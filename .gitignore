@@ -2,3 +2,8 @@
 target/
 *.iml
 python/.idea/
+python/flink_agents.egg-info/
+python/flink_agents/flink_agents.egg-info/
+python/build/
+python/dist
+python/.DS_Store
