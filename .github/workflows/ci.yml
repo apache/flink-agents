@@ -35,7 +35,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '8'
+          java-version: '11'
           distribution: 'adopt'
       - name: Set up Python
         uses: actions/setup-python@v2
@@ -55,7 +55,7 @@ jobs:
       - name: Install java
         uses: actions/setup-java@v2
         with:
-          java-version: '8'
+          java-version: '11'
           distribution: 'adopt'
       - name: Run Java Tests
         run: tools/ut.sh java
@@ -72,7 +72,7 @@ jobs:
       - name: Install java
         uses: actions/setup-java@v2
         with:
-          java-version: '8'
+          java-version: '11'
           distribution: 'adopt'
       - name: Install python
         uses: actions/setup-python@v2
