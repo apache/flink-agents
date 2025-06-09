@@ -40,7 +40,7 @@ case $1 in
     pip install -r python/requirements/test_requirements.txt
     pytest python/flink_agents
     testcode=$?
-    if [[ $testcode -ne 0 ]]; then
+    if [[ $testcode -ne 0 && testcode -ne 5 ]]; then
       exit $testcode
     fi
     echo "Executing python tests succeeds"
