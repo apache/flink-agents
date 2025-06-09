@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: Flink Agents
+name: Flink Agents CI
 
 on:
   push:
@@ -32,3 +32,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check License Header
         uses: apache/skywalking-eyes/header@main
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'adopt'
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.12
+      - name: Check code style
+        run: ./tools/lint.sh
