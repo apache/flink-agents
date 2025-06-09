@@ -18,7 +18,7 @@
 ################################################################################
 
 echo "Install format tools"
-pip install -r python/linter_requirements.txt
+pip install -r python/requirements/linter_requirements.txt
 echo "Executing Python format check"
 ruff check python
 echo "Executing Java format check"
