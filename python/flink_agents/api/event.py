@@ -17,6 +17,7 @@
 #################################################################################
 
 from abc import ABC
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -39,7 +40,7 @@ class InputEvent(Event):
     arrives at the workflow.
     """
 
-    input: str
+    input: Any
 
 
 class OutputEvent(Event):
@@ -55,4 +56,4 @@ class OutputEvent(Event):
     """
 
     isLegal: bool
-    result: str
+    result: Any
