@@ -42,7 +42,7 @@ jobs:
         with:
           python-version: 3.12
       - name: Check code style
-        run: ./tools/lint.sh
+        run: ./tools/lint.sh -c
 
   java_tests:
     name: java tests on ${{ matrix.os }}
@@ -58,7 +58,7 @@ jobs:
           java-version: '11'
           distribution: 'adopt'
       - name: Run Java Tests
-        run: tools/ut.sh java
+        run: tools/ut.sh -j
 
   python_tests:
     name: python tests on ${{ matrix.os }}
@@ -79,4 +79,4 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Run Python Tests
-        run: tools/ut.sh python
+        run: tools/ut.sh -p
