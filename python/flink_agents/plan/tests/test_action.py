@@ -15,35 +15,33 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import pytest
 
 from flink_agents.api.event import InputEvent, OutputEvent
 from flink_agents.plan.action import Action
 from flink_agents.plan.function import PythonFunction
-from flink_agents.plan.workflow_plan import WorkflowPlan
 
 
-# Note: actually, this function is not a correct action, for action will access
-# State and RunnerContext, and can emit arbitrary event. This is only for testing
-# WorkflowPlan.get_actions.
 def increment(event: InputEvent) -> OutputEvent: # noqa: D103
     value = event.input
     value += 1
     return OutputEvent(output=value)
 
+def decrement(value: int) -> OutputEvent: # noqa: D103
+    value -= 1
+    return OutputEvent(output=value)
 
-def test_simplest_workflow_plan() -> None: # noqa: D103
-    INCREMENT_ACTION = Action(
+def test_action_signature() -> None: # noqa: D103
+    Action(
         name="increment",
         exec=PythonFunction.from_callable(increment),
         listen_event_types=[InputEvent],
     )
-    actions = {InputEvent: [INCREMENT_ACTION]}
-    workflow_plan = WorkflowPlan(actions=actions)
 
-    input_event = InputEvent(input=1)
-    input_event_triggered_actions = workflow_plan.get_actions(type(input_event))
-    for action in input_event_triggered_actions:
-        result_event = action.exec(input_event)
-        if isinstance(result_event, OutputEvent):
-            print(result_event.output)
-            assert result_event.output == 2
+    with pytest.raises(TypeError):
+        Action(
+            name="decrement",
+            exec=PythonFunction.from_callable(decrement),
+            listen_event_types=[InputEvent],
+        )
+

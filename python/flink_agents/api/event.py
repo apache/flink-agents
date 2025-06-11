@@ -15,24 +15,33 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-
+import json
 from abc import ABC
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Event(BaseModel, ABC, extra="allow"):
-    """Base class for all event types in the system.
+    """Base class for all event types in the system. Event allow extra properties, but
+    these properties are required isinstance of BaseModel, or json serializable.
 
     Attributes:
     ----------
     id : UUID
         Unique identifier for the event, automatically generated using uuid4.
     """
-
     id: UUID = Field(default_factory=uuid4)
+
+    @model_validator(mode='after')
+    def validate_extra(self) -> 'Event':
+        """Make sure all extra properties are serializable."""
+        for value in self.__pydantic_extra__.values():
+            if isinstance(value, BaseModel):
+                continue
+            json.dumps(value)
+        return self
 
 
 class InputEvent(Event):
@@ -49,11 +58,8 @@ class OutputEvent(Event):
 
     Attributes:
     ----------
-    isLegal : bool
-        Is the result legal or not.
-    result : str
-        The final result returned by the workflow.
+    output : Any
+        The output result returned by the workflow.
     """
 
-    isLegal: bool
-    result: Any
+    output: Any

@@ -18,18 +18,30 @@
 
 import importlib
 import inspect
+from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Tuple
 
 from pydantic import BaseModel
 
 
-class Function(BaseModel):
-    """Descriptor for a callable function, storing module and qualified name for dynamic
-    retrieval.
+class Function(BaseModel, ABC):
+    """Base interface for user defined functions, includes python and java."""
+
+    @abstractmethod
+    def check_signature(self, checker: Callable) -> None:
+        """Check function signature is legal or not."""
+
+    @abstractmethod
+    def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
+        """Execute function."""
+
+class PythonFunction(Function):
+    """Descriptor for a python callable function, storing module and qualified name for
+    dynamic retrieval.
 
     This class allows serialization and lazy loading of functions by storing their
-    module and
-    qualified name. The actual callable is loaded on-demand when the instance is called.
+    module and qualified name. The actual callable is loaded on-demand when the instance
+    is called.
 
     Attributes:
     ----------
@@ -37,8 +49,6 @@ class Function(BaseModel):
         Name of the Python module where the function is defined.
     qualname : str
         Qualified name of the function (e.g., 'ClassName.method' for class methods).
-    __func: Callable
-        Internal cache for the resolved function
     """
 
     module: str
@@ -46,7 +56,7 @@ class Function(BaseModel):
     __func: Callable = None
 
     @staticmethod
-    def from_callable(func: Callable) -> "Function":
+    def from_callable(func: Callable) -> Function:
         """Create a Function descriptor from an existing callable.
 
         Parameters
@@ -60,11 +70,15 @@ class Function(BaseModel):
             A Function instance with module and qualname populated based on the input
             callable.
         """
-        return Function(
+        return PythonFunction(
             module=inspect.getmodule(func).__name__,
             qualname=func.__qualname__,
             __func=func,
         )
+
+    def check_signature(self, checker: Callable) -> None:
+        """Apply external check logic to function signature."""
+        checker(self.__get_func())
 
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute the stored function with provided arguments.
@@ -89,6 +103,9 @@ class Function(BaseModel):
         If the function is a method (qualified name contains a class reference), it will
         resolve the method from the corresponding class.
         """
+        return self.__get_func()(*args, **kwargs)
+
+    def __get_func(self) -> Callable:
         if self.__func is None:
             module = importlib.import_module(self.module)
             if "." in self.qualname:
@@ -99,4 +116,14 @@ class Function(BaseModel):
             else:
                 # Handle standalone functions
                 self.__func = getattr(module, self.qualname)
-        return self.__func(*args, **kwargs)
+        return self.__func
+
+
+class JavaFunction(Function):
+    """Descriptor for a java callable function."""
+
+    def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
+        """Execute the stored function with provided arguments."""
+
+    def check_signature(self, checker: Callable) -> None:
+        """Check function signature is legal or not."""
