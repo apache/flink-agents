@@ -1,0 +1,45 @@
+################################################################################
+#  Licensed to the Apache Software Foundation (ASF) under one
+#  or more contributor license agreements.  See the NOTICE file
+#  distributed with this work for additional information
+#  regarding copyright ownership.  The ASF licenses this file
+#  to you under the Apache License, Version 2.0 (the
+#  "License"); you may not use this file except in compliance
+#  with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
+
+name: Technical Debt
+description: User-unaware issues, such as code refactor and infrastructure maintenance.
+title: "[Tech Debt] "
+labels: ["tech debt"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you very much for raising the technical debt!
+  - type: checkboxes
+    attributes:
+      label: Search before asking
+      description: Please search for similar issues before creating a new one.
+      options:
+        - label: I searched in the [issues](https://github.com/apache/flink-agents/issues) and found nothing similar.
+          required: true
+  - type: textarea
+    attributes:
+      label: Description
+      description: Please describe the task. What is currently not ideal? How should it be fixed or improved?
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Are you willing to submit a PR?
+      options:
+        - label: I'm willing to submit a PR!

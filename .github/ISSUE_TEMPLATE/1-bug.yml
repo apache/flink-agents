@@ -1,0 +1,56 @@
+################################################################################
+#  Licensed to the Apache Software Foundation (ASF) under one
+#  or more contributor license agreements.  See the NOTICE file
+#  distributed with this work for additional information
+#  regarding copyright ownership.  The ASF licenses this file
+#  to you under the Apache License, Version 2.0 (the
+#  "License"); you may not use this file except in compliance
+#  with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
+
+name: Bug Report
+description: Something isn't working as expected.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thank you very much for your feedback!
+  - type: checkboxes
+    attributes:
+      label: Search before asking
+      description: Please search for similar issues before creating a new one.
+      options:
+        - label: I searched in the [issues](https://github.com/apache/flink-agents/issues) and found nothing similar.
+          required: true
+  - type: textarea
+    attributes:
+      label: Description
+      description: Please describe the problem you are facing. What are the expected behaviors and what you are actually seeing. Any error messages and logs are also helpful.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: How to reproduce
+      description: Please provide the steps to reproduce this problem.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Version and environment
+      description: Please provide the Flink Agent version you're using. Additional information such as Flink version and deployment mode, Java / Python environments and OS architecture may also be helpful.
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Are you willing to submit a PR?
+      options:
+        - label: I'm willing to submit a PR!
