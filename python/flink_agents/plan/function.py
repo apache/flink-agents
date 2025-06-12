@@ -28,7 +28,7 @@ class Function(BaseModel, ABC):
     """Base interface for user defined functions, includes python and java."""
 
     @abstractmethod
-    def check_signature(self, checker: Callable) -> None:
+    def check_signature(self, *args: Tuple[Any, ...]) -> None:
         """Check function signature is legal or not."""
 
     @abstractmethod
@@ -76,9 +76,16 @@ class PythonFunction(Function):
             __func=func,
         )
 
-    def check_signature(self, checker: Callable) -> None:
-        """Apply external check logic to function signature."""
-        checker(self.__get_func())
+    def check_signature(self, *args: Tuple[Any, ...]) -> None:
+        """Check function signature."""
+        params = inspect.signature(self.__get_func()).parameters
+        annotations = [param.annotation for param in params.values()]
+        err_msg = f"Expect {self.qualname} have signature {args}, but got {annotations}."
+        if len(params) != args.__len__():
+            raise TypeError(err_msg)
+        for i, annotation in enumerate(annotations):
+            if not issubclass(annotation, *args[i]):
+                raise TypeError(err_msg)
 
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute the stored function with provided arguments.
@@ -119,11 +126,12 @@ class PythonFunction(Function):
         return self.__func
 
 
+#TODO: Implement JavaFunction.
 class JavaFunction(Function):
     """Descriptor for a java callable function."""
 
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute the stored function with provided arguments."""
 
-    def check_signature(self, checker: Callable) -> None:
+    def check_signature(self, *args: Tuple[Any, ...]) -> None:
         """Check function signature is legal or not."""

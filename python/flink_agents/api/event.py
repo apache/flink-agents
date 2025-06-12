@@ -15,7 +15,6 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import json
 from abc import ABC
 from typing import Any
 from uuid import UUID, uuid4
@@ -36,12 +35,14 @@ class Event(BaseModel, ABC, extra="allow"):
 
     @model_validator(mode='after')
     def validate_extra(self) -> 'Event':
-        """Make sure all extra properties are serializable."""
-        for value in self.__pydantic_extra__.values():
-            if isinstance(value, BaseModel):
-                continue
-            json.dumps(value)
+        """Ensure init fields is serializable."""
+        self.model_dump_json()
         return self
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        super().__setattr__(name, value)
+        # Ensure added property can be serialized.
+        self.model_dump_json()
 
 
 class InputEvent(Event):

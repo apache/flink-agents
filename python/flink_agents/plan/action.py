@@ -15,8 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import inspect
-from typing import Callable, List, Type
+from typing import List, Type
 
 from pydantic import BaseModel
 
@@ -41,6 +40,7 @@ class Action(BaseModel):
     """
 
     name: str
+    #TODO: Raise a warning when the action has a return value, as it will be ignored.
     exec: Function
     listen_event_types: List[Type[Event]]
 
@@ -52,19 +52,5 @@ class Action(BaseModel):
     ) -> None:
         """Action will check function signature when init."""
         super().__init__(name=name, exec=exec, listen_event_types=listen_event_types)
-        exec.check_signature(self.check_signature)
-
-    @classmethod
-    def check_signature(cls, func: Callable) -> None:
-        """" Checker for action function signature."""
-        #TODO: update check logic after import State and RunnerContext.
-        params = inspect.signature(func).parameters
-        if len(params) != 1:
-            err_msg = "Action function must have exactly 1 parameter"
-            raise TypeError(err_msg)
-        for i, param in enumerate(params.values()):
-            if i == 0:
-                if not issubclass(param.annotation, Event):
-                    err_msg = "Action function first parameter must be Event"
-                    raise TypeError(err_msg)
+        exec.check_signature([Event])
 

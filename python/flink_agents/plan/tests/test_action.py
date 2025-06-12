@@ -17,31 +17,30 @@
 #################################################################################
 import pytest
 
-from flink_agents.api.event import InputEvent, OutputEvent
+from flink_agents.api.event import InputEvent
 from flink_agents.plan.action import Action
 from flink_agents.plan.function import PythonFunction
 
 
-def increment(event: InputEvent) -> OutputEvent: # noqa: D103
-    value = event.input
-    value += 1
-    return OutputEvent(output=value)
+def legal_signature(event: InputEvent) -> None: # noqa: D103
+    pass
 
-def decrement(value: int) -> OutputEvent: # noqa: D103
-    value -= 1
-    return OutputEvent(output=value)
+def illegal_signature(value: int) ->  None: # noqa: D103
+    pass
 
-def test_action_signature() -> None: # noqa: D103
+def test_action_signature_legal() -> None: # noqa: D103
     Action(
-        name="increment",
-        exec=PythonFunction.from_callable(increment),
+        name="legal",
+        exec=PythonFunction.from_callable(legal_signature),
         listen_event_types=[InputEvent],
     )
 
+def test_action_signature_illegal() -> None:  # noqa: D103
     with pytest.raises(TypeError):
         Action(
-            name="decrement",
-            exec=PythonFunction.from_callable(decrement),
+            name="illegal",
+            exec=PythonFunction.from_callable(illegal_signature),
             listen_event_types=[InputEvent],
         )
+
 

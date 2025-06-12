@@ -18,16 +18,25 @@
 from typing import Type
 
 import pytest
+from pydantic import ValidationError
+from pydantic_core import PydanticSerializationError
 
-from flink_agents.api.event import Event
+from flink_agents.api.event import Event, InputEvent, OutputEvent
 
 
-def test_event_serializable() -> None: #noqa D103
-    event = Event(a="1")
-    event.model_dump_json()
+def test_event_serializable_valid() -> None: #noqa D103
+    Event(a=1, b=InputEvent(input=1), c=OutputEvent(output='111'))
 
-    with pytest.raises(TypeError):
-        Event(a=Type[Event])
+def test_event_serializable_invalid() -> None: #noqa D103
+    with pytest.raises(ValidationError):
+        Event(a=1, b=Type[InputEvent])
 
-    event = Event(a=Event())
-    event.model_dump_json()
+def test_event_add_field() -> None: #noqa D103
+    event = Event(a=1)
+    event.c = Event()
+
+def test_event_add_field_invalid() -> None: #noqa D103
+    event = Event(a=1)
+    with pytest.raises(PydanticSerializationError):
+        event.c = Type[InputEvent]
+
