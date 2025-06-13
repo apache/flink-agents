@@ -52,5 +52,6 @@ class Action(BaseModel):
     ) -> None:
         """Action will check function signature when init."""
         super().__init__(name=name, exec=exec, listen_event_types=listen_event_types)
-        exec.check_signature([Event])
+        #TODO: Update expected signature after import State and Context.
+        exec.check_signature(Event)
 

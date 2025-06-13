@@ -23,6 +23,8 @@ from typing import Any, Callable, Dict, Tuple
 
 from pydantic import BaseModel
 
+from flink_agents.plan.utils import check_type_match
+
 
 class Function(BaseModel, ABC):
     """Base interface for user defined functions, includes python and java."""
@@ -81,11 +83,14 @@ class PythonFunction(Function):
         params = inspect.signature(self.__get_func()).parameters
         annotations = [param.annotation for param in params.values()]
         err_msg = f"Expect {self.qualname} have signature {args}, but got {annotations}."
-        if len(params) != args.__len__():
+        if len(params) != len(args):
             raise TypeError(err_msg)
-        for i, annotation in enumerate(annotations):
-            if not issubclass(annotation, *args[i]):
-                raise TypeError(err_msg)
+        try:
+            for i, annotation in enumerate(annotations):
+                check_type_match(annotation, args[i])
+        except TypeError as e:
+            raise TypeError(err_msg) from e
+
 
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute the stored function with provided arguments.
