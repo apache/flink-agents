@@ -21,11 +21,11 @@ package org.apache.flink.agents.plan.utils;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
-/** Util class for checking object serializable. */
-public final class SerializableChecker {
+/** Util class for json. */
+public final class JsonUtils {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private SerializableChecker() {}
+    private JsonUtils() {}
 
     /** Try to serialize object to check serializable. */
     public static void checkSerializable(final Object object) throws JsonProcessingException {

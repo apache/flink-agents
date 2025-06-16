@@ -20,7 +20,7 @@ package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.plan.utils.SerializableChecker;
+import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -58,21 +58,21 @@ public class TestEventSerializable {
     @Test
     public void testEventInitSerializable() throws JsonProcessingException {
         InputEvent event = new InputEvent(new SerializableClass(1));
-        SerializableChecker.checkSerializable(event);
+        JsonUtils.checkSerializable(event);
     }
 
     @Test
     public void testEventInitNonSerializable() {
         InputEvent event = new InputEvent(new UnserializableClass(1));
         Assertions.assertThrows(
-                JsonProcessingException.class, () -> SerializableChecker.checkSerializable(event));
+                JsonProcessingException.class, () -> JsonUtils.checkSerializable(event));
     }
 
     @Test
     public void testEventSetAttrSerializable() throws JsonProcessingException {
         InputEvent event = new InputEvent(new SerializableClass(1));
         event.setAttr("b", new SerializableClass(1));
-        SerializableChecker.checkSerializable(event);
+        JsonUtils.checkSerializable(event);
     }
 
     @Test
@@ -80,6 +80,6 @@ public class TestEventSerializable {
         InputEvent event = new InputEvent(new SerializableClass(1));
         event.setAttr("b", new UnserializableClass(1));
         Assertions.assertThrows(
-                JsonProcessingException.class, () -> SerializableChecker.checkSerializable(event));
+                JsonProcessingException.class, () -> JsonUtils.checkSerializable(event));
     }
 }
