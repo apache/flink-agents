@@ -18,21 +18,16 @@
 
 package org.apache.flink.agents.api;
 
-import org.apache.flink.agents.api.utils.SerializableChecker;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
-
-import java.io.Serializable;
-import java.security.InvalidParameterException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
 /** Base class for all event types in the system. */
-public abstract class Event implements Serializable {
-    private static final long serialVersionUID = 1L;
+public abstract class Event {
     private final UUID id;
     private final Map<String, Object> attributes;
 
+    // TODO: check json serializable when send event to Context.
     public Event() {
         this.id = UUID.randomUUID();
         attributes = new HashMap<>();
@@ -52,14 +47,5 @@ public abstract class Event implements Serializable {
 
     public void setAttr(String name, Object value) {
         attributes.put(name, value);
-        checkSerializable();
-    }
-
-    public void checkSerializable() {
-        try {
-            SerializableChecker.checkSerializable(this);
-        } catch (JsonProcessingException e) {
-            throw new InvalidParameterException(e.getMessage());
-        }
     }
 }

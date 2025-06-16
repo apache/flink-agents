@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api.utils;
+package org.apache.flink.agents.plan.utils;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,7 +27,7 @@ public final class SerializableChecker {
 
     private SerializableChecker() {}
 
-    /** Try serialization object to check serializable. */
+    /** Try to serialize object to check serializable. */
     public static void checkSerializable(final Object object) throws JsonProcessingException {
         MAPPER.writeValueAsString(object);
     }

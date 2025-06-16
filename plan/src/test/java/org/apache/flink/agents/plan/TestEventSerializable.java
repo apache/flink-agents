@@ -15,15 +15,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.flink.agents.api;
 
+package org.apache.flink.agents.plan;
+
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.plan.utils.SerializableChecker;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.security.InvalidParameterException;
-
-/** Test Event. */
-public class TestEvent {
+/**
+ * Test serializable of {@link Event}.
+ *
+ * <p>The check will be applied when send Event to Context.
+ */
+public class TestEventSerializable {
+    /** Class which can be serialized by jackson, for it provide getter for private field. */
     public static class SerializableClass {
         private final int a;
 
@@ -36,6 +44,9 @@ public class TestEvent {
         }
     }
 
+    /**
+     * Class which can't be serialized by jackson, for it doesn't provide getter for private field.
+     */
     public static class UnserializableClass {
         private final int a;
 
@@ -45,27 +56,30 @@ public class TestEvent {
     }
 
     @Test
-    public void testEventInitSerializable() {
+    public void testEventInitSerializable() throws JsonProcessingException {
         InputEvent event = new InputEvent(new SerializableClass(1));
+        SerializableChecker.checkSerializable(event);
     }
 
     @Test
     public void testEventInitNonSerializable() {
+        InputEvent event = new InputEvent(new UnserializableClass(1));
         Assertions.assertThrows(
-                InvalidParameterException.class, () -> new InputEvent(new UnserializableClass(1)));
+                JsonProcessingException.class, () -> SerializableChecker.checkSerializable(event));
     }
 
     @Test
-    public void testEventSetAttrSerializable() {
+    public void testEventSetAttrSerializable() throws JsonProcessingException {
         InputEvent event = new InputEvent(new SerializableClass(1));
         event.setAttr("b", new SerializableClass(1));
+        SerializableChecker.checkSerializable(event);
     }
 
     @Test
     public void testEventSetAttrNonSerializable() {
         InputEvent event = new InputEvent(new SerializableClass(1));
+        event.setAttr("b", new UnserializableClass(1));
         Assertions.assertThrows(
-                InvalidParameterException.class,
-                () -> event.setAttr("b", new UnserializableClass(1)));
+                JsonProcessingException.class, () -> SerializableChecker.checkSerializable(event));
     }
 }

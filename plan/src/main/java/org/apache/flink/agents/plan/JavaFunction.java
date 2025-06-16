@@ -25,6 +25,7 @@ public class JavaFunction implements Function {
     private final String qualName;
     private final String methodName;
     private final Class<?>[] parameterTypes;
+    private Method method;
 
     public JavaFunction(String qualName, String methodName, Class<?>[] parameterTypes) {
         this.qualName = qualName;
@@ -34,13 +35,15 @@ public class JavaFunction implements Function {
 
     @Override
     public Object call(Object... args) throws Exception {
-        Class<?> clazz = Class.forName(qualName);
-        Method method = clazz.getMethod(methodName, parameterTypes);
+        if (method == null) {
+            Class<?> clazz = Class.forName(qualName);
+            method = clazz.getMethod(methodName, parameterTypes);
+        }
         return method.invoke(null, args);
     }
 
     @Override
-    public void checkSignature(Class<?>[] parameterTypes) throws Exception {
+    public void checkSignature(Class<?>[] parameterTypes) {
         String errMsg =
                 String.format(
                         "Expect signature %s, but got %s",

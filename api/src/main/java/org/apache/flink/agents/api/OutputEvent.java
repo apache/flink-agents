@@ -18,20 +18,16 @@
 
 package org.apache.flink.agents.api;
 
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
-
 /**
  * Event representing a result from workflow. By generating an OutputEvent, actions can emit output
  * data.
  */
 public class OutputEvent extends Event {
-    private static final long serialVersionUID = 1L;
     private final Object output;
 
-    public OutputEvent(Object output) throws JsonProcessingException {
+    public OutputEvent(Object output) {
         super();
         this.output = output;
-        super.checkSerializable();
     }
 
     public Object getOutput() {
