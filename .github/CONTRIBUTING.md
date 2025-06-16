@@ -18,3 +18,39 @@ Thank you for your intention to contribute the Flink Agents project!
 ## Design discussions
 1. Minor design changes can be discussed directly in the issue.
 2. Significant design changes should be discussed as [ideas](https://github.com/apache/flink-agents/discussions/categories/ideas) with proper design docs. All issues for conducting the changes should link to the discussion thread.
+
+## Testing
+
+Run all the UT with the following command:
+
+```shell
+./tools/ut.sh
+```
+
+Only run Java UT:
+
+```shell
+./tools/ut.sh -j
+```
+
+Only run Python UT:
+
+```shell
+./tools/ut.sh -p
+```
+
+## Code Style
+
+Run the following command to format the code:
+
+```shell
+./tools/lint.sh
+```
+
+## License headers
+
+Run the following command to fix the license headers:
+
+```shell
+docker run -it --rm -v $(pwd):/github/workspace apache/skywalking-eyes header fix
+```
