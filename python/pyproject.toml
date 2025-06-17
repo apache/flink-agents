@@ -28,7 +28,7 @@ name = "flink-agents"
 version = "0.1.dev0"
 
 description = "Flink Agents Python API"
-license-files = ["../LICENSE"]
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [
     { name = "Apache Software Foundation", email = "dev@flink.apache.org" },
