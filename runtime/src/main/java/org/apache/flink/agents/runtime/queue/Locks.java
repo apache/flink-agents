@@ -1,0 +1,70 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.flink.agents.runtime.queue;
+
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
+
+/**
+ * NOTE: This source code was copied from the <a
+ * href="https://github.com/apache/flink-statefun">flink-statefun</a>
+ *
+ * <p>Provides few implementations of {@link Lock} interface to be used with {@link MpscQueue}.
+ */
+public final class Locks {
+    private Locks() {}
+
+    public static Lock spinLock() {
+        return new YieldingSpinLock();
+    }
+
+    // --------------------------------------------------------------------------------------------------------
+    // YieldingSpinLock
+    // --------------------------------------------------------------------------------------------------------
+
+    @SuppressWarnings("unused")
+    private static class LhsPadding {
+        protected long p1, p2, p3, p4, p5, p6, p7;
+    }
+
+    private static class Value extends LhsPadding {
+        protected volatile long state;
+    }
+
+    @SuppressWarnings("unused")
+    private static class RhsPadding extends Value {
+        protected long p9, p10, p11, p12, p13, p14, p15;
+    }
+
+    private static final class YieldingSpinLock extends RhsPadding implements Lock {
+
+        private static final AtomicLongFieldUpdater<Value> UPDATER =
+                AtomicLongFieldUpdater.newUpdater(Value.class, "state");
+
+        @Override
+        public void lockUninterruptibly() {
+            while (!UPDATER.compareAndSet(this, 0, 1)) {
+                Thread.yield();
+            }
+        }
+
+        @Override
+        public void unlock() {
+            UPDATER.lazySet(this, 0);
+        }
+    }
+}
