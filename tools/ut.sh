@@ -91,7 +91,27 @@ java_tests() {
     echo "Executing Java test suite..."
     pushd "${ROOT}"
     mvn -T16 --batch-mode --no-transfer-progress test
-    echo "Java tests completed"
+    testcode=$?
+    case $testcode in
+        0)  # All tests passed
+            if $verbose; then
+                echo "All Java tests passed"
+            fi
+            return 0
+            ;;
+        1)  # Tests failed
+            echo "Java tests failed" >&2
+            return 1
+            ;;
+        2)  # Test execution interrupted
+            echo "Java tests interrupted" >&2
+            return 1
+            ;;
+        *)  # Unknown error
+            echo "Java tests encountered unknown error (exit code: $testcode)" >&2
+            return 2
+            ;;
+    esac
 }
 
 python_tests() {
