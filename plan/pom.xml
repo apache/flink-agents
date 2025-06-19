@@ -28,4 +28,17 @@ under the License.
     <artifactId>plan</artifactId>
     <name>Flink Agents : Plan</name>
 
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-shaded-jackson</artifactId>
+            <version>${flink.shaded.jackson.version}-${flink.shaded.version}</version>
+        </dependency>
+    </dependencies>
+
 </project>
