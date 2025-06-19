@@ -31,25 +31,25 @@ public class TestAction {
 
     @Test
     public void testActionSignatureLegal() throws Exception {
-        Function func =
-                new JavaFunction(
-                        "org.apache.flink.agents.plan.TestAction",
-                        "legal",
-                        new Class[] {InputEvent.class});
+        ActionFunction func =
+                new ActionFunction(
+                        new JavaFunction(
+                                "org.apache.flink.agents.plan.TestAction",
+                                "legal",
+                                new Class[] {InputEvent.class}));
 
-        Action action = new Action("legal", func, List.of(InputEvent.class));
+        new Action("legal", func, List.of(InputEvent.class));
     }
 
     @Test
     public void testActionSignatureIllegal() throws Exception {
-        Function func =
-                new JavaFunction(
-                        "org.apache.flink.agents.plan.TestAction",
-                        "illegal",
-                        new Class[] {int.class, int.class});
-
         Assertions.assertThrows(
                 IllegalArgumentException.class,
-                () -> new Action("illegal", func, List.of(InputEvent.class)));
+                () ->
+                        new ActionFunction(
+                                new JavaFunction(
+                                        "org.apache.flink.agents.plan.TestAction",
+                                        "illegal",
+                                        new Class[] {int.class, int.class})));
     }
 }

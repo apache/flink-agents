@@ -20,35 +20,21 @@ package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.Event;
 
-import java.util.List;
+public class ActionFunction implements Function {
+    private final Function func;
 
-/**
- * Representation of a workflow action with event listening and function execution.
- *
- * <p>This class encapsulates a named workflow action that listens for specific event types and
- * executes an associated function when those events occur.
- */
-public class Action {
-    private final String name;
-    private final ActionFunction exec;
-    private final List<Class<? extends Event>> listenEventTypes;
-
-    public Action(String name, ActionFunction exec, List<Class<? extends Event>> listenEventTypes)
-            throws Exception {
-        this.name = name;
-        this.exec = exec;
-        this.listenEventTypes = listenEventTypes;
+    public ActionFunction(Function func) throws Exception {
+        this.func = func;
+        checkSignature(new Class[] {Event.class});
     }
 
-    public String getName() {
-        return name;
+    @Override
+    public Object call(Object... args) throws Exception {
+        return func.call(args);
     }
 
-    public ActionFunction getExec() {
-        return exec;
-    }
-
-    public List<Class<? extends Event>> getListenEventTypes() {
-        return listenEventTypes;
+    @Override
+    public void checkSignature(Class<?>[] parameterTypes) throws Exception {
+        func.checkSignature(parameterTypes);
     }
 }

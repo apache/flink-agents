@@ -25,20 +25,29 @@ public class JavaFunction implements Function {
     private final String qualName;
     private final String methodName;
     private final Class<?>[] parameterTypes;
-    private Method method;
+    private final Class<?> clazz;
+    private final Method method;
 
-    public JavaFunction(String qualName, String methodName, Class<?>[] parameterTypes) {
+    public JavaFunction(String qualName, String methodName, Class<?>[] parameterTypes)
+            throws Exception {
         this.qualName = qualName;
         this.methodName = methodName;
         this.parameterTypes = parameterTypes;
+        this.clazz = Class.forName(qualName);
+        this.method = clazz.getMethod(methodName, parameterTypes);
+    }
+
+    public JavaFunction(Class<?> clazz, String methodName, Class<?>[] parameterTypes)
+            throws Exception {
+        this.qualName = clazz.getName();
+        this.methodName = methodName;
+        this.parameterTypes = parameterTypes;
+        this.clazz = clazz;
+        this.method = clazz.getMethod(methodName, parameterTypes);
     }
 
     @Override
     public Object call(Object... args) throws Exception {
-        if (method == null) {
-            Class<?> clazz = Class.forName(qualName);
-            method = clazz.getMethod(methodName, parameterTypes);
-        }
         return method.invoke(null, args);
     }
 

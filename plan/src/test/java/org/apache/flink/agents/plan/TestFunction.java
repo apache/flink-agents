@@ -40,6 +40,14 @@ public class TestFunction {
         Assertions.assertEquals(3, result);
     }
 
+    @Test
+    public void testJavaFunctionInitByClass() throws Exception {
+        Function func =
+                new JavaFunction(TestFunction.class, "add", new Class[] {int.class, int.class});
+        int result = (int) func.call(1, 2);
+        Assertions.assertEquals(3, result);
+    }
+
     public static void check_class(InputEvent a, OutputEvent b) {}
 
     @Test
