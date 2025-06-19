@@ -21,7 +21,9 @@ from typing import Dict, List, Type
 from pydantic import BaseModel
 
 from flink_agents.api.event import Event
+from flink_agents.api.workflow import Workflow
 from flink_agents.plan.action import Action
+from flink_agents.plan.workflow_plan_utils import get_actions
 
 
 class WorkflowPlan(BaseModel):
@@ -34,6 +36,19 @@ class WorkflowPlan(BaseModel):
     """
 
     actions: Dict[Type[Event], List[Action]]
+
+    @staticmethod
+    def from_workflow(workflow: Workflow) -> "WorkflowPlan":
+        """Build a WorkflowPlan from user defined workflow."""
+        actions = {}
+        for action in get_actions(workflow):
+            assert action.name not in actions, f"Duplicate action name: {action.name}"
+            for event_type in action.listen_event_types:
+                if event_type not in actions:
+                    actions[event_type] = []
+                actions[event_type].append(action)
+        return WorkflowPlan(actions=actions)
+
 
     def get_actions(self, event_type: Type[Event]) -> List[Action]:
         """Get actions that listen to the specified event type.

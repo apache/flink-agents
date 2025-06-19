@@ -20,6 +20,7 @@ from typing import List, Type
 from pydantic import BaseModel
 
 from flink_agents.api.event import Event
+from flink_agents.api.workflow_runner_context import WorkflowRunnerContext
 from flink_agents.plan.function import Function
 
 
@@ -53,5 +54,5 @@ class Action(BaseModel):
         """Action will check function signature when init."""
         super().__init__(name=name, exec=exec, listen_event_types=listen_event_types)
         #TODO: Update expected signature after import State and Context.
-        exec.check_signature(Event)
+        exec.check_signature(Event, WorkflowRunnerContext)
 

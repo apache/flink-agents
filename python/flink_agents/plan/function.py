@@ -120,6 +120,7 @@ class PythonFunction(Function):
     def __get_func(self) -> Callable:
         if self.__func is None:
             module = importlib.import_module(self.module)
+            #TODO: support function of inner class.
             if "." in self.qualname:
                 # Handle class methods (e.g., 'ClassName.method')
                 classname, methodname = self.qualname.rsplit(".", 1)
