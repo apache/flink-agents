@@ -7,10 +7,5 @@ The Apache Software Foundation (http://www.apache.org/).
 Apache Flink
 Copyright 2014-2025 The Apache Software Foundation
 
-This project contains the following code copied from Apache Flink Stateful Functions:
-runtime/src/main/java/org/apache/flink/agents/runtime/common/*
-runtime/src/main/java/org/apache/flink/agents/runtime/feedback/*
-runtime/src/main/java/org/apache/flink/agents/runtime/logger/*
-runtime/src/main/java/org/apache/flink/agents/runtime/memory/*
-runtime/src/main/java/org/apache/flink/agents/runtime/queue/*
-Original Copyright: 2014-2020 The Apache Software Foundation
+Apache Flink Stateful Functions
+Copyright: 2014-2023 The Apache Software Foundation
