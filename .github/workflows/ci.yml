@@ -48,6 +48,7 @@ jobs:
     name: java tests on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ 'macos-latest', 'ubuntu-latest' ]
     steps:
@@ -64,6 +65,7 @@ jobs:
     name: python tests on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ 'macos-latest', 'ubuntu-latest' ]
         python-version: [ '3.9', '3.10', '3.11', '3.12' ]
