@@ -45,6 +45,7 @@ under the License.
         <junit5.version>5.10.1</junit5.version>
         <flink.shaded.version>17.0</flink.shaded.version>
         <flink.shaded.jackson.version>2.14.2</flink.shaded.jackson.version>
+        <pemja.version>0.6.0</pemja.version>
     </properties>
 
     <modules>
