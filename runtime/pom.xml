@@ -25,7 +25,7 @@ under the License.
         <version>0.1-SNAPSHOT</version>
     </parent>
 
-    <artifactId>runtime</artifactId>
+    <artifactId>flink-agents-runtime</artifactId>
     <name>Flink Agents : Runtime</name>
 
     <dependencies>

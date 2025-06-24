@@ -25,7 +25,7 @@ under the License.
         <version>0.1-SNAPSHOT</version>
     </parent>
 
-    <artifactId>examples</artifactId>
+    <artifactId>flink-agents-examples</artifactId>
     <name>Flink Agents : Examples</name>
 
 </project>

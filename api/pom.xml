@@ -25,7 +25,7 @@ under the License.
         <version>0.1-SNAPSHOT</version>
     </parent>
 
-    <artifactId>api</artifactId>
+    <artifactId>flink-agents-api</artifactId>
     <name>Flink Agents : API</name>
 
 </project>

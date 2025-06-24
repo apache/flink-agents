@@ -25,7 +25,7 @@ under the License.
         <version>0.1-SNAPSHOT</version>
     </parent>
 
-    <artifactId>plan</artifactId>
+    <artifactId>flink-agents-plan</artifactId>
     <name>Flink Agents : Plan</name>
 
 </project>
