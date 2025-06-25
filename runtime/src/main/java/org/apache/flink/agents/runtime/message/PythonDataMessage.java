@@ -15,34 +15,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.flink.agents.plan;
+package org.apache.flink.agents.runtime.message;
 
-// TODO: implement.
-/** Represent a Python function. */
-public class PythonFunction implements Function {
-    private final String module;
-    private final String qualName;
+import java.util.Arrays;
 
-    public PythonFunction(String module, String qualName) {
-        this.module = module;
-        this.qualName = qualName;
+/** Specific message type for python event. */
+public class PythonDataMessage<K> extends DataMessage<K> {
+
+    private final byte[] payload;
+
+    public PythonDataMessage(String eventType, K key, byte[] payload) {
+        super(eventType, key);
+        this.payload = payload;
+    }
+
+    public byte[] getPayload() {
+        return payload;
     }
 
     @Override
-    public Object call(Object... args) throws Exception {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void checkSignature(Class<?>[] parameterTypes) throws Exception {
-        //        throw new UnsupportedOperationException();
-    }
-
-    public String getModule() {
-        return module;
-    }
-
-    public String getQualName() {
-        return qualName;
+    public String toString() {
+        return "PythonDataMessage{"
+                + "payload="
+                + Arrays.toString(payload)
+                + ", eventType='"
+                + eventType
+                + '\''
+                + ", key="
+                + key
+                + '}';
     }
 }

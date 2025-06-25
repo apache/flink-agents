@@ -16,3 +16,4 @@ wheel
 setuptools>=75.3
 pytest==8.4.0
 pydantic==2.11.4
+cloudpickle==2.2.1
