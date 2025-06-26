@@ -40,6 +40,9 @@ github:
     projects: false
   collaborators:
     - lihaosky
+    - wenjin272
+    - codenohup
+    - GreatEugenius
 
 notifications:
   commits: commits@flink.apache.org
