@@ -17,47 +17,31 @@
  */
 package org.apache.flink.agents.runtime.message;
 
-import java.util.Objects;
-import java.util.OptionalLong;
+import java.util.Arrays;
 
 /**
- * Specific message type for event data.
+ * PythonEventMessage is a {@link EventMessage} that carries a Python event in byte array format.
  *
  * @param <K> The type of the key.
- * @param <T> The type of the event.
  */
-public class EventMessage<K, T> implements Message {
+public class PythonEventMessage<K> extends EventMessage<K, byte[]> {
 
     private static final long serialVersionUID = 1L;
-    protected final K key;
-    protected final T event;
-    protected final String eventType;
 
-    public EventMessage(K key, T event, String eventType) {
-        this.key = key;
-        this.event = Objects.requireNonNull(event);
-        this.eventType = Objects.requireNonNull(eventType);
-    }
-
-    public K getKey() {
-        return key;
-    }
-
-    public T getEvent() {
-        return event;
-    }
-
-    public String getEventType() {
-        return eventType;
-    }
-
-    @Override
-    public OptionalLong isBarrierMessage() {
-        return OptionalLong.empty();
+    public PythonEventMessage(K key, byte[] event, String eventType) {
+        super(key, event, eventType);
     }
 
     @Override
     public String toString() {
-        return "EventMessage{" + "payload=" + event + '}';
+        return "PythonEventMessage{"
+                + "payload="
+                + Arrays.toString(event)
+                + ", eventType='"
+                + eventType
+                + '\''
+                + ", key="
+                + key
+                + '}';
     }
 }
