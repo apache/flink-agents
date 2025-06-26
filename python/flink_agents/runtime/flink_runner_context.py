@@ -24,12 +24,12 @@ from flink_agents.api.event import Event, OutputEvent
 from flink_agents.api.runner_context import RunnerContext
 
 
-def create_flink_runner_context(j_runner_context: Any):
+def create_flink_runner_context(j_runner_context: Any) -> "FlinkRunnerContext":
     """Used to create a FlinkRunnerContext Python object in Pemja environment."""
     return FlinkRunnerContext(j_runner_context)
 
 
-def convert_to_python_object(bytesObject: bytes):
+def convert_to_python_object(bytesObject: bytes) -> Any:
     """Used for deserializing Python objects."""
     return cloudpickle.loads(bytesObject)
 
@@ -40,12 +40,20 @@ class FlinkRunnerContext(RunnerContext):
     This context allows access to event handling.
     """
 
-    def __init__(self, j_runner_context: Any):
+    def __init__(self, j_runner_context: Any) -> None:
+        """Initialize a flink runner context with the given java runner context.
+
+        Parameters
+        ----------
+        j_runner_context : Any
+            Java runner context used to synchronize data between Python and Java.
+        """
         self._j_runner_context = j_runner_context
 
     @override
-    def send_event(self, event: Event):
+    def send_event(self, event: Event) -> None:
         """Send an event to the workflow for processing.
+
         Parameters
         ----------
         event : Event
@@ -56,4 +64,5 @@ class FlinkRunnerContext(RunnerContext):
             class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
             self._j_runner_context.sendEvent(class_path, cloudpickle.dumps(data))
         except Exception as e:
-            raise RuntimeError(f"Failed to send event {event} to runner context: {e}")
+            err_msg = "Failed to send event " + class_path + " to runner context"
+            raise RuntimeError(err_msg) from e
