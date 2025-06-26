@@ -38,6 +38,8 @@ github:
     discussions: true
     wiki: false
     projects: false
+  collaborators:
+    - lihaosky
 
 notifications:
   commits: commits@flink.apache.org
