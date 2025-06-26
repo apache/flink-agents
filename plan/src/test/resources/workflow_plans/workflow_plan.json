@@ -1,0 +1,40 @@
+{
+  "actions": {
+    "first_action": {
+      "name": "first_action",
+      "exec": {
+        "qualname": "org.apache.flink.agents.plan.TestAction",
+        "method_name": "legal",
+        "parameter_types": ["org.apache.flink.agents.api.InputEvent"],
+        "func_type": "JavaFunction"
+      },
+      "listen_event_types": [
+        "org.apache.flink.agents.api.InputEvent"
+      ]
+    },
+    "second_action": {
+      "name": "second_action",
+      "exec": {
+        "qualname": "org.apache.flink.agents.plan.serializer.WorkflowPlanJsonDeserializerTest$MyAction",
+        "method_name": "doNothing",
+        "parameter_types": [
+          "org.apache.flink.agents.api.Event"
+        ],
+        "func_type": "JavaFunction"
+      },
+      "listen_event_types": [
+        "org.apache.flink.agents.api.InputEvent",
+        "org.apache.flink.agents.plan.serializer.WorkflowPlanJsonDeserializerTest$MyEvent"
+      ]
+    }
+  },
+  "event_trigger_actions": {
+    "org.apache.flink.agents.api.InputEvent": [
+      "first_action",
+      "second_action"
+    ],
+    "org.apache.flink.agents.plan.serializer.WorkflowPlanJsonDeserializerTest$MyEvent": [
+      "second_action"
+    ]
+  }
+}

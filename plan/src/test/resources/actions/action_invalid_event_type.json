@@ -1,0 +1,10 @@
+{
+  "name": "testAction",
+  "exec": {
+    "func_type": "JavaFunction",
+    "qualname": "org.apache.flink.agents.plan.TestAction",
+    "method_name": "legal",
+    "parameter_types": ["org.apache.flink.agents.api.InputEvent"]
+  },
+  "listenEventTypes": ["org.apache.flink.agents.api.NonExistentEvent"]
+}
