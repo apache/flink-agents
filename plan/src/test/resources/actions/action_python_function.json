@@ -1,0 +1,9 @@
+{
+  "name": "testPythonAction",
+  "exec": {
+    "func_type": "PythonFunction",
+    "module": "test_module",
+    "qualname": "test_function"
+  },
+  "listen_event_types": ["org.apache.flink.agents.api.InputEvent"]
+}

@@ -18,24 +18,32 @@
 
 package org.apache.flink.agents.plan;
 
-import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
+import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.util.List;
 import java.util.Map;
 
 /** Agent plan compiled from user defined agent. */
+@JsonSerialize(using = AgentPlanJsonSerializer.class)
+@JsonDeserialize(using = AgentPlanJsonDeserializer.class)
 public class AgentPlan {
-    private final Map<Class<? extends Event>, List<Action>> actions;
+    private final Map<String, Action> actions;
+    private final Map<String, List<Action>> eventTriggerActions;
 
-    public AgentPlan(Map<Class<? extends Event>, List<Action>> actions) {
+    public AgentPlan(
+            Map<String, Action> actions, Map<String, List<Action>> eventTriggerActions) {
         this.actions = actions;
+        this.eventTriggerActions = eventTriggerActions;
     }
 
-    public List<Action> getAction(Class<? extends Event> type) {
-        return actions.get(type);
-    }
-
-    public Map<Class<? extends Event>, List<Action>> getActions() {
+    public Map<String, Action> getActions() {
         return actions;
+    }
+
+    public Map<String, List<Action>> getEventTriggerActions() {
+        return eventTriggerActions;
     }
 }

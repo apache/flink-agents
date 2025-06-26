@@ -100,8 +100,10 @@ public class JavaFunction implements Function {
     public void checkSignature(Class<?>[] parameterTypes) {
         String errMsg =
                 String.format(
-                        "Expect signature %s, but got %s",
-                        Arrays.toString(parameterTypes), Arrays.toString(this.parameterTypes));
+                        "Function \"%s\" expects signature %s, but got %s",
+                        qualName + '.' + methodName,
+                        Arrays.toString(parameterTypes),
+                        Arrays.toString(this.parameterTypes));
         if (this.parameterTypes.length != parameterTypes.length) {
             throw new IllegalArgumentException(errMsg);
         }
