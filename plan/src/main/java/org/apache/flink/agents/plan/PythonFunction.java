@@ -51,4 +51,12 @@ public class PythonFunction implements Function {
     public void checkSignature(Class<?>[] parameterTypes) throws Exception {
         throw new UnsupportedOperationException();
     }
+
+    public String getModule() {
+        return module;
+    }
+
+    public String getQualName() {
+        return qualName;
+    }
 }
