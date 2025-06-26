@@ -19,23 +19,33 @@
 package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.plan.serializer.WorkflowPlanJsonDeserializer;
+import org.apache.flink.agents.plan.serializer.WorkflowPlanJsonSerializer;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.util.List;
 import java.util.Map;
 
 /** Workflow plan compiled from user defined workflow. */
+@JsonSerialize(using = WorkflowPlanJsonSerializer.class)
+@JsonDeserialize(using = WorkflowPlanJsonDeserializer.class)
 public class WorkflowPlan {
-    private final Map<Class<? extends Event>, List<Action>> actions;
+    private final Map<String, Action> actions;
+    private final Map<Class<? extends Event>, List<Action>> eventTriggerActions;
 
-    public WorkflowPlan(Map<Class<? extends Event>, List<Action>> actions) {
+    public WorkflowPlan(
+            Map<String, Action> actions,
+            Map<Class<? extends Event>, List<Action>> eventTriggerActions) {
         this.actions = actions;
+        this.eventTriggerActions = eventTriggerActions;
     }
 
-    public List<Action> getAction(Class<? extends Event> type) {
-        return actions.get(type);
-    }
-
-    public Map<Class<? extends Event>, List<Action>> getActions() {
+    public Map<String, Action> getActions() {
         return actions;
+    }
+
+    public Map<Class<? extends Event>, List<Action>> getEventTriggerActions() {
+        return eventTriggerActions;
     }
 }
