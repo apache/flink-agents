@@ -21,63 +21,50 @@ import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.context.PythonRunnerContext;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
-import org.apache.flink.agents.runtime.message.PythonEventMessage;
 import pemja.core.PythonInterpreter;
 
 import java.util.List;
 
 /** Execute the corresponding Python action in the workflow. */
-public class PythonRunner {
+public class PythonActionExecutor {
 
     private static final String IMPORT_FLINK_RUNNER_CONTEXT =
             "from flink_agents.runtime import flink_runner_context";
-    private static final String CREATE_FLINK_RUNNER_CONTEXT =
-            "flink_runner_context.create_flink_runner_context";
-    private static final String CONVERT_TO_PYTHON_OBJECT =
-            "flink_runner_context.convert_to_python_object";
+
+    private final PythonEnvironmentManager environmentManager;
+    private final PythonRunnerContext runnerContext;
 
     private PythonInterpreter interpreter;
-    private PythonRunnerContext runnerContext;
 
-    public PythonRunner(PythonEnvironmentManager environmentManager) throws Exception {
+    public PythonActionExecutor(PythonEnvironmentManager environmentManager) {
+        this.environmentManager = environmentManager;
+        this.runnerContext = new PythonRunnerContext();
+    }
+
+    public void open() throws Exception {
         environmentManager.open();
         EmbeddedPythonEnvironment env =
                 (EmbeddedPythonEnvironment) environmentManager.createEnvironment();
 
         interpreter = env.getInterpreter();
         interpreter.exec(IMPORT_FLINK_RUNNER_CONTEXT);
+
+        Object pythonFunctionWrapper =
+                interpreter.invoke(
+                        "flink_runner_context.create_python_function_wrapper", runnerContext);
+        interpreter.set("python_function_wrapper", pythonFunctionWrapper);
     }
 
-    public List executePythonFunction(
-            PythonFunction pythonFunction, PythonEventMessage<?> inputMessage) {
-        String modulePath = pythonFunction.getModule();
-        int moduleLastDotIndex = modulePath.lastIndexOf(".");
-        if (moduleLastDotIndex == -1) {
-            throw new IllegalArgumentException(
-                    "Invalid Python module path: " + pythonFunction.getModule());
-        }
-
-        String packagePath = modulePath.substring(0, moduleLastDotIndex);
-        String className = modulePath.substring(moduleLastDotIndex + 1);
-
-        Object eventKey = inputMessage.getKey();
-        runnerContext.setKey(eventKey);
-        runnerContext.clearAllEvents();
+    public List<PythonEvent> executePythonFunction(
+            PythonFunction pythonFunction, PythonEvent inputMessage) {
+        runnerContext.checkNoPendingEvents();
+        pythonFunction.setInterpreter(interpreter);
 
         try {
-            interpreter.exec("from " + packagePath + " import " + className);
-
-            Object pythonRunnerContextObject =
-                    interpreter.invoke(CREATE_FLINK_RUNNER_CONTEXT, runnerContext);
-
-            Object pythonEventObject =
-                    interpreter.invoke(CONVERT_TO_PYTHON_OBJECT, inputMessage.getEvent());
-
-            interpreter.invoke(
-                    pythonFunction.getQualName(), pythonEventObject, pythonRunnerContextObject);
+            pythonFunction.call(inputMessage.getEvent());
         } catch (Exception e) {
-            throw new RuntimeException(
-                    "Failed to execute Python function: " + pythonFunction.getQualName(), e);
+            runnerContext.drainEvents();
+            throw new RuntimeException("Failed to execute the Python function", e);
         }
 
         return runnerContext.drainEvents();

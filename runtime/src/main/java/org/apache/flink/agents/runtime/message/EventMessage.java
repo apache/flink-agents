@@ -20,35 +20,24 @@ package org.apache.flink.agents.runtime.message;
 import java.util.Objects;
 import java.util.OptionalLong;
 
-/**
- * Specific message type for event data.
- *
- * @param <K> The type of the key.
- * @param <T> The type of the event.
- */
-public class EventMessage<K, T> implements Message {
+/** Specific message type for data. */
+public class EventMessage<T> implements Message {
 
     private static final long serialVersionUID = 1L;
-    protected final K key;
-    protected final T event;
-    protected final String eventType;
+    private final String id;
+    private final T event;
 
-    public EventMessage(K key, T event, String eventType) {
-        this.key = key;
+    public EventMessage(String id, T event) {
+        this.id = id;
         this.event = Objects.requireNonNull(event);
-        this.eventType = Objects.requireNonNull(eventType);
     }
 
-    public K getKey() {
-        return key;
+    public String getId() {
+        return id;
     }
 
     public T getEvent() {
         return event;
-    }
-
-    public String getEventType() {
-        return eventType;
     }
 
     @Override

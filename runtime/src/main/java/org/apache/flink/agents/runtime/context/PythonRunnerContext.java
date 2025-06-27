@@ -17,8 +17,8 @@
  */
 package org.apache.flink.agents.runtime.context;
 
-import org.apache.flink.agents.runtime.message.EventMessage;
-import org.apache.flink.agents.runtime.message.PythonEventMessage;
+import org.apache.flink.agents.runtime.PythonEvent;
+import org.apache.flink.util.Preconditions;
 
 import javax.annotation.concurrent.NotThreadSafe;
 
@@ -27,41 +27,28 @@ import java.util.List;
 
 /**
  * This class is used to manage the execution context when interacting with Python functions,
- * including temporarily saving the key of the current Event and collecting new events generated
- * during the execution of actions.
+ * including collecting new events generated during the execution of actions.
  */
 @NotThreadSafe
 public class PythonRunnerContext {
-    private Object key;
-    private List<EventMessage<?, ?>> events;
+    private final List<PythonEvent> events;
 
     public PythonRunnerContext() {
-        this(null);
-    }
-
-    public PythonRunnerContext(Object key) {
-        this.key = key;
         this.events = new ArrayList<>();
     }
 
-    public void setKey(Object key) {
-        this.key = key;
-    }
-
     public void sendEvent(String type, byte[] event) {
-        if (key == null) {
-            throw new IllegalStateException("Key is not set.");
-        }
-        this.events.add(new PythonEventMessage<>(key, event, type));
+        this.events.add(new PythonEvent(event, type));
     }
 
-    public List<EventMessage<?, ?>> drainEvents() {
-        List<EventMessage<?, ?>> list = new ArrayList<>(this.events);
-        clearAllEvents();
+    public List<PythonEvent> drainEvents() {
+        List<PythonEvent> list = new ArrayList<>(this.events);
+        this.events.clear();
         return list;
     }
 
-    public void clearAllEvents() {
-        this.events.clear();
+    public void checkNoPendingEvents() {
+        Preconditions.checkState(
+                this.events.isEmpty(), "There are pending events remaining in the context.");
     }
 }

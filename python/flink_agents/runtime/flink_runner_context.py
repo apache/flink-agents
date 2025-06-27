@@ -20,18 +20,9 @@ from typing import Any
 import cloudpickle
 from typing_extensions import override
 
-from flink_agents.api.event import Event, OutputEvent
+from flink_agents.api.event import Event
 from flink_agents.api.runner_context import RunnerContext
-
-
-def create_flink_runner_context(j_runner_context: Any) -> "FlinkRunnerContext":
-    """Used to create a FlinkRunnerContext Python object in Pemja environment."""
-    return FlinkRunnerContext(j_runner_context)
-
-
-def convert_to_python_object(bytesObject: bytes) -> Any:
-    """Used for deserializing Python objects."""
-    return cloudpickle.loads(bytesObject)
+from flink_agents.plan.function import PythonFunction
 
 
 class FlinkRunnerContext(RunnerContext):
@@ -60,9 +51,45 @@ class FlinkRunnerContext(RunnerContext):
             The event to be processed by the workflow system.
         """
         try:
-            data = event.output if isinstance(event, OutputEvent) else event
             class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
-            self._j_runner_context.sendEvent(class_path, cloudpickle.dumps(data))
+            self._j_runner_context.sendEvent(class_path, cloudpickle.dumps(event))
         except Exception as e:
             err_msg = "Failed to send event " + class_path + " to runner context"
             raise RuntimeError(err_msg) from e
+
+
+class PythonFunctionWrapper:
+    """A wrapper class to execute Python functions in a Pemja environment with Flink
+    context synchronization.
+
+    Attributes:
+    ----------
+    runner_context : FlinkRunnerContext
+        The Python-side Flink runner context, created by wrapping the Java
+        `j_runner_context`.
+    """
+
+    def __init__(self, j_runner_context: Any) -> None:
+        """Initialize a python function wrapper with the given java runner context.
+
+        Parameters
+        ----------
+        j_runner_context : Any
+            Java runner context used to synchronize data between Python and Java.
+        """
+        self.runner_context = FlinkRunnerContext(j_runner_context)
+
+    def call_python_function(
+        self, module: str, qualname: str, bytesEvent: bytes
+    ) -> None:
+        """Used to create a PythonFunction Python object in Pemja environment."""
+        func = PythonFunction(module=module, qualname=qualname)
+        event = cloudpickle.loads(bytesEvent)
+        func(event, self.runner_context)
+
+
+def create_python_function_wrapper(j_runner_context: Any) -> PythonFunctionWrapper:
+    """Used to create a PythonFunctionWrapper Python object with FlinkRunnerContext
+    in Pemja environment.
+    """
+    return PythonFunctionWrapper(j_runner_context)

@@ -17,32 +17,42 @@
  */
 package org.apache.flink.agents.plan;
 
-// TODO: implement.
+import pemja.core.PythonInterpreter;
+
 /** Represent a Python function. */
 public class PythonFunction implements Function {
+
     private final String module;
     private final String qualName;
+
+    private transient PythonInterpreter interpreter;
 
     public PythonFunction(String module, String qualName) {
         this.module = module;
         this.qualName = qualName;
     }
 
-    @Override
-    public Object call(Object... args) throws Exception {
-        throw new UnsupportedOperationException();
+    public void setInterpreter(PythonInterpreter interpreter) {
+        this.interpreter = interpreter;
     }
 
+    @Override
+    public Object call(Object... args) throws Exception {
+        if (args.length < 1) {
+            throw new IllegalArgumentException("Expected at least 1 arguments: PythonEvent");
+        }
+        byte[] pythonEvent = (byte[]) args[0];
+
+        if (interpreter == null) {
+            throw new IllegalStateException("Python interpreter is not set.");
+        }
+        return interpreter.invokeMethod(
+                "python_function_wrapper", "call_python_function", module, qualName, pythonEvent);
+    }
+
+    // TODO: check Python function signature compatibility with given parameter types
     @Override
     public void checkSignature(Class<?>[] parameterTypes) throws Exception {
         throw new UnsupportedOperationException();
-    }
-
-    public String getModule() {
-        return module;
-    }
-
-    public String getQualName() {
-        return qualName;
     }
 }
