@@ -21,6 +21,7 @@ package org.apache.flink.agents.plan.serializer;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.WorkflowPlan;
@@ -42,7 +43,7 @@ public class WorkflowPlanJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class});
+                        new Class[] {InputEvent.class, RunnerContext.class});
 
         // Create an Action
         Action action = new Action("testAction", function, List.of(InputEvent.class));
@@ -77,6 +78,9 @@ public class WorkflowPlanJsonSerializerTest {
                 json.contains("\"org.apache.flink.agents.api.InputEvent\""),
                 "JSON should contain the event type class name");
         assertTrue(
+                json.contains("\"org.apache.flink.agents.api.context.RunnerContext\""),
+                "JSON should contain the runner context type class name");
+        assertTrue(
                 json.contains("\"event_trigger_actions\":{}"),
                 "JSON should contain empty event trigger actions");
     }
@@ -88,7 +92,7 @@ public class WorkflowPlanJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class});
+                        new Class[] {InputEvent.class, RunnerContext.class});
 
         // Create an Action
         Action action = new Action("testAction", function, List.of(InputEvent.class));
@@ -123,12 +127,12 @@ public class WorkflowPlanJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class});
+                        new Class[] {InputEvent.class, RunnerContext.class});
         JavaFunction function2 =
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class});
+                        new Class[] {InputEvent.class, RunnerContext.class});
 
         // Create Actions
         Action action1 = new Action("action1", function1, List.of(InputEvent.class));
