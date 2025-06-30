@@ -21,7 +21,6 @@ import org.apache.flink.api.common.JobID;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.python.env.AbstractPythonEnvironmentManager;
 import org.apache.flink.python.env.PythonDependencyInfo;
-import org.apache.flink.python.env.PythonEnvironment;
 import pemja.core.PythonInterpreterConfig;
 
 import java.util.HashMap;
@@ -43,7 +42,7 @@ public class PythonEnvironmentManager extends AbstractPythonEnvironmentManager {
     }
 
     @Override
-    public PythonEnvironment createEnvironment() {
+    public EmbeddedPythonEnvironment createEnvironment() {
         Map<String, String> env = new HashMap<>(getPythonEnv());
 
         PythonInterpreterConfig.PythonInterpreterConfigBuilder interpreterConfigBuilder =

@@ -151,8 +151,7 @@ public class PythonEnvironmentManagerTest {
             expected.put("python", "/usr/local/bin/python");
             assertEquals(expected, environmentVariable);
 
-            EmbeddedPythonEnvironment env =
-                    (EmbeddedPythonEnvironment) environmentManager.createEnvironment();
+            EmbeddedPythonEnvironment env = environmentManager.createEnvironment();
 
             assertEquals(expected, env.getEnv());
 
@@ -227,8 +226,7 @@ public class PythonEnvironmentManagerTest {
                                     File.separator, baseDir, PYTHON_FILES_DIR, "dir0", "test_dir")),
                     false);
 
-            EmbeddedPythonEnvironment env =
-                    (EmbeddedPythonEnvironment) environmentManager.createEnvironment();
+            EmbeddedPythonEnvironment env = environmentManager.createEnvironment();
             PythonInterpreterConfig config = env.getConfig();
             assertArrayEquals(expectedPythonPath.split(File.pathSeparator), config.getPaths());
         }
@@ -265,8 +263,7 @@ public class PythonEnvironmentManagerTest {
                     new File(String.join(File.separator, tmpBase, PYTHON_ARCHIVES_DIR, "py312")),
                     true);
 
-            EmbeddedPythonEnvironment env =
-                    (EmbeddedPythonEnvironment) environmentManager.createEnvironment();
+            EmbeddedPythonEnvironment env = environmentManager.createEnvironment();
 
             assertEquals(expected, env.getEnv());
 

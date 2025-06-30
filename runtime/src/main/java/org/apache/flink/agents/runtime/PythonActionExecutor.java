@@ -28,11 +28,10 @@ import java.util.List;
 /** Execute the corresponding Python action in the workflow. */
 public class PythonActionExecutor {
 
-    private static final String IMPORT_FUNCTION = "from flink_agents.plan import function";
-    private static final String IMPORT_FLINK_RUNNER_CONTEXT =
-            "from flink_agents.runtime import flink_runner_context";
-    private static final String IMPORT_PYTHON_JAVA_UTILS =
-            "from flink_agents.runtime import python_java_utils";
+    private static final String PYTHON_IMPORTS =
+            "from flink_agents.plan import function\n"
+                    + "from flink_agents.runtime import flink_runner_context\n"
+                    + "from flink_agents.runtime import python_java_utils";
     private static final String CREATE_FLINK_RUNNER_CONTEXT =
             "flink_runner_context.create_flink_runner_context";
     private static final String CONVERT_TO_PYTHON_OBJECT =
@@ -51,15 +50,12 @@ public class PythonActionExecutor {
 
     public void open() throws Exception {
         environmentManager.open();
-        EmbeddedPythonEnvironment env =
-                (EmbeddedPythonEnvironment) environmentManager.createEnvironment();
+        EmbeddedPythonEnvironment env = environmentManager.createEnvironment();
 
         interpreter = env.getInterpreter();
+        interpreter.exec(PYTHON_IMPORTS);
 
-        interpreter.exec(IMPORT_FUNCTION);
-        interpreter.exec(IMPORT_FLINK_RUNNER_CONTEXT);
-        interpreter.exec(IMPORT_PYTHON_JAVA_UTILS);
-
+        // TODO: remove the set and get runner context after updating pemja to version 0.5.3
         Object pythonRunnerContextObject =
                 interpreter.invoke(CREATE_FLINK_RUNNER_CONTEXT, runnerContext);
         interpreter.set(FLINK_RUNNER_CONTEXT_VAR_NAME, pythonRunnerContextObject);
@@ -70,6 +66,7 @@ public class PythonActionExecutor {
         runnerContext.checkNoPendingEvents();
         function.setInterpreter(interpreter);
 
+        // TODO: remove the set and get runner context after updating pemja to version 0.5.3
         Object pythonRunnerContextObject = interpreter.get(FLINK_RUNNER_CONTEXT_VAR_NAME);
 
         Object pythonEventObject = interpreter.invoke(CONVERT_TO_PYTHON_OBJECT, event.getEvent());
