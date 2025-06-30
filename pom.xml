@@ -46,6 +46,9 @@ under the License.
         <flink.shaded.version>17.0</flink.shaded.version>
         <flink.shaded.jackson.version>2.14.2</flink.shaded.jackson.version>
         <pemja.version>0.6.0</pemja.version>
+        <log4j2.version>2.23.1</log4j2.version>
+        <slf4j.version>1.7.36</slf4j.version>
+        <assertj.version>3.23.1</assertj.version>
     </properties>
 
     <modules>
