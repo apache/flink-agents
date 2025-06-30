@@ -21,6 +21,7 @@ import pemja.core.PythonInterpreter;
 
 /** Represent a Python function. */
 public class PythonFunction implements Function {
+    private static final String CALL_PYTHON_FUNCTION = "function.call_python_function";
 
     private final String module;
     private final String qualName;
@@ -38,16 +39,11 @@ public class PythonFunction implements Function {
 
     @Override
     public Object call(Object... args) throws Exception {
-        if (args.length < 1) {
-            throw new IllegalArgumentException("Expected at least 1 arguments: PythonEvent");
-        }
-        byte[] pythonEvent = (byte[]) args[0];
-
         if (interpreter == null) {
             throw new IllegalStateException("Python interpreter is not set.");
         }
-        return interpreter.invokeMethod(
-                "python_function_wrapper", "call_python_function", module, qualName, pythonEvent);
+
+        return interpreter.invoke(CALL_PYTHON_FUNCTION, module, qualName, args);
     }
 
     // TODO: check Python function signature compatibility with given parameter types

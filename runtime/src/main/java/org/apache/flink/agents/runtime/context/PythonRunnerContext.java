@@ -31,24 +31,24 @@ import java.util.List;
  */
 @NotThreadSafe
 public class PythonRunnerContext {
-    private final List<PythonEvent> events;
+    private final List<PythonEvent> pendingEvents;
 
     public PythonRunnerContext() {
-        this.events = new ArrayList<>();
+        this.pendingEvents = new ArrayList<>();
     }
 
     public void sendEvent(String type, byte[] event) {
-        this.events.add(new PythonEvent(event, type));
+        this.pendingEvents.add(new PythonEvent(event, type));
     }
 
     public List<PythonEvent> drainEvents() {
-        List<PythonEvent> list = new ArrayList<>(this.events);
-        this.events.clear();
+        List<PythonEvent> list = new ArrayList<>(this.pendingEvents);
+        this.pendingEvents.clear();
         return list;
     }
 
     public void checkNoPendingEvents() {
         Preconditions.checkState(
-                this.events.isEmpty(), "There are pending events remaining in the context.");
+                this.pendingEvents.isEmpty(), "There are pending events remaining in the context.");
     }
 }

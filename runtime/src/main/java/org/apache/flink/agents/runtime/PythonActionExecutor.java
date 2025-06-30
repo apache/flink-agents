@@ -28,8 +28,16 @@ import java.util.List;
 /** Execute the corresponding Python action in the workflow. */
 public class PythonActionExecutor {
 
+    private static final String IMPORT_FUNCTION = "from flink_agents.plan import function";
     private static final String IMPORT_FLINK_RUNNER_CONTEXT =
             "from flink_agents.runtime import flink_runner_context";
+    private static final String IMPORT_PYTHON_JAVA_UTILS =
+            "from flink_agents.runtime import python_java_utils";
+    private static final String CREATE_FLINK_RUNNER_CONTEXT =
+            "flink_runner_context.create_flink_runner_context";
+    private static final String CONVERT_TO_PYTHON_OBJECT =
+            "python_java_utils.convert_to_python_object";
+    private static final String FLINK_RUNNER_CONTEXT_VAR_NAME = "flink_runner_context";
 
     private final PythonEnvironmentManager environmentManager;
     private final PythonRunnerContext runnerContext;
@@ -47,26 +55,39 @@ public class PythonActionExecutor {
                 (EmbeddedPythonEnvironment) environmentManager.createEnvironment();
 
         interpreter = env.getInterpreter();
-        interpreter.exec(IMPORT_FLINK_RUNNER_CONTEXT);
 
-        Object pythonFunctionWrapper =
-                interpreter.invoke(
-                        "flink_runner_context.create_python_function_wrapper", runnerContext);
-        interpreter.set("python_function_wrapper", pythonFunctionWrapper);
+        interpreter.exec(IMPORT_FUNCTION);
+        interpreter.exec(IMPORT_FLINK_RUNNER_CONTEXT);
+        interpreter.exec(IMPORT_PYTHON_JAVA_UTILS);
+
+        Object pythonRunnerContextObject =
+                interpreter.invoke(CREATE_FLINK_RUNNER_CONTEXT, runnerContext);
+        interpreter.set(FLINK_RUNNER_CONTEXT_VAR_NAME, pythonRunnerContextObject);
     }
 
-    public List<PythonEvent> executePythonFunction(
-            PythonFunction pythonFunction, PythonEvent inputMessage) {
+    public List<PythonEvent> executePythonFunction(PythonFunction function, PythonEvent event)
+            throws Exception {
         runnerContext.checkNoPendingEvents();
-        pythonFunction.setInterpreter(interpreter);
+        function.setInterpreter(interpreter);
+
+        Object pythonRunnerContextObject = interpreter.get(FLINK_RUNNER_CONTEXT_VAR_NAME);
+
+        Object pythonEventObject = interpreter.invoke(CONVERT_TO_PYTHON_OBJECT, event.getEvent());
 
         try {
-            pythonFunction.call(inputMessage.getEvent());
+            function.call(pythonEventObject, pythonRunnerContextObject);
         } catch (Exception e) {
             runnerContext.drainEvents();
-            throw new RuntimeException("Failed to execute the Python function", e);
+            throw new PythonActionExecutionException("Failed to execute Python action", e);
         }
 
         return runnerContext.drainEvents();
+    }
+
+    /** Failed to execute Python action. */
+    public static class PythonActionExecutionException extends Exception {
+        public PythonActionExecutionException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 }
