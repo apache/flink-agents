@@ -39,6 +39,11 @@ under the License.
             <artifactId>flink-shaded-jackson</artifactId>
             <version>${flink.shaded.jackson.version}-${flink.shaded.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>pemja</artifactId>
+            <version>${pemja.version}</version>
+        </dependency>
     </dependencies>
 
 </project>

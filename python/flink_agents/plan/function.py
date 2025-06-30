@@ -141,3 +141,9 @@ class JavaFunction(Function):
 
     def check_signature(self, *args: Tuple[Any, ...]) -> None:
         """Check function signature is legal or not."""
+
+
+def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...]) -> Any:
+    """Used to call a Python function in the Pemja environment."""
+    func = PythonFunction(module=module, qualname=qualname)
+    return func(*func_args)

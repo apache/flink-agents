@@ -31,6 +31,11 @@ under the License.
     <dependencies>
         <dependency>
             <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-plan</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
             <artifactId>flink-streaming-java</artifactId>
             <version>${flink.version}</version>
             <scope>provided</scope>
