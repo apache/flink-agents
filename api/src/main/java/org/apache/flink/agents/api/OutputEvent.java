@@ -33,4 +33,14 @@ public class OutputEvent extends Event {
     public Object getOutput() {
         return output;
     }
+
+    @Override
+    public boolean isOutputEvent() {
+        return true;
+    }
+
+    @Override
+    public String toString() {
+        return "OutputEvent{" + "output=" + output + '}';
+    }
 }
