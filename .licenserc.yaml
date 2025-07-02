@@ -26,6 +26,7 @@ header:
     - 'NOTICE'
     - '.gitignore'
     - '**/*.json'
+    - '**/*.txt'
   comment: on-failure
   dependency:
     files:

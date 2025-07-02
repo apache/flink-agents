@@ -18,6 +18,7 @@
 package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -25,7 +26,7 @@ import java.util.List;
 
 /** Test Action. */
 public class TestAction {
-    public static void legal(InputEvent event) {}
+    public static void legal(InputEvent event, RunnerContext context) {}
 
     public static void illegal(int a, int b) {}
 
@@ -35,9 +36,9 @@ public class TestAction {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class});
+                        new Class[] {InputEvent.class, RunnerContext.class});
 
-        new Action("legal", func, List.of(InputEvent.class));
+        new Action("legal", func, List.of(InputEvent.class.getName()));
     }
 
     @Test
@@ -50,6 +51,6 @@ public class TestAction {
 
         Assertions.assertThrows(
                 IllegalArgumentException.class,
-                () -> new Action("illegal", func, List.of(InputEvent.class)));
+                () -> new Action("illegal", func, List.of(InputEvent.class.getName())));
     }
 }

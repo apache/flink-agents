@@ -35,6 +35,16 @@ public class PythonEvent extends Event {
         return event;
     }
 
+    @Override
+    public boolean isInputEvent() {
+        return eventType.equals("flink_agents.api.event.InputEvent");
+    }
+
+    public boolean isOutputEvent() {
+        return eventType.equals("flink_agents.api.event.OutputEvent");
+    }
+
+    @Override
     public String getEventType() {
         return eventType;
     }

@@ -19,14 +19,31 @@ import importlib
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
+from pyflink.datastream import DataStream, KeySelector, StreamExecutionEnvironment
+
 from flink_agents.api.workflow import Workflow
 
 
 class AgentsExecutionEnvironment(ABC):
     """Base class for workflow execution environment."""
 
-    @staticmethod
-    def get_execution_environment(**kwargs: Dict[str, Any]) -> 'AgentsExecutionEnvironment':
+    __env: StreamExecutionEnvironment = None
+
+    @classmethod
+    def from_env(
+        cls, env: StreamExecutionEnvironment
+    ) -> type["AgentsExecutionEnvironment"]:
+        """Set StreamExecutionEnvironment of AgentsExecutionEnvironment.
+
+        Currently, this property is only used for distinguishing execution environment.
+        """
+        cls.__env = env
+        return cls
+
+    @classmethod
+    def get_execution_environment(
+        cls, **kwargs: Dict[str, Any]
+    ) -> "AgentsExecutionEnvironment":
         """Get agents execution environment.
 
         Currently, this method only returns LocalExecutionEnvironment. After
@@ -38,12 +55,17 @@ class AgentsExecutionEnvironment(ABC):
         AgentsExecutionEnvironment
             Environment for workflow execution.
         """
-        return importlib.import_module(
-            "flink_agents.runtime.local_execution_environment"
-        ).get_execution_environment(**kwargs)
+        if cls.__env is None:
+            return importlib.import_module(
+                "flink_agents.runtime.local_execution_environment"
+            ).get_execution_environment(**kwargs)
+        else:
+            return importlib.import_module(
+                "flink_agents.runtime.remote_execution_environment"
+            ).get_execution_environment(**kwargs)
 
     @abstractmethod
-    def from_list(self, input: List[Dict[str, Any]]) -> 'AgentsExecutionEnvironment':
+    def from_list(self, input: List[Dict[str, Any]]) -> "AgentsExecutionEnvironment":
         """Set input for agents. Used for local execution.
 
         Parameters
@@ -54,7 +76,21 @@ class AgentsExecutionEnvironment(ABC):
         """
 
     @abstractmethod
-    def apply(self, workflow: Workflow) -> 'AgentsExecutionEnvironment':
+    def from_datastream(
+        self, input: DataStream, key_selector: KeySelector = None
+    ) -> "AgentsExecutionEnvironment":
+        """Set input for agents. Used for remote execution.
+
+        Parameters
+        ----------
+        input : DataStream
+            Receive a DataStream as input.
+        key_selector : KeySelector
+            Extract key from each input record.
+        """
+
+    @abstractmethod
+    def apply(self, workflow: Workflow) -> "AgentsExecutionEnvironment":
         """Set workflow of execution environment.
 
         Parameters
@@ -72,6 +108,16 @@ class AgentsExecutionEnvironment(ABC):
         Returns:
         -------
         list
+            Outputs of workflow execution.
+        """
+
+    @abstractmethod
+    def to_datastream(self) -> DataStream:
+        """Get outputs of workflow execution. Used for remote execution.
+
+        Returns:
+        -------
+        DataStream
             Outputs of workflow execution.
         """
 

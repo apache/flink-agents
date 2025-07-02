@@ -1,0 +1,7 @@
+{
+  "name": "testAction",
+  "exec": {
+    "func_type": "JavaFunction"
+  },
+  "listenEventTypes": ["org.apache.flink.agents.api.InputEvent"]
+}
