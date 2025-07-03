@@ -64,7 +64,7 @@ public class ActionJsonSerializerTest {
         assertTrue(
                 json.contains("\"method_name\":\"legal\""), "JSON should contain the method name");
         assertTrue(
-                json.contains("\"listenEventTypes\":["),
+                json.contains("\"listen_event_types\":["),
                 "JSON should contain the listen event types");
         assertTrue(
                 json.contains("\"org.apache.flink.agents.api.InputEvent\""),
@@ -96,7 +96,7 @@ public class ActionJsonSerializerTest {
                 json.contains("\"qualname\":\"test_function\""),
                 "JSON should contain the qualified name");
         assertTrue(
-                json.contains("\"listenEventTypes\":["),
+                json.contains("\"listen_event_types\":["),
                 "JSON should contain the listen event types");
         assertTrue(
                 json.contains("\"org.apache.flink.agents.api.InputEvent\""),
@@ -126,7 +126,7 @@ public class ActionJsonSerializerTest {
                 json.contains("\"name\":\"multiEventAction\""),
                 "JSON should contain the action name");
         assertTrue(
-                json.contains("\"listenEventTypes\":["),
+                json.contains("\"listen_event_types\":["),
                 "JSON should contain the listen event types");
         assertTrue(
                 json.contains("\"org.apache.flink.agents.api.InputEvent\""),
@@ -156,7 +156,7 @@ public class ActionJsonSerializerTest {
                 json.contains("\"name\":\"emptyEventsAction\""),
                 "JSON should contain the action name");
         assertTrue(
-                json.contains("\"listenEventTypes\":[]"),
+                json.contains("\"listen_event_types\":[]"),
                 "JSON should contain an empty listen event types array");
     }
 

@@ -70,7 +70,7 @@ public class WorkflowPlanJsonSerializerTest {
         assertTrue(
                 json.contains("\"method_name\":\"legal\""), "JSON should contain the method name");
         assertTrue(
-                json.contains("\"listenEventTypes\":["),
+                json.contains("\"listen_event_types\":["),
                 "JSON should contain the listen event types");
         assertTrue(
                 json.contains("\"org.apache.flink.agents.api.InputEvent\""),

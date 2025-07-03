@@ -32,7 +32,6 @@ import java.nio.charset.StandardCharsets;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Test for {@link ActionJsonDeserializer}. */
 public class ActionJsonDeserializerTest {
@@ -66,7 +65,7 @@ public class ActionJsonDeserializerTest {
 
         // Verify the deserialized Action
         assertEquals("testAction", action.getName());
-        assertTrue(action.getExec() instanceof JavaFunction);
+        assertInstanceOf(JavaFunction.class, action.getExec());
         JavaFunction javaFunction = (JavaFunction) action.getExec();
         assertEquals("org.apache.flink.agents.plan.TestAction", javaFunction.getQualName());
         assertEquals("legal", javaFunction.getMethodName());
