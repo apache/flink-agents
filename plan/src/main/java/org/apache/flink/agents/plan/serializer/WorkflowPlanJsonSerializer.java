@@ -66,7 +66,7 @@ public class WorkflowPlanJsonSerializer extends StdSerializer<WorkflowPlan> {
                 .forEach(
                         (eventClass, actions) -> {
                             try {
-                                jsonGenerator.writeFieldName(eventClass.getName());
+                                jsonGenerator.writeFieldName(eventClass);
                                 jsonGenerator.writeStartArray();
                                 for (Action action : actions) {
                                     jsonGenerator.writeString(action.getName());
@@ -74,8 +74,7 @@ public class WorkflowPlanJsonSerializer extends StdSerializer<WorkflowPlan> {
                                 jsonGenerator.writeEndArray();
                             } catch (IOException e) {
                                 throw new RuntimeException(
-                                        "Error writing event trigger actions for: "
-                                                + eventClass.getName(),
+                                        "Error writing event trigger actions for: " + eventClass,
                                         e);
                             }
                         });

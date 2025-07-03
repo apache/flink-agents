@@ -18,7 +18,6 @@
 
 package org.apache.flink.agents.plan.serializer;
 
-import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.WorkflowPlan;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JacksonException;
@@ -69,21 +68,13 @@ public class WorkflowPlanJsonDeserializer extends StdDeserializer<WorkflowPlan> 
 
         // Deserialize event trigger actions
         JsonNode eventTriggerActionsNode = node.get("event_trigger_actions");
-        Map<Class<? extends Event>, List<Action>> eventTriggerActions = new HashMap<>();
+        Map<String, List<Action>> eventTriggerActions = new HashMap<>();
         if (eventTriggerActionsNode != null && eventTriggerActionsNode.isObject()) {
             Iterator<Map.Entry<String, JsonNode>> iterator = eventTriggerActionsNode.fields();
             while (iterator.hasNext()) {
                 Map.Entry<String, JsonNode> entry = iterator.next();
                 String eventClassName = entry.getKey();
                 JsonNode actionsArrayNode = entry.getValue();
-
-                Class<? extends Event> eventClass;
-                try {
-                    eventClass = (Class<? extends Event>) Class.forName(eventClassName);
-                } catch (ClassNotFoundException e) {
-                    throw new IOException("Event class not found: " + eventClassName, e);
-                }
-
                 List<Action> actionsTriggeredByEvent = new ArrayList<>();
                 for (JsonNode actionNameNode : actionsArrayNode) {
                     String actionName = actionNameNode.asText();
@@ -93,7 +84,7 @@ public class WorkflowPlanJsonDeserializer extends StdDeserializer<WorkflowPlan> 
                     }
                     actionsTriggeredByEvent.add(action);
                 }
-                eventTriggerActions.put(eventClass, actionsTriggeredByEvent);
+                eventTriggerActions.put(eventClassName, actionsTriggeredByEvent);
             }
         }
 

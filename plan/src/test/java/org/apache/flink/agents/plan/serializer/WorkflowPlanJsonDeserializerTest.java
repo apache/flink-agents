@@ -57,12 +57,13 @@ public class WorkflowPlanJsonDeserializerTest {
 
         // Check event trigger actions
         assertEquals(2, workflowPlan.getEventTriggerActions().size());
-        assertTrue(workflowPlan.getEventTriggerActions().containsKey(InputEvent.class));
+        assertTrue(workflowPlan.getEventTriggerActions().containsKey(InputEvent.class.getName()));
         assertEquals(
                 List.of(firstAction, secondAction),
-                workflowPlan.getEventTriggerActions().get(InputEvent.class));
+                workflowPlan.getEventTriggerActions().get(InputEvent.class.getName()));
         assertEquals(
-                List.of(secondAction), workflowPlan.getEventTriggerActions().get(MyEvent.class));
+                List.of(secondAction),
+                workflowPlan.getEventTriggerActions().get(MyEvent.class.getName()));
     }
 
     /**

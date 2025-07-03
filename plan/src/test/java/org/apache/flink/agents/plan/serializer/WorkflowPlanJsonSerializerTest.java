@@ -18,7 +18,6 @@
 
 package org.apache.flink.agents.plan.serializer;
 
-import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.plan.Action;
@@ -94,8 +93,8 @@ public class WorkflowPlanJsonSerializerTest {
         Action action = new Action("testAction", function, List.of(InputEvent.class));
 
         // Create a map of event trigger actions
-        Map<Class<? extends Event>, List<Action>> eventTriggerActions = new HashMap<>();
-        eventTriggerActions.put(InputEvent.class, List.of(action));
+        Map<String, List<Action>> eventTriggerActions = new HashMap<>();
+        eventTriggerActions.put(InputEvent.class.getName(), List.of(action));
 
         // Create a WorkflowPlan with event trigger actions but no regular actions
         WorkflowPlan workflowPlan = new WorkflowPlan(new HashMap<>(), eventTriggerActions);
@@ -140,9 +139,9 @@ public class WorkflowPlanJsonSerializerTest {
         actions.put(action2.getName(), action2);
 
         // Create a map of event trigger actions
-        Map<Class<? extends Event>, List<Action>> eventTriggerActions = new HashMap<>();
-        eventTriggerActions.put(InputEvent.class, List.of(action1));
-        eventTriggerActions.put(OutputEvent.class, List.of(action2));
+        Map<String, List<Action>> eventTriggerActions = new HashMap<>();
+        eventTriggerActions.put(InputEvent.class.getName(), List.of(action1));
+        eventTriggerActions.put(OutputEvent.class.getName(), List.of(action2));
 
         // Create a WorkflowPlan with both actions and event trigger actions
         WorkflowPlan workflowPlan = new WorkflowPlan(actions, eventTriggerActions);
