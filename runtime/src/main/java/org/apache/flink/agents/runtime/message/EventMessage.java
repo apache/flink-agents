@@ -15,29 +15,45 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.flink.agents.runtime.message;
 
-import java.util.Objects;
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.util.function.SerializableFunction;
+
 import java.util.OptionalLong;
 
-/** Specific message type for data. */
-public class EventMessage<T> implements Message {
+/**
+ * A special type used to wrap {@link org.apache.flink.agents.api.Event}, which must include a key
+ * and the actual event. This type will be used for data transmission between Flink operators.
+ *
+ * @param <K> The type of the key.
+ */
+public class EventMessage<K> implements Message {
 
     private static final long serialVersionUID = 1L;
-    private final String id;
-    private final T event;
 
-    public EventMessage(String id, T event) {
-        this.id = id;
-        this.event = Objects.requireNonNull(event);
+    /** The key of the event. */
+    private final K key;
+
+    private final Event event;
+
+    public EventMessage(K key, Event event) {
+        this.key = key;
+        this.event = event;
     }
 
-    public String getId() {
-        return id;
+    public K getKey() {
+        return key;
     }
 
-    public T getEvent() {
+    public Event getEvent() {
         return event;
+    }
+
+    public String getEventType() {
+        return event.getEventType();
     }
 
     @Override
@@ -45,8 +61,32 @@ public class EventMessage<T> implements Message {
         return OptionalLong.empty();
     }
 
+    public boolean isInputEvent() {
+        return event.isInputEvent();
+    }
+
+    public boolean isOutputEvent() {
+        return event.isOutputEvent();
+    }
+
     @Override
     public String toString() {
-        return "EventMessage{" + "payload=" + event + '}';
+        return "EventMessage{" + "key=" + key + ", event=" + event + '}';
+    }
+
+    public static final class EventMessageKeySelector<K>
+            implements SerializableFunction<EventMessage<K>, K>, KeySelector<EventMessage<K>, K> {
+
+        private static final long serialVersionUID = 1;
+
+        @Override
+        public K apply(EventMessage<K> eventMessage) {
+            return getKey(eventMessage);
+        }
+
+        @Override
+        public K getKey(EventMessage<K> eventMessage) {
+            return eventMessage.getKey();
+        }
     }
 }

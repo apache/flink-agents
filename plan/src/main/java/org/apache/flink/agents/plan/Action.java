@@ -19,6 +19,11 @@
 package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.plan.serializer.ActionJsonDeserializer;
+import org.apache.flink.agents.plan.serializer.ActionJsonSerializer;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.util.List;
 
@@ -28,6 +33,8 @@ import java.util.List;
  * <p>This class encapsulates a named workflow action that listens for specific event types and
  * executes an associated function when those events occur.
  */
+@JsonSerialize(using = ActionJsonSerializer.class)
+@JsonDeserialize(using = ActionJsonDeserializer.class)
 public class Action {
     private final String name;
     private final Function exec;
@@ -38,7 +45,7 @@ public class Action {
         this.name = name;
         this.exec = exec;
         this.listenEventTypes = listenEventTypes;
-        exec.checkSignature(new Class[] {Event.class});
+        exec.checkSignature(new Class[] {Event.class, RunnerContext.class});
     }
 
     public String getName() {

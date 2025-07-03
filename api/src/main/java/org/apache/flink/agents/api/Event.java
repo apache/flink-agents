@@ -48,4 +48,20 @@ public abstract class Event {
     public void setAttr(String name, Object value) {
         attributes.put(name, value);
     }
+
+    /**
+     * Get the event type name. The event type name should be the fully qualified class name of the
+     * event, whether it is a Java or Python event.
+     */
+    public String getEventType() {
+        return this.getClass().getCanonicalName();
+    }
+
+    public boolean isInputEvent() {
+        return false;
+    }
+
+    public boolean isOutputEvent() {
+        return false;
+    }
 }
