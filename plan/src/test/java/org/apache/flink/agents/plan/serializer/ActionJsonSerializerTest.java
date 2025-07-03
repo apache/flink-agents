@@ -74,13 +74,7 @@ public class ActionJsonSerializerTest {
     @Test
     public void testSerializePythonFunction() throws Exception {
         // Create a TestPythonFunction (which overrides checkSignature to not throw an exception)
-        PythonFunction function =
-                new PythonFunction("test_module", "test_function") {
-                    @Override
-                    public void checkSignature(Class<?>[] args) {
-                        // Do nothing to avoid throwing an exception
-                    }
-                };
+        PythonFunction function = new PythonFunction("test_module", "test_function");
 
         // Create an Action
         Action action = new Action("testPythonAction", function, List.of(InputEvent.class));

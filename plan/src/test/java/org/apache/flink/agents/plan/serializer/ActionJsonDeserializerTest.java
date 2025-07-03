@@ -21,6 +21,7 @@ package org.apache.flink.agents.plan.serializer;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
@@ -29,6 +30,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -80,17 +82,17 @@ public class ActionJsonDeserializerTest {
         String json = readJsonFromResource("actions/action_python_function.json");
 
         // Deserialize the JSON to an Action
-        // Since PythonFunction's checkSignature method throws UnsupportedOperationException,
-        // we expect the deserialization to fail with an IOException
         ObjectMapper mapper = new ObjectMapper();
-        Exception exception =
-                assertThrows(Exception.class, () -> mapper.readValue(json, Action.class));
+        Action action = mapper.readValue(json, Action.class);
 
-        // Verify the exception message
-        assertTrue(
-                exception
-                        .getMessage()
-                        .contains("Failed to create Action with name \"testPythonAction\""));
+        // Verify the deserialized Action
+        assertEquals("testPythonAction", action.getName());
+        assertInstanceOf(PythonFunction.class, action.getExec());
+        PythonFunction pythonFunction = (PythonFunction) action.getExec();
+        assertEquals("test_module", pythonFunction.getModule());
+        assertEquals("test_function", pythonFunction.getQualName());
+        assertEquals(1, action.getListenEventTypes().size());
+        assertEquals(InputEvent.class, action.getListenEventTypes().get(0));
     }
 
     @Test

@@ -5,5 +5,5 @@
     "module": "test_module",
     "qualname": "test_function"
   },
-  "listenEventTypes": ["org.apache.flink.agents.api.InputEvent"]
+  "listen_event_types": ["org.apache.flink.agents.api.InputEvent"]
 }

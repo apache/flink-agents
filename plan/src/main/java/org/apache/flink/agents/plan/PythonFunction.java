@@ -48,9 +48,7 @@ public class PythonFunction implements Function {
 
     // TODO: check Python function signature compatibility with given parameter types
     @Override
-    public void checkSignature(Class<?>[] parameterTypes) throws Exception {
-        throw new UnsupportedOperationException();
-    }
+    public void checkSignature(Class<?>[] parameterTypes) throws Exception {}
 
     public String getModule() {
         return module;
