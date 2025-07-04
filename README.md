@@ -29,25 +29,45 @@ mvn clean install -DskipTests
 
 ### Python Build
 
-Firstly, you need to install the dependencies with following command:
+#### Using uv (Recommended)
+
+Firstly, install uv and build dependencies:
 
 ```shell
-python -m pip install -r python/requirements/build_requirements.txt
+pip install uv
+cd python
+uv sync --extra build
 ```
 
-Secondly, you can build Flink Agents Python sdist and wheel packages with following command:
+Then build the package:
 
 ```shell
-python -m build python
+uv run python -m build
 ```
 
-The sdist and wheel package of flink-agents will be found under ./python/dist/. Either of them could be
-used
-for installation, such as:
+#### Using pip (Traditional)
+
+Alternatively, you can use traditional pip:
 
 ```shell
+cd python
+pip install -e .[build]
+python -m build
+```
+
+The sdist and wheel package of flink-agents will be found under `./python/dist/`. Either of them could be
+used for installation:
+
+```shell
+# Using uv
+uv pip install python/dist/*.whl
+
+# Using pip
 python -m pip install python/dist/*.whl
 ```
+
+> **Note**: The `requirements/*.txt` files are deprecated. Please use the modern `pyproject.toml` 
+> dependency groups. See [python/MIGRATION_GUIDE.md](python/MIGRATION_GUIDE.md) for details.
 
 ## How to Contribute
 

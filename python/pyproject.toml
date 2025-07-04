@@ -29,7 +29,7 @@ version = "0.1.dev0"
 
 description = "Flink Agents Python API"
 license-files = ["LICENSE"]
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.12"
 authors = [
     { name = "Apache Software Foundation", email = "dev@flink.apache.org" },
 ]
@@ -45,7 +45,46 @@ classifiers = [
 
 dependencies = [
     "apache-flink==1.20.1",
-    "pydantic==2.11.4"
+    "pydantic==2.11.4",
+]
+
+# Optional dependencies (dependency groups)
+[project.optional-dependencies]
+# Development dependencies - includes all tools needed for development
+dev = [
+    "build",
+    "ruff==0.11.13",
+    "pytest==8.4.0",
+    "wheel",
+    "setuptools>=75.3",
+]
+
+# Build dependencies - tools needed for building the package
+build = [
+    "build",
+    "wheel",
+    "setuptools>=75.3",
+]
+
+# Linting dependencies - code quality tools
+lint = [
+    "ruff==0.11.13",
+]
+
+# Testing dependencies - tools needed for running tests
+test = [
+    "pytest==8.4.0",
+    "wheel",
+    "setuptools>=75.3",
+]
+
+# All dependencies - convenience group that includes everything
+all = [
+    "build",
+    "ruff==0.11.13",
+    "pytest==8.4.0",
+    "wheel",
+    "setuptools>=75.3",
 ]
 
 [tool.cibuildwheel]
@@ -56,6 +95,28 @@ archs = ["x86_64", "arm64"]
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64"]
+
+# uv configuration
+[tool.uv]
+# Use uv for dependency resolution and virtual environment management
+dev-dependencies = [
+    "build",
+    "ruff==0.11.13",
+    "pytest==8.4.0",
+    "wheel",
+    "setuptools>=75.3",
+]
+
+# Override problematic dependencies for Python 3.12 compatibility
+override-dependencies = [
+    "pemja>=0.4.2; python_version>='3.12'",
+    "numpy>=1.25.0; python_version>='3.12'",
+]
+
+# Configure uv workspace (if needed for multi-package projects)
+[tool.uv.workspace]
+# Currently a single package project, but ready for workspace expansion
+members = ["."]
 
 [tool.ruff]
 line-length = 88
