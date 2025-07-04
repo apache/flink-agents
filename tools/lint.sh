@@ -60,13 +60,69 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
+# Function to install Python dependencies
+install_python_deps() {
+  echo "Installing Python lint dependencies..."
+  # Check if uv is available
+  if command -v uv >/dev/null 2>&1; then
+    echo "Using uv for dependency management"
+    pushd python
+    uv sync --extra lint
+    popd
+  else
+    echo "uv not found, falling back to pip"
+    # Try modern pyproject.toml first, then fallback to requirements.txt
+    if [ -f "python/pyproject.toml" ]; then
+      echo "Using pyproject.toml dependency groups"
+      pip install -e "python[lint]"
+    else
+      echo "Using legacy requirements.txt"
+      pip install -r python/requirements/linter_requirements.txt
+    fi
+  fi
+}
+
+# Function to run Python linting
+run_python_lint() {
+  local action="$1"  # "format" or "check"
+  
+  # Check if uv is available
+  if command -v uv >/dev/null 2>&1; then
+    pushd python
+    if [[ "$action" == "format" ]]; then
+      echo "Executing Python format with uv"
+      uv run ruff format .
+    else
+      echo "Executing Python format check with uv"
+      uv run ruff check .
+    fi
+    local result=$?
+    popd
+    return $result
+  else
+    # Use traditional approach
+    if [[ "$action" == "format" ]]; then
+      echo "Executing Python format"
+      ruff format python
+    else
+      echo "Executing Python format check"
+      ruff check python
+    fi
+    return $?
+  fi
+}
+
 # Function to format files
 format_files() {
   set +e
-  echo "Install format tools"
-  pip install -r python/requirements/linter_requirements.txt
-  echo "Executing Python format"
-  ruff format python
+  install_python_deps
+  local install_result=$?
+  if [[ $install_result -ne 0 ]]; then
+    echo "Failed to install Python dependencies" >&2
+    return 2
+  fi
+  
+  run_python_lint "format"
   testcode=$?
   if [[ $testcode -ne 0 ]]; then
     echo "Python format failed" >&2
@@ -86,10 +142,14 @@ format_files() {
 # Function to check files for issues
 check_files() {
   set +e
-  echo "Install format tools"
-  pip install -r python/requirements/linter_requirements.txt
-  echo "Executing Python format check"
-  ruff check python
+  install_python_deps
+  local install_result=$?
+  if [[ $install_result -ne 0 ]]; then
+    echo "Failed to install Python dependencies" >&2
+    return 2
+  fi
+  
+  run_python_lint "check"
   testcode=$?
   if [[ $testcode -ne 0 ]]; then
     echo "Python format check failed" >&2

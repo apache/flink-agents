@@ -121,9 +121,42 @@ python_tests() {
 
     set +e
     pushd "${ROOT}"/python
-    pip install -r requirements/test_requirements.txt
-    pytest flink_agents
-    testcode=$?
+    
+    # Install dependencies and run tests
+    echo "Installing Python test dependencies..."
+    if command -v uv >/dev/null 2>&1; then
+        if $verbose; then
+            echo "Using uv for dependency management"
+        fi
+        uv sync --extra test
+        if $verbose; then
+            echo "Running tests with uv..."
+        fi
+        uv run pytest flink_agents
+        testcode=$?
+    else
+        if $verbose; then
+            echo "uv not found, falling back to pip"
+        fi
+        # Try modern pyproject.toml first, then fallback to requirements.txt
+        if [ -f "pyproject.toml" ]; then
+            if $verbose; then
+                echo "Using pyproject.toml dependency groups"
+            fi
+            pip install -e ".[test]"
+        else
+            if $verbose; then
+                echo "Using legacy requirements.txt"
+            fi
+            pip install -r requirements/test_requirements.txt
+        fi
+        if $verbose; then
+            echo "Running tests with pytest..."
+        fi
+        pytest flink_agents
+        testcode=$?
+    fi
+    
     popd
 
     # Handle pytest exit codes
