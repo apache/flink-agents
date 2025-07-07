@@ -21,7 +21,7 @@ from flink_agents.api.event import Event
 
 
 def action(*listen_events: Tuple[Type[Event], ...]) -> Callable:
-    """Decorator for marking a function as a workflow action.
+    """Decorator for marking a function as an agent action.
 
     Parameters
     ----------

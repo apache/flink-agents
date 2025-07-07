@@ -23,9 +23,9 @@ import org.apache.flink.agents.api.Event;
 import java.util.List;
 
 /**
- * Representation of a workflow action with event listening and function execution.
+ * Representation of a agent action with event listening and function execution.
  *
- * <p>This class encapsulates a named workflow action that listens for specific event types and
+ * <p>This class encapsulates a named agent action that listens for specific event types and
  * executes an associated function when those events occur.
  */
 public class Action {

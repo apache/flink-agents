@@ -25,7 +25,7 @@ import pemja.core.PythonInterpreter;
 
 import java.util.List;
 
-/** Execute the corresponding Python action in the workflow. */
+/** Execute the corresponding Python action in the agent. */
 public class PythonActionExecutor {
 
     private static final String PYTHON_IMPORTS =

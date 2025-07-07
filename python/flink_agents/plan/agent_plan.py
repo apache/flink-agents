@@ -19,13 +19,13 @@ from typing import Dict, List
 
 from pydantic import BaseModel
 
-from flink_agents.api.workflow import Workflow
+from flink_agents.api.agent import Agent
 from flink_agents.plan.action import Action
 from flink_agents.plan.function import PythonFunction
 
 
-class WorkflowPlan(BaseModel):
-    """Workflow plan compiled from user defined workflow.
+class AgentPlan(BaseModel):
+    """Agent plan compiled from user defined agent.
 
     Attributes:
     ----------
@@ -38,18 +38,18 @@ class WorkflowPlan(BaseModel):
     event_trigger_actions: Dict[str, List[str]]
 
     @staticmethod
-    def from_workflow(workflow: Workflow) -> "WorkflowPlan":
-        """Build a WorkflowPlan from user defined workflow."""
+    def from_agent(agent: Agent) -> "AgentPlan":
+        """Build a AgentPlan from user defined agent."""
         actions = {}
         event_trigger_actions = {}
-        for action in _get_actions(workflow):
+        for action in _get_actions(agent):
             assert action.name not in actions, f"Duplicate action name: {action.name}"
             actions[action.name] = action
             for event_type in action.listen_event_types:
                 if event_type not in event_trigger_actions:
                     event_trigger_actions[event_type] = []
                 event_trigger_actions[event_type].append(action.name)
-        return WorkflowPlan(actions=actions, event_trigger_actions=event_trigger_actions)
+        return AgentPlan(actions=actions, event_trigger_actions=event_trigger_actions)
 
     def get_actions(self, event_type: str) -> List[Action]:
         """Get actions that listen to the specified event type.
@@ -67,21 +67,21 @@ class WorkflowPlan(BaseModel):
         return [self.actions[name] for name in self.event_trigger_actions[event_type]]
 
 
-def _get_actions(workflow: Workflow) -> List[Action]:
-    """Extract all registered workflow actions from a workflow.
+def _get_actions(agent: Agent) -> List[Action]:
+    """Extract all registered agent actions from an agent.
 
     Parameters
     ----------
-    workflow : Workflow
-        The workflow to be analyzed.
+    agent : Agent
+        The agent to be analyzed.
 
     Returns:
     -------
     List[Action]
-        List of Action defined in the workflow.
+        List of Action defined in the agent.
     """
     actions = []
-    for name, value in workflow.__class__.__dict__.items():
+    for name, value in agent.__class__.__dict__.items():
         if isinstance(value, staticmethod) and hasattr(value, '_listen_events'):
             actions.append(Action(name=name, exec=PythonFunction.from_callable(value.__func__),
                                   listen_event_types=[f'{event_type.__module__}.{event_type.__name__}'

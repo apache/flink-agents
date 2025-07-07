@@ -19,11 +19,11 @@ import importlib
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
-from flink_agents.api.workflow import Workflow
+from flink_agents.api.agent import Agent
 
 
 class AgentsExecutionEnvironment(ABC):
-    """Base class for workflow execution environment."""
+    """Base class for agent execution environment."""
 
     @staticmethod
     def get_execution_environment(**kwargs: Dict[str, Any]) -> 'AgentsExecutionEnvironment':
@@ -36,7 +36,7 @@ class AgentsExecutionEnvironment(ABC):
         Returns:
         -------
         AgentsExecutionEnvironment
-            Environment for workflow execution.
+            Environment for agent execution.
         """
         return importlib.import_module(
             "flink_agents.runtime.local_execution_environment"
@@ -54,25 +54,25 @@ class AgentsExecutionEnvironment(ABC):
         """
 
     @abstractmethod
-    def apply(self, workflow: Workflow) -> 'AgentsExecutionEnvironment':
-        """Set workflow of execution environment.
+    def apply(self, agent: Agent) -> 'AgentsExecutionEnvironment':
+        """Set agent of execution environment.
 
         Parameters
         ----------
-        workflow : Workflow
-            The workflow user defined to run in execution environment.
+        agent : Agent
+            The agent user defined to run in execution environment.
         """
 
     @abstractmethod
     def to_list(self) -> List[Dict[str, Any]]:
-        """Get outputs of workflow execution. Used for local execution.
+        """Get outputs of agent execution. Used for local execution.
 
         The element in the list is a dict like {'key': output}.
 
         Returns:
         -------
         list
-            Outputs of workflow execution.
+            Outputs of agent execution.
         """
 
     @abstractmethod

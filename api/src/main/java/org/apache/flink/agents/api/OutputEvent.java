@@ -19,7 +19,7 @@
 package org.apache.flink.agents.api;
 
 /**
- * Event representing a result from workflow. By generating an OutputEvent, actions can emit output
+ * Event representing a result from agent. By generating an OutputEvent, actions can emit output
  * data.
  */
 public class OutputEvent extends Event {

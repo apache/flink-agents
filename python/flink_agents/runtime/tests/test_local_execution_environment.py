@@ -21,10 +21,10 @@ from flink_agents.api.decorators import action
 from flink_agents.api.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_enviroment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.workflow import Workflow
+from flink_agents.api.agent import Agent
 
 
-class TestWorkflow1(Workflow): # noqa: D101
+class TestAgent1(Agent): # noqa: D101
     @action(InputEvent)
     @staticmethod
     def increment(event: Event, ctx: RunnerContext): #noqa D102
@@ -32,7 +32,7 @@ class TestWorkflow1(Workflow): # noqa: D101
         value = input + 1
         ctx.send_event(OutputEvent(output=value))
 
-class TestWorkflow2(Workflow): # noqa: D101
+class TestAgent2(Agent): # noqa: D101
     @action(InputEvent)
     @staticmethod
     def decrease(event: Event, ctx: RunnerContext): #noqa D102
@@ -44,9 +44,9 @@ def test_local_execution_environment() -> None: # noqa: D103
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []
-    workflow = TestWorkflow1()
+    agent = TestAgent1()
 
-    output_list = env.from_list(input_list).apply(workflow).to_list()
+    output_list = env.from_list(input_list).apply(agent).to_list()
 
     input_list.append({'key': 'bob', 'value': 1})
     input_list.append({'k': 'john', 'v': 2})
@@ -55,24 +55,24 @@ def test_local_execution_environment() -> None: # noqa: D103
 
     assert output_list == [{'bob': 2}, {'john': 3}]
 
-def test_local_execution_environment_apply_multi_workflows() -> None: # noqa: D103
+def test_local_execution_environment_apply_multi_agents() -> None: # noqa: D103
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []
-    workflow1 = TestWorkflow1()
-    workflow2 = TestWorkflow2()
+    agent1 = TestAgent1()
+    agent2 = TestAgent2()
 
     with pytest.raises(RuntimeError):
-        env.from_list(input_list).apply(workflow1).apply(workflow2).to_list()
+        env.from_list(input_list).apply(agent1).apply(agent2).to_list()
 
 
 def test_local_execution_environment_execute_multi_times() -> None: # noqa: D103
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []
-    workflow = TestWorkflow1()
+    agent = TestAgent1()
 
-    env.from_list(input_list).apply(workflow).to_list()
+    env.from_list(input_list).apply(agent).to_list()
 
     input_list.append({'key': 'bob', 'value': 1})
     input_list.append({'k': 'john', 'v': 2})

@@ -25,7 +25,7 @@ from flink_agents.api.runner_context import RunnerContext
 
 
 class FlinkRunnerContext(RunnerContext):
-    """Providing context for workflow execution in Flink Environment.
+    """Providing context for agent execution in Flink Environment.
 
     This context allows access to event handling.
     """
@@ -42,12 +42,12 @@ class FlinkRunnerContext(RunnerContext):
 
     @override
     def send_event(self, event: Event) -> None:
-        """Send an event to the workflow for processing.
+        """Send an event to the agent for processing.
 
         Parameters
         ----------
         event : Event
-            The event to be processed by the workflow system.
+            The event to be processed by the agent system.
         """
         try:
             class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"

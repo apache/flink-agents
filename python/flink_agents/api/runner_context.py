@@ -21,17 +21,17 @@ from flink_agents.api.event import Event
 
 
 class RunnerContext(ABC):
-    """Abstract base class providing context for workflow execution.
+    """Abstract base class providing context for agent execution.
 
     This context provides access to event handling.
     """
 
     @abstractmethod
     def send_event(self, event: Event) -> None:
-        """Send an event to the workflow for processing.
+        """Send an event to the agent for processing.
 
         Parameters
         ----------
         event : Event
-            The event to be processed by the workflow system.
+            The event to be processed by the agent system.
         """

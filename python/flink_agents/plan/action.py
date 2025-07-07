@@ -25,15 +25,15 @@ from flink_agents.plan.function import Function, JavaFunction, PythonFunction
 
 
 class Action(BaseModel):
-    """Representation of a workflow action with event listening and function execution.
+    """Representation of an agent action with event listening and function execution.
 
-    This class encapsulates a named workflow action that listens for specific event
+    This class encapsulates a named agent action that listens for specific event
     types and executes an associated function when those events occur.
 
     Attributes:
     ----------
     name : str
-        Name/identifier of the workflow Action.
+        Name/identifier of the agent Action.
     exec : Function
         To be executed when the Action is triggered.
     listen_event_types : List[str]

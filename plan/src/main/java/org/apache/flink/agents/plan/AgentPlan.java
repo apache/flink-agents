@@ -23,11 +23,11 @@ import org.apache.flink.agents.api.Event;
 import java.util.List;
 import java.util.Map;
 
-/** Workflow plan compiled from user defined workflow. */
-public class WorkflowPlan {
+/** Agent plan compiled from user defined agent. */
+public class AgentPlan {
     private final Map<Class<? extends Event>, List<Action>> actions;
 
-    public WorkflowPlan(Map<Class<? extends Event>, List<Action>> actions) {
+    public AgentPlan(Map<Class<? extends Event>, List<Action>> actions) {
         this.actions = actions;
     }
 

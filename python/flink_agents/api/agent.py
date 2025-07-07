@@ -15,30 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from abc import ABC, abstractmethod
-from typing import Any, Dict
+from abc import ABC
 
 
-class WorkflowRunner(ABC):
-    """Abstract base class defining the interface for workflow execution.
-
-    Concrete implementations must implement the `run` method to handle workflow
-    execution logic specific to their use case.
+class Agent(ABC): # noqa: B024
+    """Base class for defining agent logic. Currently, Agent is
+    an empty interface, we may add interactive method like add_action(),
+    add_model() later.
     """
-
-    @abstractmethod
-    def run(self, **data: Dict[str, Any]) -> Any:
-        """Execute the workflow and return the key of input.
-
-        Parameters
-        ----------
-        **data : dict[str, Any]
-            input record from upstream.
-
-        Returns:
-        -------
-        Any
-            The key of the input that was processed, will be automatically
-            generated if necessary.
-        """
-

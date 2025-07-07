@@ -18,7 +18,7 @@
 from typing import Any, Dict, List
 
 from flink_agents.api.execution_enviroment import AgentsExecutionEnvironment
-from flink_agents.api.workflow import Workflow
+from flink_agents.api.agent import Agent
 from flink_agents.runtime.local_runner import LocalRunner
 
 
@@ -39,15 +39,15 @@ class LocalExecutionEnvironment(AgentsExecutionEnvironment):
         self.__input = input
         return self
 
-    def apply(self, workflow: Workflow) -> 'AgentsExecutionEnvironment':
-        """Create local runner to execute given workflow.
+    def apply(self, agent: Agent) -> 'AgentsExecutionEnvironment':
+        """Create local runner to execute given agent.
 
-        Doesn't support apply multiple workflows.
+        Doesn't support apply multiple agents.
         """
         if self.__runner is not None:
-            err_msg = "LocalExecutionEnvironment doesn't support apply multiple workflows."
+            err_msg = "LocalExecutionEnvironment doesn't support apply multiple agents."
             raise RuntimeError(err_msg)
-        self.__runner = LocalRunner(workflow)
+        self.__runner = LocalRunner(agent)
         return self
 
     def to_list(self) -> list:

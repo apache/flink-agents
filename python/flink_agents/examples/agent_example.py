@@ -21,17 +21,17 @@ from flink_agents.api.decorators import action
 from flink_agents.api.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_enviroment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.workflow import Workflow
+from flink_agents.api.agent import Agent
 
 
 class MyEvent(Event): #noqa D101
     value: Any
 
-#TODO: Replace this workflow with more practical example.
-class MyWorkflow(Workflow):
-    """An example of Workflow to show the basic usage.
+#TODO: Replace this agent with more practical example.
+class MyAgent(Agent):
+    """An example of agent to show the basic usage.
 
-    Currently, this workflow doesn't really make sense, and it's mainly for developing
+    Currently, this agent doesn't really make sense, and it's mainly for developing
     validation.
     """
     @action(InputEvent)
@@ -54,9 +54,9 @@ if __name__ == "__main__":
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []
-    workflow = MyWorkflow()
+    agent = MyAgent()
 
-    output_list = env.from_list(input_list).apply(workflow).to_list()
+    output_list = env.from_list(input_list).apply(agent).to_list()
 
 
     input_list.append({'key': 'bob', 'value': 'The message from bob'})
