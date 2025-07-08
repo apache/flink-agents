@@ -17,32 +17,28 @@
  */
 package org.apache.flink.agents.runtime.context;
 
-import org.apache.flink.agents.runtime.PythonEvent;
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.util.Preconditions;
-
-import javax.annotation.concurrent.NotThreadSafe;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * This class is used to manage the execution context when interacting with Python functions,
- * including collecting new events generated during the execution of actions.
+ * The implementation class of {@link RunnerContext}, which serves as the execution context for
+ * actions.
  */
-@NotThreadSafe
-public class PythonRunnerContext {
-    private final List<PythonEvent> pendingEvents;
+public class RunnerContextImpl implements RunnerContext {
 
-    public PythonRunnerContext() {
-        this.pendingEvents = new ArrayList<>();
+    protected final List<Event> pendingEvents = new ArrayList<>();
+
+    @Override
+    public void sendEvent(Event event) {
+        pendingEvents.add(event);
     }
 
-    public void sendEvent(String type, byte[] event) {
-        this.pendingEvents.add(new PythonEvent(event, type));
-    }
-
-    public List<PythonEvent> drainEvents() {
-        List<PythonEvent> list = new ArrayList<>(this.pendingEvents);
+    public List<Event> drainEvents() {
+        List<Event> list = new ArrayList<>(this.pendingEvents);
         this.pendingEvents.clear();
         return list;
     }

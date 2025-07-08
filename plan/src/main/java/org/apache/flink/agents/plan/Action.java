@@ -19,6 +19,7 @@
 package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.serializer.ActionJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.ActionJsonSerializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
@@ -43,7 +44,7 @@ public class Action {
         this.name = name;
         this.exec = exec;
         this.listenEventTypes = listenEventTypes;
-        exec.checkSignature(new Class[] {Event.class});
+        exec.checkSignature(new Class[] {Event.class, RunnerContext.class});
     }
 
     public String getName() {

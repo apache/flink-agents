@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.serializer;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -89,7 +90,7 @@ public class AgentPlanJsonDeserializerTest {
 
     private static class MyAction extends Action {
 
-        public static void doNothing(Event event) {
+        public static void doNothing(Event event, RunnerContext context) {
             // No operation
         }
 
@@ -97,7 +98,9 @@ public class AgentPlanJsonDeserializerTest {
             super(
                     "MyAction",
                     new JavaFunction(
-                            MyAction.class.getName(), "doNothing", new Class[] {Event.class}),
+                            MyAction.class.getName(),
+                            "doNothing",
+                            new Class[] {Event.class, RunnerContext.class}),
                     List.of(InputEvent.class.getName(), MyEvent.class.getName()));
         }
     }

@@ -19,6 +19,7 @@
 package org.apache.flink.agents.plan.serializer;
 
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -69,8 +70,9 @@ public class ActionJsonDeserializerTest {
         JavaFunction javaFunction = (JavaFunction) action.getExec();
         assertEquals("org.apache.flink.agents.plan.TestAction", javaFunction.getQualName());
         assertEquals("legal", javaFunction.getMethodName());
-        assertEquals(1, javaFunction.getParameterTypes().length);
+        assertEquals(2, javaFunction.getParameterTypes().length);
         assertEquals(InputEvent.class, javaFunction.getParameterTypes()[0]);
+        assertEquals(RunnerContext.class, javaFunction.getParameterTypes()[1]);
         assertEquals(1, action.getListenEventTypes().size());
         assertEquals(InputEvent.class.getName(), action.getListenEventTypes().get(0));
     }
