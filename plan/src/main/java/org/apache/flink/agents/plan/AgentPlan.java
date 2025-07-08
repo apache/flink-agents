@@ -57,6 +57,10 @@ public class AgentPlan implements Serializable {
         return actionsByEvent;
     }
 
+    public List<Action> getActionsTriggeredBy(String eventType) {
+        return actionsByEvent.get(eventType);
+    }
+
     private void writeObject(ObjectOutputStream out) throws IOException {
         String serializedStr = new ObjectMapper().writeValueAsString(this);
         out.writeUTF(serializedStr);
