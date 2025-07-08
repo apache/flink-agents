@@ -20,22 +20,29 @@ package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
 
 /** Agent plan compiled from user defined agent. */
 @JsonSerialize(using = AgentPlanJsonSerializer.class)
 @JsonDeserialize(using = AgentPlanJsonDeserializer.class)
-public class AgentPlan {
+public class AgentPlan implements Serializable {
 
     /** Mapping from action name to action itself. */
-    private final Map<String, Action> actions;
+    private Map<String, Action> actions;
 
     /** Mapping from event class name to list of actions that should be triggered by the event. */
-    private final Map<String, List<Action>> actionsByEvent;
+    private Map<String, List<Action>> actionsByEvent;
+
+    public AgentPlan() {}
 
     public AgentPlan(Map<String, Action> actions, Map<String, List<Action>> actionsByEvent) {
         this.actions = actions;
@@ -48,5 +55,17 @@ public class AgentPlan {
 
     public Map<String, List<Action>> getActionsByEvent() {
         return actionsByEvent;
+    }
+
+    private void writeObject(ObjectOutputStream out) throws IOException {
+        String serializedStr = new ObjectMapper().writeValueAsString(this);
+        out.writeUTF(serializedStr);
+    }
+
+    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+        String serializedStr = in.readUTF();
+        AgentPlan agentPlan = new ObjectMapper().readValue(serializedStr, AgentPlan.class);
+        this.actions = agentPlan.getActions();
+        this.actionsByEvent = agentPlan.getActionsByEvent();
     }
 }
