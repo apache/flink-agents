@@ -18,7 +18,6 @@
 
 package org.apache.flink.agents.plan.serializer;
 
-import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.Function;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -61,23 +60,9 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
         }
 
         // Deserialize listenEventTypes
-        List<Class<? extends Event>> listenEventTypes = new ArrayList<>();
+        List<String> listenEventTypes = new ArrayList<>();
         node.get("listen_event_types")
-                .forEach(
-                        eventTypeNode -> {
-                            String eventTypeName = eventTypeNode.asText();
-                            try {
-                                Class<? extends Event> eventType =
-                                        (Class<? extends Event>) Class.forName(eventTypeName);
-                                listenEventTypes.add(eventType);
-                            } catch (ClassNotFoundException e) {
-                                throw new RuntimeException(
-                                        String.format(
-                                                "Failed to deserialize event type \"%s\"",
-                                                eventTypeName),
-                                        e);
-                            }
-                        });
+                .forEach(eventTypeNode -> listenEventTypes.add(eventTypeNode.asText()));
 
         try {
             return new Action(name, func, listenEventTypes);

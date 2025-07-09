@@ -37,7 +37,7 @@ public class TestAction {
                         "legal",
                         new Class[] {InputEvent.class});
 
-        new Action("legal", func, List.of(InputEvent.class));
+        new Action("legal", func, List.of(InputEvent.class.getName()));
     }
 
     @Test
@@ -50,6 +50,6 @@ public class TestAction {
 
         Assertions.assertThrows(
                 IllegalArgumentException.class,
-                () -> new Action("illegal", func, List.of(InputEvent.class)));
+                () -> new Action("illegal", func, List.of(InputEvent.class.getName())));
     }
 }

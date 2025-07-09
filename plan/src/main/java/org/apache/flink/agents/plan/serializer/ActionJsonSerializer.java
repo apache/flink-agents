@@ -18,7 +18,6 @@
 
 package org.apache.flink.agents.plan.serializer;
 
-import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -64,8 +63,8 @@ public class ActionJsonSerializer extends StdSerializer<Action> {
         // Write listenEventTypes field
         jsonGenerator.writeFieldName("listen_event_types");
         jsonGenerator.writeStartArray();
-        for (Class<? extends Event> eventType : action.getListenEventTypes()) {
-            jsonGenerator.writeString(eventType.getName());
+        for (String eventType : action.getListenEventTypes()) {
+            jsonGenerator.writeString(eventType);
         }
         jsonGenerator.writeEndArray();
 

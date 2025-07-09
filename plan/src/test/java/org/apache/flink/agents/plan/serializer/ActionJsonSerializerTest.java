@@ -18,7 +18,6 @@
 
 package org.apache.flink.agents.plan.serializer;
 
-import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.plan.Action;
@@ -47,7 +46,7 @@ public class ActionJsonSerializerTest {
                         new Class[] {InputEvent.class});
 
         // Create an Action
-        Action action = new Action("testAction", function, List.of(InputEvent.class));
+        Action action = new Action("testAction", function, List.of(InputEvent.class.getName()));
 
         // Serialize the action to JSON
         String json = new ObjectMapper().writeValueAsString(action);
@@ -77,7 +76,8 @@ public class ActionJsonSerializerTest {
         PythonFunction function = new PythonFunction("test_module", "test_function");
 
         // Create an Action
-        Action action = new Action("testPythonAction", function, List.of(InputEvent.class));
+        Action action =
+                new Action("testPythonAction", function, List.of(InputEvent.class.getName()));
 
         // Serialize the action to JSON
         String json = new ObjectMapper().writeValueAsString(action);
@@ -113,9 +113,9 @@ public class ActionJsonSerializerTest {
                         new Class[] {InputEvent.class});
 
         // Create an Action with multiple event types
-        List<Class<? extends Event>> eventTypes = new ArrayList<>();
-        eventTypes.add(InputEvent.class);
-        eventTypes.add(OutputEvent.class);
+        List<String> eventTypes = new ArrayList<>();
+        eventTypes.add(InputEvent.class.getName());
+        eventTypes.add(OutputEvent.class.getName());
         Action action = new Action("multiEventAction", function, eventTypes);
 
         // Serialize the action to JSON
@@ -170,7 +170,8 @@ public class ActionJsonSerializerTest {
                         new Class[] {InputEvent.class});
 
         // Create an Action
-        Action originalAction = new Action("roundTripAction", function, List.of(InputEvent.class));
+        Action originalAction =
+                new Action("roundTripAction", function, List.of(InputEvent.class.getName()));
 
         // Serialize the action to JSON
         ObjectMapper mapper = new ObjectMapper();
@@ -188,6 +189,6 @@ public class ActionJsonSerializerTest {
         assertEquals(1, deserializedFunction.getParameterTypes().length);
         assertEquals(InputEvent.class, deserializedFunction.getParameterTypes()[0]);
         assertEquals(1, deserializedAction.getListenEventTypes().size());
-        assertEquals(InputEvent.class, deserializedAction.getListenEventTypes().get(0));
+        assertEquals(InputEvent.class.getName(), deserializedAction.getListenEventTypes().get(0));
     }
 }

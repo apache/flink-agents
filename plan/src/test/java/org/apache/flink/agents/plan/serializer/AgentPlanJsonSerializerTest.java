@@ -44,7 +44,7 @@ public class AgentPlanJsonSerializerTest {
                         new Class[] {InputEvent.class});
 
         // Create an Action
-        Action action = new Action("testAction", function, List.of(InputEvent.class));
+        Action action = new Action("testAction", function, List.of(InputEvent.class.getName()));
 
         // Create a map of actions
         Map<String, Action> actions = new HashMap<>();
@@ -90,7 +90,7 @@ public class AgentPlanJsonSerializerTest {
                         new Class[] {InputEvent.class});
 
         // Create an Action
-        Action action = new Action("testAction", function, List.of(InputEvent.class));
+        Action action = new Action("testAction", function, List.of(InputEvent.class.getName()));
 
         // Create a map of event trigger actions
         Map<String, List<Action>> actionsByEvent = new HashMap<>();
@@ -130,8 +130,8 @@ public class AgentPlanJsonSerializerTest {
                         new Class[] {InputEvent.class});
 
         // Create Actions
-        Action action1 = new Action("action1", function1, List.of(InputEvent.class));
-        Action action2 = new Action("action2", function2, List.of(OutputEvent.class));
+        Action action1 = new Action("action1", function1, List.of(InputEvent.class.getName()));
+        Action action2 = new Action("action2", function2, List.of(OutputEvent.class.getName()));
 
         // Create a map of actions
         Map<String, Action> actions = new HashMap<>();
