@@ -56,14 +56,13 @@ public class AgentPlanJsonDeserializerTest {
         assertEquals(List.of(InputEvent.class, MyEvent.class), secondAction.getListenEventTypes());
 
         // Check event trigger actions
-        assertEquals(2, agentPlan.getEventTriggerActions().size());
-        assertTrue(agentPlan.getEventTriggerActions().containsKey(InputEvent.class.getName()));
+        assertEquals(2, agentPlan.getActionsByEvent().size());
+        assertTrue(agentPlan.getActionsByEvent().containsKey(InputEvent.class.getName()));
         assertEquals(
                 List.of(firstAction, secondAction),
-                agentPlan.getEventTriggerActions().get(InputEvent.class.getName()));
+                agentPlan.getActionsByEvent().get(InputEvent.class.getName()));
         assertEquals(
-                List.of(secondAction),
-                agentPlan.getEventTriggerActions().get(MyEvent.class.getName()));
+                List.of(secondAction), agentPlan.getActionsByEvent().get(MyEvent.class.getName()));
     }
 
     /**

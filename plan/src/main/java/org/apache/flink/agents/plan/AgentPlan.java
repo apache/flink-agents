@@ -30,20 +30,23 @@ import java.util.Map;
 @JsonSerialize(using = AgentPlanJsonSerializer.class)
 @JsonDeserialize(using = AgentPlanJsonDeserializer.class)
 public class AgentPlan {
-    private final Map<String, Action> actions;
-    private final Map<String, List<Action>> eventTriggerActions;
 
-    public AgentPlan(
-            Map<String, Action> actions, Map<String, List<Action>> eventTriggerActions) {
+    /** Mapping from action name to action itself. */
+    private final Map<String, Action> actions;
+
+    /** Mapping from event class name to list of actions that should be triggered by the event. */
+    private final Map<String, List<Action>> actionsByEvent;
+
+    public AgentPlan(Map<String, Action> actions, Map<String, List<Action>> actionsByEvent) {
         this.actions = actions;
-        this.eventTriggerActions = eventTriggerActions;
+        this.actionsByEvent = actionsByEvent;
     }
 
     public Map<String, Action> getActions() {
         return actions;
     }
 
-    public Map<String, List<Action>> getEventTriggerActions() {
-        return eventTriggerActions;
+    public Map<String, List<Action>> getActionsByEvent() {
+        return actionsByEvent;
     }
 }

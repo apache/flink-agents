@@ -28,7 +28,7 @@
       ]
     }
   },
-  "event_trigger_actions": {
+  "actions_by_event": {
     "org.apache.flink.agents.api.InputEvent": [
       "first_action",
       "second_action"

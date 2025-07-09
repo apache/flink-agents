@@ -57,10 +57,10 @@ public class AgentPlanJsonSerializer extends StdSerializer<AgentPlan> {
         jsonGenerator.writeEndObject();
 
         // Serialize event trigger actions
-        jsonGenerator.writeFieldName("event_trigger_actions");
+        jsonGenerator.writeFieldName("actions_by_event");
         jsonGenerator.writeStartObject();
         agentPlan
-                .getEventTriggerActions()
+                .getActionsByEvent()
                 .forEach(
                         (eventClass, actions) -> {
                             try {

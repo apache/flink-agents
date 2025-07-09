@@ -15,13 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Dict, List
-
-from pydantic import BaseModel
-
 from flink_agents.api.agent import Agent
 from flink_agents.plan.action import Action
 from flink_agents.plan.function import PythonFunction
+from pydantic import BaseModel
+from typing import Dict, List
 
 
 class AgentPlan(BaseModel):
@@ -31,25 +29,25 @@ class AgentPlan(BaseModel):
     ----------
     actions: Dict[str, Action]
         Mapping of action names to actions
-    event_trigger_actions : Dict[Type[Event], str]
+    actions_by_event : Dict[Type[Event], str]
         Mapping of event types to the list of actions name that listen to them.
     """
     actions: Dict[str, Action]
-    event_trigger_actions: Dict[str, List[str]]
+    actions_by_event: Dict[str, List[str]]
 
     @staticmethod
     def from_agent(agent: Agent) -> "AgentPlan":
         """Build a AgentPlan from user defined agent."""
         actions = {}
-        event_trigger_actions = {}
+        actions_by_event = {}
         for action in _get_actions(agent):
             assert action.name not in actions, f"Duplicate action name: {action.name}"
             actions[action.name] = action
             for event_type in action.listen_event_types:
-                if event_type not in event_trigger_actions:
-                    event_trigger_actions[event_type] = []
-                event_trigger_actions[event_type].append(action.name)
-        return AgentPlan(actions=actions, event_trigger_actions=event_trigger_actions)
+                if event_type not in actions_by_event:
+                    actions_by_event[event_type] = []
+                actions_by_event[event_type].append(action.name)
+        return AgentPlan(actions=actions, actions_by_event=actions_by_event)
 
     def get_actions(self, event_type: str) -> List[Action]:
         """Get actions that listen to the specified event type.
@@ -64,7 +62,7 @@ class AgentPlan(BaseModel):
         list[Action]
             List of Actions that will respond to this event type.
         """
-        return [self.actions[name] for name in self.event_trigger_actions[event_type]]
+        return [self.actions[name] for name in self.actions_by_event[event_type]]
 
 
 def _get_actions(agent: Agent) -> List[Action]:

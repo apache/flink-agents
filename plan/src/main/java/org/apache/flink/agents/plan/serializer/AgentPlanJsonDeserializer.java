@@ -67,10 +67,10 @@ public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
         }
 
         // Deserialize event trigger actions
-        JsonNode eventTriggerActionsNode = node.get("event_trigger_actions");
-        Map<String, List<Action>> eventTriggerActions = new HashMap<>();
-        if (eventTriggerActionsNode != null && eventTriggerActionsNode.isObject()) {
-            Iterator<Map.Entry<String, JsonNode>> iterator = eventTriggerActionsNode.fields();
+        JsonNode actionsByEventNode = node.get("actions_by_event");
+        Map<String, List<Action>> actionsByEvent = new HashMap<>();
+        if (actionsByEventNode != null && actionsByEventNode.isObject()) {
+            Iterator<Map.Entry<String, JsonNode>> iterator = actionsByEventNode.fields();
             while (iterator.hasNext()) {
                 Map.Entry<String, JsonNode> entry = iterator.next();
                 String eventClassName = entry.getKey();
@@ -84,10 +84,10 @@ public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
                     }
                     actionsTriggeredByEvent.add(action);
                 }
-                eventTriggerActions.put(eventClassName, actionsTriggeredByEvent);
+                actionsByEvent.put(eventClassName, actionsTriggeredByEvent);
             }
         }
 
-        return new AgentPlan(actions, eventTriggerActions);
+        return new AgentPlan(actions, actionsByEvent);
     }
 }

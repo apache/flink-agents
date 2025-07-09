@@ -76,12 +76,12 @@ public class AgentPlanJsonSerializerTest {
                 json.contains("\"org.apache.flink.agents.api.InputEvent\""),
                 "JSON should contain the event type class name");
         assertTrue(
-                json.contains("\"event_trigger_actions\":{}"),
+                json.contains("\"actions_by_event\":{}"),
                 "JSON should contain empty event trigger actions");
     }
 
     @Test
-    public void testSerializeAgentPlanWithEventTriggerActions() throws Exception {
+    public void testSerializeAgentPlanWithActionsByEvent() throws Exception {
         // Create a JavaFunction
         JavaFunction function =
                 new JavaFunction(
@@ -93,11 +93,11 @@ public class AgentPlanJsonSerializerTest {
         Action action = new Action("testAction", function, List.of(InputEvent.class));
 
         // Create a map of event trigger actions
-        Map<String, List<Action>> eventTriggerActions = new HashMap<>();
-        eventTriggerActions.put(InputEvent.class.getName(), List.of(action));
+        Map<String, List<Action>> actionsByEvent = new HashMap<>();
+        actionsByEvent.put(InputEvent.class.getName(), List.of(action));
 
         // Create a AgentPlan with event trigger actions but no regular actions
-        AgentPlan agentPlan = new AgentPlan(new HashMap<>(), eventTriggerActions);
+        AgentPlan agentPlan = new AgentPlan(new HashMap<>(), actionsByEvent);
 
         // Serialize the agent plan to JSON
         String json = new ObjectMapper().writeValueAsString(agentPlan);
@@ -105,7 +105,7 @@ public class AgentPlanJsonSerializerTest {
         // Verify the JSON contains the expected fields
         assertTrue(json.contains("\"actions\":{}"), "JSON should contain empty actions");
         assertTrue(
-                json.contains("\"event_trigger_actions\":{"),
+                json.contains("\"actions_by_event\":{"),
                 "JSON should contain the event trigger actions field");
         assertTrue(
                 json.contains("\"org.apache.flink.agents.api.InputEvent\":["),
@@ -116,7 +116,7 @@ public class AgentPlanJsonSerializerTest {
     }
 
     @Test
-    public void testSerializeAgentPlanWithBothActionsAndEventTriggerActions() throws Exception {
+    public void testSerializeAgentPlanWithBothActionsAndActionsByEvent() throws Exception {
         // Create JavaFunctions
         JavaFunction function1 =
                 new JavaFunction(
@@ -139,12 +139,12 @@ public class AgentPlanJsonSerializerTest {
         actions.put(action2.getName(), action2);
 
         // Create a map of event trigger actions
-        Map<String, List<Action>> eventTriggerActions = new HashMap<>();
-        eventTriggerActions.put(InputEvent.class.getName(), List.of(action1));
-        eventTriggerActions.put(OutputEvent.class.getName(), List.of(action2));
+        Map<String, List<Action>> actionsByEvent = new HashMap<>();
+        actionsByEvent.put(InputEvent.class.getName(), List.of(action1));
+        actionsByEvent.put(OutputEvent.class.getName(), List.of(action2));
 
         // Create a AgentPlan with both actions and event trigger actions
-        AgentPlan agentPlan = new AgentPlan(actions, eventTriggerActions);
+        AgentPlan agentPlan = new AgentPlan(actions, actionsByEvent);
 
         // Serialize the agent plan to JSON
         String json = new ObjectMapper().writeValueAsString(agentPlan);
@@ -154,7 +154,7 @@ public class AgentPlanJsonSerializerTest {
         assertTrue(json.contains("\"action1\":{"), "JSON should contain the first action name");
         assertTrue(json.contains("\"action2\":{"), "JSON should contain the second action name");
         assertTrue(
-                json.contains("\"event_trigger_actions\":{"),
+                json.contains("\"actions_by_event\":{"),
                 "JSON should contain the event trigger actions field");
         assertTrue(
                 json.contains("\"org.apache.flink.agents.api.InputEvent\":["),
@@ -181,7 +181,7 @@ public class AgentPlanJsonSerializerTest {
         // Verify the JSON contains the expected fields
         assertTrue(json.contains("\"actions\":{}"), "JSON should contain empty actions");
         assertTrue(
-                json.contains("\"event_trigger_actions\":{}"),
+                json.contains("\"actions_by_event\":{}"),
                 "JSON should contain empty event trigger actions");
     }
 }
