@@ -17,11 +17,11 @@
 #################################################################################
 import pytest
 
+from flink_agents.api.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_enviroment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.agent import Agent
 
 
 class TestAgent1(Agent): # noqa: D101

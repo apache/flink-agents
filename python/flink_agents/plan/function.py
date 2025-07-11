@@ -19,7 +19,7 @@
 import importlib
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 from pydantic import BaseModel
 
@@ -135,6 +135,9 @@ class PythonFunction(Function):
 #TODO: Implement JavaFunction.
 class JavaFunction(Function):
     """Descriptor for a java callable function."""
+    qualname: str
+    method_name: str
+    parameter_types: List[str]
 
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute the stored function with provided arguments."""

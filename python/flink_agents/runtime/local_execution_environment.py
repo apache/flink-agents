@@ -17,8 +17,8 @@
 #################################################################################
 from typing import Any, Dict, List
 
-from flink_agents.api.execution_enviroment import AgentsExecutionEnvironment
 from flink_agents.api.agent import Agent
+from flink_agents.api.execution_enviroment import AgentsExecutionEnvironment
 from flink_agents.runtime.local_runner import LocalRunner
 
 

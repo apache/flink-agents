@@ -22,9 +22,9 @@ from typing import Any, Dict, List
 
 from typing_extensions import override
 
+from flink_agents.api.agent import Agent
 from flink_agents.api.event import Event, InputEvent, OutputEvent
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.agent import Agent
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.runtime.agent_runner import AgentRunner
 

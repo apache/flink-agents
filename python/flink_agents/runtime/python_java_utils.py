@@ -17,6 +17,7 @@
 from typing import Any
 
 import cloudpickle
+
 from flink_agents.api.event import InputEvent
 
 

@@ -15,11 +15,13 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from typing import Dict, List
+
+from pydantic import BaseModel
+
 from flink_agents.api.agent import Agent
 from flink_agents.plan.action import Action
 from flink_agents.plan.function import PythonFunction
-from pydantic import BaseModel
-from typing import Dict, List
 
 
 class AgentPlan(BaseModel):
