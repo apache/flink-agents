@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.plan;
 
+import org.apache.flink.agents.api.Agent;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,6 +30,9 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -47,6 +52,19 @@ public class AgentPlan implements Serializable {
     public AgentPlan(Map<String, Action> actions, Map<String, List<Action>> actionsByEvent) {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
+    }
+
+    /**
+     * Constructor that creates an AgentPlan from an Agent instance by scanning for @Action
+     * annotations.
+     *
+     * @param agent the agent instance to scan for actions
+     * @throws Exception if there's an error creating actions from the agent
+     */
+    public AgentPlan(Agent agent) throws Exception {
+        this.actions = new HashMap<>();
+        this.actionsByEvent = new HashMap<>();
+        extractActionsFromAgent(agent);
     }
 
     public Map<String, Action> getActions() {
@@ -71,5 +89,42 @@ public class AgentPlan implements Serializable {
         AgentPlan agentPlan = new ObjectMapper().readValue(serializedStr, AgentPlan.class);
         this.actions = agentPlan.getActions();
         this.actionsByEvent = agentPlan.getActionsByEvent();
+    }
+
+    private void extractActionsFromAgent(Agent agent) throws Exception {
+        // Scan the agent class for methods annotated with @Action
+        Class<?> agentClass = agent.getClass();
+        for (Method method : agentClass.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(org.apache.flink.agents.api.Action.class)) {
+                org.apache.flink.agents.api.Action actionAnnotation =
+                        method.getAnnotation(org.apache.flink.agents.api.Action.class);
+
+                // Get the event types this action listens to
+                Class<? extends Event>[] listenEventTypes = actionAnnotation.listenEvents();
+
+                // Convert event types to string names
+                List<String> eventTypeNames = new ArrayList<>();
+                for (Class<? extends Event> eventType : listenEventTypes) {
+                    eventTypeNames.add(eventType.getName());
+                }
+
+                // Create a JavaFunction for this method
+                JavaFunction javaFunction =
+                        new JavaFunction(agentClass, method.getName(), method.getParameterTypes());
+
+                // Create an Action
+                Action action = new Action(method.getName(), javaFunction, eventTypeNames);
+
+                // Add to actions map
+                actions.put(action.getName(), action);
+
+                // Add to actionsByEvent map
+                for (String eventTypeName : eventTypeNames) {
+                    actionsByEvent
+                            .computeIfAbsent(eventTypeName, k -> new ArrayList<>())
+                            .add(action);
+                }
+            }
+        }
     }
 }

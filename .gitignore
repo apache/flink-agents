@@ -1,5 +1,6 @@
 .idea/*
 target/
+.vscode
 *.iml
 .DS_Store
 python/.idea/
@@ -7,5 +8,6 @@ python/flink_agents.egg-info/
 python/flink_agents/flink_agents.egg-info/
 python/build/
 python/dist
+python/uv.lock
 python/.DS_Store
 __pycache__
