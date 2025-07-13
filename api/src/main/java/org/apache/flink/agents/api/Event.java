@@ -27,7 +27,6 @@ public abstract class Event {
     private final UUID id;
     private final Map<String, Object> attributes;
 
-    // TODO: check json serializable when send event to Context.
     public Event() {
         this.id = UUID.randomUUID();
         attributes = new HashMap<>();

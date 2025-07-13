@@ -19,6 +19,8 @@ package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.plan.utils.JsonUtils;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.util.Preconditions;
 
 import java.util.ArrayList;
@@ -34,6 +36,13 @@ public class RunnerContextImpl implements RunnerContext {
 
     @Override
     public void sendEvent(Event event) {
+        try {
+            JsonUtils.checkSerializable(event);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException(
+                    "Event is not JSON serializable. All events sent to context must be JSON serializable.",
+                    e);
+        }
         pendingEvents.add(event);
     }
 
