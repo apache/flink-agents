@@ -19,8 +19,17 @@ from abc import ABC
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, ValidationError
+from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
+
+
+def row_serializer(row: Row) -> dict:
+    """Serialize a PyFlink Row object to a dictionary for JSON serialization."""
+    return {
+        "type": "Row",
+        "values": row._values
+    }
 
 
 class Event(BaseModel, ABC, extra="allow"):
@@ -37,17 +46,76 @@ class Event(BaseModel, ABC, extra="allow"):
     @model_validator(mode='after')
     def validate_extra(self) -> 'Event':
         """Ensure init fields is serializable."""
-        #TODO: support Event contains Row field be json serializable
-        for value in self.model_dump().values():
-            if isinstance(value, Row):
+        try:
+            self.model_dump_json()
+        except Exception as e:
+            # If normal JSON serialization fails, check if it's only due to Row objects
+            if self._contains_only_row_serialization_issues():
+                # If it's only Row objects, that's acceptable
                 return self
-        self.model_dump_json()
+            # Otherwise, convert to ValidationError for model validation
+            raise ValidationError.from_exception_data(
+                "Event",
+                [{"type": "value_error", "loc": (), "msg": "Fields must be JSON serializable", "input": str(e), "ctx": {"error": str(e)}}]
+            )
         return self
+
+    def _serialize_with_row_support(self) -> str:
+        """Serialize the event with support for Row objects."""
+        import json
+        
+        def custom_serializer(obj):
+            if isinstance(obj, Row):
+                return row_serializer(obj)
+            elif isinstance(obj, UUID):
+                return str(obj)
+            elif hasattr(obj, 'model_dump'):
+                return obj.model_dump()
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+        
+        data = self.model_dump()
+        return json.dumps(data, default=custom_serializer)
+
+    def _contains_only_row_serialization_issues(self) -> bool:
+        """Check if serialization issues are only due to Row objects."""
+        import json
+        
+        # Check if all non-serializable objects are Row objects
+        for key, value in self.model_dump().items():
+            if not self._is_json_serializable(value):
+                if not isinstance(value, Row):
+                    return False
+        return True
+    
+    def _is_json_serializable(self, obj) -> bool:
+        """Check if an object is JSON serializable."""
+        import json
+        try:
+            json.dumps(obj)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    def model_dump_json(self, **kwargs) -> str:
+        """Override model_dump_json to handle Row objects."""
+        try:
+            return super().model_dump_json(**kwargs)
+        except Exception:
+            return self._serialize_with_row_support()
 
     def __setattr__(self, name: str, value: Any) -> None:
         super().__setattr__(name, value)
         # Ensure added property can be serialized.
-        self.model_dump_json()
+        try:
+            self.model_dump_json()
+        except Exception as e:
+            # If normal JSON serialization fails, check if it's only due to Row objects
+            if not self._contains_only_row_serialization_issues():
+                # If it's not only Row objects, re-raise the original exception
+                if isinstance(e, PydanticSerializationError):
+                    raise e
+                else:
+                    raise PydanticSerializationError(str(e))
 
 
 class InputEvent(Event):

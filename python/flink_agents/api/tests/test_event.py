@@ -44,3 +44,7 @@ def test_event_setattr_non_serializable() -> None: #noqa D103
 def test_input_event_ignore_row_unserializable() -> None: #noqa D103
     InputEvent(input=Row({"a": 1}))
 
+def test_event_row_with_non_serializable_fails() -> None: #noqa D103
+    with pytest.raises(ValidationError):
+        Event(row_field=Row({"a": 1}), non_serializable_field=Type[InputEvent])
+
