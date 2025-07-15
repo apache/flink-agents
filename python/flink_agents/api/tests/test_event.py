@@ -48,3 +48,16 @@ def test_event_row_with_non_serializable_fails() -> None: #noqa D103
     with pytest.raises(ValidationError):
         Event(row_field=Row({"a": 1}), non_serializable_field=Type[InputEvent])
 
+def test_event_multiple_rows_serializable() -> None: #noqa D103
+    Event(row1=Row({"a": 1}), row2=Row({"b": 2}), normal_field="test")
+
+def test_event_setattr_row_serializable() -> None: #noqa D103
+    event = Event(a=1)
+    event.row_field = Row({"key": "value"})
+
+def test_event_json_serialization_with_row() -> None: #noqa D103
+    event = InputEvent(input=Row({"test": "data"}))
+    json_str = event.model_dump_json()
+    assert "test" in json_str
+    assert "Row" in json_str
+
