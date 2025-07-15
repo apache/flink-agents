@@ -26,10 +26,7 @@ from pyflink.common import Row
 
 def row_serializer(row: Row) -> dict:
     """Serialize a PyFlink Row object to a dictionary for JSON serialization."""
-    return {
-        "type": "Row",
-        "values": row._values
-    }
+    return {"type": "Row", "values": row._values}
 
 
 class Event(BaseModel, ABC, extra="allow"):
@@ -41,10 +38,11 @@ class Event(BaseModel, ABC, extra="allow"):
     id : UUID
         Unique identifier for the event, automatically generated using uuid4.
     """
+
     id: UUID = Field(default_factory=uuid4)
 
-    @model_validator(mode='after')
-    def validate_extra(self) -> 'Event':
+    @model_validator(mode="after")
+    def validate_extra(self) -> "Event":
         """Ensure init fields is serializable."""
         try:
             self.model_dump_json()
@@ -56,40 +54,49 @@ class Event(BaseModel, ABC, extra="allow"):
             # Otherwise, convert to ValidationError for model validation
             raise ValidationError.from_exception_data(
                 "Event",
-                [{"type": "value_error", "loc": (), "msg": "Fields must be JSON serializable", "input": str(e), "ctx": {"error": str(e)}}]
+                [
+                    {
+                        "type": "value_error",
+                        "loc": (),
+                        "msg": "Fields must be JSON serializable",
+                        "input": str(e),
+                        "ctx": {"error": str(e)},
+                    }
+                ],
             )
         return self
 
     def _serialize_with_row_support(self) -> str:
         """Serialize the event with support for Row objects."""
         import json
-        
+
         def custom_serializer(obj):
             if isinstance(obj, Row):
                 return row_serializer(obj)
             elif isinstance(obj, UUID):
                 return str(obj)
-            elif hasattr(obj, 'model_dump'):
+            elif hasattr(obj, "model_dump"):
                 return obj.model_dump()
             raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
-        
+
         data = self.model_dump()
         return json.dumps(data, default=custom_serializer)
 
     def _contains_only_row_serialization_issues(self) -> bool:
         """Check if serialization issues are only due to Row objects."""
         import json
-        
+
         # Check if all non-serializable objects are Row objects
         for key, value in self.model_dump().items():
             if not self._is_json_serializable(value):
                 if not isinstance(value, Row):
                     return False
         return True
-    
+
     def _is_json_serializable(self, obj) -> bool:
         """Check if an object is JSON serializable."""
         import json
+
         try:
             json.dumps(obj)
             return True
