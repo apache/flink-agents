@@ -43,6 +43,9 @@ github:
     - wenjin272
     - codenohup
     - GreatEugenius
+    - coderplay
+    - weiqingy
+    - alnzng
 
 notifications:
   commits: commits@flink.apache.org
