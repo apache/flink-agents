@@ -88,6 +88,30 @@ public class ResourceConfig {
     }
     
     /**
+     * 从注解创建资源配置
+     * 
+     * @param annotation 资源配置注解
+     * @return 资源配置实例
+     */
+    public static ResourceConfig fromAnnotation(ResourceConfigAnnotation annotation) {
+        ResourceConfig config = new ResourceConfig();
+        
+        // 设置属性
+        String[] properties = annotation.properties();
+        for (int i = 0; i < properties.length; i += 2) {
+            if (i + 1 < properties.length) {
+                config.setProperty(properties[i], properties[i + 1]);
+            }
+        }
+        
+        // 设置其他属性
+        config.setTimeout(Duration.ofMillis(annotation.timeout()));
+        config.setRetryCount(annotation.maxRetries());
+        
+        return config;
+    }
+    
+    /**
      * 获取资源类型
      * 
      * @return 资源类型

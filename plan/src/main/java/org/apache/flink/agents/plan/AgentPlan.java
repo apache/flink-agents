@@ -46,12 +46,16 @@ public class AgentPlan implements Serializable {
 
     /** Mapping from event class name to list of actions that should be triggered by the event. */
     private Map<String, List<Action>> actionsByEvent;
+    
+    /** Resource binding manager for managing resource declarations and bindings. */
+    private ResourceBindingManager resourceBindingManager;
 
     public AgentPlan() {}
 
     public AgentPlan(Map<String, Action> actions, Map<String, List<Action>> actionsByEvent) {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
+        this.resourceBindingManager = new ResourceBindingManager();
     }
 
     /**
@@ -64,6 +68,7 @@ public class AgentPlan implements Serializable {
     public AgentPlan(Agent agent) throws Exception {
         this.actions = new HashMap<>();
         this.actionsByEvent = new HashMap<>();
+        this.resourceBindingManager = new ResourceBindingManager();
         extractActionsFromAgent(agent);
     }
 
@@ -74,9 +79,27 @@ public class AgentPlan implements Serializable {
     public Map<String, List<Action>> getActionsByEvent() {
         return actionsByEvent;
     }
-
+    
     public List<Action> getActionsTriggeredBy(String eventType) {
         return actionsByEvent.get(eventType);
+    }
+    
+    /**
+     * 获取资源绑定管理器
+     * 
+     * @return 资源绑定管理器
+     */
+    public ResourceBindingManager getResourceBindingManager() {
+        return resourceBindingManager;
+    }
+    
+    /**
+     * 设置资源绑定管理器
+     * 
+     * @param resourceBindingManager 资源绑定管理器
+     */
+    public void setResourceBindingManager(ResourceBindingManager resourceBindingManager) {
+        this.resourceBindingManager = resourceBindingManager;
     }
 
     private void writeObject(ObjectOutputStream out) throws IOException {
@@ -89,11 +112,16 @@ public class AgentPlan implements Serializable {
         AgentPlan agentPlan = new ObjectMapper().readValue(serializedStr, AgentPlan.class);
         this.actions = agentPlan.getActions();
         this.actionsByEvent = agentPlan.getActionsByEvent();
+        this.resourceBindingManager = agentPlan.getResourceBindingManager();
     }
 
     private void extractActionsFromAgent(Agent agent) throws Exception {
         // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
+        
+        // 提取资源声明
+        resourceBindingManager.extractResourceDeclarations(agentClass);
+        
         for (Method method : agentClass.getDeclaredMethods()) {
             if (method.isAnnotationPresent(org.apache.flink.agents.api.Action.class)) {
                 org.apache.flink.agents.api.Action actionAnnotation =
