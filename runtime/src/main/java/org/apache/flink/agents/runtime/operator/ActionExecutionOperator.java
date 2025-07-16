@@ -26,9 +26,13 @@ import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.utils.EventUtil;
+import org.apache.flink.api.common.state.*;
+import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.python.env.PythonDependencyInfo;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
@@ -69,6 +73,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient StreamRecord<OUT> reusedStreamRecord;
 
+    private transient MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState;
+
     // RunnerContext for Java actions
     private transient RunnerContextImpl runnerContext;
 
@@ -89,7 +95,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         reusedStreamRecord = new StreamRecord<>(null);
 
-        this.runnerContext = new RunnerContextImpl();
+        // init shortTermMemState
+        MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> shortTermMemStateDescriptor =
+                new MapStateDescriptor<>(
+                        "shortTermMemory",
+                        TypeInformation.of(String.class),
+                        TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
+        shortTermMemState = getRuntimeContext().getMapState(shortTermMemStateDescriptor);
+        runnerContext = new RunnerContextImpl(shortTermMemState);
 
         // init PythonActionExecutor
         initPythonActionExecutor();
@@ -177,7 +190,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     new PythonActionExecutor(
                             pythonEnvironmentManager,
                             new ObjectMapper().writeValueAsString(agentPlan));
-            pythonActionExecutor.open();
+            pythonActionExecutor.open(shortTermMemState);
         }
     }
 

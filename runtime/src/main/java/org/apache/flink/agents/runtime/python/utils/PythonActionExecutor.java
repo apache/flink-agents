@@ -21,9 +21,11 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.utils.EventUtil;
+import org.apache.flink.api.common.state.MapState;
 import pemja.core.PythonInterpreter;
 
 import java.util.List;
@@ -48,22 +50,24 @@ public class PythonActionExecutor {
 
     private final PythonEnvironmentManager environmentManager;
     private final String agentPlanJson;
-    private final PythonRunnerContextImpl runnerContext;
+    private PythonRunnerContextImpl runnerContext;
 
     private PythonInterpreter interpreter;
 
     public PythonActionExecutor(PythonEnvironmentManager environmentManager, String agentPlanJson) {
         this.environmentManager = environmentManager;
         this.agentPlanJson = agentPlanJson;
-        this.runnerContext = new PythonRunnerContextImpl();
     }
 
-    public void open() throws Exception {
+    public void open(MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState)
+            throws Exception {
         environmentManager.open();
         EmbeddedPythonEnvironment env = environmentManager.createEnvironment();
 
         interpreter = env.getInterpreter();
         interpreter.exec(PYTHON_IMPORTS);
+
+        runnerContext = new PythonRunnerContextImpl(shortTermMemState);
 
         // TODO: remove the set and get runner context after updating pemja to version 0.5.3
         Object pythonRunnerContextObject =
