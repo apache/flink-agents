@@ -18,9 +18,12 @@
 package org.apache.flink.agents.runtime.python.context;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
+import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.util.Preconditions;
 
 import javax.annotation.concurrent.NotThreadSafe;
@@ -28,6 +31,10 @@ import javax.annotation.concurrent.NotThreadSafe;
 /** A specialized {@link RunnerContext} that is specifically used when executing Python actions. */
 @NotThreadSafe
 public class PythonRunnerContextImpl extends RunnerContextImpl {
+
+    public PythonRunnerContextImpl(MapState<String, MemoryObjectImpl.MemoryItem> store) {
+        super(store);
+    }
 
     @Override
     public void sendEvent(Event event) {
@@ -39,5 +46,10 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
     public void sendEvent(String type, byte[] event) {
         // this method will be invoked by PythonActionExecutor's python interpreter.
         sendEvent(new PythonEvent(event, type));
+    }
+
+    @Override
+    public MemoryObject getShortTermMemory() throws Exception {
+        return new MemoryObjectImpl(store, MemoryObjectImpl.ROOT_KEY);
     }
 }
