@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 import copy
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
@@ -42,6 +42,7 @@ class ItemData(BaseModel):
     id: int
     review: str
     review_score: float
+    memory_info: Optional[dict] = None
 
 
 class MyEvent(Event):  # noqa D101
@@ -60,6 +61,16 @@ class DataStreamAgent(Agent):
     @staticmethod
     def first_action(event: Event, ctx: RunnerContext):  # noqa D102
         input = event.input
+
+        stm = ctx.get_short_term_memory()
+        status = stm.new_object("status", overwrite = True)
+
+        total = 0
+        if stm.is_exist("status.total_reviews"):
+            total = status.get("total_reviews")
+        total += 1
+        status.set("total_reviews", total)
+
         content = copy.deepcopy(input)
         content.review += " first action"
         ctx.send_event(MyEvent(value=content))
@@ -68,8 +79,15 @@ class DataStreamAgent(Agent):
     @staticmethod
     def second_action(event: Event, ctx: RunnerContext):  # noqa D102
         input = event.value
+
+        stm = ctx.get_short_term_memory()
+        memory_info = {
+            "total_reviews": stm.get("status.total_reviews"),
+        }
+
         content = copy.deepcopy(input)
         content.review += " second action"
+        content.memory_info = memory_info
         ctx.send_event(OutputEvent(output=content))
 
 
