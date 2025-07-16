@@ -30,4 +30,12 @@ public interface RunnerContext {
      * @param event the event to be sent
      */
     void sendEvent(Event event);
+
+    /**
+     * Gets the short-term memory.
+     *
+     * @return MemoryObject the root of the short-term memory
+     * @throws Exception if the underlying state backend cannot be accessed
+     */
+    MemoryObject getShortTermMemory() throws Exception;
 }

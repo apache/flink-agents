@@ -18,8 +18,11 @@
 package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.utils.JsonUtils;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.util.Preconditions;
 
@@ -33,6 +36,11 @@ import java.util.List;
 public class RunnerContextImpl implements RunnerContext {
 
     protected final List<Event> pendingEvents = new ArrayList<>();
+    protected final MapState<String, MemoryObjectImpl.MemoryItem> store;
+
+    public RunnerContextImpl(MapState<String, MemoryObjectImpl.MemoryItem> store) {
+        this.store = store;
+    }
 
     @Override
     public void sendEvent(Event event) {
@@ -55,5 +63,10 @@ public class RunnerContextImpl implements RunnerContext {
     public void checkNoPendingEvents() {
         Preconditions.checkState(
                 this.pendingEvents.isEmpty(), "There are pending events remaining in the context.");
+    }
+
+    @Override
+    public MemoryObject getShortTermMemory() throws Exception {
+        return new MemoryObjectImpl(store, MemoryObjectImpl.ROOT_KEY);
     }
 }
