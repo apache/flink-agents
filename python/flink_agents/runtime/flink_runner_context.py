@@ -22,6 +22,7 @@ from typing_extensions import override
 
 from flink_agents.api.event import Event
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 
 
 class FlinkRunnerContext(RunnerContext):
@@ -55,6 +56,22 @@ class FlinkRunnerContext(RunnerContext):
         except Exception as e:
             err_msg = "Failed to send event " + class_path + " to runner context"
             raise RuntimeError(err_msg) from e
+
+    def get_short_term_memory(self) -> FlinkMemoryObject:
+        """Get the short-term memory object associated with this context.
+
+        Returns:
+        -------
+        MemoryObject
+             The short-term memory object that can be used to access and modify
+             temporary state data.
+        """
+        try:
+            return FlinkMemoryObject(self._j_runner_context.getShortTermMemory())
+        except Exception as e:
+            err_msg = "Failed to get short-term memory of runner context"
+            raise RuntimeError(err_msg) from e
+
 
 def create_flink_runner_context(j_runner_context: Any) -> FlinkRunnerContext:
     """Used to create a FlinkRunnerContext Python object in Pemja environment."""
