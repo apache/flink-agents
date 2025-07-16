@@ -40,16 +40,32 @@ class MyAgent(Agent):
     @staticmethod
     def first_action(event: Event, ctx: RunnerContext):  # noqa D102
         input = event.input
-        content = input + " first_action"
+        memory = ctx.get_short_term_memory()
+
+        current_count = memory.get("action_counter") or 0
+        new_count = current_count + 1
+        memory.set("action_counter", new_count)
+
+        content = input + " -> first_action"
+        key_with_count = f"(seen {new_count} times)"
+
         ctx.send_event(MyEvent(value=content))
-        ctx.send_event(OutputEvent(output=content))
+        ctx.send_event(OutputEvent(output={key_with_count: content}))
 
     @action(MyEvent)
     @staticmethod
     def second_action(event: Event, ctx: RunnerContext):  # noqa D102
         input = event.value
-        content = input + " second_action"
-        ctx.send_event(OutputEvent(output=content))
+        memory = ctx.get_short_term_memory()
+
+        current_count = memory.get("action_counter")
+        new_count = current_count + 1
+        memory.set("action_counter", new_count)
+
+        base_message = input.split("->")[0].strip()
+        content = base_message + " -> second_action"
+        key_with_count = f"(seen {new_count} times)"
+        ctx.send_event(OutputEvent(output={key_with_count: content}))
 
 
 if __name__ == "__main__":
@@ -62,8 +78,10 @@ if __name__ == "__main__":
 
     input_list.append({"key": "bob", "value": "The message from bob"})
     input_list.append({"k": "john", "v": "The message from john"})
+    input_list.append({"key": "john", "value": "Second message from john"})
+    input_list.append({"key": "bob", "value": "Second message from bob"})
     input_list.append(
-        {"value": "The message from unknown"}
+        {"value": "Message from unknown"}
     )  # will automatically generate a new unique key
 
     env.execute()
