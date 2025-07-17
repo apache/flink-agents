@@ -23,6 +23,9 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from pydantic import BaseModel
 
+# Global cache for PythonFunction instances to avoid repeated creation
+_PYTHON_FUNCTION_CACHE: Dict[Tuple[str, str], "PythonFunction"] = {}
+
 from flink_agents.plan.utils import check_type_match
 
 
@@ -36,6 +39,7 @@ class Function(BaseModel, ABC):
     @abstractmethod
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute function."""
+
 
 class PythonFunction(Function):
     """Descriptor for a python callable function, storing module and qualified name for
@@ -82,7 +86,9 @@ class PythonFunction(Function):
         """Check function signature."""
         params = inspect.signature(self.__get_func()).parameters
         annotations = [param.annotation for param in params.values()]
-        err_msg = f"Expect {self.qualname} have signature {args}, but got {annotations}."
+        err_msg = (
+            f"Expect {self.qualname} have signature {args}, but got {annotations}."
+        )
         if len(params) != len(args):
             raise TypeError(err_msg)
         try:
@@ -90,7 +96,6 @@ class PythonFunction(Function):
                 check_type_match(annotation, args[i])
         except TypeError as e:
             raise TypeError(err_msg) from e
-
 
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute the stored function with provided arguments.
@@ -120,7 +125,7 @@ class PythonFunction(Function):
     def __get_func(self) -> Callable:
         if self.__func is None:
             module = importlib.import_module(self.module)
-            #TODO: support function of inner class.
+            # TODO: support function of inner class.
             if "." in self.qualname:
                 # Handle class methods (e.g., 'ClassName.method')
                 classname, methodname = self.qualname.rsplit(".", 1)
@@ -132,9 +137,10 @@ class PythonFunction(Function):
         return self.__func
 
 
-#TODO: Implement JavaFunction.
+# TODO: Implement JavaFunction.
 class JavaFunction(Function):
     """Descriptor for a java callable function."""
+
     qualname: str
     method_name: str
     parameter_types: List[str]
@@ -147,6 +153,66 @@ class JavaFunction(Function):
 
 
 def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...]) -> Any:
-    """Used to call a Python function in the Pemja environment."""
-    func = PythonFunction(module=module, qualname=qualname)
+    """Used to call a Python function in the Pemja environment.
+
+    Uses caching to reuse PythonFunction instances for identical (module, qualname) pairs
+    to improve performance during frequent invocations.
+
+    Parameters
+    ----------
+    module : str
+        Name of the Python module where the function is defined.
+    qualname : str
+        Qualified name of the function (e.g., 'ClassName.method' for class methods).
+    func_args : Tuple[Any, ...]
+        Arguments to pass to the function.
+
+    Returns
+    -------
+    Any
+        The result of calling the function with the provided arguments.
+    """
+    cache_key = (module, qualname)
+
+    # Check if PythonFunction instance already exists in cache
+    if cache_key not in _PYTHON_FUNCTION_CACHE:
+        # Create new instance and cache it
+        _PYTHON_FUNCTION_CACHE[cache_key] = PythonFunction(
+            module=module, qualname=qualname
+        )
+
+    # Use cached instance
+    func = _PYTHON_FUNCTION_CACHE[cache_key]
     return func(*func_args)
+
+
+def clear_python_function_cache() -> None:
+    """Clear the PythonFunction cache.
+
+    This function is useful for testing or when you want to ensure
+    fresh function instances are created.
+    """
+    global _PYTHON_FUNCTION_CACHE
+    _PYTHON_FUNCTION_CACHE.clear()
+
+
+def get_python_function_cache_size() -> int:
+    """Get the current size of the PythonFunction cache.
+
+    Returns
+    -------
+    int
+        The number of cached PythonFunction instances.
+    """
+    return len(_PYTHON_FUNCTION_CACHE)
+
+
+def get_python_function_cache_keys() -> List[Tuple[str, str]]:
+    """Get all cache keys (module, qualname) pairs currently in the cache.
+
+    Returns
+    -------
+    List[Tuple[str, str]]
+        List of (module, qualname) tuples representing cached functions.
+    """
+    return list(_PYTHON_FUNCTION_CACHE.keys())
