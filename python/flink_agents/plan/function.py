@@ -23,11 +23,10 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from pydantic import BaseModel
 
-# Global cache for PythonFunction instances to avoid repeated creation
-_PYTHON_FUNCTION_CACHE: Dict[Tuple[str, str], "PythonFunction"] = {}
-
 from flink_agents.plan.utils import check_type_match
 
+# Global cache for PythonFunction instances to avoid repeated creation
+_PYTHON_FUNCTION_CACHE: Dict[Tuple[str, str], "PythonFunction"] = {}
 
 class Function(BaseModel, ABC):
     """Base interface for user defined functions, includes python and java."""
@@ -155,8 +154,9 @@ class JavaFunction(Function):
 def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...]) -> Any:
     """Used to call a Python function in the Pemja environment.
 
-    Uses caching to reuse PythonFunction instances for identical (module, qualname) pairs
-    to improve performance during frequent invocations.
+    Uses caching to reuse PythonFunction instances for identical
+    (module, qualname) pairs to improve performance during
+    frequent invocations.
 
     Parameters
     ----------
@@ -167,7 +167,7 @@ def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...])
     func_args : Tuple[Any, ...]
         Arguments to pass to the function.
 
-    Returns
+    Returns:
     -------
     Any
         The result of calling the function with the provided arguments.
@@ -199,7 +199,7 @@ def clear_python_function_cache() -> None:
 def get_python_function_cache_size() -> int:
     """Get the current size of the PythonFunction cache.
 
-    Returns
+    Returns:
     -------
     int
         The number of cached PythonFunction instances.
@@ -210,7 +210,7 @@ def get_python_function_cache_size() -> int:
 def get_python_function_cache_keys() -> List[Tuple[str, str]]:
     """Get all cache keys (module, qualname) pairs currently in the cache.
 
-    Returns
+    Returns:
     -------
     List[Tuple[str, str]]
         List of (module, qualname) tuples representing cached functions.

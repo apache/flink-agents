@@ -27,8 +27,8 @@ from flink_agents.plan.function import (
     PythonFunction,
     call_python_function,
     clear_python_function_cache,
-    get_python_function_cache_size,
     get_python_function_cache_keys,
+    get_python_function_cache_size,
 )
 
 
