@@ -27,6 +27,7 @@ import org.apache.flink.agents.runtime.utils.EventUtil;
 import pemja.core.PythonInterpreter;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.apache.flink.util.Preconditions.checkState;
 
@@ -48,6 +49,8 @@ public class PythonActionExecutor {
 
     private final PythonEnvironmentManager environmentManager;
     private final PythonRunnerContextImpl runnerContext;
+    private final ConcurrentHashMap<String, PythonFunction> functionCache =
+            new ConcurrentHashMap<>();
 
     private PythonInterpreter interpreter;
 
@@ -69,10 +72,17 @@ public class PythonActionExecutor {
         interpreter.set(FLINK_RUNNER_CONTEXT_VAR_NAME, pythonRunnerContextObject);
     }
 
+    public PythonFunction getOrCreatePythonFunction(String module, String qualName) {
+        String cacheKey = module + ":" + qualName;
+        return functionCache.computeIfAbsent(cacheKey, k -> new PythonFunction(module, qualName));
+    }
+
     public List<Event> executePythonFunction(PythonFunction function, PythonEvent event)
             throws Exception {
+        PythonFunction cachedFunction =
+                getOrCreatePythonFunction(function.getModule(), function.getQualName());
         runnerContext.checkNoPendingEvents();
-        function.setInterpreter(interpreter);
+        cachedFunction.setInterpreter(interpreter);
 
         // TODO: remove the set and get runner context after updating pemja to version 0.5.3
         Object pythonRunnerContextObject = interpreter.get(FLINK_RUNNER_CONTEXT_VAR_NAME);
@@ -80,7 +90,7 @@ public class PythonActionExecutor {
         Object pythonEventObject = interpreter.invoke(CONVERT_TO_PYTHON_OBJECT, event.getEvent());
 
         try {
-            function.call(pythonEventObject, pythonRunnerContextObject);
+            cachedFunction.call(pythonEventObject, pythonRunnerContextObject);
         } catch (Exception e) {
             runnerContext.drainEvents();
             throw new PythonActionExecutionException("Failed to execute Python action", e);
