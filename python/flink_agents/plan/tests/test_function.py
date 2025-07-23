@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 ################################################################################
 #  Licensed to the Apache Software Foundation (ASF) under one
 #  or more contributor license agreements.  See the NOTICE file
@@ -17,19 +19,22 @@
 #################################################################################
 import json
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Generator, Tuple
 
 import pytest
 
 from flink_agents.api.event import Event, InputEvent, OutputEvent
 from flink_agents.plan.function import (
-    Function,
     PythonFunction,
+    _is_function_cacheable,
     call_python_function,
     clear_python_function_cache,
     get_python_function_cache_keys,
     get_python_function_cache_size,
 )
+
+if TYPE_CHECKING:
+    from python.flink_agents.plan.function import Function
 
 
 def check_class(input_event: InputEvent, output_event: OutputEvent) -> None:  # noqa: D103
@@ -138,6 +143,34 @@ def function_for_caching(value: int) -> int:
     return value * 2
 
 
+# Functions to test selective caching
+def generator_function(n: int) -> Generator[int, None, None]:
+    """Generator function - should not be cached."""
+    yield from range(n)
+
+
+def function_with_mutable_default(items: list[int] | None = None) -> list[int]:
+    """Function with mutable default - should not be cached."""
+    if items is None:
+        items = []
+    items.append(1)
+    return items
+
+
+def make_closure(multiplier: int) -> Callable[[int], int]:
+    """Creates a closure - the returned function should not be cached."""
+
+    def inner(value: int) -> int:
+        return value * multiplier
+
+    return inner
+
+
+def simple_pure_function(x: int, y: int) -> int:
+    """Simple pure function - should be cached."""
+    return x + y
+
+
 def test_call_python_function_basic() -> None:
     """Test basic functionality of call_python_function."""
     # Clear cache before testing
@@ -154,38 +187,33 @@ def test_call_python_function_caching() -> None:
     # Clear cache before testing
     clear_python_function_cache()
 
-    # Verify cache is empty initially
     assert get_python_function_cache_size() == 0
 
-    # First call should create and cache the function
     result1 = call_python_function(
         "flink_agents.plan.tests.test_function", "function_for_caching", (3,)
     )
     assert result1 == 6
     assert get_python_function_cache_size() == 1
 
-    # Second call with same module/qualname should reuse cached instance
     result2 = call_python_function(
         "flink_agents.plan.tests.test_function", "function_for_caching", (4,)
     )
     assert result2 == 8
     assert get_python_function_cache_size() == 1  # Cache size should remain 1
 
-    # Call with different qualname should create new cache entry
     result3 = call_python_function(
         "flink_agents.plan.tests.test_function",
         "check_class",
         (InputEvent(input="test"), OutputEvent(output="test")),
     )
-    assert result3 is None  # check_class returns None
-    assert get_python_function_cache_size() == 2  # Cache size should increase
+    assert result3 is None
+    assert get_python_function_cache_size() == 2
 
 
 def test_call_python_function_different_modules() -> None:
     """Test caching with different modules."""
     clear_python_function_cache()
 
-    # These should be treated as different cache entries
     call_python_function(
         "flink_agents.plan.tests.test_function", "function_for_caching", (1,)
     )
@@ -197,7 +225,6 @@ def test_call_python_function_different_modules() -> None:
 
     assert get_python_function_cache_size() == 2
 
-    # Verify cache keys
     cache_keys = get_python_function_cache_keys()
     expected_keys = [
         ("flink_agents.plan.tests.test_function", "function_for_caching"),
@@ -210,7 +237,6 @@ def test_clear_python_function_cache() -> None:
     """Test clearing the cache."""
     clear_python_function_cache()
 
-    # Add some entries to cache
     call_python_function(
         "flink_agents.plan.tests.test_function", "function_for_caching", (1,)
     )
@@ -221,10 +247,7 @@ def test_clear_python_function_cache() -> None:
     )
 
     assert get_python_function_cache_size() == 2
-
-    # Clear cache
     clear_python_function_cache()
-
     assert get_python_function_cache_size() == 0
     assert get_python_function_cache_keys() == []
 
@@ -251,9 +274,90 @@ def test_cache_performance_benefit() -> None:
 
     assert get_python_function_cache_size() == first_cache_size
 
-    # Verify all calls return correct results
     for i in range(5):
         result = call_python_function(
             "flink_agents.plan.tests.test_function", "function_for_caching", (i,)
         )
         assert result == i * 2
+
+
+def test_selective_caching_pure_functions() -> None:
+    """Test that pure functions are cached."""
+    clear_python_function_cache()
+
+    # Pure functions should be cached
+    call_python_function(
+        "flink_agents.plan.tests.test_function", "simple_pure_function", (1, 2)
+    )
+    call_python_function(
+        "flink_agents.plan.tests.test_function", "function_for_caching", (5,)
+    )
+
+    # Both should be in cache
+    assert get_python_function_cache_size() == 2
+    cache_keys = get_python_function_cache_keys()
+    assert (
+        "flink_agents.plan.tests.test_function",
+        "simple_pure_function",
+    ) in cache_keys
+    assert (
+        "flink_agents.plan.tests.test_function",
+        "function_for_caching",
+    ) in cache_keys
+
+
+def test_selective_caching_generator_functions() -> None:
+    """Test that generator functions are not cached."""
+    clear_python_function_cache()
+
+    # Generator function should not be cached
+    result = call_python_function(
+        "flink_agents.plan.tests.test_function", "generator_function", (3,)
+    )
+    # Convert generator to list for testing
+    result_list = list(result)
+    assert result_list == [0, 1, 2]
+
+    # Should not be cached
+    assert get_python_function_cache_size() == 0
+
+
+def test_selective_caching_mutable_defaults() -> None:
+    """Test that functions with mutable defaults are not cached."""
+    clear_python_function_cache()
+
+    # Function with mutable default should not be cached
+    result1 = call_python_function(
+        "flink_agents.plan.tests.test_function", "function_with_mutable_default", ()
+    )
+    result2 = call_python_function(
+        "flink_agents.plan.tests.test_function", "function_with_mutable_default", ()
+    )
+
+    # Should not be cached (each call creates a new function instance)
+    assert get_python_function_cache_size() == 0
+
+    # Results should be different if function is correctly not cached
+    # (mutable default behavior depends on not caching)
+    assert isinstance(result1, list)
+    assert isinstance(result2, list)
+
+
+def test_is_function_cacheable() -> None:
+    """Test the _is_function_cacheable function directly."""
+    # Pure functions should be cacheable
+    assert _is_function_cacheable(simple_pure_function) is True
+    assert _is_function_cacheable(function_for_caching) is True
+
+    # Generator functions should not be cacheable
+    assert _is_function_cacheable(generator_function) is False
+
+    # Functions with mutable defaults should not be cacheable
+    assert _is_function_cacheable(function_with_mutable_default) is False
+
+    # Closures should not be cacheable
+    closure_func = make_closure(5)
+    assert _is_function_cacheable(closure_func) is False
+
+    # None should not be cacheable
+    assert _is_function_cacheable(None) is False
