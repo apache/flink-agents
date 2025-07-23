@@ -22,6 +22,8 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.metrics.ActionMetricGroup;
+import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.util.Preconditions;
@@ -38,8 +40,30 @@ public class RunnerContextImpl implements RunnerContext {
     protected final List<Event> pendingEvents = new ArrayList<>();
     protected final MapState<String, MemoryObjectImpl.MemoryItem> store;
 
-    public RunnerContextImpl(MapState<String, MemoryObjectImpl.MemoryItem> store) {
+    protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
+
+    protected ActionMetricGroup actionMetricGroup;
+
+    public RunnerContextImpl(
+            MapState<String, MemoryObjectImpl.MemoryItem> store,
+            FlinkAgentsMetricGroupImpl agentMetricGroup) {
         this.store = store;
+        this.agentMetricGroup = agentMetricGroup;
+    }
+
+    public void setActionMetricGroup(ActionMetricGroup actionMetricGroup) {
+        this.actionMetricGroup = actionMetricGroup;
+    }
+
+    @Override
+    public FlinkAgentsMetricGroupImpl getAgentMetricGroup() {
+        return agentMetricGroup;
+    }
+
+    @Override
+    public ActionMetricGroup getActionMetricGroup() {
+        Preconditions.checkNotNull(agentMetricGroup, "Action Metric Group is not set.");
+        return actionMetricGroup;
     }
 
     @Override

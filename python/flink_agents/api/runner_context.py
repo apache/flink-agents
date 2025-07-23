@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 
 from flink_agents.api.event import Event
 from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 
 
@@ -58,4 +59,24 @@ class RunnerContext(ABC):
         -------
         MemoryObject
           The root object of the short-term memory.
+        """
+
+    @abstractmethod
+    def get_agent_metric_group(self) -> MetricGroup:
+        """Get the metric group for flink agents.
+
+        Returns:
+        -------
+        MetricGroup
+            The metric group shared across all actions.
+        """
+
+    @abstractmethod
+    def get_action_metric_group(self) -> MetricGroup:
+        """Get the individual metric group dedicated for each action.
+
+        Returns:
+        -------
+        MetricGroup
+            The individual metric group specific to the current action.
         """

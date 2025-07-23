@@ -27,6 +27,9 @@ import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.metrics.ActionMetricGroup;
+import org.apache.flink.agents.runtime.metrics.BuiltInMetricGroup;
+import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.utils.EventUtil;
@@ -81,6 +84,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // PythonActionExecutor for Python actions
     private transient PythonActionExecutor pythonActionExecutor;
 
+    private transient FlinkAgentsMetricGroupImpl metricGroup;
+
+    private transient BuiltInMetricGroup builtInMetricGroup;
+
     public ActionExecutionOperator(
             AgentPlan agentPlan, Boolean inputIsJava, ProcessingTimeService processingTimeService) {
         this.agentPlan = agentPlan;
@@ -102,7 +109,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         TypeInformation.of(String.class),
                         TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
         shortTermMemState = getRuntimeContext().getMapState(shortTermMemStateDescriptor);
-        runnerContext = new RunnerContextImpl(shortTermMemState);
+
+        metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
+        builtInMetricGroup = new BuiltInMetricGroup(metricGroup, agentPlan);
+
+        runnerContext = new RunnerContextImpl(shortTermMemState, metricGroup);
 
         // init PythonActionExecutor
         initPythonActionExecutor();
@@ -130,16 +141,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // TODO: Implement asynchronous action execution.
 
                     // execute action and collect output events
-                    LOG.debug("Try execute action {} for event {}.", action.getName(), event);
+                    String actionName = action.getName();
+                    LOG.debug("Try execute action {} for event {}.", actionName, event);
+                    ActionMetricGroup actionMetricGroup =
+                            builtInMetricGroup.getActionMetricGroup(actionName);
                     List<Event> actionOutputEvents;
                     if (action.getExec() instanceof JavaFunction) {
+                        runnerContext.setActionMetricGroup(actionMetricGroup);
                         action.getExec().call(event, runnerContext);
                         actionOutputEvents = runnerContext.drainEvents();
                     } else if (action.getExec() instanceof PythonFunction) {
                         checkState(event instanceof PythonEvent);
                         actionOutputEvents =
                                 pythonActionExecutor.executePythonFunction(
-                                        (PythonFunction) action.getExec(), (PythonEvent) event);
+                                        (PythonFunction) action.getExec(),
+                                        (PythonEvent) event,
+                                        actionMetricGroup);
                     } else {
                         throw new RuntimeException("Unsupported action type: " + action.getClass());
                     }
@@ -190,7 +207,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     new PythonActionExecutor(
                             pythonEnvironmentManager,
                             new ObjectMapper().writeValueAsString(agentPlan));
-            pythonActionExecutor.open(shortTermMemState);
+            pythonActionExecutor.open(shortTermMemState, metricGroup);
         }
     }
 

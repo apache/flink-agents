@@ -25,6 +25,7 @@ from typing_extensions import override
 from flink_agents.api.agent import Agent
 from flink_agents.api.event import Event, InputEvent, OutputEvent
 from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
@@ -114,6 +115,18 @@ class LocalRunnerContext(RunnerContext):
             The root object of the short-term memory.
         """
         return self._short_term_memory
+
+    @override
+    def get_agent_metric_group(self) -> MetricGroup:
+        # TODO: Support metric mechanism for local agent execution.
+        err_msg = "Metric mechanism is not supported for local agent execution yet."
+        raise NotImplementedError(err_msg)
+
+    @override
+    def get_action_metric_group(self) -> MetricGroup:
+        # TODO: Support metric mechanism for local agent execution.
+        err_msg = "Metric mechanism is not supported for local agent execution yet."
+        raise NotImplementedError(err_msg)
 
 class LocalRunner(AgentRunner):
     """Agent runner implementation for local execution, which is

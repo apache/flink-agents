@@ -18,6 +18,7 @@
 package org.apache.flink.agents.api.context;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 
 /**
  * A context object used during action execution. It is responsible for collecting output events
@@ -38,4 +39,18 @@ public interface RunnerContext {
      * @throws Exception if the underlying state backend cannot be accessed
      */
     MemoryObject getShortTermMemory() throws Exception;
+
+    /**
+     * Gets the metric group for Flink Agents.
+     *
+     * @return the metric group shared across all actions.
+     */
+    FlinkAgentsMetricGroup getAgentMetricGroup();
+
+    /**
+     * Gets the individual metric group dedicated for each action.
+     *
+     * @return the individual metric group specific to the current action.
+     */
+    FlinkAgentsMetricGroup getActionMetricGroup();
 }

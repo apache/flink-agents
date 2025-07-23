@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.util.Preconditions;
@@ -32,8 +33,10 @@ import javax.annotation.concurrent.NotThreadSafe;
 @NotThreadSafe
 public class PythonRunnerContextImpl extends RunnerContextImpl {
 
-    public PythonRunnerContextImpl(MapState<String, MemoryObjectImpl.MemoryItem> store) {
-        super(store);
+    public PythonRunnerContextImpl(
+            MapState<String, MemoryObjectImpl.MemoryItem> store,
+            FlinkAgentsMetricGroupImpl agentMetricGroup) {
+        super(store, agentMetricGroup);
     }
 
     @Override

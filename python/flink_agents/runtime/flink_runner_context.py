@@ -25,6 +25,7 @@ from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
+from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
 
 
 class FlinkRunnerContext(RunnerContext):
@@ -81,6 +82,28 @@ class FlinkRunnerContext(RunnerContext):
         except Exception as e:
             err_msg = "Failed to get short-term memory of runner context"
             raise RuntimeError(err_msg) from e
+
+    @override
+    def get_agent_metric_group(self) -> FlinkMetricGroup:
+        """Get the metric group for flink agents.
+
+        Returns:
+        -------
+        FlinkMetricGroup
+            The metric group shared across all actions.
+        """
+        return FlinkMetricGroup(self._j_runner_context.getAgentMetricGroup())
+
+    @override
+    def get_action_metric_group(self) -> FlinkMetricGroup:
+        """Get the individual metric group dedicated for each action.
+
+        Returns:
+        -------
+        FlinkMetricGroup
+            The individual metric group specific to the current action.
+        """
+        return FlinkMetricGroup(self._j_runner_context.getActionMetricGroup())
 
 
 def create_flink_runner_context(j_runner_context: Any, agent_plan_json: str) -> FlinkRunnerContext:
