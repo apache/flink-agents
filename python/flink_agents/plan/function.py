@@ -19,11 +19,80 @@
 import importlib
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple, get_type_hints
 
 from pydantic import BaseModel
 
 from flink_agents.plan.utils import check_type_match
+
+# Global cache for PythonFunction instances to avoid repeated creation
+_PYTHON_FUNCTION_CACHE: Dict[Tuple[str, str], "PythonFunction"] = {}
+
+
+def _is_function_cacheable(func: Callable) -> bool:
+    """Check if a function is safe to cache.
+
+    Returns False for functions that should not be cached due to:
+    - Closures (functions that capture variables from outer scope)
+    - Generator functions (functions that yield values)
+    - Functions with mutable default arguments
+    - Instance methods (which depend on instance state)
+
+    Parameters
+    ----------
+    func : Callable
+        The function to check
+
+    Returns:
+    -------
+    bool
+        True if the function is safe to cache, False otherwise
+    """
+    if func is None:
+        return False
+
+    if inspect.isgeneratorfunction(func):
+        return False
+
+    if inspect.iscoroutinefunction(func):
+        return False
+
+    if inspect.ismethod(func):
+        return False
+
+    if hasattr(func, "__closure__") and func.__closure__ is not None:
+        return False
+
+    # Check for mutable default arguments
+    try:
+        sig = inspect.signature(func)
+        for param in sig.parameters.values():
+            if param.default is not inspect.Parameter.empty:
+                # Check if default is a mutable type
+                if isinstance(param.default, (list, dict, set)):
+                    return False
+
+                if param.default is None:
+                    try:
+                        source = inspect.getsource(func)
+                        param_name = param.name
+                        if f"if {param_name} is None:" in source and any(
+                            mutable_type in source
+                            for mutable_type in [
+                                "[]",
+                                "{}",
+                                "list()",
+                                "dict()",
+                                "set()",
+                            ]
+                        ):
+                            return False
+                    except (OSError, TypeError):
+                        pass
+    except (ValueError, TypeError):
+        return False
+
+    return True
 
 
 class Function(BaseModel, ABC):
@@ -36,6 +105,7 @@ class Function(BaseModel, ABC):
     @abstractmethod
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute function."""
+
 
 class PythonFunction(Function):
     """Descriptor for a python callable function, storing module and qualified name for
@@ -80,9 +150,23 @@ class PythonFunction(Function):
 
     def check_signature(self, *args: Tuple[Any, ...]) -> None:
         """Check function signature."""
-        params = inspect.signature(self.__get_func()).parameters
-        annotations = [param.annotation for param in params.values()]
-        err_msg = f"Expect {self.qualname} have signature {args}, but got {annotations}."
+        func = self.__get_func()
+        params = inspect.signature(func).parameters
+
+        # Use get_type_hints to resolve string annotations properly
+        try:
+            type_hints = get_type_hints(func)
+            annotations = [
+                type_hints.get(param_name, param.annotation)
+                for param_name, param in params.items()
+            ]
+        except (NameError, AttributeError):
+            # Fallback to raw annotations if get_type_hints fails
+            annotations = [param.annotation for param in params.values()]
+
+        err_msg = (
+            f"Expect {self.qualname} have signature {args}, but got {annotations}."
+        )
         if len(params) != len(args):
             raise TypeError(err_msg)
         try:
@@ -90,7 +174,6 @@ class PythonFunction(Function):
                 check_type_match(annotation, args[i])
         except TypeError as e:
             raise TypeError(err_msg) from e
-
 
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute the stored function with provided arguments.
@@ -120,7 +203,7 @@ class PythonFunction(Function):
     def __get_func(self) -> Callable:
         if self.__func is None:
             module = importlib.import_module(self.module)
-            #TODO: support function of inner class.
+            # TODO: support function of inner class.
             if "." in self.qualname:
                 # Handle class methods (e.g., 'ClassName.method')
                 classname, methodname = self.qualname.rsplit(".", 1)
@@ -132,9 +215,10 @@ class PythonFunction(Function):
         return self.__func
 
 
-#TODO: Implement JavaFunction.
+# TODO: Implement JavaFunction.
 class JavaFunction(Function):
     """Descriptor for a java callable function."""
+
     qualname: str
     method_name: str
     parameter_types: List[str]
@@ -147,6 +231,71 @@ class JavaFunction(Function):
 
 
 def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...]) -> Any:
-    """Used to call a Python function in the Pemja environment."""
-    func = PythonFunction(module=module, qualname=qualname)
+    """Used to call a Python function in the Pemja environment.
+
+    Uses selective caching to reuse PythonFunction instances for identical
+    (module, qualname) pairs to improve performance during frequent invocations.
+    Only caches functions that are safe to cache (no closures, generators, etc.).
+
+    Parameters
+    ----------
+    module : str
+        Name of the Python module where the function is defined.
+    qualname : str
+        Qualified name of the function (e.g., 'ClassName.method' for class methods).
+    func_args : Tuple[Any, ...]
+        Arguments to pass to the function.
+
+    Returns:
+    -------
+    Any
+        The result of calling the function with the provided arguments.
+    """
+    cache_key = (module, qualname)
+
+    if cache_key not in _PYTHON_FUNCTION_CACHE:
+        python_func = PythonFunction(module=module, qualname=qualname)
+        try:
+            actual_func = python_func._PythonFunction__get_func()
+            if _is_function_cacheable(actual_func):
+                _PYTHON_FUNCTION_CACHE[cache_key] = python_func
+            else:
+                return python_func(*func_args)
+        except Exception:
+            return python_func(*func_args)
+
+    # Use cached instance
+    func = _PYTHON_FUNCTION_CACHE[cache_key]
     return func(*func_args)
+
+
+def clear_python_function_cache() -> None:
+    """Clear the PythonFunction cache.
+
+    This function is useful for testing or when you want to ensure
+    fresh function instances are created.
+    """
+    global _PYTHON_FUNCTION_CACHE
+    _PYTHON_FUNCTION_CACHE.clear()
+
+
+def get_python_function_cache_size() -> int:
+    """Get the current size of the PythonFunction cache.
+
+    Returns:
+    -------
+    int
+        The number of cached PythonFunction instances.
+    """
+    return len(_PYTHON_FUNCTION_CACHE)
+
+
+def get_python_function_cache_keys() -> List[Tuple[str, str]]:
+    """Get all cache keys (module, qualname) pairs currently in the cache.
+
+    Returns:
+    -------
+    List[Tuple[str, str]]
+        List of (module, qualname) tuples representing cached functions.
+    """
+    return list(_PYTHON_FUNCTION_CACHE.keys())
