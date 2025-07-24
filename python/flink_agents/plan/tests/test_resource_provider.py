@@ -46,7 +46,7 @@ def resource_provider() -> ResourceProvider:  # noqa: D103
     )
 
 
-def test_python_resource_provider_serialize( # noqa: D103
+def test_python_resource_provider_serialize(  # noqa: D103
     resource_provider: ResourceProvider,
 ) -> None:
     json_value = resource_provider.model_dump_json(serialize_as_any=True)
@@ -57,7 +57,7 @@ def test_python_resource_provider_serialize( # noqa: D103
     assert actual == expected
 
 
-def test_python_resource_provider_deserialize( # noqa: D103
+def test_python_resource_provider_deserialize(  # noqa: D103
     resource_provider: ResourceProvider,
 ) -> None:
     with Path.open(Path(f"{current_dir}/resources/resource_provider.json")) as f:

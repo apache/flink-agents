@@ -21,13 +21,15 @@ from flink_agents.api.tools.tool import BaseTool
 from flink_agents.plan.function import Function
 
 
-#TODO: Complete FunctionTool
+# TODO: Complete FunctionTool
 class FunctionTool(BaseTool):
     """Function tool.
 
     Currently, this class is just for testing purposes.
     """
+
     func: Function
+
     def call(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Call function."""
         return self.func(*args, **kwargs)

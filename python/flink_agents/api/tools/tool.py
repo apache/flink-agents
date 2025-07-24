@@ -22,7 +22,7 @@ from typing_extensions import override
 from flink_agents.api.resource import ResourceType, SerializableResource
 
 
-#TODO: Complete BaseTool
+# TODO: Complete BaseTool
 class BaseTool(SerializableResource, ABC):
     """Base abstract class of all kinds of tools.
 

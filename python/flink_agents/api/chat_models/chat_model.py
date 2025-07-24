@@ -22,7 +22,7 @@ from typing_extensions import override
 from flink_agents.api.resource import Resource, ResourceType
 
 
-#TODO: Complete BaseChatModel
+# TODO: Complete BaseChatModel
 class BaseChatModel(Resource, ABC):
     """Base abstract class of all kinds of chat models.
 
