@@ -26,9 +26,11 @@ def convert_to_python_object(bytesObject: bytes) -> Any:
     """Used for deserializing Python objects."""
     return cloudpickle.loads(bytesObject)
 
+
 def wrap_to_input_event(bytesObject: bytes) -> bytes:
     """Wrap data to python input event and serialize."""
     return cloudpickle.dumps(InputEvent(input=cloudpickle.loads(bytesObject)))
+
 
 def get_output_from_output_event(bytesObject: bytes) -> Any:
     """Get output data from OutputEvent and serialize."""

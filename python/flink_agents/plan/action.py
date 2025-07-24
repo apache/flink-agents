@@ -41,40 +41,39 @@ class Action(BaseModel):
     """
 
     name: str
-    #TODO: Raise a warning when the action has a return value, as it will be ignored.
+    # TODO: Raise a warning when the action has a return value, as it will be ignored.
     exec: Function
     listen_event_types: List[str]
 
-    @field_serializer('exec')
+    @field_serializer("exec")
     def __serialize_exec(self, exec: Function) -> dict:
         # append meta info to help deserialize exec
         data = exec.model_dump()
-        data['func_type'] = exec.__class__.__qualname__
+        data["func_type"] = exec.__class__.__qualname__
         return data
 
-    @model_validator(mode='before')
-    def __custom_deserialize(self) -> 'Action':
-        exec = self['exec']
+    @model_validator(mode="before")
+    def __custom_deserialize(self) -> "Action":
+        exec = self["exec"]
         # restore exec from serialized json.
         if isinstance(exec, dict):
-            func_type = exec['func_type']
-            if func_type == 'PythonFunction':
-                self['exec'] = PythonFunction(**exec)
-            elif func_type == 'JavaFunction':
-                self['exec'] = JavaFunction(**exec)
+            func_type = exec["func_type"]
+            if func_type == "PythonFunction":
+                self["exec"] = PythonFunction(**exec)
+            elif func_type == "JavaFunction":
+                self["exec"] = JavaFunction(**exec)
             else:
-                err_msg = f'Unknown function type: {func_type}'
+                err_msg = f"Unknown function type: {func_type}"
                 raise NotImplementedError(err_msg)
         return self
 
     def __init__(
-            self,
-            name: str,
-            exec: Function,
-            listen_event_types: List[str],
+        self,
+        name: str,
+        exec: Function,
+        listen_event_types: List[str],
     ) -> None:
         """Action will check function signature when init."""
         super().__init__(name=name, exec=exec, listen_event_types=listen_event_types)
-        #TODO: Update expected signature after import State and Context.
+        # TODO: Update expected signature after import State and Context.
         self.exec.check_signature(Event, RunnerContext)
-

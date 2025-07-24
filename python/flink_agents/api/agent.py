@@ -18,7 +18,7 @@
 from abc import ABC
 
 
-class Agent(ABC): # noqa: B024
+class Agent(ABC):  # noqa: B024
     """Base class for defining agent logic. Currently, Agent is
     an empty interface, we may add interactive method like add_action(),
     add_model() later.

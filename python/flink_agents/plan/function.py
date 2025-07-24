@@ -37,6 +37,7 @@ class Function(BaseModel, ABC):
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute function."""
 
+
 class PythonFunction(Function):
     """Descriptor for a python callable function, storing module and qualified name for
     dynamic retrieval.
@@ -82,7 +83,9 @@ class PythonFunction(Function):
         """Check function signature."""
         params = inspect.signature(self.__get_func()).parameters
         annotations = [param.annotation for param in params.values()]
-        err_msg = f"Expect {self.qualname} have signature {args}, but got {annotations}."
+        err_msg = (
+            f"Expect {self.qualname} have signature {args}, but got {annotations}."
+        )
         if len(params) != len(args):
             raise TypeError(err_msg)
         try:
@@ -90,7 +93,6 @@ class PythonFunction(Function):
                 check_type_match(annotation, args[i])
         except TypeError as e:
             raise TypeError(err_msg) from e
-
 
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute the stored function with provided arguments.
@@ -120,7 +122,7 @@ class PythonFunction(Function):
     def __get_func(self) -> Callable:
         if self.__func is None:
             module = importlib.import_module(self.module)
-            #TODO: support function of inner class.
+            # TODO: support function of inner class.
             if "." in self.qualname:
                 # Handle class methods (e.g., 'ClassName.method')
                 classname, methodname = self.qualname.rsplit(".", 1)
@@ -132,9 +134,10 @@ class PythonFunction(Function):
         return self.__func
 
 
-#TODO: Implement JavaFunction.
+# TODO: Implement JavaFunction.
 class JavaFunction(Function):
     """Descriptor for a java callable function."""
+
     qualname: str
     method_name: str
     parameter_types: List[str]

@@ -77,7 +77,7 @@ def test_nested_set_and_get() -> None:  # noqa: D103
     mem = create_memory()
     mem.set("a.b.c", True)
     tmp_obj = mem.get("a.b")
-    tmp_obj.set("tmp",10)
+    tmp_obj.set("tmp", 10)
     assert mem.get("a.b.tmp") == 10
     assert "tmp" in mem.get("a.b").get_field_names()
     assert mem.get("a").get("b").get("c") is True

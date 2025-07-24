@@ -76,17 +76,18 @@ class MockChatModelImpl(Resource):  # noqa: D101
     desc: str
 
     @classmethod
-    def resource_type(cls) -> ResourceType: # noqa: D102
+    def resource_type(cls) -> ResourceType:  # noqa: D102
         return ResourceType.CHAT_MODEL
 
     def chat(self) -> str:
         """For testing purposes."""
         return self.host + " " + self.desc
 
+
 class MyAgent(Agent):  # noqa: D101
     @chat_model
     @staticmethod
-    def mock() -> Tuple[Type[Resource], Dict[str, Any]]: # noqa: D102
+    def mock() -> Tuple[Type[Resource], Dict[str, Any]]:  # noqa: D102
         return MockChatModelImpl, {
             "name": "mock",
             "host": "8.8.8.8",
@@ -126,6 +127,7 @@ def test_agent_plan_deserialize(agent_plan: AgentPlan) -> None:  # noqa: D103
         expected_json = f.read()
     deserialized_agent_plan = AgentPlan.model_validate_json(expected_json)
     assert deserialized_agent_plan == agent_plan
+
 
 def test_get_resource() -> None:  # noqa: D103
     agent_plan = AgentPlan.from_agent(MyAgent())

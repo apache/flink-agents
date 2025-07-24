@@ -83,6 +83,8 @@ class FlinkRunnerContext(RunnerContext):
             raise RuntimeError(err_msg) from e
 
 
-def create_flink_runner_context(j_runner_context: Any, agent_plan_json: str) -> FlinkRunnerContext:
+def create_flink_runner_context(
+    j_runner_context: Any, agent_plan_json: str
+) -> FlinkRunnerContext:
     """Used to create a FlinkRunnerContext Python object in Pemja environment."""
     return FlinkRunnerContext(j_runner_context, agent_plan_json)

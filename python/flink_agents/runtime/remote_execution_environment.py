@@ -205,7 +205,9 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         self.__env.execute()
 
 
-def create_instance(env: StreamExecutionEnvironment, **kwargs: Dict[str, Any]) -> AgentsExecutionEnvironment:
+def create_instance(
+    env: StreamExecutionEnvironment, **kwargs: Dict[str, Any]
+) -> AgentsExecutionEnvironment:
     """Factory function to create a remote agents execution environment.
 
     Parameters

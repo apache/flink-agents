@@ -32,12 +32,13 @@ class Event(BaseModel, ABC, extra="allow"):
     id : UUID
         Unique identifier for the event, automatically generated using uuid4.
     """
+
     id: UUID = Field(default_factory=uuid4)
 
-    @model_validator(mode='after')
-    def validate_extra(self) -> 'Event':
+    @model_validator(mode="after")
+    def validate_extra(self) -> "Event":
         """Ensure init fields is serializable."""
-        #TODO: support Event contains Row field be json serializable
+        # TODO: support Event contains Row field be json serializable
         for value in self.model_dump().values():
             if isinstance(value, Row):
                 return self
