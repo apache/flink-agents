@@ -46,7 +46,7 @@ public class FlinkAgentsMetricGroupImpl extends ProxyMetricGroup<MetricGroup>
 
     private final HashMap<String, Histogram> histograms = new HashMap<>();
 
-    private final HashMap<String, StringGaugeImpl> gauges = new HashMap<>();
+    private final HashMap<String, UpdatableGaugeImpl> gauges = new HashMap<>();
 
     public FlinkAgentsMetricGroupImpl(MetricGroup parentMetricGroup) {
         super(parentMetricGroup);
@@ -59,9 +59,9 @@ public class FlinkAgentsMetricGroupImpl extends ProxyMetricGroup<MetricGroup>
         return subMetricGroups.get(name);
     }
 
-    public StringGaugeImpl getGauge(String name) {
+    public UpdatableGaugeImpl getGauge(String name) {
         if (!gauges.containsKey(name)) {
-            gauges.put(name, super.gauge(name, new StringGaugeImpl()));
+            gauges.put(name, super.gauge(name, new UpdatableGaugeImpl()));
         }
         return gauges.get(name);
     }

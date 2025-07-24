@@ -44,9 +44,9 @@ public interface FlinkAgentsMetricGroup {
      * avoiding potential type conflicts by standardizing on String as the value type.
      *
      * @param name The name of the gauge.
-     * @return the gauge instance for string values.
+     * @return the updatable gauge instance.
      */
-    StringGauge getGauge(String name);
+    UpdatableGauge getGauge(String name);
 
     /**
      * Create or retrieve a counter with the given name.

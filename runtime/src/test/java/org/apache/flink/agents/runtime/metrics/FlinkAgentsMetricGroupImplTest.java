@@ -54,7 +54,7 @@ public class FlinkAgentsMetricGroupImplTest {
     @Test
     void testGetGauge() {
         String name = "testGauge";
-        StringGaugeImpl result = metricGroup.getGauge(name);
+        UpdatableGaugeImpl result = metricGroup.getGauge(name);
 
         assertNotNull(result);
         assertSame(result, metricGroup.getGauge(name));

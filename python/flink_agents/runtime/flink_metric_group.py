@@ -150,11 +150,11 @@ class FlinkGauge(Gauge):
         self._j_gauge = j_gauge
 
     @override
-    def update(self, value: str) -> None:
+    def update(self, value: float) -> None:
         """Update the gauge with the given value."""
         self._j_gauge.update(value)
 
     @override
-    def get_value(self) -> str:
+    def get_value(self) -> float:
         """Return the current value of the gauge."""
         return self._j_gauge.getValue()

@@ -27,8 +27,7 @@ import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
-import org.apache.flink.agents.runtime.metrics.ActionMetricGroup;
-import org.apache.flink.agents.runtime.metrics.BuiltInMetricGroup;
+import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -86,7 +85,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient FlinkAgentsMetricGroupImpl metricGroup;
 
-    private transient BuiltInMetricGroup builtInMetricGroup;
+    private transient BuiltInMetrics builtInMetrics;
 
     public ActionExecutionOperator(
             AgentPlan agentPlan, Boolean inputIsJava, ProcessingTimeService processingTimeService) {
@@ -111,7 +110,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         shortTermMemState = getRuntimeContext().getMapState(shortTermMemStateDescriptor);
 
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
-        builtInMetricGroup = new BuiltInMetricGroup(metricGroup, agentPlan);
+        builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
 
         runnerContext = new RunnerContextImpl(shortTermMemState, metricGroup);
 
@@ -132,7 +131,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         events.push(inputEvent);
         while (!events.isEmpty()) {
             Event event = events.pop();
-            builtInMetricGroup.markEventProcessed();
+            builtInMetrics.markEventProcessed();
             List<Action> actions = getActionsTriggeredBy(event);
             if (actions != null && !actions.isEmpty()) {
                 for (Action action : actions) {
@@ -144,12 +143,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // execute action and collect output events
                     String actionName = action.getName();
                     LOG.debug("Try execute action {} for event {}.", actionName, event);
-                    ActionMetricGroup actionMetricGroup =
-                            builtInMetricGroup.getActionMetricGroup(actionName);
-                    builtInMetricGroup.markActionExecuting(actionName);
                     List<Event> actionOutputEvents;
                     if (action.getExec() instanceof JavaFunction) {
-                        runnerContext.setActionMetricGroup(actionMetricGroup);
+                        runnerContext.setActionName(actionName);
                         action.getExec().call(event, runnerContext);
                         actionOutputEvents = runnerContext.drainEvents();
                     } else if (action.getExec() instanceof PythonFunction) {
@@ -158,15 +154,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 pythonActionExecutor.executePythonFunction(
                                         (PythonFunction) action.getExec(),
                                         (PythonEvent) event,
-                                        actionMetricGroup);
+                                        actionName);
                     } else {
                         throw new RuntimeException("Unsupported action type: " + action.getClass());
                     }
-                    builtInMetricGroup.markActionExecuted(actionName);
+                    builtInMetrics.markActionExecuted(actionName);
 
                     for (Event actionOutputEvent : actionOutputEvents) {
                         if (EventUtil.isOutputEvent(actionOutputEvent)) {
-                            builtInMetricGroup.markEventProcessed();
+                            builtInMetrics.markEventProcessed();
                             OUT outputData = getOutputFromOutputEvent(actionOutputEvent);
                             LOG.debug(
                                     "Collect output data {} for input {} in action {}.",

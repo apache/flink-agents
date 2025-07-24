@@ -22,15 +22,16 @@ package org.apache.flink.agents.api.metrics;
 import org.apache.flink.metrics.Gauge;
 
 /**
- * StringGauge interface is designed to measure and update string values. It extends the Gauge
- * interface with a generic type of String. This interface is used to define standard operations for
- * components that need to monitor and update string information.
+ * UpdatableGauge interface defines a simple gauge that extends the Gauge interface. This interface
+ * provides a method to update the gauge value.
+ *
+ * @param <T> The type parameter of the gauge value
  */
-public interface StringGauge extends Gauge<String> {
+public interface UpdatableGauge<T> extends Gauge<T> {
     /**
-     * Updates the value of the StringGauge.
+     * Updates the value of the UpdatableGauge.
      *
-     * @param value The new string value to be set, should not be null.
+     * @param value The new value to be set.
      */
-    public void update(String value);
+    void update(T value);
 }

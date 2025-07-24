@@ -22,7 +22,6 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
-import org.apache.flink.agents.runtime.metrics.ActionMetricGroup;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
@@ -42,7 +41,7 @@ public class RunnerContextImpl implements RunnerContext {
 
     protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
 
-    protected ActionMetricGroup actionMetricGroup;
+    protected String actionName;
 
     public RunnerContextImpl(
             MapState<String, MemoryObjectImpl.MemoryItem> store,
@@ -51,8 +50,8 @@ public class RunnerContextImpl implements RunnerContext {
         this.agentMetricGroup = agentMetricGroup;
     }
 
-    public void setActionMetricGroup(ActionMetricGroup actionMetricGroup) {
-        this.actionMetricGroup = actionMetricGroup;
+    public void setActionName(String actionName) {
+        this.actionName = actionName;
     }
 
     @Override
@@ -61,9 +60,8 @@ public class RunnerContextImpl implements RunnerContext {
     }
 
     @Override
-    public ActionMetricGroup getActionMetricGroup() {
-        Preconditions.checkNotNull(agentMetricGroup, "Action Metric Group is not set.");
-        return actionMetricGroup;
+    public FlinkAgentsMetricGroupImpl getActionMetricGroup() {
+        return agentMetricGroup.getSubGroup(actionName);
     }
 
     @Override

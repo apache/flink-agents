@@ -22,7 +22,6 @@ import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
-import org.apache.flink.agents.runtime.metrics.ActionMetricGroup;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
@@ -80,10 +79,9 @@ public class PythonActionExecutor {
     }
 
     public List<Event> executePythonFunction(
-            PythonFunction function, PythonEvent event, ActionMetricGroup actionMetricGroup)
-            throws Exception {
+            PythonFunction function, PythonEvent event, String actionName) throws Exception {
         runnerContext.checkNoPendingEvents();
-        runnerContext.setActionMetricGroup(actionMetricGroup);
+        runnerContext.setActionName(actionName);
         function.setInterpreter(interpreter);
 
         // TODO: remove the set and get runner context after updating pemja to version 0.5.3

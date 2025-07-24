@@ -19,26 +19,24 @@
 
 package org.apache.flink.agents.runtime.metrics;
 
-import org.apache.flink.agents.api.metrics.StringGauge;
+import org.apache.flink.agents.api.metrics.UpdatableGauge;
 
 /**
- * Implementation of the StringGauge interface, used to monitor and track string values. This class
- * provides methods to set and retrieve the monitored string value.
+ * Implementation of the UpdatableGauge interface, used to monitor and track values. This class
+ * provides methods to set and retrieve the monitored value.
+ *
+ * @param <T> The type of value being monitored
  */
-public class StringGaugeImpl implements StringGauge {
-    private String value;
-
-    public StringGaugeImpl() {
-        this.value = "";
-    }
+public class UpdatableGaugeImpl<T> implements UpdatableGauge<T> {
+    private T value;
 
     @Override
-    public void update(String value) {
+    public void update(T value) {
         this.value = value;
     }
 
     @Override
-    public String getValue() {
+    public T getValue() {
         return value;
     }
 }

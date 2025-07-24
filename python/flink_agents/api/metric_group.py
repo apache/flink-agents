@@ -131,9 +131,9 @@ class Gauge(ABC):
     """A gauge metric that returns a value by invoking a function."""
 
     @abstractmethod
-    def update(self, value: str) -> None:
+    def update(self, value: float) -> None:
         """Update the current value of the gauge."""
 
     @abstractmethod
-    def get_value(self) -> str:
+    def get_value(self) -> float:
         """Return the current value of the gauge."""

@@ -31,22 +31,19 @@ import java.util.HashMap;
  * number of events processed, the number of actions being executed, and the number of actions
  * executed per second.
  */
-public class BuiltInMetricGroup {
+public class BuiltInMetrics {
 
     private final Meter numOfEventProcessedPerSec;
 
-    private final Counter numOfActionsExecuting;
-
     private final Meter numOfActionsExecutedPerSec;
 
-    private final HashMap<String, ActionMetricGroup> actionMetricGroups;
+    private final HashMap<String, BuiltInActionMetrics> actionMetricGroups;
 
-    public BuiltInMetricGroup(FlinkAgentsMetricGroupImpl parentMetricGroup, AgentPlan agentPlan) {
+    public BuiltInMetrics(FlinkAgentsMetricGroupImpl parentMetricGroup, AgentPlan agentPlan) {
         Counter numOfEventsProcessed = parentMetricGroup.getCounter("numOfEventProcessed");
         this.numOfEventProcessedPerSec =
                 parentMetricGroup.getMeter("numOfEventProcessedPerSec", numOfEventsProcessed);
 
-        this.numOfActionsExecuting = parentMetricGroup.getCounter("numOfActionsExecuting");
         Counter numOfActionsExecuted = parentMetricGroup.getCounter("numOfActionsExecuted");
         this.numOfActionsExecutedPerSec =
                 parentMetricGroup.getMeter("numOfActionsExecutedPerSec", numOfActionsExecuted);
@@ -54,7 +51,8 @@ public class BuiltInMetricGroup {
         this.actionMetricGroups = new HashMap<>();
         for (String actionName : agentPlan.getActions().keySet()) {
             actionMetricGroups.put(
-                    actionName, new ActionMetricGroup(parentMetricGroup.getSubGroup(actionName)));
+                    actionName,
+                    new BuiltInActionMetrics(parentMetricGroup.getSubGroup(actionName)));
         }
     }
 
@@ -64,31 +62,11 @@ public class BuiltInMetricGroup {
     }
 
     /**
-     * Marks that an action has started executing. Increments the executing actions counter and
-     * records the start time.
-     */
-    public void markActionExecuting(String actionName) {
-        numOfActionsExecuting.inc();
-        actionMetricGroups.get(actionName).markActionExecuting();
-    }
-
-    /**
      * Marks that an action has finished executing. Decrements the executing actions counter and
      * marks an event on the executed meter.
      */
     public void markActionExecuted(String actionName) {
-        numOfActionsExecuting.dec();
         numOfActionsExecutedPerSec.markEvent();
         actionMetricGroups.get(actionName).markActionExecuted();
-    }
-
-    /**
-     * Retrieves the metric group for a specific action.
-     *
-     * @param actionName The name of the action.
-     * @return The ActionMetricGroup instance for the specified action.
-     */
-    public ActionMetricGroup getActionMetricGroup(String actionName) {
-        return actionMetricGroups.get(actionName);
     }
 }
