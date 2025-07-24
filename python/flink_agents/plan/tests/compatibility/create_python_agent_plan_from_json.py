@@ -75,7 +75,9 @@ if __name__ == "__main__":
     assert len(actions_by_event) == 2
 
     assert input_event in actions_by_event
-    assert actions_by_event[input_event] == ["firstAction", "secondAction"]
+    actions_by_input_event = actions_by_event[input_event]
+    actions_by_input_event.sort()
+    assert actions_by_input_event == ["firstAction", "secondAction"]
 
     assert my_event in actions_by_event
     assert actions_by_event[my_event] == ["secondAction"]

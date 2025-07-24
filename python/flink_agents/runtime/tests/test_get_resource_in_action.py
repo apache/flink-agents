@@ -15,28 +15,35 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, Tuple, Type
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
 from flink_agents.api.agent import Agent
+from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModel
 from flink_agents.api.decorators import action, chat_model, tool
 from flink_agents.api.event import InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.tools.tool import BaseTool
 
 
 class MockChatModelImpl(BaseChatModel):  # noqa: D101
     host: str
     desc: str
 
-    @classmethod
-    def resource_type(cls) -> ResourceType:  # noqa: D102
-        return ResourceType.CHAT_MODEL
+    def chat(  # noqa: D102
+        self,
+        messages: Sequence[ChatMessage],
+        chat_history: Optional[List[ChatMessage]] = None,
+    ) -> ChatMessage:
+        return ChatMessage(
+            role=MessageRole.ASSISTANT,
+            content=f"{messages[0].content} {self.host} {self.desc}",
+        )
 
-    def chat(self) -> str:
-        """For testing purposes."""
-        return self.host + " " + self.desc
+    def bind_tools(self, tools: Sequence[BaseTool]) -> None:  # noqa: D102
+        pass
 
 
 class MyAgent(Agent):  # noqa: D101
@@ -51,7 +58,19 @@ class MyAgent(Agent):  # noqa: D101
 
     @tool
     @staticmethod
-    def mock_tool(input: str) -> str:  # noqa: D102
+    def mock_tool(input: str) -> str:
+        """Mock tool.
+
+        Parameters
+        ----------
+        input : str
+            The input message.
+
+        Returns:
+        -------
+        strs
+            Response string value.
+        """
         return input + " mock tools just for testing."
 
     @action(InputEvent)
@@ -64,9 +83,9 @@ class MyAgent(Agent):  # noqa: D101
         mock_tool = ctx.get_resource(type=ResourceType.TOOL, name="mock_tool")
         ctx.send_event(
             OutputEvent(
-                output=input
-                + " "
-                + mock_chat_model.chat()
+                output=mock_chat_model.chat(
+                    messages=[ChatMessage(role=MessageRole.USER, content=input)]
+                ).content
                 + " "
                 + mock_tool.call("call")
             )

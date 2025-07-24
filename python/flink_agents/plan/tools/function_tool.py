@@ -15,19 +15,77 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, Tuple
+from typing import Any, Callable
 
-from flink_agents.api.tools.tool import BaseTool
-from flink_agents.plan.function import Function
+from docstring_parser import parse
+from pydantic import field_serializer, model_validator
+from typing_extensions import override
+
+from flink_agents.api.tools.tool import BaseTool, ToolMetadata, ToolType
+from flink_agents.api.tools.utils import create_schema_from_function
+from flink_agents.plan.function import Function, JavaFunction, PythonFunction
 
 
-#TODO: Complete FunctionTool
 class FunctionTool(BaseTool):
-    """Function tool.
+    """Tool that takes in a function.
 
-    Currently, this class is just for testing purposes.
+    Attributes:
+    ----------
+    func : Function
+        User defined function.
     """
+
     func: Function
-    def call(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
-        """Call function."""
+
+    @field_serializer("func")
+    def __serialize_func(self, func: Function) -> dict:
+        # append meta info to help deserialize exec
+        data = func.model_dump()
+        data["func_type"] = func.__class__.__qualname__
+        return data
+
+    @model_validator(mode="before")
+    def __custom_deserialize(self) -> "FunctionTool":
+        func = self["func"]
+        # restore exec from serialized json.
+        if isinstance(func, dict):
+            func_type = func["func_type"]
+            if func_type == "PythonFunction":
+                self["func"] = PythonFunction(**func)
+            elif func_type == "JavaFunction":
+                self["func"] = JavaFunction(**func)
+            else:
+                err_msg = f"Unknown function type: {func_type}"
+                raise NotImplementedError(err_msg)
+        return self
+
+    @classmethod
+    @override
+    def tool_type(cls) -> ToolType:
+        """Get the tool type."""
+        return ToolType.FUNCTION
+
+    def call(self, *args: Any, **kwargs: Any) -> Any:
+        """Call the function tool."""
         return self.func(*args, **kwargs)
+
+
+def from_callable(name: str, func: Callable) -> FunctionTool:
+    """Create FunctionTool from a user defined function.
+
+    Parameters
+    ----------
+    name : str
+        Name of the tool function.
+    func : Callable
+        The function to analyze.
+    """
+    description = parse(func.__doc__).description
+    metadata = ToolMetadata(
+        name=name,
+        description=description,
+        args_schema=create_schema_from_function(name=name, func=func),
+    )
+    return FunctionTool(
+        name=name, func=PythonFunction.from_callable(func), metadata=metadata
+    )
