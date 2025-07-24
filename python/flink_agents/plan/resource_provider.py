@@ -102,6 +102,20 @@ class PythonSerializableResourceProvider(SerializableResourceProvider):
     serialized: Dict[str, Any]
     resource: Optional[SerializableResource] = None
 
+    @staticmethod
+    def from_resource(
+        name: str, resource: SerializableResource
+    ) -> "PythonSerializableResourceProvider":
+        """Create PythonSerializableResourceProvider from SerializableResource."""
+        return PythonSerializableResourceProvider(
+            name=name,
+            type=resource.resource_type(),
+            serialized=resource.model_dump(),
+            module=resource.__module__,
+            clazz=resource.__class__.__name__,
+            resource=resource,
+        )
+
     def provide(self) -> Resource:
         """Get or deserialize resource in runtime."""
         if self.resource is None:

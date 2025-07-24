@@ -22,6 +22,39 @@
                 "flink_agents.api.event.InputEvent",
                 "flink_agents.plan.tests.test_agent_plan.MyEvent"
             ]
+        },
+        "process_chat_request": {
+            "name": "process_chat_request",
+            "exec": {
+                "module": "flink_agents.plan.action",
+                "qualname": "process_chat_request",
+                "func_type": "PythonFunction"
+            },
+            "listen_event_types": [
+                "flink_agents.api.event.ChatRequestEvent"
+            ]
+        },
+        "process_tool_request": {
+            "name": "process_tool_request",
+            "exec": {
+                "module": "flink_agents.plan.action",
+                "qualname": "process_tool_request",
+                "func_type": "PythonFunction"
+            },
+            "listen_event_types": [
+                "flink_agents.api.event.ToolRequestEvent"
+            ]
+        },
+        "process_tool_response": {
+            "name": "process_tool_response",
+            "exec": {
+                "module": "flink_agents.plan.action",
+                "qualname": "process_tool_response",
+                "func_type": "PythonFunction"
+            },
+            "listen_event_types": [
+                "flink_agents.api.event.ToolResponseEvent"
+            ]
         }
     },
     "actions_by_event": {
@@ -31,6 +64,15 @@
         ],
         "flink_agents.plan.tests.test_agent_plan.MyEvent": [
             "second_action"
+        ],
+        "flink_agents.api.event.ChatRequestEvent": [
+            "process_chat_request"
+        ],
+        "flink_agents.api.event.ToolRequestEvent": [
+            "process_tool_request"
+        ],
+        "flink_agents.api.event.ToolResponseEvent": [
+            "process_tool_response"
         ]
     },
     "resource_providers": {

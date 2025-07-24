@@ -17,15 +17,18 @@
 #################################################################################
 import json
 from pathlib import Path
-from typing import Any, Dict, Tuple, Type
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
 import pytest
 
 from flink_agents.api.agent import Agent
+from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.chat_model import BaseChatModel
 from flink_agents.api.decorators import action, chat_model
 from flink_agents.api.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.tools.tool import BaseTool
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.function import PythonFunction
 
@@ -71,22 +74,32 @@ class MyEvent(Event):
     """Event for testing purposes."""
 
 
-class MockChatModelImpl(Resource):  # noqa: D101
+class MockChatModelImpl(BaseChatModel):  # noqa: D101
     host: str
     desc: str
 
     @classmethod
-    def resource_type(cls) -> ResourceType: # noqa: D102
+    def resource_type(cls) -> ResourceType:  # noqa: D102
         return ResourceType.CHAT_MODEL
 
-    def chat(self) -> str:
-        """For testing purposes."""
-        return self.host + " " + self.desc
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        chat_history: Optional[List[ChatMessage]] = None,
+    ) -> ChatMessage:
+        """Testing Implementation."""
+        return ChatMessage(
+            role=MessageRole.ASSISTANT, content=self.host + " " + self.desc
+        )
+
+    def bind_tools(self, tools: Sequence[BaseTool]) -> None:
+        """Testing Implementation."""
+
 
 class MyAgent(Agent):  # noqa: D101
     @chat_model
     @staticmethod
-    def mock() -> Tuple[Type[Resource], Dict[str, Any]]: # noqa: D102
+    def mock() -> Tuple[Type[Resource], Dict[str, Any]]:  # noqa: D102
         return MockChatModelImpl, {
             "name": "mock",
             "host": "8.8.8.8",
@@ -114,6 +127,7 @@ current_dir = Path(__file__).parent
 
 def test_agent_plan_serialize(agent_plan: AgentPlan) -> None:  # noqa: D103
     json_value = agent_plan.model_dump_json(serialize_as_any=True, indent=4)
+    print(json_value)
     with Path.open(Path(f"{current_dir}/resources/agent_plan.json")) as f:
         expected_json = f.read()
     actual = json.loads(json_value)
@@ -127,7 +141,11 @@ def test_agent_plan_deserialize(agent_plan: AgentPlan) -> None:  # noqa: D103
     deserialized_agent_plan = AgentPlan.model_validate_json(expected_json)
     assert deserialized_agent_plan == agent_plan
 
+
 def test_get_resource() -> None:  # noqa: D103
     agent_plan = AgentPlan.from_agent(MyAgent())
     mock = agent_plan.get_resource("mock", ResourceType.CHAT_MODEL)
-    assert mock.chat() == "8.8.8.8 mock resource just for testing."
+    assert (
+        mock.chat(ChatMessage(role=MessageRole.USER, content="")).content
+        == "8.8.8.8 mock resource just for testing."
+    )

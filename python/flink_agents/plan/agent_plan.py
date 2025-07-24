@@ -21,7 +21,7 @@ from pydantic import BaseModel, field_serializer, model_validator
 
 from flink_agents.api.agent import Agent
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.plan.action import Action
+from flink_agents.plan.action import BUILT_IN_ACTIONS, Action
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.resource_provider import (
     JavaResourceProvider,
@@ -30,7 +30,7 @@ from flink_agents.plan.resource_provider import (
     PythonSerializableResourceProvider,
     ResourceProvider,
 )
-from flink_agents.plan.tools.function_tool import FunctionTool
+from flink_agents.plan.tools.function_tool import from_callable
 
 
 class AgentPlan(BaseModel):
@@ -124,6 +124,15 @@ class AgentPlan(BaseModel):
                     actions_by_event[event_type] = []
                 actions_by_event[event_type].append(action.name)
 
+        # append built-in actions
+        for action in BUILT_IN_ACTIONS:
+            if action.name not in actions:
+                actions[action.name] = action
+                for event_type in action.listen_event_types:
+                    if event_type not in actions_by_event:
+                        actions_by_event[event_type] = []
+                    actions_by_event[event_type].append(action.name)
+
         resource_providers = {}
         for provider in _get_resource_providers(agent):
             type = provider.type
@@ -169,7 +178,23 @@ class AgentPlan(BaseModel):
             self.__resources[type] = {}
         if name not in self.__resources[type]:
             resource_provider = self.resource_providers[type][name]
-            self.__resources[type][name] = resource_provider.provide()
+            resource = resource_provider.provide()
+            if resource.resource_type() == ResourceType.CHAT_MODEL:
+                # bind tools
+                if resource.tools is not None:
+                    resource.bind_tools(
+                        [
+                            self.get_resource(name, ResourceType.TOOL)
+                            for name in resource.tools
+                        ]
+                    )
+                # bind prompt
+                if resource.prompt is not None and isinstance(resource.prompt, str):
+                    resource.prompt = self.get_resource(
+                        resource.prompt, ResourceType.PROMPT
+                    )
+
+            self.__resources[type][name] = resource
         return self.__resources[type][name]
 
 
@@ -222,30 +247,33 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
 
             if callable(value):
                 clazz, kwargs = value()
-                module = clazz.__module__
                 provider = PythonResourceProvider(
                     name=name,
                     type=clazz.resource_type(),
-                    module=module,
+                    module=clazz.__module__,
                     clazz=clazz.__name__,
                     kwargs=kwargs,
                 )
                 resource_providers.append(provider)
-        if hasattr(value, "_is_tool"):
+        elif hasattr(value, "_is_tool"):
             if isinstance(value, staticmethod):
                 value = value.__func__
 
             if callable(value):
                 # TODO: support other tool type.
-                func = PythonFunction.from_callable(value)
-                tool = FunctionTool(name=name, func=func)
-                provider = PythonSerializableResourceProvider(
-                    name=tool.name,
-                    type=tool.resource_type(),
-                    serialized=tool.model_dump(),
-                    module=tool.__module__,
-                    clazz=tool.__class__.__name__,
-                    resource=tool,
+                tool = from_callable(name=name, func=value)
+                resource_providers.append(
+                    PythonSerializableResourceProvider.from_resource(
+                        name=name, resource=tool
+                    )
                 )
-                resource_providers.append(provider)
+        elif hasattr(value, "_is_prompt"):
+            if isinstance(value, staticmethod):
+                value = value.__func__
+            prompt = value()
+            resource_providers.append(
+                PythonSerializableResourceProvider.from_resource(
+                    name=name, resource=prompt
+                )
+            )
     return resource_providers
