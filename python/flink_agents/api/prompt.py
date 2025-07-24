@@ -54,7 +54,7 @@ class Prompt(SerializableResource):
         """Generate text string from template with input arguments."""
         msgs = []
         for m in self.template:
-            msg = f"{m.role}: {Formatter().format(m.content, **kwargs)}"
+            msg = f"{m.role.value}: {Formatter().format(m.content, **kwargs)}"
             if m.extra_args is not None and len(m.extra_args) > 0:
                 msg += f"{m.extra_args}"
             msgs.append(msg)
