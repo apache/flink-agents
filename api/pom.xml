@@ -28,4 +28,13 @@ under the License.
     <artifactId>flink-agents-api</artifactId>
     <name>Flink Agents : API</name>
 
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-metrics-core</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
 </project>

@@ -22,6 +22,7 @@ import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.utils.EventUtil;
@@ -59,7 +60,9 @@ public class PythonActionExecutor {
         this.agentPlanJson = agentPlanJson;
     }
 
-    public void open(MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState)
+    public void open(
+            MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState,
+            FlinkAgentsMetricGroupImpl metricGroup)
             throws Exception {
         environmentManager.open();
         EmbeddedPythonEnvironment env = environmentManager.createEnvironment();
@@ -67,7 +70,7 @@ public class PythonActionExecutor {
         interpreter = env.getInterpreter();
         interpreter.exec(PYTHON_IMPORTS);
 
-        runnerContext = new PythonRunnerContextImpl(shortTermMemState);
+        runnerContext = new PythonRunnerContextImpl(shortTermMemState, metricGroup);
 
         // TODO: remove the set and get runner context after updating pemja to version 0.5.3
         Object pythonRunnerContextObject =
@@ -75,9 +78,10 @@ public class PythonActionExecutor {
         interpreter.set(FLINK_RUNNER_CONTEXT_VAR_NAME, pythonRunnerContextObject);
     }
 
-    public List<Event> executePythonFunction(PythonFunction function, PythonEvent event)
-            throws Exception {
+    public List<Event> executePythonFunction(
+            PythonFunction function, PythonEvent event, String actionName) throws Exception {
         runnerContext.checkNoPendingEvents();
+        runnerContext.setActionName(actionName);
         function.setInterpreter(interpreter);
 
         // TODO: remove the set and get runner context after updating pemja to version 0.5.3

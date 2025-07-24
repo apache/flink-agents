@@ -27,6 +27,8 @@ import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
+import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.utils.EventUtil;
@@ -81,6 +83,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // PythonActionExecutor for Python actions
     private transient PythonActionExecutor pythonActionExecutor;
 
+    private transient FlinkAgentsMetricGroupImpl metricGroup;
+
+    private transient BuiltInMetrics builtInMetrics;
+
     public ActionExecutionOperator(
             AgentPlan agentPlan, Boolean inputIsJava, ProcessingTimeService processingTimeService) {
         this.agentPlan = agentPlan;
@@ -102,7 +108,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         TypeInformation.of(String.class),
                         TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
         shortTermMemState = getRuntimeContext().getMapState(shortTermMemStateDescriptor);
-        runnerContext = new RunnerContextImpl(shortTermMemState);
+
+        metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
+        builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
+
+        runnerContext = new RunnerContextImpl(shortTermMemState, metricGroup);
 
         // init PythonActionExecutor
         initPythonActionExecutor();
@@ -121,6 +131,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         events.push(inputEvent);
         while (!events.isEmpty()) {
             Event event = events.pop();
+            builtInMetrics.markEventProcessed();
             List<Action> actions = getActionsTriggeredBy(event);
             if (actions != null && !actions.isEmpty()) {
                 for (Action action : actions) {
@@ -130,22 +141,28 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // TODO: Implement asynchronous action execution.
 
                     // execute action and collect output events
-                    LOG.debug("Try execute action {} for event {}.", action.getName(), event);
+                    String actionName = action.getName();
+                    LOG.debug("Try execute action {} for event {}.", actionName, event);
                     List<Event> actionOutputEvents;
                     if (action.getExec() instanceof JavaFunction) {
+                        runnerContext.setActionName(actionName);
                         action.getExec().call(event, runnerContext);
                         actionOutputEvents = runnerContext.drainEvents();
                     } else if (action.getExec() instanceof PythonFunction) {
                         checkState(event instanceof PythonEvent);
                         actionOutputEvents =
                                 pythonActionExecutor.executePythonFunction(
-                                        (PythonFunction) action.getExec(), (PythonEvent) event);
+                                        (PythonFunction) action.getExec(),
+                                        (PythonEvent) event,
+                                        actionName);
                     } else {
                         throw new RuntimeException("Unsupported action type: " + action.getClass());
                     }
+                    builtInMetrics.markActionExecuted(actionName);
 
                     for (Event actionOutputEvent : actionOutputEvents) {
                         if (EventUtil.isOutputEvent(actionOutputEvent)) {
+                            builtInMetrics.markEventProcessed();
                             OUT outputData = getOutputFromOutputEvent(actionOutputEvent);
                             LOG.debug(
                                     "Collect output data {} for input {} in action {}.",
@@ -190,7 +207,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     new PythonActionExecutor(
                             pythonEnvironmentManager,
                             new ObjectMapper().writeValueAsString(agentPlan));
-            pythonActionExecutor.open(shortTermMemState);
+            pythonActionExecutor.open(shortTermMemState, metricGroup);
         }
     }
 
