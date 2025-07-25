@@ -59,7 +59,9 @@ public class PythonActionExecutor {
         this.agentPlanJson = agentPlanJson;
     }
 
-    public void open(MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState)
+    public void open(
+            MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState,
+            Runnable mailboxThreadChecker)
             throws Exception {
         environmentManager.open();
         EmbeddedPythonEnvironment env = environmentManager.createEnvironment();
@@ -67,7 +69,7 @@ public class PythonActionExecutor {
         interpreter = env.getInterpreter();
         interpreter.exec(PYTHON_IMPORTS);
 
-        runnerContext = new PythonRunnerContextImpl(shortTermMemState);
+        runnerContext = new PythonRunnerContextImpl(shortTermMemState, mailboxThreadChecker);
 
         // TODO: remove the set and get runner context after updating pemja to version 0.5.3
         Object pythonRunnerContextObject =
