@@ -28,7 +28,6 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
-import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Test;
@@ -55,14 +54,13 @@ public class AgentPlanTest {
     }
 
     /** Test tool resource class. */
-    public static class TestTool extends Resource {
+    public static class TestTool extends SerializableResource {
         private final String name;
 
         public TestTool(String name) {
             this.name = name;
         }
 
-        @Override
         public String getName() {
             return name;
         }
@@ -81,7 +79,6 @@ public class AgentPlanTest {
             this.name = name;
         }
 
-        @Override
         public String getName() {
             return name;
         }
@@ -115,15 +112,13 @@ public class AgentPlanTest {
     /** Test agent class with resource annotations. */
     public static class TestAgentWithResources extends Agent {
 
-        @Tool(name = "myTool")
-        private TestTool tool = new TestTool("myTool");
+        @Tool private TestTool myTool = new TestTool("myTool");
 
         @ChatModel
         private TestSerializableChatModel chatModel =
                 new TestSerializableChatModel("defaultChatModel");
 
-        @Tool(name = "anotherTool")
-        private TestTool anotherTool = new TestTool("anotherTool");
+        @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
         @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
         public void handleInputEvent(InputEvent event, RunnerContext context) {
@@ -254,14 +249,14 @@ public class AgentPlanTest {
         assertThat(toolProviders).containsKey("myTool");
         assertThat(toolProviders).containsKey("anotherTool");
 
-        // Verify that tool providers are JavaResourceProvider (non-serializable)
+        // Verify that tool providers are JavaSerializableResourceProvider (non-serializable)
         ResourceProvider myToolProvider = toolProviders.get("myTool");
-        assertThat(myToolProvider).isInstanceOf(JavaResourceProvider.class);
+        assertThat(myToolProvider).isInstanceOf(JavaSerializableResourceProvider.class);
         assertThat(myToolProvider.getName()).isEqualTo("myTool");
         assertThat(myToolProvider.getType()).isEqualTo(ResourceType.TOOL);
 
         ResourceProvider anotherToolProvider = toolProviders.get("anotherTool");
-        assertThat(anotherToolProvider).isInstanceOf(JavaResourceProvider.class);
+        assertThat(anotherToolProvider).isInstanceOf(JavaSerializableResourceProvider.class);
         assertThat(anotherToolProvider.getName()).isEqualTo("anotherTool");
         assertThat(anotherToolProvider.getType()).isEqualTo(ResourceType.TOOL);
 
@@ -297,14 +292,12 @@ public class AgentPlanTest {
         Resource myTool = agentPlan.getResource("myTool", ResourceType.TOOL);
         assertThat(myTool).isNotNull();
         assertThat(myTool).isInstanceOf(TestTool.class);
-        assertThat(myTool.getName()).isEqualTo("myTool");
         assertThat(myTool.getResourceType()).isEqualTo(ResourceType.TOOL);
 
         // Test getting a chat model resource
         Resource chatModel = agentPlan.getResource("chatModel", ResourceType.CHAT_MODEL);
         assertThat(chatModel).isNotNull();
         assertThat(chatModel).isInstanceOf(TestSerializableChatModel.class);
-        assertThat(chatModel.getName()).isEqualTo("defaultChatModel");
         assertThat(chatModel.getResourceType()).isEqualTo(ResourceType.CHAT_MODEL);
 
         // Test that resources are cached (should be the same instance)

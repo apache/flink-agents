@@ -28,6 +28,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.Serialize
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ser.std.StdSerializer;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Custom serializer for {@link ResourceProvider} that handles the serialization of different
@@ -53,15 +54,10 @@ public class ResourceProviderJsonSerializer extends StdSerializer<ResourceProvid
             serializePythonSerializableResourceProvider(
                     jsonGenerator, (PythonSerializableResourceProvider) resourceProvider);
         } else if (resourceProvider instanceof JavaResourceProvider) {
-            jsonGenerator.writeStringField("name", resourceProvider.getName());
-            jsonGenerator.writeStringField("type", resourceProvider.getType().getValue());
+            serializeJavaResourceProvider(jsonGenerator, (JavaResourceProvider) resourceProvider);
         } else if (resourceProvider instanceof JavaSerializableResourceProvider) {
-            jsonGenerator.writeStringField("name", resourceProvider.getName());
-            jsonGenerator.writeStringField("type", resourceProvider.getType().getValue());
-            jsonGenerator.writeStringField(
-                    "module", ((JavaSerializableResourceProvider) resourceProvider).getModule());
-            jsonGenerator.writeStringField(
-                    "clazz", ((JavaSerializableResourceProvider) resourceProvider).getClazz());
+            serializeJavaSerializableResourceProvider(
+                    jsonGenerator, (JavaSerializableResourceProvider) resourceProvider);
         } else {
             throw new IllegalArgumentException(
                     "Unsupported resource provider type: " + resourceProvider.getClass().getName());
@@ -118,5 +114,39 @@ public class ResourceProviderJsonSerializer extends StdSerializer<ResourceProvid
         gen.writeEndObject();
 
         gen.writeStringField("__resource_provider_type__", "PythonSerializableResourceProvider");
+    }
+
+    private void serializeJavaSerializableResourceProvider(
+            JsonGenerator gen, JavaSerializableResourceProvider provider) throws IOException {
+        gen.writeStringField("name", provider.getName());
+        gen.writeStringField("type", provider.getType().getValue());
+        gen.writeStringField("module", provider.getModule());
+        gen.writeStringField("clazz", provider.getClazz());
+        gen.writeStringField("serializedResource", provider.getSerializedResource());
+        gen.writeStringField(
+                "__resource_provider_type__",
+                JavaSerializableResourceProvider.class.getSimpleName());
+    }
+
+    private void serializeJavaResourceProvider(JsonGenerator gen, JavaResourceProvider provider)
+            throws IOException {
+        gen.writeStringField("name", provider.getName());
+        gen.writeStringField("type", provider.getType().getValue());
+        gen.writeStringField("className", provider.getClassName());
+        List<Object> parameters = provider.getParameters();
+        gen.writeFieldName("parameters");
+        gen.writeStartArray();
+        for (Object parameter : parameters) {
+            gen.writeObject(parameter);
+        }
+        gen.writeEndArray();
+        gen.writeFieldName("parameterTypes");
+        gen.writeStartArray();
+        for (String type : provider.getParameterTypes()) {
+            gen.writeString(type);
+        }
+        gen.writeEndArray();
+        gen.writeStringField(
+                "__resource_provider_type__", JavaResourceProvider.class.getSimpleName());
     }
 }

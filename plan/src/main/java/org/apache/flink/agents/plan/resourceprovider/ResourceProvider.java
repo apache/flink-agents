@@ -25,7 +25,7 @@ import org.apache.flink.agents.plan.serializer.ResourceProviderJsonSerializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
-import java.util.concurrent.Callable;
+import java.util.function.BiFunction;
 
 /**
  * Resource provider that carries resource metadata to create Resource objects at runtime.
@@ -70,5 +70,6 @@ public abstract class ResourceProvider implements java.io.Serializable {
      * @return the created resource
      * @throws Exception if the resource cannot be created
      */
-    public abstract Resource provide(Callable<Resource> getResource) throws Exception;
+    public abstract Resource provide(BiFunction<String, ResourceType, Resource> getResource)
+            throws Exception;
 }

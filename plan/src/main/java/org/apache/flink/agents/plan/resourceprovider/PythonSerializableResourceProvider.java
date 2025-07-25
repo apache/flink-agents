@@ -24,7 +24,7 @@ import org.apache.flink.agents.api.resource.SerializableResource;
 
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.Callable;
+import java.util.function.BiFunction;
 
 /**
  * Resource Provider that carries Resource object or serialized object.
@@ -66,7 +66,8 @@ public class PythonSerializableResourceProvider extends SerializableResourceProv
     }
 
     @Override
-    public Resource provide(Callable<Resource> getResource) throws Exception {
+    public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
+            throws Exception {
         // TODO: Implement Python resource deserialization logic
         // This would typically involve calling into Python runtime to deserialize the
         // resource

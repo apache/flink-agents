@@ -16,18 +16,19 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api.resource;
+package org.apache.flink.agents.api.annotation;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 /**
- * Base interface for all kinds of resources, including chat models, tools, prompts and so on.
+ * Annotation to mark a field as a prompt resource that should be managed by the agent plan.
  *
- * <p>Resources are components that can be used by agents during action execution.
+ * <p>Fields annotated with @Prompt will be scanned during agent plan creation and corresponding
+ * resource providers will be created to manage the prompt instances.
  */
-public abstract class Resource {
-    /**
-     * Get the type of the resource.
-     *
-     * @return the resource type
-     */
-    public abstract ResourceType getResourceType();
-}
+@Target({ElementType.FIELD, ElementType.METHOD})
+@Retention(RetentionPolicy.RUNTIME)
+public @interface Prompt {}

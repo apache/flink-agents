@@ -23,7 +23,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.Callable;
+import java.util.function.BiFunction;
 
 /**
  * Python Resource provider that carries resource metadata to create Resource objects at runtime.
@@ -61,7 +61,8 @@ public class PythonResourceProvider extends ResourceProvider {
     }
 
     @Override
-    public Resource provide(Callable<Resource> getResource) throws Exception {
+    public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
+            throws Exception {
         // TODO: Implement Python resource creation logic
         // This would typically involve calling into Python runtime to create the
         // resource

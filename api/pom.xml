@@ -27,7 +27,6 @@ under the License.
 
     <artifactId>flink-agents-api</artifactId>
     <name>Flink Agents : API</name>
-
     <dependencies>
         <dependency>
             <groupId>org.apache.flink</groupId>

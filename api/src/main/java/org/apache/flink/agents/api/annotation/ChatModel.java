@@ -29,13 +29,10 @@ import java.lang.annotation.Target;
  * <p>Fields annotated with @ChatModel will be scanned during agent plan creation and corresponding
  * resource providers will be created to manage the chat model instances.
  */
-@Target(ElementType.FIELD)
+@Target({ElementType.FIELD, ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface ChatModel {
-    /**
-     * The name of the chat model resource. If not specified, the field name will be used.
-     *
-     * @return the resource name
-     */
-    String name() default "";
+    String CHAT_MODEL_CLASS_NAME = "clazz";
+    String CHAT_MODEL_ARGUMENTS = "arguments";
+    String CHAT_MODEL_ARGUMENTS_TYPES = "types";
 }

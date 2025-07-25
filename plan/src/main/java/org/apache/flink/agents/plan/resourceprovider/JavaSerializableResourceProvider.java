@@ -21,8 +21,11 @@ package org.apache.flink.agents.plan.resourceprovider;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnore;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.util.concurrent.Callable;
+import java.util.function.BiFunction;
 
 /**
  * Serializable Resource Provider for Java-based resources.
@@ -31,21 +34,56 @@ import java.util.concurrent.Callable;
  * execution.
  */
 public class JavaSerializableResourceProvider extends SerializableResourceProvider {
+    @JsonIgnore private SerializableResource resource;
+
+    private final String serializedResource;
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     public JavaSerializableResourceProvider(
-            String name, ResourceType type, String module, String clazz) {
+            String name,
+            ResourceType type,
+            String module,
+            String clazz,
+            String serializedResource) {
         super(name, type, module, clazz);
+        this.serializedResource = serializedResource;
+    }
+
+    public JavaSerializableResourceProvider(
+            String name,
+            ResourceType type,
+            String module,
+            String clazz,
+            SerializableResource resource,
+            String serializedResource) {
+        super(name, type, module, clazz);
+        this.resource = resource;
+        this.serializedResource = serializedResource;
+    }
+
+    public static JavaSerializableResourceProvider createResourceProvider(
+            String name, ResourceType type, SerializableResource resource)
+            throws JsonProcessingException {
+        return new JavaSerializableResourceProvider(
+                name,
+                type,
+                resource.getClass().getPackageName(),
+                resource.getClass().getName(),
+                resource,
+                objectMapper.writeValueAsString(resource));
+    }
+
+    public String getSerializedResource() {
+        return serializedResource;
     }
 
     @Override
-    public Resource provide(Callable<Resource> getResource) throws Exception {
-        // This provider is expected to be used with a Callable that returns a SerializableResource
-        // instance.
-        // The actual resource creation logic should be implemented in the Callable.
-        Resource resource = getResource.call();
-        if (!(resource instanceof SerializableResource)) {
-            throw new IllegalArgumentException(
-                    "Expected a SerializableResource, but got: " + resource.getClass().getName());
+    public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
+            throws Exception {
+        if (resource == null) {
+            resource =
+                    (SerializableResource)
+                            objectMapper.readValue(serializedResource, Class.forName(getClazz()));
         }
         return resource;
     }
