@@ -18,7 +18,7 @@
 import logging
 import uuid
 from collections import deque
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Callable, Tuple, Generator
 
 from typing_extensions import override
 
@@ -115,6 +115,23 @@ class LocalRunnerContext(RunnerContext):
         """
         return self._short_term_memory
 
+    def execute_async(
+        self,
+        func: Callable[[Any], Any],
+        *args: Tuple[Any, ...],
+        **kwargs: Dict[str, Any],
+    ) -> Any:
+        """Asynchronously execute the provided function. Access to memory
+         is prohibited within the function.
+        """
+        logger.info(
+            "Local runner does not support asynchronous execution; falling back to synchronous execution."
+        )
+        func_result = func(*args, **kwargs)
+        yield func_result
+        return func_result
+
+
 class LocalRunner(AgentRunner):
     """Agent runner implementation for local execution, which is
     convenient for debugging.
@@ -190,7 +207,13 @@ class LocalRunner(AgentRunner):
                 logger.info(
                     "key: %s, performing action: %s", key, action.name
                 )
-                action.exec(event, context)
+                func_result = action.exec(event, context)
+                if isinstance(func_result, Generator):
+                    try:
+                        while True:
+                            next(func_result)
+                    except StopIteration:
+                        pass
         return key
 
     def get_outputs(self) -> List[Dict[str, Any]]:

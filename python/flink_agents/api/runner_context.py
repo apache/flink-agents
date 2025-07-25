@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
+from typing import Any, Callable, Tuple, Dict
 
 from flink_agents.api.event import Event
 from flink_agents.api.memory_object import MemoryObject
@@ -58,4 +59,28 @@ class RunnerContext(ABC):
         -------
         MemoryObject
           The root object of the short-term memory.
+        """
+
+    @abstractmethod
+    def execute_async(
+        self,
+        func: Callable[[Any], Any],
+        *args: Tuple[Any, ...],
+        **kwargs: Dict[str, Any],
+    ) -> Any:
+        """Asynchronously execute the provided function. Access to memory
+         is prohibited within the function.
+
+        Parameters
+        ----------
+        func : Callable
+            The function need to be asynchronously processing.
+        *args : tuple
+            Positional arguments to pass to the function.
+        **kwargs : dict
+            Keyword arguments to pass to the function.
+        Returns:
+        -------
+        Any
+            The result of the function.
         """
