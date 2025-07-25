@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any
+from typing import Any, Callable, Tuple, Dict
 
 import cloudpickle
 from typing_extensions import override
@@ -105,6 +105,18 @@ class FlinkRunnerContext(RunnerContext):
         """
         return FlinkMetricGroup(self._j_runner_context.getActionMetricGroup())
 
+    @override
+    def execute_async(
+            self,
+            func: Callable[[Any], Any],
+            *args: Tuple[Any, ...],
+            **kwargs: Dict[str, Any],
+    ) -> Any:
+        """Asynchronously execute the provided function. Access to memory
+         is prohibited within the function.
+        """
+        # TODO: Implement in a future commit.
+        pass
 
 def create_flink_runner_context(j_runner_context: Any, agent_plan_json: str) -> FlinkRunnerContext:
     """Used to create a FlinkRunnerContext Python object in Pemja environment."""
