@@ -18,7 +18,6 @@
 package org.apache.flink.agents.runtime.python.context;
 
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
@@ -35,8 +34,9 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
 
     public PythonRunnerContextImpl(
             MapState<String, MemoryObjectImpl.MemoryItem> store,
-            FlinkAgentsMetricGroupImpl agentMetricGroup) {
-        super(store, agentMetricGroup);
+            FlinkAgentsMetricGroupImpl agentMetricGroup,
+            Runnable mailboxThreadChecker) {
+        super(store, agentMetricGroup, mailboxThreadChecker);
     }
 
     @Override
@@ -49,10 +49,5 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
     public void sendEvent(String type, byte[] event) {
         // this method will be invoked by PythonActionExecutor's python interpreter.
         sendEvent(new PythonEvent(event, type));
-    }
-
-    @Override
-    public MemoryObject getShortTermMemory() throws Exception {
-        return new MemoryObjectImpl(store, MemoryObjectImpl.ROOT_KEY);
     }
 }
