@@ -62,7 +62,8 @@ public class PythonActionExecutor {
 
     public void open(
             MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState,
-            FlinkAgentsMetricGroupImpl metricGroup)
+            FlinkAgentsMetricGroupImpl metricGroup,
+            Runnable mailboxThreadChecker)
             throws Exception {
         environmentManager.open();
         EmbeddedPythonEnvironment env = environmentManager.createEnvironment();
@@ -70,7 +71,8 @@ public class PythonActionExecutor {
         interpreter = env.getInterpreter();
         interpreter.exec(PYTHON_IMPORTS);
 
-        runnerContext = new PythonRunnerContextImpl(shortTermMemState, metricGroup);
+        runnerContext =
+                new PythonRunnerContextImpl(shortTermMemState, metricGroup, mailboxThreadChecker);
 
         // TODO: remove the set and get runner context after updating pemja to version 0.5.3
         Object pythonRunnerContextObject =

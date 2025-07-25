@@ -32,6 +32,7 @@ import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.utils.EventUtil;
+import org.apache.flink.api.common.operators.MailboxExecutor;
 import org.apache.flink.api.common.state.*;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -42,10 +43,13 @@ import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
+import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxExecutorImpl;
+import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxProcessor;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -87,12 +91,25 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient BuiltInMetrics builtInMetrics;
 
+    private transient MailboxExecutor mailboxExecutor;
+
+    // We need to check whether the current thread is the mailbox thread using the mailbox
+    // processor.
+    // TODO: This is a temporary workaround. In the future, we should add an interface in
+    // MailboxExecutor to check whether a thread is a mailbox thread, rather than using reflection
+    // to obtain the MailboxProcessor instance and make the determination.
+    private transient MailboxProcessor mailboxProcessor;
+
     public ActionExecutionOperator(
-            AgentPlan agentPlan, Boolean inputIsJava, ProcessingTimeService processingTimeService) {
+            AgentPlan agentPlan,
+            Boolean inputIsJava,
+            ProcessingTimeService processingTimeService,
+            MailboxExecutor mailboxExecutor) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
         this.processingTimeService = processingTimeService;
         this.chainingStrategy = ChainingStrategy.ALWAYS;
+        this.mailboxExecutor = mailboxExecutor;
     }
 
     @Override
@@ -112,10 +129,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
 
-        runnerContext = new RunnerContextImpl(shortTermMemState, metricGroup);
+        runnerContext =
+                new RunnerContextImpl(shortTermMemState, metricGroup, this::checkMailboxThread);
 
         // init PythonActionExecutor
         initPythonActionExecutor();
+
+        mailboxProcessor = getMailboxProcessor();
     }
 
     @Override
@@ -207,7 +227,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     new PythonActionExecutor(
                             pythonEnvironmentManager,
                             new ObjectMapper().writeValueAsString(agentPlan));
-            pythonActionExecutor.open(shortTermMemState, metricGroup);
+            pythonActionExecutor.open(shortTermMemState, metricGroup, this::checkMailboxThread);
         }
     }
 
@@ -239,5 +259,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         } else {
             return agentPlan.getActionsTriggeredBy(event.getClass().getName());
         }
+    }
+
+    private MailboxProcessor getMailboxProcessor() throws Exception {
+        Field field = MailboxExecutorImpl.class.getDeclaredField("mailboxProcessor");
+        field.setAccessible(true);
+        return (MailboxProcessor) field.get(mailboxExecutor);
+    }
+
+    private void checkMailboxThread() {
+        checkState(
+                mailboxProcessor.isMailboxThread(),
+                "Expected to be running on the task mailbox thread, but was not.");
     }
 }

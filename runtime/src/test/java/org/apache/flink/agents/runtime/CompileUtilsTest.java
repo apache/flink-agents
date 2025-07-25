@@ -41,7 +41,7 @@ public class CompileUtilsTest {
     private static final Long TEST_SEQUENCE_END = 100L;
     // Agent logic: x -> (x + 1) * 2
     private static final AgentPlan TEST_AGENT_PLAN =
-            ActionExecutionOperatorTest.TestAgent.getAgentPlan();
+            ActionExecutionOperatorTest.TestAgent.getAgentPlan(false);
 
     @Test
     void testJavaNoKeyedStreamConnectToAgent() throws Exception {
