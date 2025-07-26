@@ -19,7 +19,7 @@
 import importlib
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple, Generator
 
 from pydantic import BaseModel
 
@@ -146,7 +146,59 @@ class JavaFunction(Function):
         """Check function signature is legal or not."""
 
 
+class PythonGeneratorWrapper:
+    """
+    A temporary wrapper class for Python generators to work around a
+    known issue in PEMJA, where the generator type is incorrectly handled.
+
+    Note: This wrapper is intended to be a temporary solution. Once PEMJA
+    version 0.6.0 (or later) fixes the bug related to generator type conversion,
+    this wrapper should be removed.
+    """
+
+    def __init__(self, generator: Generator) -> None:
+        """Initialize a PythonGeneratorWrapper. """
+        self.generator = generator
+
+    def __str__(self) -> str:
+        return "PythonGeneratorWrapper, generator=" + str(self.generator)
+
+    def __next__(self) -> Any:
+        return next(self.generator)
+
+
 def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...]) -> Any:
     """Used to call a Python function in the Pemja environment."""
     func = PythonFunction(module=module, qualname=qualname)
-    return func(*func_args)
+    func_result = func(*func_args)
+    if isinstance(func_result, Generator):
+        return PythonGeneratorWrapper(func_result)
+    return func_result
+
+
+def call_python_generator(generator_wrapper: PythonGeneratorWrapper) -> (bool, Any):
+    """
+    Invokes the next step of a wrapped Python generator and returns whether
+    it is done, along with the yielded or returned value.
+
+    Args:
+        generator_wrapper (PythonGeneratorWrapper): A wrapper object that
+        contains a `generator` attribute. This attribute should be an instance
+        of a Python generator.
+
+    Returns:
+        Tuple[bool, Any]:
+            - The first element is a boolean flag indicating whether the generator
+            has finished:
+                * False: The generator has more values to yield.
+                * True: The generator has completed.
+            - The second element is either:
+                * The value yielded by the generator (when not exhausted), or
+                * The return value of the generator (when it has finished).
+    """
+    try:
+        result = next(generator_wrapper.generator)
+    except StopIteration as e:
+        return True, e.value
+    else:
+        return False, result
