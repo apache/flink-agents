@@ -37,13 +37,17 @@ public class RunnerContextImpl implements RunnerContext {
 
     protected final List<Event> pendingEvents = new ArrayList<>();
     protected final MapState<String, MemoryObjectImpl.MemoryItem> store;
+    protected final Runnable mailboxThreadChecker;
 
-    public RunnerContextImpl(MapState<String, MemoryObjectImpl.MemoryItem> store) {
+    public RunnerContextImpl(
+            MapState<String, MemoryObjectImpl.MemoryItem> store, Runnable mailboxThreadChecker) {
         this.store = store;
+        this.mailboxThreadChecker = mailboxThreadChecker;
     }
 
     @Override
     public void sendEvent(Event event) {
+        mailboxThreadChecker.run();
         try {
             JsonUtils.checkSerializable(event);
         } catch (JsonProcessingException e) {
@@ -55,6 +59,7 @@ public class RunnerContextImpl implements RunnerContext {
     }
 
     public List<Event> drainEvents() {
+        mailboxThreadChecker.run();
         List<Event> list = new ArrayList<>(this.pendingEvents);
         this.pendingEvents.clear();
         return list;
@@ -67,6 +72,7 @@ public class RunnerContextImpl implements RunnerContext {
 
     @Override
     public MemoryObject getShortTermMemory() throws Exception {
-        return new MemoryObjectImpl(store, MemoryObjectImpl.ROOT_KEY);
+        mailboxThreadChecker.run();
+        return new MemoryObjectImpl(store, MemoryObjectImpl.ROOT_KEY, mailboxThreadChecker);
     }
 }
