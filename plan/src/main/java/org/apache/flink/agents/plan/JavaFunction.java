@@ -38,7 +38,7 @@ public class JavaFunction implements Function {
     @JsonProperty(FIELD_NAME_PARAMETER_TYPES)
     private final Class<?>[] parameterTypes;
 
-    @JsonIgnore private final Method method;
+    @JsonIgnore private transient Method method;
 
     public JavaFunction(
             @JsonProperty(FIELD_NAME_QUAL_NAME) String qualName,
@@ -71,7 +71,10 @@ public class JavaFunction implements Function {
         return parameterTypes;
     }
 
-    public Method getMethod() {
+    public Method getMethod() throws ClassNotFoundException, NoSuchMethodException {
+        if (method == null) {
+            this.method = Class.forName(qualName).getMethod(methodName, parameterTypes);
+        }
         return method;
     }
 
@@ -93,7 +96,7 @@ public class JavaFunction implements Function {
 
     @Override
     public Object call(Object... args) throws Exception {
-        return method.invoke(null, args);
+        return getMethod().invoke(null, args);
     }
 
     @Override

@@ -16,6 +16,8 @@
 # limitations under the License.
 #################################################################################
 import copy
+import random
+import time
 from typing import Any, Optional
 
 from pydantic import BaseModel
@@ -60,6 +62,12 @@ class DataStreamAgent(Agent):
     @action(InputEvent)
     @staticmethod
     def first_action(event: Event, ctx: RunnerContext):  # noqa D102
+        def log_to_stdout(input: Any, total: int) -> bool:
+            # Simulating asynchronous time consumption
+            time.sleep(random.random())
+            print(f"[log_to_stdout] Logging input={input}, total reviews now={total}")
+            return True
+
         input = event.input
 
         stm = ctx.get_short_term_memory()
@@ -71,8 +79,10 @@ class DataStreamAgent(Agent):
         total += 1
         status.set("total_reviews", total)
 
+        log_success = yield from ctx.execute_async(log_to_stdout, input, total)
+
         content = copy.deepcopy(input)
-        content.review += " first action"
+        content.review += " first action, log success=" + str(log_success) + ","
         ctx.send_event(MyEvent(value=content))
 
     @action(MyEvent)

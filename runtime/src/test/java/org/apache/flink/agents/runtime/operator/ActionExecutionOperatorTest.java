@@ -28,6 +28,7 @@ import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
+import org.apache.flink.streaming.runtime.tasks.mailbox.TaskMailbox;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.Test;
@@ -54,15 +55,91 @@ public class ActionExecutionOperatorTest {
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
             testHarness.processElement(new StreamRecord<>(0L));
+            operator.waitInFlightEventsFinished();
             List<StreamRecord<Object>> recordOutput =
                     (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(recordOutput.size()).isEqualTo(1);
             assertThat(recordOutput.get(0).getValue()).isEqualTo(2L);
 
             testHarness.processElement(new StreamRecord<>(1L));
+            operator.waitInFlightEventsFinished();
             recordOutput = (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(recordOutput.size()).isEqualTo(2);
+            assertThat(recordOutput.get(1).getValue()).isEqualTo(4L);
+        }
+    }
+
+    @Test
+    void testSameKeyDataAreProcessedInOrder() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Process input data 1 with key 0
+            testHarness.processElement(new StreamRecord<>(0L));
+            // Process input data 2, which has the same key (0)
+            testHarness.processElement(new StreamRecord<>(0L));
+            // Since both pieces of data share the same key, we should consolidate them and process
+            // only input data 1.
+            // This means we need one mail to execute the action1 action for input data 1.
+            assertMailboxSizeAndRun(testHarness.getTaskMailbox(), 1);
+            // After executing this mail, we will have another mail to execute the action2 action
+            // for input data 1.
+            assertMailboxSizeAndRun(testHarness.getTaskMailbox(), 1);
+            // Once the above mails are executed, we should get a single output result from input
+            // data 1.
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(2L);
+
+            // After the processing of input data 1 is finished, we can proceed to process input
+            // data 2 and obtain its result.
+            operator.waitInFlightEventsFinished();
+            recordOutput = (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(2);
+            assertThat(recordOutput.get(1).getValue()).isEqualTo(2L);
+        }
+    }
+
+    @Test
+    void testDifferentKeyDataCanRunConcurrently() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Process input data 1 with key 0
+            testHarness.processElement(new StreamRecord<>(0L));
+            // Process input data 2, which has the different key (1)
+            testHarness.processElement(new StreamRecord<>(1L));
+            // Since the two input data items have different keys, they can be processed in
+            // parallel.
+            // As a result, we should have two separate mails to execute the action1 for each of
+            // them.
+            assertMailboxSizeAndRun(testHarness.getTaskMailbox(), 2);
+            // After these two mails are executed, there should be another two mails — one for each
+            // input data item — to execute the corresponding action2.
+            assertMailboxSizeAndRun(testHarness.getTaskMailbox(), 2);
+            // Once both action2 operations are completed, we should receive two output data items,
+            // each corresponding to one of the original inputs.
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(2);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(2L);
             assertThat(recordOutput.get(1).getValue()).isEqualTo(4L);
         }
     }
@@ -75,8 +152,12 @@ public class ActionExecutionOperatorTest {
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            assertThatThrownBy(() -> testHarness.processElement(new StreamRecord<>(0L)))
+            testHarness.processElement(new StreamRecord<>(0L));
+            assertThatThrownBy(() -> operator.waitInFlightEventsFinished())
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
                     .rootCause()
                     .hasMessageContaining("Expected to be running on the task mailbox thread");
         }
@@ -178,6 +259,14 @@ public class ActionExecutionOperatorTest {
                 ExceptionUtils.rethrow(e);
             }
             return null;
+        }
+    }
+
+    private static void assertMailboxSizeAndRun(TaskMailbox mailbox, int expectedSize)
+            throws Exception {
+        assertThat(mailbox.size()).isEqualTo(expectedSize);
+        for (int i = 0; i < expectedSize; i++) {
+            mailbox.take(TaskMailbox.MIN_PRIORITY).run();
         }
     }
 }

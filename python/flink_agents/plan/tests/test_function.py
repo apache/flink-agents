@@ -30,7 +30,7 @@ from flink_agents.plan.function import (
     call_python_function,
     clear_python_function_cache,
     get_python_function_cache_keys,
-    get_python_function_cache_size,
+    get_python_function_cache_size, PythonGeneratorWrapper,
 )
 
 if TYPE_CHECKING:
@@ -314,8 +314,9 @@ def test_selective_caching_generator_functions() -> None:
     result = call_python_function(
         "flink_agents.plan.tests.test_function", "generator_function", (3,)
     )
+    assert isinstance(result, PythonGeneratorWrapper)
     # Convert generator to list for testing
-    result_list = list(result)
+    result_list = list(result.generator)
     assert result_list == [0, 1, 2]
 
     # Should not be cached

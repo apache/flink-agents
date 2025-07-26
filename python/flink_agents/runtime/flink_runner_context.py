@@ -26,6 +26,8 @@ from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
+from concurrent.futures import ThreadPoolExecutor
+import os
 
 
 class FlinkRunnerContext(RunnerContext):
@@ -36,7 +38,9 @@ class FlinkRunnerContext(RunnerContext):
 
     __agent_plan: AgentPlan
 
-    def __init__(self, j_runner_context: Any, agent_plan_json: str) -> None:
+    def __init__(
+        self, j_runner_context: Any, agent_plan_json: str, executor: ThreadPoolExecutor
+    ) -> None:
         """Initialize a flink runner context with the given java runner context.
 
         Parameters
@@ -46,6 +50,7 @@ class FlinkRunnerContext(RunnerContext):
         """
         self._j_runner_context = j_runner_context
         self.__agent_plan = AgentPlan.model_validate_json(agent_plan_json)
+        self.executor = executor
 
     @override
     def send_event(self, event: Event) -> None:
@@ -115,9 +120,29 @@ class FlinkRunnerContext(RunnerContext):
         """Asynchronously execute the provided function. Access to memory
          is prohibited within the function.
         """
-        # TODO: Implement in a future commit.
-        pass
+        future = self.executor.submit(func, *args, **kwargs)
+        while not future.done():
+            # TODO: Currently, we are using a polling mechanism to check whether
+            #  the future has completed. This approach should be optimized in the
+            #  future by switching to a notification-based model, where the Flink
+            #  operator is notified directly once the future is completed.
+            yield
+        return future.result()
 
-def create_flink_runner_context(j_runner_context: Any, agent_plan_json: str) -> FlinkRunnerContext:
+
+def create_flink_runner_context(
+    j_runner_context: Any, agent_plan_json: str, executor: ThreadPoolExecutor
+) -> FlinkRunnerContext:
     """Used to create a FlinkRunnerContext Python object in Pemja environment."""
-    return FlinkRunnerContext(j_runner_context, agent_plan_json)
+    return FlinkRunnerContext(j_runner_context, agent_plan_json, executor)
+
+
+def create_async_thread_pool() -> ThreadPoolExecutor:
+    """Used to create a thread pool to execute asynchronous
+    code block in action."""
+    return ThreadPoolExecutor(max_workers=os.cpu_count() * 2)
+
+
+def close_async_thread_pool(executor: ThreadPoolExecutor) -> None:
+    """Used to close the thread pool."""
+    executor.shutdown()

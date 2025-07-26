@@ -16,10 +16,11 @@
 # limitations under the License.
 #################################################################################
 
+import logging
 import importlib
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Tuple, get_type_hints
+from typing import Any, Callable, Dict, List, Tuple, get_type_hints, Generator
 
 from pydantic import BaseModel
 
@@ -27,6 +28,11 @@ from flink_agents.plan.utils import check_type_match
 
 # Global cache for PythonFunction instances to avoid repeated creation
 _PYTHON_FUNCTION_CACHE: Dict[Tuple[str, str], "PythonFunction"] = {}
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 def _is_function_cacheable(func: Callable) -> bool:
@@ -237,6 +243,28 @@ class JavaFunction(Function):
         """Check function signature is legal or not."""
 
 
+class PythonGeneratorWrapper:
+    """
+    A temporary wrapper class for Python generators to work around a
+    known issue in PEMJA, where the generator type is incorrectly handled.
+
+    TODO: This wrapper is intended to be a temporary solution. Once PEMJA
+    version 0.5.5 (or later) fixes the bug related to generator type conversion,
+    this wrapper should be removed. For more details, please refer to
+    https://github.com/apache/flink-agents/issues/83.
+    """
+
+    def __init__(self, generator: Generator) -> None:
+        """Initialize a PythonGeneratorWrapper. """
+        self.generator = generator
+
+    def __str__(self) -> str:
+        return "PythonGeneratorWrapper, generator=" + str(self.generator)
+
+    def __next__(self) -> Any:
+        return next(self.generator)
+
+
 def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...]) -> Any:
     """Used to call a Python function in the Pemja environment.
 
@@ -260,19 +288,19 @@ def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...])
     """
     cache_key = (module, qualname)
 
+    python_func = None
+
     if cache_key not in _PYTHON_FUNCTION_CACHE:
         python_func = PythonFunction(module=module, qualname=qualname)
-        try:
-            if python_func.is_cacheable():
-                _PYTHON_FUNCTION_CACHE[cache_key] = python_func
-            else:
-                return python_func(*func_args)
-        except Exception:
-            return python_func(*func_args)
+        if python_func.is_cacheable():
+            _PYTHON_FUNCTION_CACHE[cache_key] = python_func
+    else:
+        python_func = _PYTHON_FUNCTION_CACHE[cache_key]
 
-    # Use cached instance
-    func = _PYTHON_FUNCTION_CACHE[cache_key]
-    return func(*func_args)
+    func_result = python_func(*func_args)
+    if isinstance(func_result, Generator):
+        return PythonGeneratorWrapper(func_result)
+    return func_result
 
 
 def clear_python_function_cache() -> None:
@@ -305,3 +333,34 @@ def get_python_function_cache_keys() -> List[Tuple[str, str]]:
         List of (module, qualname) tuples representing cached functions.
     """
     return list(_PYTHON_FUNCTION_CACHE.keys())
+
+
+def call_python_generator(generator_wrapper: PythonGeneratorWrapper) -> (bool, Any):
+    """
+    Invokes the next step of a wrapped Python generator and returns whether
+    it is done, along with the yielded or returned value.
+
+    Args:
+        generator_wrapper (PythonGeneratorWrapper): A wrapper object that
+        contains a `generator` attribute. This attribute should be an instance
+        of a Python generator.
+
+    Returns:
+        Tuple[bool, Any]:
+            - The first element is a boolean flag indicating whether the generator
+            has finished:
+                * False: The generator has more values to yield.
+                * True: The generator has completed.
+            - The second element is either:
+                * The value yielded by the generator (when not exhausted), or
+                * The return value of the generator (when it has finished).
+    """
+    try:
+        result = next(generator_wrapper.generator)
+    except StopIteration as e:
+        return True, e.value if hasattr(e, 'value') else None
+    except Exception:
+        logger.exception("Error in generator execution")
+        raise
+    else:
+        return False, result
