@@ -126,6 +126,7 @@ class PythonFunction(Function):
     module: str
     qualname: str
     __func: Callable = None
+    __is_cacheable: bool = None
 
     @staticmethod
     def from_callable(func: Callable) -> Function:
@@ -214,6 +215,12 @@ class PythonFunction(Function):
                 self.__func = getattr(module, self.qualname)
         return self.__func
 
+    def is_cacheable(self) -> bool:
+        """Check if this function is cacheable, caching the result for future calls."""
+        if self.__is_cacheable is None:
+            self.__is_cacheable = _is_function_cacheable(self.__get_func())
+        return self.__is_cacheable
+
 
 # TODO: Implement JavaFunction.
 class JavaFunction(Function):
@@ -256,8 +263,7 @@ def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...])
     if cache_key not in _PYTHON_FUNCTION_CACHE:
         python_func = PythonFunction(module=module, qualname=qualname)
         try:
-            actual_func = python_func._PythonFunction__get_func()
-            if _is_function_cacheable(actual_func):
+            if python_func.is_cacheable():
                 _PYTHON_FUNCTION_CACHE[cache_key] = python_func
             else:
                 return python_func(*func_args)

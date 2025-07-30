@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 import typing
-from typing import Any, get_type_hints
+from typing import Any
 
 
 def check_type_match(actual: Any, expect: Any) -> None:

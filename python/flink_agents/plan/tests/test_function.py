@@ -361,3 +361,31 @@ def test_is_function_cacheable() -> None:
 
     # None should not be cacheable
     assert _is_function_cacheable(None) is False
+
+
+def test_python_function_cacheability_optimization() -> None:
+    """Test that PythonFunction caches the cacheability check result."""
+    # Test cacheable function
+    cacheable_func = PythonFunction.from_callable(simple_pure_function)
+
+    # First call should compute and cache the result
+    assert cacheable_func.is_cacheable() is True
+
+    # Second call should use cached result (we can't directly test this,
+    # but we can verify it returns the same result)
+    assert cacheable_func.is_cacheable() is True
+
+    # Test non-cacheable function
+    non_cacheable_func = PythonFunction.from_callable(generator_function)
+
+    # First call should compute and cache the result
+    assert non_cacheable_func.is_cacheable() is False
+
+    # Second call should use cached result
+    assert non_cacheable_func.is_cacheable() is False
+
+    # Test that the cacheability check is consistent with direct _is_function_cacheable
+    assert cacheable_func.is_cacheable() == _is_function_cacheable(simple_pure_function)
+    assert non_cacheable_func.is_cacheable() == _is_function_cacheable(
+        generator_function
+    )
