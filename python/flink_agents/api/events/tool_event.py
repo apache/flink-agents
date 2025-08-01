@@ -15,32 +15,36 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Type
+from typing import Any
 
-import pytest
-from pydantic import ValidationError
-from pydantic_core import PydanticSerializationError
-from pyflink.common import Row
-
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import Event
 
 
-def test_event_init_serializable() -> None: #noqa D103
-    Event(a=1, b=InputEvent(input=1), c=OutputEvent(output='111'))
+class ToolRequestEvent(Event):
+    """Event representing a tool call request.
 
-def test_event_init_non_serializable() -> None: #noqa D103
-    with pytest.raises(ValidationError):
-        Event(a=1, b=Type[InputEvent])
+    Attributes:
+    ----------
+    tool : str
+        The name of the tool to be called.
+    kwargs : dict
+        The arguments passed to the tool.
+    """
 
-def test_event_setattr_serializable() -> None: #noqa D103
-    event = Event(a=1)
-    event.c = Event()
+    tool: str
+    kwargs: dict
 
-def test_event_setattr_non_serializable() -> None: #noqa D103
-    event = Event(a=1)
-    with pytest.raises(PydanticSerializationError):
-        event.c = Type[InputEvent]
 
-def test_input_event_ignore_row_unserializable() -> None: #noqa D103
-    InputEvent(input=Row({"a": 1}))
+class ToolResponseEvent(Event):
+    """Event representing a result from tool call.
 
+    Attributes:
+    ----------
+    request : ToolRequestEvent
+        The correspond request of the response.
+    response : Any
+        The response from the tool.
+    """
+
+    request: ToolRequestEvent
+    response: Any

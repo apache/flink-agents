@@ -20,7 +20,7 @@ from typing import List
 import pytest
 
 from flink_agents.api.decorators import action
-from flink_agents.api.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.runner_context import RunnerContext
 
 

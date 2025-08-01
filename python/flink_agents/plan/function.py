@@ -21,7 +21,7 @@ import inspect
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Tuple, get_type_hints
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_serializer
 
 from flink_agents.plan.utils import check_type_match
 
@@ -128,6 +128,15 @@ class PythonFunction(Function):
     __func: Callable = None
     __is_cacheable: bool = None
 
+    @model_serializer
+    def __custom_serializer(self) -> dict[str, Any]:
+        data = {
+            "func_type": self.__class__.__qualname__,
+            "module": self.module,
+            "qualname": self.qualname,
+        }
+        return data
+
     @staticmethod
     def from_callable(func: Callable) -> Function:
         """Create a Function descriptor from an existing callable.
@@ -229,6 +238,16 @@ class JavaFunction(Function):
     qualname: str
     method_name: str
     parameter_types: List[str]
+
+    @model_serializer
+    def __custom_serializer(self) -> dict[str, Any]:
+        data = {
+            "func_type": self.__class__.__qualname__,
+            "qualname": self.qualname,
+            "method_name": self.method_name,
+            "parameter_types": self.parameter_types,
+        }
+        return data
 
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute the stored function with provided arguments."""

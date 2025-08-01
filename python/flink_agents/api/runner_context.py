@@ -17,7 +17,7 @@
 #################################################################################
 from abc import ABC, abstractmethod
 
-from flink_agents.api.event import Event
+from flink_agents.api.events.event import Event
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType

@@ -15,32 +15,37 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Type
+from typing import List
 
-import pytest
-from pydantic import ValidationError
-from pydantic_core import PydanticSerializationError
-from pyflink.common import Row
-
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.chat_message import ChatMessage
+from flink_agents.api.events.event import Event
 
 
-def test_event_init_serializable() -> None: #noqa D103
-    Event(a=1, b=InputEvent(input=1), c=OutputEvent(output='111'))
+class ChatRequestEvent(Event):
+    """Event representing a request to chat model.
 
-def test_event_init_non_serializable() -> None: #noqa D103
-    with pytest.raises(ValidationError):
-        Event(a=1, b=Type[InputEvent])
+    Attributes:
+    ----------
+    model : str
+        The name of the chat model to be chatted with.
+    messages : List[ChatMessage]
+        The input to the chat model.
+    """
 
-def test_event_setattr_serializable() -> None: #noqa D103
-    event = Event(a=1)
-    event.c = Event()
+    model: str
+    messages: List[ChatMessage]
 
-def test_event_setattr_non_serializable() -> None: #noqa D103
-    event = Event(a=1)
-    with pytest.raises(PydanticSerializationError):
-        event.c = Type[InputEvent]
 
-def test_input_event_ignore_row_unserializable() -> None: #noqa D103
-    InputEvent(input=Row({"a": 1}))
+class ChatResponseEvent(Event):
+    """Event representing a response from chat model.
 
+    Attributes:
+    ----------
+    request : ChatRequestEvent
+        The correspond request of the response.
+    response : ChatMessage
+        The response from the chat model.
+    """
+
+    request: ChatRequestEvent
+    response: ChatMessage

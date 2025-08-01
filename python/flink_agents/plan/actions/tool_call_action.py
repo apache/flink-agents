@@ -15,32 +15,23 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Type
-
-import pytest
-from pydantic import ValidationError
-from pydantic_core import PydanticSerializationError
-from pyflink.common import Row
-
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
+from flink_agents.api.resource import ResourceType
+from flink_agents.api.runner_context import RunnerContext
+from flink_agents.plan.actions.action import Action
+from flink_agents.plan.function import PythonFunction
 
 
-def test_event_init_serializable() -> None: #noqa D103
-    Event(a=1, b=InputEvent(input=1), c=OutputEvent(output='111'))
+def process_tool_request(event: ToolRequestEvent, ctx: RunnerContext) -> None:
+    """Built-in action for processing a tool call request."""
+    tool = ctx.get_resource(event.tool, ResourceType.TOOL)
+    # TODO: support async execution of tool call.
+    response = tool.call(**event.kwargs)
+    ctx.send_event(ToolResponseEvent(request=event, response=response))
 
-def test_event_init_non_serializable() -> None: #noqa D103
-    with pytest.raises(ValidationError):
-        Event(a=1, b=Type[InputEvent])
 
-def test_event_setattr_serializable() -> None: #noqa D103
-    event = Event(a=1)
-    event.c = Event()
-
-def test_event_setattr_non_serializable() -> None: #noqa D103
-    event = Event(a=1)
-    with pytest.raises(PydanticSerializationError):
-        event.c = Type[InputEvent]
-
-def test_input_event_ignore_row_unserializable() -> None: #noqa D103
-    InputEvent(input=Row({"a": 1}))
-
+TOOL_CALL_ACTION = Action(
+    name="tool_call_action",
+    exec=PythonFunction.from_callable(process_tool_request),
+    listen_event_types=[f"{ToolRequestEvent.__module__}.{ToolRequestEvent.__name__}"],
+)

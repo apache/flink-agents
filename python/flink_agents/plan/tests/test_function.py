@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Generator, Tuple
 
 import pytest
 
-from flink_agents.api.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.plan.function import (
     PythonFunction,
     _is_function_cacheable,

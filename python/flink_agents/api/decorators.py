@@ -15,12 +15,12 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Callable, Tuple, Type
+from typing import Callable, Type
 
-from flink_agents.api.event import Event
+from flink_agents.api.events.event import Event
 
 
-def action(*listen_events: Tuple[Type[Event], ...]) -> Callable:
+def action(*listen_events: Type[Event]) -> Callable:
     """Decorator for marking a function as an agent action.
 
     Parameters
@@ -70,7 +70,7 @@ def chat_model(func: Callable) -> Callable:
 
 
 def tool(func: Callable) -> Callable:
-    """Decorator for marking a function declaring a chat model.
+    """Decorator for marking a function declaring a tool.
 
     Parameters
     ----------
@@ -80,7 +80,24 @@ def tool(func: Callable) -> Callable:
     Returns:
     -------
     Callable
-        Decorator function that marks the target function declare a tools.
+        Decorator function that marks the target function declare a tool.
     """
     func._is_tool = True
+    return func
+
+
+def prompt(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a prompt.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare a prompt.
+    """
+    func._is_prompt = True
     return func

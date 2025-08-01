@@ -15,32 +15,24 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Type
+from string import Formatter
+from typing import Any
 
-import pytest
-from pydantic import ValidationError
-from pydantic_core import PydanticSerializationError
-from pyflink.common import Row
-
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from typing_extensions import override
 
 
-def test_event_init_serializable() -> None: #noqa D103
-    Event(a=1, b=InputEvent(input=1), c=OutputEvent(output='111'))
+class SafeFormatter(Formatter):
+    """Safe string formatter that does not raise KeyError if key is missing."""
 
-def test_event_init_non_serializable() -> None: #noqa D103
-    with pytest.raises(ValidationError):
-        Event(a=1, b=Type[InputEvent])
+    @override
+    def get_value(self, key: Any, args: Any, kwargs: Any) -> Any:
+        if isinstance(key, int):
+            return args[key]
+        else:
+            if key in kwargs:
+                return kwargs[key]
+            else:
+                return str(key)
 
-def test_event_setattr_serializable() -> None: #noqa D103
-    event = Event(a=1)
-    event.c = Event()
 
-def test_event_setattr_non_serializable() -> None: #noqa D103
-    event = Event(a=1)
-    with pytest.raises(PydanticSerializationError):
-        event.c = Type[InputEvent]
-
-def test_input_event_ignore_row_unserializable() -> None: #noqa D103
-    InputEvent(input=Row({"a": 1}))
-
+formatter = SafeFormatter()
