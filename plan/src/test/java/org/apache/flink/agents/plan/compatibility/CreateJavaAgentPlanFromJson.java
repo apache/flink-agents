@@ -46,11 +46,11 @@ public class CreateJavaAgentPlanFromJson {
         String agentJsonFile = args[0];
         String json = Files.readString(Paths.get(agentJsonFile));
         AgentPlan agentPlan = new ObjectMapper().readValue(json, AgentPlan.class);
-        assertEquals(5, agentPlan.getActions().size());
+        assertEquals(4, agentPlan.getActions().size());
 
         String myEvent =
                 "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent.MyEvent";
-        String inputEvent = "flink_agents.api.event.InputEvent";
+        String inputEvent = "flink_agents.api.events.event.InputEvent";
 
         // Check the first action
         String testModule =
@@ -77,34 +77,28 @@ public class CreateJavaAgentPlanFromJson {
         assertEquals(List.of(inputEvent, myEvent), secondAction.getListenEventTypes());
 
         // Check the built-in actions
-        String builtInModule = "flink_agents.plan.action";
+        assertTrue(agentPlan.getActions().containsKey("chat_model_action"));
+        Action chatModelAction = agentPlan.getActions().get("chat_model_action");
+        assertInstanceOf(PythonFunction.class, chatModelAction.getExec());
+        PythonFunction processChatRequestFunc = (PythonFunction) chatModelAction.getExec();
+        assertEquals(
+                "flink_agents.plan.actions.chat_model_action", processChatRequestFunc.getModule());
+        assertEquals("process_chat_request_or_tool_response", processChatRequestFunc.getQualName());
+        String chatRequestEvent = "flink_agents.api.events.chat_event.ChatRequestEvent";
+        String toolResponseEvent = "flink_agents.api.events.tool_event.ToolResponseEvent";
+        assertEquals(
+                List.of(chatRequestEvent, toolResponseEvent),
+                chatModelAction.getListenEventTypes());
 
-        assertTrue(agentPlan.getActions().containsKey("process_chat_request"));
-        Action processChatRequest = agentPlan.getActions().get("process_chat_request");
-        assertInstanceOf(PythonFunction.class, processChatRequest.getExec());
-        PythonFunction processChatRequestFunc = (PythonFunction) processChatRequest.getExec();
-        assertEquals(builtInModule, processChatRequestFunc.getModule());
-        assertEquals("process_chat_request", processChatRequestFunc.getQualName());
-        String chatRequestEvent = "flink_agents.api.event.ChatRequestEvent";
-        assertEquals(List.of(chatRequestEvent), processChatRequest.getListenEventTypes());
-
-        assertTrue(agentPlan.getActions().containsKey("process_tool_request"));
-        Action processToolRequest = agentPlan.getActions().get("process_tool_request");
-        assertInstanceOf(PythonFunction.class, processChatRequest.getExec());
-        PythonFunction processToolRequestFunc = (PythonFunction) processToolRequest.getExec();
-        assertEquals(builtInModule, processToolRequestFunc.getModule());
+        assertTrue(agentPlan.getActions().containsKey("tool_call_action"));
+        Action toolCallAction = agentPlan.getActions().get("tool_call_action");
+        assertInstanceOf(PythonFunction.class, toolCallAction.getExec());
+        PythonFunction processToolRequestFunc = (PythonFunction) toolCallAction.getExec();
+        assertEquals(
+                "flink_agents.plan.actions.tool_call_action", processToolRequestFunc.getModule());
         assertEquals("process_tool_request", processToolRequestFunc.getQualName());
-        String toolRequestEvent = "flink_agents.api.event.ToolRequestEvent";
-        assertEquals(List.of(toolRequestEvent), processToolRequest.getListenEventTypes());
-
-        assertTrue(agentPlan.getActions().containsKey("process_tool_response"));
-        Action processToolResponse = agentPlan.getActions().get("process_tool_response");
-        assertInstanceOf(PythonFunction.class, processToolResponse.getExec());
-        PythonFunction processToolResponseFunc = (PythonFunction) processToolResponse.getExec();
-        assertEquals(builtInModule, processToolResponseFunc.getModule());
-        assertEquals("process_tool_response", processToolResponseFunc.getQualName());
-        String toolResponseEvent = "flink_agents.api.event.ToolResponseEvent";
-        assertEquals(List.of(toolResponseEvent), processToolResponse.getListenEventTypes());
+        String toolRequestEvent = "flink_agents.api.events.tool_event.ToolRequestEvent";
+        assertEquals(List.of(toolRequestEvent), toolCallAction.getListenEventTypes());
 
         // Check event trigger actions
         Map<String, List<Action>> actionsByEvent = agentPlan.getActionsByEvent();
@@ -117,8 +111,8 @@ public class CreateJavaAgentPlanFromJson {
         assertEquals(
                 List.of(firstAction, secondAction), agentPlan.getActionsByEvent().get(inputEvent));
         assertEquals(List.of(secondAction), agentPlan.getActionsByEvent().get(myEvent));
-        assertEquals(List.of(processChatRequest), actionsByEvent.get(chatRequestEvent));
-        assertEquals(List.of(processToolRequest), actionsByEvent.get(toolRequestEvent));
-        assertEquals(List.of(processToolResponse), actionsByEvent.get(toolResponseEvent));
+        assertEquals(List.of(chatModelAction), actionsByEvent.get(chatRequestEvent));
+        assertEquals(List.of(toolCallAction), actionsByEvent.get(toolRequestEvent));
+        assertEquals(List.of(chatModelAction), actionsByEvent.get(toolResponseEvent));
     }
 }

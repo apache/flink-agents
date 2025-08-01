@@ -25,7 +25,7 @@ from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModel
 from flink_agents.api.decorators import action, chat_model
-from flink_agents.api.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.tools.tool import BaseTool
@@ -127,7 +127,6 @@ current_dir = Path(__file__).parent
 
 def test_agent_plan_serialize(agent_plan: AgentPlan) -> None:  # noqa: D103
     json_value = agent_plan.model_dump_json(serialize_as_any=True, indent=4)
-    print(json_value)
     with Path.open(Path(f"{current_dir}/resources/agent_plan.json")) as f:
         expected_json = f.read()
     actual = json.loads(json_value)

@@ -18,7 +18,7 @@
 import pytest
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.prompt import Prompt
+from flink_agents.api.prompts.prompt import Prompt
 
 
 @pytest.fixture(scope="module")
@@ -29,7 +29,7 @@ def text_prompt() -> Prompt:  # noqa: D103
         "The product {product_id} is {description}, and user review is '{review}'."
     )
 
-    return Prompt.from_text(name="prompt", text=template, role=MessageRole.USER)
+    return Prompt.from_text(name="prompt", text=template)
 
 
 def test_prompt_from_text_to_string(text_prompt: Prompt) -> None:  # noqa: D103
@@ -38,7 +38,7 @@ def test_prompt_from_text_to_string(text_prompt: Prompt) -> None:  # noqa: D103
         description="wireless noise-canceling headphones with 20-hour battery life",
         review="The headphones broke after one week of use. Very poor quality",
     ) == (
-        "user: You ara a product review analyzer, please generate a score and the "
+        "You ara a product review analyzer, please generate a score and the "
         "dislike reasons(if any) for the review. The product 12345 is wireless "
         "noise-canceling headphones with 20-hour battery life, and user review is "
         "'The headphones broke after one week of use. Very poor quality'."
@@ -52,7 +52,7 @@ def test_prompt_from_text_to_messages(text_prompt: Prompt) -> None:  # noqa: D10
         review="The headphones broke after one week of use. Very poor quality",
     ) == [
         ChatMessage(
-            role=MessageRole.USER,
+            role=MessageRole.SYSTEM,
             content="You ara a product review analyzer, please generate a score and the "
             "dislike reasons(if any) for the review. The product 12345 is wireless "
             "noise-canceling headphones with 20-hour battery life, and user review is "
@@ -110,3 +110,14 @@ def test_prompt_from_messages_to_messages(messages_prompt: Prompt) -> None:  # n
             "'The headphones broke after one week of use. Very poor quality'.",
         ),
     ]
+
+
+def test_prompt_lack_one_argument(text_prompt: Prompt) -> None: #noqa: D103
+    assert text_prompt.format_string(
+        product_id="12345",
+        review="The headphones broke after one week of use. Very poor quality",
+    ) == (
+        "You ara a product review analyzer, please generate a score and the "
+        "dislike reasons(if any) for the review. The product 12345 is description, "
+        "and user review is 'The headphones broke after one week of use. Very poor quality'."
+    )

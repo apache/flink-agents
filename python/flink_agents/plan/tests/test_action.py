@@ -20,9 +20,9 @@ from pathlib import Path
 
 import pytest
 
-from flink_agents.api.event import InputEvent
+from flink_agents.api.events.event import InputEvent
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.plan.action import Action
+from flink_agents.plan.actions.action import Action
 from flink_agents.plan.function import PythonFunction
 
 
@@ -71,7 +71,7 @@ def test_action_deserialize(action: Action) -> None: # noqa: D103
         expected_json = f.read()
     action = Action.model_validate_json(expected_json)
     assert action.name == 'legal'
-    assert action.listen_event_types == ['flink_agents.api.event.InputEvent']
+    assert action.listen_event_types == ['flink_agents.api.events.event.InputEvent']
     func = action.exec
     assert func.module == 'flink_agents.plan.tests.test_action'
     assert func.qualname == 'legal_signature'

@@ -21,7 +21,9 @@ from pydantic import BaseModel, field_serializer, model_validator
 
 from flink_agents.api.agent import Agent
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.plan.action import BUILT_IN_ACTIONS, Action
+from flink_agents.plan.actions.action import Action
+from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
+from flink_agents.plan.actions.tool_call_action import TOOL_CALL_ACTION
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.resource_provider import (
     JavaResourceProvider,
@@ -32,6 +34,7 @@ from flink_agents.plan.resource_provider import (
 )
 from flink_agents.plan.tools.function_tool import from_callable
 
+BUILT_IN_ACTIONS = [CHAT_MODEL_ACTION, TOOL_CALL_ACTION]
 
 class AgentPlan(BaseModel):
     """Agent plan compiled from user defined agent.
@@ -116,22 +119,13 @@ class AgentPlan(BaseModel):
         """Build a AgentPlan from user defined agent."""
         actions = {}
         actions_by_event = {}
-        for action in _get_actions(agent):
+        for action in _get_actions(agent) + BUILT_IN_ACTIONS:
             assert action.name not in actions, f"Duplicate action name: {action.name}"
             actions[action.name] = action
             for event_type in action.listen_event_types:
                 if event_type not in actions_by_event:
                     actions_by_event[event_type] = []
                 actions_by_event[event_type].append(action.name)
-
-        # append built-in actions
-        for action in BUILT_IN_ACTIONS:
-            if action.name not in actions:
-                actions[action.name] = action
-                for event_type in action.listen_event_types:
-                    if event_type not in actions_by_event:
-                        actions_by_event[event_type] = []
-                    actions_by_event[event_type].append(action.name)
 
         resource_providers = {}
         for provider in _get_resource_providers(agent):
@@ -178,22 +172,7 @@ class AgentPlan(BaseModel):
             self.__resources[type] = {}
         if name not in self.__resources[type]:
             resource_provider = self.resource_providers[type][name]
-            resource = resource_provider.provide()
-            if resource.resource_type() == ResourceType.CHAT_MODEL:
-                # bind tools
-                if resource.tools is not None:
-                    resource.bind_tools(
-                        [
-                            self.get_resource(name, ResourceType.TOOL)
-                            for name in resource.tools
-                        ]
-                    )
-                # bind prompt
-                if resource.prompt is not None and isinstance(resource.prompt, str):
-                    resource.prompt = self.get_resource(
-                        resource.prompt, ResourceType.PROMPT
-                    )
-
+            resource = resource_provider.provide(plan=self)
             self.__resources[type][name] = resource
         return self.__resources[type][name]
 

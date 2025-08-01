@@ -15,15 +15,14 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Callable
+from typing import Any, Callable, Union
 
 from docstring_parser import parse
-from pydantic import field_serializer, model_validator
 from typing_extensions import override
 
 from flink_agents.api.tools.tool import BaseTool, ToolMetadata, ToolType
 from flink_agents.api.tools.utils import create_schema_from_function
-from flink_agents.plan.function import Function, JavaFunction, PythonFunction
+from flink_agents.plan.function import JavaFunction, PythonFunction
 
 
 class FunctionTool(BaseTool):
@@ -35,29 +34,7 @@ class FunctionTool(BaseTool):
         User defined function.
     """
 
-    func: Function
-
-    @field_serializer("func")
-    def __serialize_func(self, func: Function) -> dict:
-        # append meta info to help deserialize exec
-        data = func.model_dump()
-        data["func_type"] = func.__class__.__qualname__
-        return data
-
-    @model_validator(mode="before")
-    def __custom_deserialize(self) -> "FunctionTool":
-        func = self["func"]
-        # restore exec from serialized json.
-        if isinstance(func, dict):
-            func_type = func["func_type"]
-            if func_type == "PythonFunction":
-                self["func"] = PythonFunction(**func)
-            elif func_type == "JavaFunction":
-                self["func"] = JavaFunction(**func)
-            else:
-                err_msg = f"Unknown function type: {func_type}"
-                raise NotImplementedError(err_msg)
-        return self
+    func: Union[PythonFunction, JavaFunction]
 
     @classmethod
     @override

@@ -20,7 +20,7 @@ from typing import Any
 import cloudpickle
 from typing_extensions import override
 
-from flink_agents.api.event import Event
+from flink_agents.api.events.event import Event
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan

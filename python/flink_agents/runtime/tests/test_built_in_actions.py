@@ -22,14 +22,13 @@ from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModel
 from flink_agents.api.decorators import action, chat_model, prompt, tool
-from flink_agents.api.event import (
-    ChatRequestEvent,
-    ChatResponseEvent,
+from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
+from flink_agents.api.events.event import (
     InputEvent,
     OutputEvent,
 )
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from flink_agents.api.prompt import Prompt
+from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.tools.tool import BaseTool, ToolMetadata, ToolType
 
@@ -152,7 +151,7 @@ def test_built_in_actions() -> None:  # noqa: D103
     assert output_list == [
         {
             "0001": "calculate the sum of 1 and 2.\n"
-            "user: Please call the appropriate tool to do the following task: "
+            "Please call the appropriate tool to do the following task: "
             "calculate the sum of 1 and 2.\n"
             "3"
         }

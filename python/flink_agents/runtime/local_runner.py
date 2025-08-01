@@ -23,7 +23,7 @@ from typing import Any, Dict, List
 from typing_extensions import override
 
 from flink_agents.api.agent import Agent
-from flink_agents.api.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType

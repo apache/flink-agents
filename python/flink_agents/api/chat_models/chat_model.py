@@ -21,7 +21,7 @@ from typing import List, Optional, Sequence, Union
 from typing_extensions import override
 
 from flink_agents.api.chat_message import ChatMessage
-from flink_agents.api.prompt import Prompt
+from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.tools.tool import BaseTool
 

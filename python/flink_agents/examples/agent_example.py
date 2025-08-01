@@ -19,7 +19,7 @@ from typing import Any
 
 from flink_agents.api.agent import Agent
 from flink_agents.api.decorators import action
-from flink_agents.api.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 

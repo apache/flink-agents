@@ -17,7 +17,7 @@
 #################################################################################
 from typing import Callable, Type
 
-from flink_agents.api.event import Event
+from flink_agents.api.events.event import Event
 
 
 def action(*listen_events: Type[Event]) -> Callable:

@@ -15,10 +15,10 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from string import Formatter
-from typing import List, Sequence
+from typing import List, Sequence, Union
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.prompts.utils import formatter
 from flink_agents.api.resource import ResourceType, SerializableResource
 
 
@@ -27,11 +27,11 @@ class Prompt(SerializableResource):
 
     Attributes:
     ----------
-    template : Sequence[ChatMessage]
+    template : Union[Sequence[ChatMessage], str]
         The prompt template.
     """
 
-    template: Sequence[ChatMessage]
+    template: Union[Sequence[ChatMessage], str]
 
     @staticmethod
     def from_messages(name: str, messages: Sequence[ChatMessage]) -> "Prompt":
@@ -39,11 +39,9 @@ class Prompt(SerializableResource):
         return Prompt(name=name, template=messages)
 
     @staticmethod
-    def from_text(
-        name: str, text: str, role: MessageRole = MessageRole.USER
-    ) -> "Prompt":
+    def from_text(name: str, text: str) -> "Prompt":
         """Create prompt from text string."""
-        return Prompt(name=name, template=[ChatMessage(role=role, content=text)])
+        return Prompt(name=name, template=text)
 
     @classmethod
     def resource_type(cls) -> ResourceType:
@@ -52,20 +50,32 @@ class Prompt(SerializableResource):
 
     def format_string(self, **kwargs: str) -> str:
         """Generate text string from template with input arguments."""
-        msgs = []
-        for m in self.template:
-            msg = f"{m.role.value}: {Formatter().format(m.content, **kwargs)}"
-            if m.extra_args is not None and len(m.extra_args) > 0:
-                msg += f"{m.extra_args}"
-            msgs.append(msg)
-        return "\n".join(msgs)
+        if isinstance(self.template, str):
+            return formatter.format(self.template, **kwargs)
+        else:
+            msgs = []
+            for m in self.template:
+                msg = f"{m.role.value}: {formatter.format(m.content, **kwargs)}"
+                if m.extra_args is not None and len(m.extra_args) > 0:
+                    msg += f"{m.extra_args}"
+                msgs.append(msg)
+            return "\n".join(msgs)
 
-    def format_messages(self, **kwargs: str) -> List[ChatMessage]:
+    def format_messages(
+        self, role: MessageRole = MessageRole.SYSTEM, **kwargs: str
+    ) -> List[ChatMessage]:
         """Generate list of ChatMessage from template with input arguments."""
-        msgs = []
-        for m in self.template:
-            msg = ChatMessage(
-                role=m.role, content=Formatter().format(m.content, **kwargs)
-            )
-            msgs.append(msg)
-        return msgs
+        if isinstance(self.template, str):
+            return [
+                ChatMessage(
+                    role=role, content=formatter.format(self.template, **kwargs)
+                )
+            ]
+        else:
+            msgs = []
+            for m in self.template:
+                msg = ChatMessage(
+                    role=m.role, content=formatter.format(m.content, **kwargs)
+                )
+                msgs.append(msg)
+            return msgs

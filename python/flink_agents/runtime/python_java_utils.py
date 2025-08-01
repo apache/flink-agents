@@ -19,7 +19,7 @@ from typing import Any
 
 import cloudpickle
 
-from flink_agents.api.event import InputEvent
+from flink_agents.api.events.event import InputEvent
 
 
 def convert_to_python_object(bytesObject: bytes) -> Any:

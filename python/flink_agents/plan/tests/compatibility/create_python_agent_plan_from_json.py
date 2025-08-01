@@ -65,6 +65,7 @@ if __name__ == "__main__":
         runner_context,
     ]
     listen_event_types2 = action2.listen_event_types
+    listen_event_types2.sort()
     assert listen_event_types2 == [
         input_event,
         my_event,

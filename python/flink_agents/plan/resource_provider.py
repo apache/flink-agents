@@ -44,7 +44,7 @@ class ResourceProvider(BaseModel, ABC):
     type: ResourceType
 
     @abstractmethod
-    def provide(self) -> Resource:
+    def provide(self, **kwargs: Any) -> Resource:
         """Create resource in runtime."""
 
 
@@ -81,11 +81,27 @@ class PythonResourceProvider(ResourceProvider):
     clazz: str
     kwargs: Dict[str, Any]
 
-    def provide(self) -> Resource:
+    def provide(self, **kwargs: Any) -> Resource:
         """Create resource in runtime."""
         module = importlib.import_module(self.module)
         cls = getattr(module, self.clazz)
-        return cls(**self.kwargs)
+        resource = cls(**self.kwargs)
+        if self.type == ResourceType.CHAT_MODEL:
+            plan = kwargs["plan"]
+            # bind tools
+            if resource.tools is not None:
+                resource.bind_tools(
+                    [
+                        plan.get_resource(name, ResourceType.TOOL)
+                        for name in resource.tools
+                    ]
+                )
+            # bind prompt
+            if resource.prompt is not None and isinstance(resource.prompt, str):
+                resource.prompt = plan.get_resource(
+                    resource.prompt, ResourceType.PROMPT
+                )
+        return resource
 
 
 class PythonSerializableResourceProvider(SerializableResourceProvider):
@@ -116,7 +132,7 @@ class PythonSerializableResourceProvider(SerializableResourceProvider):
             resource=resource,
         )
 
-    def provide(self) -> Resource:
+    def provide(self, **kwargs: Any) -> Resource:
         """Get or deserialize resource in runtime."""
         if self.resource is None:
             module = importlib.import_module(self.module)
@@ -132,7 +148,7 @@ class JavaResourceProvider(ResourceProvider):
     Currently, this class only used for deserializing Java agent plan json
     """
 
-    def provide(self) -> Resource:
+    def provide(self, **kwargs: Any) -> Resource:
         """Create resource in runtime."""
         err_msg = (
             "Currently, flink-agents doesn't support create resource "
@@ -148,7 +164,7 @@ class JavaSerializableResourceProvider(SerializableResourceProvider):
     Currently, this class only used for deserializing Java agent plan json
     """
 
-    def provide(self) -> Resource:
+    def provide(self, **kwargs: Any) -> Resource:
         """Get or deserialize resource in runtime."""
         err_msg = (
             "Currently, flink-agents doesn't support create resource "

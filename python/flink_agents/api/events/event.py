@@ -16,13 +16,11 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC
-from typing import Any, List
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 from pyflink.common import Row
-
-from flink_agents.api.chat_message import ChatMessage
 
 
 class Event(BaseModel, ABC, extra="allow"):
@@ -72,63 +70,3 @@ class OutputEvent(Event):
     """
 
     output: Any
-
-
-class ChatRequestEvent(Event):
-    """Event representing a request to chat model.
-
-    Attributes:
-    ----------
-    model : str
-        The name of the chat model to be chatted with.
-    messages : List[ChatMessage]
-        The input to the chat model.
-    """
-
-    model: str
-    messages: List[ChatMessage]
-
-
-class ChatResponseEvent(Event):
-    """Event representing a response from chat model.
-
-    Attributes:
-    ----------
-    request : ChatRequestEvent
-        The correspond request of the response.
-    response : ChatMessage
-        The response from the chat model.
-    """
-
-    request: ChatRequestEvent
-    response: ChatMessage
-
-
-class ToolRequestEvent(Event):
-    """Event representing a tool call request.
-
-    Attributes:
-    ----------
-    tool : str
-        The name of the tool to be called.
-    kwargs : dict
-        The arguments passed to the tool.
-    """
-
-    tool: str
-    kwargs: dict
-
-
-class ToolResponseEvent(Event):
-    """Event representing a result from tool call.
-
-    Attributes:
-    ----------
-    request : ToolRequestEvent
-        The correspond request of the response.
-    response : Any
-        The response from the tool.
-    """
-
-    request: ToolRequestEvent
-    response: Any
