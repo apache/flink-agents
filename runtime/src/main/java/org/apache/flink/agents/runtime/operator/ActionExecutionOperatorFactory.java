@@ -41,7 +41,10 @@ public class ActionExecutionOperatorFactory<IN, OUT>
             StreamOperatorParameters<OUT> parameters) {
         ActionExecutionOperator<IN, OUT> op =
                 new ActionExecutionOperator<>(
-                        agentPlan, inputIsJava, parameters.getProcessingTimeService());
+                        agentPlan,
+                        inputIsJava,
+                        parameters.getProcessingTimeService(),
+                        parameters.getMailboxExecutor());
         op.setup(
                 parameters.getContainingTask(),
                 parameters.getStreamConfig(),
