@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Tuple, Dict
+from typing import Any, Callable, Dict, Tuple
 
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory_object import MemoryObject
@@ -100,6 +100,7 @@ class RunnerContext(ABC):
             Positional arguments to pass to the function.
         **kwargs : dict
             Keyword arguments to pass to the function.
+
         Returns:
         -------
         Any

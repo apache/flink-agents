@@ -97,7 +97,7 @@ class Meter(ABC):
     """Metric for measuring throughput."""
 
     @abstractmethod
-    def mark(self, n: int =1) -> None:
+    def mark(self, n: int = 1) -> None:
         """Trigger the meter by the given value."""
 
     @abstractmethod

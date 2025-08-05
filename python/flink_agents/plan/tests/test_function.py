@@ -26,11 +26,12 @@ import pytest
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.plan.function import (
     PythonFunction,
+    PythonGeneratorWrapper,
     _is_function_cacheable,
     call_python_function,
     clear_python_function_cache,
     get_python_function_cache_keys,
-    get_python_function_cache_size, PythonGeneratorWrapper,
+    get_python_function_cache_size,
 )
 
 if TYPE_CHECKING:

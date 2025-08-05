@@ -112,7 +112,7 @@ def test_prompt_from_messages_to_messages(messages_prompt: Prompt) -> None:  # n
     ]
 
 
-def test_prompt_lack_one_argument(text_prompt: Prompt) -> None: #noqa: D103
+def test_prompt_lack_one_argument(text_prompt: Prompt) -> None:  # noqa: D103
     assert text_prompt.format_string(
         product_id="12345",
         review="The headphones broke after one week of use. Very poor quality",

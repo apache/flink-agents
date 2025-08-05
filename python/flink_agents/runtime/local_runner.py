@@ -18,7 +18,7 @@
 import logging
 import uuid
 from collections import deque
-from typing import Any, Dict, List, Callable, Tuple, Generator
+from typing import Any, Callable, Dict, Generator, List, Tuple
 
 from typing_extensions import override
 
@@ -135,7 +135,7 @@ class LocalRunnerContext(RunnerContext):
         **kwargs: Dict[str, Any],
     ) -> Any:
         """Asynchronously execute the provided function. Access to memory
-         is prohibited within the function.
+        is prohibited within the function.
         """
         logger.warning(
             "Local runner does not support asynchronous execution; falling back to synchronous execution."
@@ -189,10 +189,10 @@ class LocalRunner(AgentRunner):
         key
             The key of the input that was processed.
         """
-        if 'key' in data:
-            key = data['key']
-        elif 'k' in data:
-            key = data['k']
+        if "key" in data:
+            key = data["key"]
+        elif "k" in data:
+            key = data["k"]
         else:
             key = uuid.uuid4()
 
@@ -200,10 +200,10 @@ class LocalRunner(AgentRunner):
             self.__keyed_contexts[key] = LocalRunnerContext(self.__agent_plan, key)
         context = self.__keyed_contexts[key]
 
-        if 'value' in data:
-            input_event = InputEvent(input=data['value'])
-        elif 'v' in data:
-            input_event = InputEvent(input=data['v'])
+        if "value" in data:
+            input_event = InputEvent(input=data["value"])
+        elif "v" in data:
+            input_event = InputEvent(input=data["v"])
         else:
             msg = "Input data must be dict has 'v' or 'value' field"
             raise RuntimeError(msg)
@@ -215,11 +215,9 @@ class LocalRunner(AgentRunner):
             if isinstance(event, OutputEvent):
                 self.__outputs.append({key: event.output})
                 continue
-            event_type = f'{event.__class__.__module__}.{event.__class__.__name__}'
+            event_type = f"{event.__class__.__module__}.{event.__class__.__name__}"
             for action in self.__agent_plan.get_actions(event_type):
-                logger.info(
-                    "key: %s, performing action: %s", key, action.name
-                )
+                logger.info("key: %s, performing action: %s", key, action.name)
                 func_result = action.exec(event, context)
                 if isinstance(func_result, Generator):
                     try:

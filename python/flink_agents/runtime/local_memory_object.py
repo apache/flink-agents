@@ -194,7 +194,7 @@ class LocalMemoryObject(MemoryObject):
         """Check whether the stored value represents a nested object."""
         return isinstance(value, _ObjMarker)
 
-    def _ensure_object_node(self, path: str) -> '_ObjMarker':
+    def _ensure_object_node(self, path: str) -> "_ObjMarker":
         """Ensure the given path exists in store *as an object* and return marker."""
         if path not in self.__store or not self._is_nested_object(self.__store[path]):
             self.__store[path] = _ObjMarker()

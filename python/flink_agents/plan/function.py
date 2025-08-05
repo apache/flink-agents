@@ -16,11 +16,11 @@
 # limitations under the License.
 #################################################################################
 
-import logging
 import importlib
 import inspect
+import logging
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Tuple, get_type_hints, Generator
+from typing import Any, Callable, Dict, Generator, List, Tuple, get_type_hints
 
 from pydantic import BaseModel, model_serializer
 
@@ -263,8 +263,7 @@ class JavaFunction(Function):
 
 
 class PythonGeneratorWrapper:
-    """
-    A temporary wrapper class for Python generators to work around a
+    """A temporary wrapper class for Python generators to work around a
     known issue in PEMJA, where the generator type is incorrectly handled.
 
     TODO: This wrapper is intended to be a temporary solution. Once PEMJA
@@ -274,7 +273,7 @@ class PythonGeneratorWrapper:
     """
 
     def __init__(self, generator: Generator) -> None:
-        """Initialize a PythonGeneratorWrapper. """
+        """Initialize a PythonGeneratorWrapper."""
         self.generator = generator
 
     def __str__(self) -> str:
@@ -355,8 +354,7 @@ def get_python_function_cache_keys() -> List[Tuple[str, str]]:
 
 
 def call_python_generator(generator_wrapper: PythonGeneratorWrapper) -> (bool, Any):
-    """
-    Invokes the next step of a wrapped Python generator and returns whether
+    """Invokes the next step of a wrapped Python generator and returns whether
     it is done, along with the yielded or returned value.
 
     Args:
@@ -377,7 +375,7 @@ def call_python_generator(generator_wrapper: PythonGeneratorWrapper) -> (bool, A
     try:
         result = next(generator_wrapper.generator)
     except StopIteration as e:
-        return True, e.value if hasattr(e, 'value') else None
+        return True, e.value if hasattr(e, "value") else None
     except Exception:
         logger.exception("Error in generator execution")
         raise

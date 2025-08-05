@@ -25,22 +25,25 @@ from pyflink.common import Row
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 
 
-def test_event_init_serializable() -> None: #noqa D103
-    Event(a=1, b=InputEvent(input=1), c=OutputEvent(output='111'))
+def test_event_init_serializable() -> None:  # noqa D103
+    Event(a=1, b=InputEvent(input=1), c=OutputEvent(output="111"))
 
-def test_event_init_non_serializable() -> None: #noqa D103
+
+def test_event_init_non_serializable() -> None:  # noqa D103
     with pytest.raises(ValidationError):
         Event(a=1, b=Type[InputEvent])
 
-def test_event_setattr_serializable() -> None: #noqa D103
+
+def test_event_setattr_serializable() -> None:  # noqa D103
     event = Event(a=1)
     event.c = Event()
 
-def test_event_setattr_non_serializable() -> None: #noqa D103
+
+def test_event_setattr_non_serializable() -> None:  # noqa D103
     event = Event(a=1)
     with pytest.raises(PydanticSerializationError):
         event.c = Type[InputEvent]
 
-def test_input_event_ignore_row_unserializable() -> None: #noqa D103
-    InputEvent(input=Row({"a": 1}))
 
+def test_input_event_ignore_row_unserializable() -> None:  # noqa D103
+    InputEvent(input=Row({"a": 1}))

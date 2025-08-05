@@ -24,6 +24,7 @@ from flink_agents.api.metric_group import Counter, Gauge, Histogram, Meter, Metr
 
 class FlinkMetricGroup(MetricGroup):
     """Implementation of MetricGroup for flink execution environment."""
+
     def __init__(self, j_metric_group: Any) -> None:
         """Initialize a flink metric group with the given java metric group.
 
@@ -47,15 +48,17 @@ class FlinkMetricGroup(MetricGroup):
         return FlinkMeter(self._j_metric_group.getMeter(name))
 
     @override
-    def get_histogram(self, name: str, window_size: int =100) -> "FlinkHistogram":
+    def get_histogram(self, name: str, window_size: int = 100) -> "FlinkHistogram":
         return FlinkHistogram(self._j_metric_group.getHistogram(name, window_size))
 
     @override
     def get_gauge(self, name: str) -> "FlinkGauge":
         return FlinkGauge(self._j_metric_group.getGauge(name))
 
+
 class FlinkCounter(Counter):
     """Implementation of Counter for flink execution environment."""
+
     def __init__(self, j_counter: Any) -> None:
         """Initialize a flink runner context with the given java runner context.
 
@@ -81,8 +84,10 @@ class FlinkCounter(Counter):
         """Return the current count."""
         return self._j_counter.getCount()
 
+
 class FlinkMeter(Meter):
     """Implementation of Meter for flink execution environment."""
+
     def __init__(self, j_meter: Any) -> None:
         """Initialize a flink meter with the given java meter.
 
@@ -103,8 +108,10 @@ class FlinkMeter(Meter):
         """Return the current event rate per second."""
         return self._j_meter.getRate()
 
+
 class FlinkHistogram(Histogram):
     """Implementation of Histogram for flink execution environment."""
+
     def __init__(self, j_histogram: Any) -> None:
         """Initialize a flink histogram with the given java histogram.
 
@@ -137,8 +144,10 @@ class FlinkHistogram(Histogram):
         """Return the minimum recorded value."""
         return self._j_statistics.getMin()
 
+
 class FlinkGauge(Gauge):
     """Implementation of Gauge for flink execution environment."""
+
     def __init__(self, j_gauge: Any) -> None:
         """Initialize a flink gauge with the given java gauge.
 

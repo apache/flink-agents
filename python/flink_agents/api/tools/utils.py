@@ -65,6 +65,7 @@ def create_schema_from_function(name: str, func: Callable) -> Type[BaseModel]:
 
     return create_model(name, **fields)
 
+
 TYPE_MAPPING: dict[str, type] = {
     "string": str,
     "integer": int,
@@ -149,7 +150,9 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
         fields = {}
         for field_name, field_schema in model_schema.get("properties", {}).items():
             field_type = resolve_field_type(field_schema=field_schema)
-            field_params = __get_field_params_from_field_schema(field_schema=field_schema)
+            field_params = __get_field_params_from_field_schema(
+                field_schema=field_schema
+            )
             fields[field_name] = (field_type, Field(**field_params))
 
         models[model_name] = create_model(

@@ -24,37 +24,41 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.runner_context import RunnerContext
 
 
-def test_action_decorator() -> None: #noqa D103
+def test_action_decorator() -> None:  # noqa D103
     @action(InputEvent)
     def forward_action(event: Event, ctx: RunnerContext) -> None:
         input = event.input
         ctx.send_event(OutputEvent(output=input))
 
-    assert hasattr(forward_action, '_listen_events')
+    assert hasattr(forward_action, "_listen_events")
     listen_events = forward_action._listen_events
     assert listen_events == (InputEvent,)
 
-def test_action_decorator_listen_multi_events() -> None: #noqa D103
+
+def test_action_decorator_listen_multi_events() -> None:  # noqa D103
     @action(InputEvent, OutputEvent)
     def forward_action(event: Event, ctx: RunnerContext) -> None:
         input = event.input
         ctx.send_event(OutputEvent(output=input))
 
-    assert hasattr(forward_action, '_listen_events')
+    assert hasattr(forward_action, "_listen_events")
     listen_events = forward_action._listen_events
     assert listen_events == (InputEvent, OutputEvent)
 
-def test_action_decorator_listen_no_event() -> None: #noqa D103
+
+def test_action_decorator_listen_no_event() -> None:  # noqa D103
     with pytest.raises(AssertionError):
+
         @action()
         def forward_action(event: Event, ctx: RunnerContext) -> None:
             input = event.input
             ctx.send_event(OutputEvent(output=input))
 
-def test_action_decorator_listen_non_event_type() -> None: #noqa D103
+
+def test_action_decorator_listen_non_event_type() -> None:  # noqa D103
     with pytest.raises(AssertionError):
+
         @action(List)
         def forward_action(event: Event, ctx: RunnerContext) -> None:
             input = event.input
             ctx.send_event(OutputEvent(output=input))
-

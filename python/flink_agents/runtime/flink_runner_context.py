@@ -15,7 +15,9 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Callable, Tuple, Dict
+import os
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Dict, Tuple
 
 import cloudpickle
 from typing_extensions import override
@@ -26,8 +28,6 @@ from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
-from concurrent.futures import ThreadPoolExecutor
-import os
 
 
 class FlinkRunnerContext(RunnerContext):
@@ -112,13 +112,13 @@ class FlinkRunnerContext(RunnerContext):
 
     @override
     def execute_async(
-            self,
-            func: Callable[[Any], Any],
-            *args: Tuple[Any, ...],
-            **kwargs: Dict[str, Any],
+        self,
+        func: Callable[[Any], Any],
+        *args: Tuple[Any, ...],
+        **kwargs: Dict[str, Any],
     ) -> Any:
         """Asynchronously execute the provided function. Access to memory
-         is prohibited within the function.
+        is prohibited within the function.
         """
         future = self.executor.submit(func, *args, **kwargs)
         while not future.done():
@@ -139,7 +139,8 @@ def create_flink_runner_context(
 
 def create_async_thread_pool() -> ThreadPoolExecutor:
     """Used to create a thread pool to execute asynchronous
-    code block in action."""
+    code block in action.
+    """
     return ThreadPoolExecutor(max_workers=os.cpu_count() * 2)
 
 

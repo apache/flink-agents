@@ -71,7 +71,7 @@ class DataStreamAgent(Agent):
         input = event.input
 
         stm = ctx.get_short_term_memory()
-        status = stm.new_object("status", overwrite = True)
+        status = stm.new_object("status", overwrite=True)
 
         total = 0
         if stm.is_exist("status.total_reviews"):
