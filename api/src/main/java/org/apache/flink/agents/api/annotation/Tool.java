@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api;
+package org.apache.flink.agents.api.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -24,28 +24,18 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Annotation for marking a method as an agent action.
+ * Annotation to mark a field as a tool resource that should be managed by the agent plan.
  *
- * <p>This annotation specifies which event types the action should respond to. The annotated method
- * will be triggered when any of the specified event types occur.
- *
- * <p>Example usage:
- *
- * <pre>{@code
- * @Action(listenEvents = {InputEvent.class, CustomEvent.class})
- * public void handleEvents(Event event) {
- *     // Action logic here
- * }
- * }</pre>
+ * <p>Fields annotated with @Tool will be scanned during agent plan creation and corresponding
+ * resource providers will be created to manage the tool instances.
  */
-@Target(ElementType.METHOD)
+@Target(ElementType.FIELD)
 @Retention(RetentionPolicy.RUNTIME)
-public @interface Action {
+public @interface Tool {
     /**
-     * List of event types that this action should respond to. At least one event type must be
-     * specified.
+     * The name of the tool resource. If not specified, the field name will be used.
      *
-     * @return Array of Event classes that this action listens to
+     * @return the resource name
      */
-    Class<? extends Event>[] listenEvents();
+    String name() default "";
 }

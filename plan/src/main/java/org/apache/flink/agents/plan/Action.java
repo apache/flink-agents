@@ -28,7 +28,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotatio
 import java.util.List;
 
 /**
- * Representation of a agent action with event listening and function execution.
+ * Representation of an agent action with event listening and function execution.
  *
  * <p>This class encapsulates a named agent action that listens for specific event types and
  * executes an associated function when those events occur.

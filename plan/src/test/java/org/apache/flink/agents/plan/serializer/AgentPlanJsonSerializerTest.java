@@ -41,17 +41,18 @@ public class AgentPlanJsonSerializerTest {
     /** Test Agent class with @Action annotated methods. */
     public static class TestAgent extends Agent {
 
-        @org.apache.flink.agents.api.Action(listenEvents = {InputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
         public void handleInputEvent(InputEvent event, RunnerContext context) {
             // Test action logic
         }
 
-        @org.apache.flink.agents.api.Action(listenEvents = {OutputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(listenEvents = {OutputEvent.class})
         public void processOutputEvent(OutputEvent event, RunnerContext context) {
             // Test action logic
         }
 
-        @org.apache.flink.agents.api.Action(listenEvents = {InputEvent.class, OutputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(
+                listenEvents = {InputEvent.class, OutputEvent.class})
         public void handleMultipleEvents(Event event, RunnerContext context) {
             // Test action logic for multiple event types
         }

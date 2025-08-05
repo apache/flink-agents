@@ -21,6 +21,7 @@ package org.apache.flink.agents.plan.compatibility;
 import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,12 +42,12 @@ public class GenerateAgentPlanJson {
     /** Agent class for generating java agent plan json. */
     public static class JavaAgentPlanCompatibilityTestAgent extends Agent {
 
-        @org.apache.flink.agents.api.Action(listenEvents = {InputEvent.class})
+        @Action(listenEvents = {InputEvent.class})
         public void firstAction(InputEvent event, RunnerContext context) {
             // Test action implementation
         }
 
-        @org.apache.flink.agents.api.Action(listenEvents = {InputEvent.class, MyEvent.class})
+        @Action(listenEvents = {InputEvent.class, MyEvent.class})
         public void secondAction(Event event, RunnerContext context) {
             // Test action implementation
         }

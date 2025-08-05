@@ -20,6 +20,14 @@ package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.annotation.ChatModel;
+import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.SerializableResource;
+import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,11 +38,14 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Agent plan compiled from user defined agent. */
 @JsonSerialize(using = AgentPlanJsonSerializer.class)
@@ -47,24 +58,30 @@ public class AgentPlan implements Serializable {
     /** Mapping from event class name to list of actions that should be triggered by the event. */
     private Map<String, List<Action>> actionsByEvent;
 
-    public AgentPlan() {}
+    /** Two-level mapping of resource type to resource name to resource provider. */
+    private Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
+
+    /** Cache for instantiated resources. */
+    private transient Map<ResourceType, Map<String, Resource>> resourceCache;
 
     public AgentPlan(Map<String, Action> actions, Map<String, List<Action>> actionsByEvent) {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
+        this.resourceProviders = new HashMap<>();
+        this.resourceCache = new ConcurrentHashMap<>();
     }
 
     /**
-     * Constructor that creates an AgentPlan from an Agent instance by scanning for @Action
+     * Constructor that creates an AgentPlan from an Agent instance by scanning for all types of
      * annotations.
      *
      * @param agent the agent instance to scan for actions
      * @throws Exception if there's an error creating actions from the agent
      */
     public AgentPlan(Agent agent) throws Exception {
-        this.actions = new HashMap<>();
-        this.actionsByEvent = new HashMap<>();
+        this(new HashMap<>(), new HashMap<>());
         extractActionsFromAgent(agent);
+        extractResourceProvidersFromAgent(agent);
     }
 
     public Map<String, Action> getActions() {
@@ -75,8 +92,43 @@ public class AgentPlan implements Serializable {
         return actionsByEvent;
     }
 
+    public Map<ResourceType, Map<String, ResourceProvider>> getResourceProviders() {
+        return resourceProviders;
+    }
+
     public List<Action> getActionsTriggeredBy(String eventType) {
         return actionsByEvent.get(eventType);
+    }
+
+    /**
+     * Get resource from agent plan.
+     *
+     * @param name the resource name
+     * @param type the resource type
+     * @return the resource instance
+     * @throws Exception if the resource cannot be found or created
+     */
+    public Resource getResource(String name, ResourceType type) throws Exception {
+        // Check cache first
+        if (resourceCache.containsKey(type) && resourceCache.get(type).containsKey(name)) {
+            return resourceCache.get(type).get(name);
+        }
+
+        // Get resource provider
+        if (!resourceProviders.containsKey(type)
+                || !resourceProviders.get(type).containsKey(name)) {
+            throw new IllegalArgumentException("Resource not found: " + name + " of type " + type);
+        }
+
+        ResourceProvider provider = resourceProviders.get(type).get(name);
+
+        // Create resource using provider
+        Resource resource = provider.provide(() -> this.getResource(name, type));
+
+        // Cache the resource
+        resourceCache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
+
+        return resource;
     }
 
     private void writeObject(ObjectOutputStream out) throws IOException {
@@ -89,15 +141,17 @@ public class AgentPlan implements Serializable {
         AgentPlan agentPlan = new ObjectMapper().readValue(serializedStr, AgentPlan.class);
         this.actions = agentPlan.getActions();
         this.actionsByEvent = agentPlan.getActionsByEvent();
+        this.resourceProviders = agentPlan.getResourceProviders();
+        this.resourceCache = new ConcurrentHashMap<>();
     }
 
     private void extractActionsFromAgent(Agent agent) throws Exception {
         // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
         for (Method method : agentClass.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(org.apache.flink.agents.api.Action.class)) {
-                org.apache.flink.agents.api.Action actionAnnotation =
-                        method.getAnnotation(org.apache.flink.agents.api.Action.class);
+            if (method.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
+                org.apache.flink.agents.api.annotation.Action actionAnnotation =
+                        method.getAnnotation(org.apache.flink.agents.api.annotation.Action.class);
 
                 // Get the event types this action listens to
                 Class<? extends Event>[] listenEventTypes = actionAnnotation.listenEvents();
@@ -126,5 +180,103 @@ public class AgentPlan implements Serializable {
                 }
             }
         }
+    }
+
+    private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
+        Class<?> agentClass = agent.getClass();
+
+        // Scan all fields in the agent class for @Tool and @ChatModel annotations
+        for (Field field : agentClass.getDeclaredFields()) {
+            field.setAccessible(true); // Allow access to private fields
+
+            // Check for @Tool annotation
+            if (field.isAnnotationPresent(Tool.class)) {
+                Tool toolAnnotation = field.getAnnotation(Tool.class);
+                String resourceName =
+                        toolAnnotation.name().isEmpty() ? field.getName() : toolAnnotation.name();
+
+                try {
+                    Object fieldValue = field.get(agent);
+                    if (fieldValue != null && fieldValue instanceof Resource) {
+                        Resource resource = (Resource) fieldValue;
+                        ResourceProvider provider =
+                                createResourceProvider(
+                                        resourceName, ResourceType.TOOL, resource, agentClass);
+                        addResourceProvider(provider);
+                    }
+                } catch (IllegalAccessException e) {
+                    throw new Exception(
+                            "Failed to access field "
+                                    + field.getName()
+                                    + " in agent class "
+                                    + agentClass.getName(),
+                            e);
+                }
+            }
+
+            // Check for @ChatModel annotation
+            if (field.isAnnotationPresent(ChatModel.class)) {
+                ChatModel chatModelAnnotation = field.getAnnotation(ChatModel.class);
+                String resourceName =
+                        chatModelAnnotation.name().isEmpty()
+                                ? field.getName()
+                                : chatModelAnnotation.name();
+
+                try {
+                    Object fieldValue = field.get(agent);
+                    if (fieldValue != null && fieldValue instanceof Resource) {
+                        Resource resource = (Resource) fieldValue;
+                        ResourceProvider provider =
+                                createResourceProvider(
+                                        resourceName,
+                                        ResourceType.CHAT_MODEL,
+                                        resource,
+                                        agentClass);
+                        addResourceProvider(provider);
+                    }
+                } catch (IllegalAccessException e) {
+                    throw new Exception(
+                            "Failed to access field "
+                                    + field.getName()
+                                    + " in agent class "
+                                    + agentClass.getName(),
+                            e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Creates an appropriate ResourceProvider based on the resource type and whether it's
+     * serializable.
+     */
+    private ResourceProvider createResourceProvider(
+            String name, ResourceType type, Resource resource, Class<?> agentClass) {
+        if (resource instanceof SerializableResource) {
+            // For serializable resources, use JavaSerializableResourceProvider
+            SerializableResource serializableResource = (SerializableResource) resource;
+            return new JavaSerializableResourceProvider(
+                    name, type, agentClass.getPackage().getName(), resource.getClass().getName()) {
+                @Override
+                public Resource provide(Callable<Resource> getResource) throws Exception {
+                    return serializableResource;
+                }
+            };
+        } else {
+            // For non-serializable resources, use JavaResourceProvider
+            return new JavaResourceProvider(name, type) {
+                @Override
+                public Resource provide(Callable<Resource> getResource) throws Exception {
+                    return resource;
+                }
+            };
+        }
+    }
+
+    /** Adds a resource provider to the resourceProviders map. */
+    private void addResourceProvider(ResourceProvider provider) {
+        resourceProviders
+                .computeIfAbsent(provider.getType(), k -> new HashMap<>())
+                .put(provider.getName(), provider);
     }
 }

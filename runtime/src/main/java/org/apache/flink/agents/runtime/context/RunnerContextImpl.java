@@ -20,6 +20,9 @@ package org.apache.flink.agents.runtime.context;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
@@ -40,15 +43,18 @@ public class RunnerContextImpl implements RunnerContext {
     protected final MapState<String, MemoryObjectImpl.MemoryItem> store;
     protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
     protected final Runnable mailboxThreadChecker;
+    protected final AgentPlan agentPlan;
     protected String actionName;
 
     public RunnerContextImpl(
             MapState<String, MemoryObjectImpl.MemoryItem> store,
             FlinkAgentsMetricGroupImpl agentMetricGroup,
-            Runnable mailboxThreadChecker) {
+            Runnable mailboxThreadChecker,
+            AgentPlan agentPlan) {
         this.store = store;
         this.agentMetricGroup = agentMetricGroup;
         this.mailboxThreadChecker = mailboxThreadChecker;
+        this.agentPlan = agentPlan;
     }
 
     public void setActionName(String actionName) {
@@ -94,5 +100,13 @@ public class RunnerContextImpl implements RunnerContext {
     public MemoryObject getShortTermMemory() throws Exception {
         mailboxThreadChecker.run();
         return new MemoryObjectImpl(store, MemoryObjectImpl.ROOT_KEY, mailboxThreadChecker);
+    }
+
+    @Override
+    public Resource getResource(String name, ResourceType type) throws Exception {
+        if (agentPlan == null) {
+            throw new IllegalStateException("AgentPlan is not available in this context");
+        }
+        return agentPlan.getResource(name, type);
     }
 }

@@ -22,10 +22,19 @@ import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.annotation.ChatModel;
+import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.SerializableResource;
+import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -45,15 +54,54 @@ public class AgentPlanTest {
         }
     }
 
+    /** Test tool resource class. */
+    public static class TestTool extends Resource {
+        private final String name;
+
+        public TestTool(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public ResourceType getResourceType() {
+            return ResourceType.TOOL;
+        }
+    }
+
+    /** Test serializable chat model resource class. */
+    public static class TestSerializableChatModel extends SerializableResource {
+        private final String name;
+
+        public TestSerializableChatModel(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public ResourceType getResourceType() {
+            return ResourceType.CHAT_MODEL;
+        }
+    }
+
     /** Test agent class with annotated methods. */
     public static class TestAgent extends Agent {
 
-        @org.apache.flink.agents.api.Action(listenEvents = {InputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
         public void handleInputEvent(InputEvent event, RunnerContext context) {
             // Test action implementation
         }
 
-        @org.apache.flink.agents.api.Action(listenEvents = {TestEvent.class, OutputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(
+                listenEvents = {TestEvent.class, OutputEvent.class})
         public void handleMultipleEvents(Event event, RunnerContext context) {
             // Test action implementation
         }
@@ -61,6 +109,25 @@ public class AgentPlanTest {
         // This method is not annotated, so it should not be included
         public void nonAnnotatedMethod(Event event, RunnerContext context) {
             // This should not be included in the agent plan
+        }
+    }
+
+    /** Test agent class with resource annotations. */
+    public static class TestAgentWithResources extends Agent {
+
+        @Tool(name = "myTool")
+        private TestTool tool = new TestTool("myTool");
+
+        @ChatModel
+        private TestSerializableChatModel chatModel =
+                new TestSerializableChatModel("defaultChatModel");
+
+        @Tool(name = "anotherTool")
+        private TestTool anotherTool = new TestTool("anotherTool");
+
+        @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
+        public void handleInputEvent(InputEvent event, RunnerContext context) {
+            // Test action implementation
         }
     }
 
@@ -137,5 +204,111 @@ public class AgentPlanTest {
         // Verify that no actions were collected
         assertThat(agentPlan.getActions().size()).isEqualTo(0);
         assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(0);
+    }
+
+    @Test
+    public void testAgentPlanResourceProviders() throws Exception {
+        // Test that AgentPlan initializes resource providers correctly
+        TestAgent agent = new TestAgent();
+        AgentPlan agentPlan = new AgentPlan(agent);
+
+        // Verify that resource providers map is initialized
+        Map<ResourceType, Map<String, ResourceProvider>> resourceProviders =
+                agentPlan.getResourceProviders();
+        assertThat(resourceProviders).isNotNull();
+
+        // The map should be empty for agents without resource annotations
+        assertThat(resourceProviders).isEmpty();
+    }
+
+    @Test
+    public void testGetResourceNotFound() throws Exception {
+        TestAgent agent = new TestAgent();
+        AgentPlan agentPlan = new AgentPlan(agent);
+
+        // Test getting non-existent resource throws exception
+        try {
+            agentPlan.getResource("non-existent", ResourceType.CHAT_MODEL);
+            assertThat(false).as("Should have thrown IllegalArgumentException").isTrue();
+        } catch (IllegalArgumentException e) {
+            assertThat(e.getMessage()).contains("Resource not found: non-existent");
+        }
+    }
+
+    @Test
+    public void testExtractResourceProvidersFromAgent() throws Exception {
+        // Create an agent with resource annotations
+        TestAgentWithResources agent = new TestAgentWithResources();
+        AgentPlan agentPlan = new AgentPlan(agent);
+
+        // Verify that resource providers were extracted correctly
+        Map<ResourceType, Map<String, ResourceProvider>> resourceProviders =
+                agentPlan.getResourceProviders();
+        assertThat(resourceProviders).isNotNull();
+        assertThat(resourceProviders).hasSize(2); // TOOL and CHAT_MODEL
+
+        // Verify TOOL resource providers
+        Map<String, ResourceProvider> toolProviders = resourceProviders.get(ResourceType.TOOL);
+        assertThat(toolProviders).isNotNull();
+        assertThat(toolProviders).hasSize(2); // myTool and anotherTool
+        assertThat(toolProviders).containsKey("myTool");
+        assertThat(toolProviders).containsKey("anotherTool");
+
+        // Verify that tool providers are JavaResourceProvider (non-serializable)
+        ResourceProvider myToolProvider = toolProviders.get("myTool");
+        assertThat(myToolProvider).isInstanceOf(JavaResourceProvider.class);
+        assertThat(myToolProvider.getName()).isEqualTo("myTool");
+        assertThat(myToolProvider.getType()).isEqualTo(ResourceType.TOOL);
+
+        ResourceProvider anotherToolProvider = toolProviders.get("anotherTool");
+        assertThat(anotherToolProvider).isInstanceOf(JavaResourceProvider.class);
+        assertThat(anotherToolProvider.getName()).isEqualTo("anotherTool");
+        assertThat(anotherToolProvider.getType()).isEqualTo(ResourceType.TOOL);
+
+        // Verify CHAT_MODEL resource providers
+        Map<String, ResourceProvider> chatModelProviders =
+                resourceProviders.get(ResourceType.CHAT_MODEL);
+        assertThat(chatModelProviders).isNotNull();
+        assertThat(chatModelProviders).hasSize(1); // defaultChatModel (field name used as default)
+        assertThat(chatModelProviders).containsKey("chatModel");
+
+        // Verify that chat model provider is JavaSerializableResourceProvider
+        // (serializable)
+        ResourceProvider chatModelProvider = chatModelProviders.get("chatModel");
+        assertThat(chatModelProvider).isInstanceOf(JavaSerializableResourceProvider.class);
+        assertThat(chatModelProvider.getName()).isEqualTo("chatModel");
+        assertThat(chatModelProvider.getType()).isEqualTo(ResourceType.CHAT_MODEL);
+
+        // Test JavaSerializableResourceProvider specific methods
+        JavaSerializableResourceProvider serializableProvider =
+                (JavaSerializableResourceProvider) chatModelProvider;
+        assertThat(serializableProvider.getModule())
+                .isEqualTo(TestAgentWithResources.class.getPackage().getName());
+        assertThat(serializableProvider.getClazz()).contains("TestSerializableChatModel");
+    }
+
+    @Test
+    public void testGetResourceFromResourceProvider() throws Exception {
+        // Create an agent with resource annotations
+        TestAgentWithResources agent = new TestAgentWithResources();
+        AgentPlan agentPlan = new AgentPlan(agent);
+
+        // Test getting a tool resource
+        Resource myTool = agentPlan.getResource("myTool", ResourceType.TOOL);
+        assertThat(myTool).isNotNull();
+        assertThat(myTool).isInstanceOf(TestTool.class);
+        assertThat(myTool.getName()).isEqualTo("myTool");
+        assertThat(myTool.getResourceType()).isEqualTo(ResourceType.TOOL);
+
+        // Test getting a chat model resource
+        Resource chatModel = agentPlan.getResource("chatModel", ResourceType.CHAT_MODEL);
+        assertThat(chatModel).isNotNull();
+        assertThat(chatModel).isInstanceOf(TestSerializableChatModel.class);
+        assertThat(chatModel.getName()).isEqualTo("defaultChatModel");
+        assertThat(chatModel.getResourceType()).isEqualTo(ResourceType.CHAT_MODEL);
+
+        // Test that resources are cached (should be the same instance)
+        Resource myToolAgain = agentPlan.getResource("myTool", ResourceType.TOOL);
+        assertThat(myTool).isSameAs(myToolAgain);
     }
 }

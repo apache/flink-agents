@@ -19,6 +19,8 @@ package org.apache.flink.agents.api.context;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceType;
 
 /**
  * A context object used during action execution. It is responsible for collecting output events
@@ -53,4 +55,14 @@ public interface RunnerContext {
      * @return the individual metric group specific to the current action.
      */
     FlinkAgentsMetricGroup getActionMetricGroup();
+
+    /**
+     * Gets a resource by name and type.
+     *
+     * @param name the resource name
+     * @param type the resource type
+     * @return the resource instance
+     * @throws Exception if the resource cannot be found or created
+     */
+    Resource getResource(String name, ResourceType type) throws Exception;
 }

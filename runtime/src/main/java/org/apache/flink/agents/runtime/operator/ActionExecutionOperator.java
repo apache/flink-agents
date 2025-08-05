@@ -413,11 +413,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         RunnerContextImpl runnerContext;
         if (actionTask.action.getExec() instanceof JavaFunction) {
             runnerContext =
-                    new RunnerContextImpl(shortTermMemState, metricGroup, this::checkMailboxThread);
+                    new RunnerContextImpl(
+                            shortTermMemState, metricGroup, this::checkMailboxThread, agentPlan);
         } else if (actionTask.action.getExec() instanceof PythonFunction) {
             runnerContext =
                     new PythonRunnerContextImpl(
-                            shortTermMemState, metricGroup, this::checkMailboxThread);
+                            shortTermMemState, metricGroup, this::checkMailboxThread, agentPlan);
         } else {
             throw new IllegalStateException(
                     "Unsupported action type: " + actionTask.action.getExec().getClass());

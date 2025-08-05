@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.api.common.JobID;
@@ -500,14 +501,14 @@ public class RescalingITCase extends TestLogger {
 
         public static final AtomicInteger numProcessedEvent = new AtomicInteger(0);
 
-        @org.apache.flink.agents.api.Action(listenEvents = {InputEvent.class})
+        @Action(listenEvents = {InputEvent.class})
         public static void handleInputEvent(InputEvent event, RunnerContext context) {
             // Test action implementation
             numProcessedEvent.incrementAndGet();
             context.sendEvent(new TestEvent((Integer) event.getInput()));
         }
 
-        @org.apache.flink.agents.api.Action(listenEvents = {TestEvent.class})
+        @Action(listenEvents = {TestEvent.class})
         public static void handleTestEvent(TestEvent event, RunnerContext context) {
             numProcessedEvent.incrementAndGet();
             context.sendEvent(new OutputEvent(event.data));
