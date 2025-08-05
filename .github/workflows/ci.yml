@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check License Header
-        uses: apache/skywalking-eyes/header@main
+        run: tools/check-license.sh
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
