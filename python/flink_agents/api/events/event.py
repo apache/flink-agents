@@ -54,10 +54,6 @@ class Event(BaseModel, ABC, extra="allow"):
             kwargs['fallback'] = self.__serialize_unknown
         return super().model_dump_json(**kwargs)
 
-    @model_validator(mode='after')
-    def validate_extra(self) -> 'Event':
-        """Ensure init fields is serializable."""
-
     @model_validator(mode="after")
     def validate_extra(self) -> "Event":
         """Ensure init fields is serializable."""
