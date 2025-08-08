@@ -15,12 +15,12 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Callable, Tuple, Type
+from typing import Callable, Type
 
-from flink_agents.api.event import Event
+from flink_agents.api.events.event import Event
 
 
-def action(*listen_events: Tuple[Type[Event], ...]) -> Callable:
+def action(*listen_events: Type[Event]) -> Callable:
     """Decorator for marking a function as an agent action.
 
     Parameters
@@ -38,13 +38,66 @@ def action(*listen_events: Tuple[Type[Event], ...]) -> Callable:
     AssertionError
         If no events are provided to listen to.
     """
-    assert len(listen_events) > 0, 'action must have at least one event type to listen to'
+    assert len(listen_events) > 0, (
+        "action must have at least one event type to listen to"
+    )
 
     for event in listen_events:
-        assert issubclass(event, Event), 'action must only listen to event types.'
+        assert issubclass(event, Event), "action must only listen to event types."
 
     def decorator(func: Callable) -> Callable:
         func._listen_events = listen_events
         return func
 
     return decorator
+
+
+def chat_model(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a chat model.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare a chat model.
+    """
+    func._is_chat_model = True
+    return func
+
+
+def tool(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a tool.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare a tool.
+    """
+    func._is_tool = True
+    return func
+
+
+def prompt(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a prompt.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare a prompt.
+    """
+    func._is_prompt = True
+    return func

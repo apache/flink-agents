@@ -1,0 +1,10 @@
+{
+    "name": "mock",
+    "type": "chat_model",
+    "module": "flink_agents.plan.tests.test_resource_provider",
+    "clazz": "MockChatModelImpl",
+    "kwargs": {
+        "host": "8.8.8.8",
+        "desc": "mock chat model"
+    }
+}

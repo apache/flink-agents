@@ -91,10 +91,10 @@ run_python_lint() {
     pushd python
     if [[ "$action" == "format" ]]; then
       echo "Executing Python format with uv"
-      uv run ruff format .
+      uv run ruff check --fix .
     else
       echo "Executing Python format check with uv"
-      uv run ruff check .
+      uv run ruff check --no-fix .
     fi
     local result=$?
     popd
@@ -103,10 +103,10 @@ run_python_lint() {
     # Use traditional approach
     if [[ "$action" == "format" ]]; then
       echo "Executing Python format"
-      ruff format python
+      ruff check --fix python
     else
       echo "Executing Python format check"
-      ruff check python
+      ruff check --no-fix python
     fi
     return $?
   fi

@@ -72,3 +72,13 @@ python -m pip install python/dist/*.whl
 ## How to Contribute
 
 [Contribution Guidelines](.github/CONTRIBUTING.md).
+
+## Community
+
+### Slack
+
+See the [Apache Flink website](https://flink.apache.org/what-is-flink/community/#slack) for how to join the slack workspace. We use [#flink-agents-dev](https://apache-flink.slack.com/archives/C097QF5HG8J) for developement related discussions.
+
+### Community Sync
+
+There is a weekly online sync. Everyone is welcome to join. Please find the schedule, agenda for the next sync, and records of previous syncs in this [github discussion page](https://github.com/apache/flink-agents/discussions/66).

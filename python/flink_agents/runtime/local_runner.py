@@ -18,15 +18,19 @@
 import logging
 import uuid
 from collections import deque
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, Generator, List, Tuple
 
 from typing_extensions import override
 
 from flink_agents.api.agent import Agent
-from flink_agents.api.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.metric_group import MetricGroup
+from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.runtime.agent_runner import AgentRunner
+from flink_agents.runtime.local_memory_object import LocalMemoryObject
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -52,6 +56,8 @@ class LocalRunnerContext(RunnerContext):
     __agent_plan: AgentPlan
     __key: Any
     events: deque[Event]
+    _store: dict[str, Any]
+    _short_term_memory: MemoryObject
 
     def __init__(self, agent_plan: AgentPlan, key: Any) -> None:
         """Initialize a new context with the given agent and key.
@@ -67,6 +73,10 @@ class LocalRunnerContext(RunnerContext):
         self.__agent_plan = agent_plan
         self.__key = key
         self.events = deque()
+        self._store = {}
+        self._short_term_memory = LocalMemoryObject(
+            self._store, LocalMemoryObject.ROOT_KEY
+        )
 
     @property
     def key(self) -> Any:
@@ -90,6 +100,49 @@ class LocalRunnerContext(RunnerContext):
         """
         logger.info("key: %s, send_event: %s", self.__key, event)
         self.events.append(event)
+
+    @override
+    def get_resource(self, name: str, type: ResourceType) -> Resource:
+        return self.__agent_plan.get_resource(name, type)
+
+    @override
+    def get_short_term_memory(self) -> MemoryObject:
+        """Get the short-term memory object associated with this context.
+
+        Returns:
+        -------
+        MemoryObject
+            The root object of the short-term memory.
+        """
+        return self._short_term_memory
+
+    @override
+    def get_agent_metric_group(self) -> MetricGroup:
+        # TODO: Support metric mechanism for local agent execution.
+        err_msg = "Metric mechanism is not supported for local agent execution yet."
+        raise NotImplementedError(err_msg)
+
+    @override
+    def get_action_metric_group(self) -> MetricGroup:
+        # TODO: Support metric mechanism for local agent execution.
+        err_msg = "Metric mechanism is not supported for local agent execution yet."
+        raise NotImplementedError(err_msg)
+
+    def execute_async(
+        self,
+        func: Callable[[Any], Any],
+        *args: Tuple[Any, ...],
+        **kwargs: Dict[str, Any],
+    ) -> Any:
+        """Asynchronously execute the provided function. Access to memory
+        is prohibited within the function.
+        """
+        logger.warning(
+            "Local runner does not support asynchronous execution; falling back to synchronous execution."
+        )
+        func_result = func(*args, **kwargs)
+        yield
+        return func_result
 
 
 class LocalRunner(AgentRunner):
@@ -136,10 +189,10 @@ class LocalRunner(AgentRunner):
         key
             The key of the input that was processed.
         """
-        if 'key' in data:
-            key = data['key']
-        elif 'k' in data:
-            key = data['k']
+        if "key" in data:
+            key = data["key"]
+        elif "k" in data:
+            key = data["k"]
         else:
             key = uuid.uuid4()
 
@@ -147,10 +200,10 @@ class LocalRunner(AgentRunner):
             self.__keyed_contexts[key] = LocalRunnerContext(self.__agent_plan, key)
         context = self.__keyed_contexts[key]
 
-        if 'value' in data:
-            input_event = InputEvent(input=data['value'])
-        elif 'v' in data:
-            input_event = InputEvent(input=data['v'])
+        if "value" in data:
+            input_event = InputEvent(input=data["value"])
+        elif "v" in data:
+            input_event = InputEvent(input=data["v"])
         else:
             msg = "Input data must be dict has 'v' or 'value' field"
             raise RuntimeError(msg)
@@ -162,12 +215,17 @@ class LocalRunner(AgentRunner):
             if isinstance(event, OutputEvent):
                 self.__outputs.append({key: event.output})
                 continue
-            event_type = f'{event.__class__.__module__}.{event.__class__.__name__}'
+            event_type = f"{event.__class__.__module__}.{event.__class__.__name__}"
             for action in self.__agent_plan.get_actions(event_type):
-                logger.info(
-                    "key: %s, performing action: %s", key, action.name
-                )
-                action.exec(event, context)
+                logger.info("key: %s, performing action: %s", key, action.name)
+                func_result = action.exec(event, context)
+                if isinstance(func_result, Generator):
+                    try:
+                        for _ in func_result:
+                            pass
+                    except Exception:
+                        logger.exception("Error in async execution")
+                        raise
         return key
 
     def get_outputs(self) -> List[Dict[str, Any]]:

@@ -52,5 +52,5 @@ Run the following command to format the code:
 Run the following command to fix the license headers:
 
 ```shell
-docker run -it --rm -v $(pwd):/github/workspace apache/skywalking-eyes header fix
+./tools/check-license.sh
 ```

@@ -33,6 +33,35 @@ def check_type_match(actual: Any, expect: Any) -> None:
     if expect is Any:
         return
 
+    # Handle string annotations from __future__ import annotations
+    if isinstance(actual, str):
+        # For string annotations, we need to compare the string representation
+        # Convert expect type to string for comparison
+        if hasattr(expect, "__name__"):
+            expect_str = expect.__name__
+        else:
+            expect_str = str(expect)
+
+        # Simple string comparison for basic types
+        if actual == expect_str or actual == str(expect):
+            return
+
+        # For complex types, try to extract the base type name
+        if "[" in actual:
+            actual_base = actual.split("[")[0]
+            if hasattr(expect, "__name__"):
+                expect_base = expect.__name__
+            elif hasattr(expect, "_name"):
+                expect_base = expect._name
+            else:
+                expect_base = str(expect).split("[")[0]
+
+            if actual_base == expect_base:
+                return
+
+        # If string comparison fails, raise TypeError
+        raise TypeError()
+
     actual_class = actual
     expect_class = expect
     # get origin class from generic type.
@@ -53,5 +82,7 @@ def check_type_match(actual: Any, expect: Any) -> None:
     if expect_args is not None and len(expect_args) != 0:
         if len(typing.get_args(actual)) != len(typing.get_args(expect)):
             raise TypeError()
-        for actual_arg, expect_arg in zip(typing.get_args(actual), typing.get_args(expect)):
+        for actual_arg, expect_arg in zip(
+            typing.get_args(actual), typing.get_args(expect)
+        ):
             check_type_match(actual_arg, expect_arg)

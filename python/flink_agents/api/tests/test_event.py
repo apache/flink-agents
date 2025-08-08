@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
-from flink_agents.api.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 
 
 def test_event_init_serializable() -> None:  # noqa D103
@@ -116,3 +116,8 @@ def test_event_with_mixed_serializable_types() -> None:  # noqa D103
     # Row data should use fallback serializer
     assert parsed["input"]["row_data"]["type"] == "Row"
     assert parsed["input"]["nested_row"]["inner"]["type"] == "Row"
+
+
+def test_input_event_ignore_row_unserializable() -> None:  # noqa D103
+    InputEvent(input=Row({"a": 1}))
+

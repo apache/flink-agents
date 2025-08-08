@@ -18,8 +18,12 @@
 package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.utils.JsonUtils;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.util.Preconditions;
 
@@ -33,9 +37,37 @@ import java.util.List;
 public class RunnerContextImpl implements RunnerContext {
 
     protected final List<Event> pendingEvents = new ArrayList<>();
+    protected final MapState<String, MemoryObjectImpl.MemoryItem> store;
+    protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
+    protected final Runnable mailboxThreadChecker;
+    protected String actionName;
+
+    public RunnerContextImpl(
+            MapState<String, MemoryObjectImpl.MemoryItem> store,
+            FlinkAgentsMetricGroupImpl agentMetricGroup,
+            Runnable mailboxThreadChecker) {
+        this.store = store;
+        this.agentMetricGroup = agentMetricGroup;
+        this.mailboxThreadChecker = mailboxThreadChecker;
+    }
+
+    public void setActionName(String actionName) {
+        this.actionName = actionName;
+    }
+
+    @Override
+    public FlinkAgentsMetricGroupImpl getAgentMetricGroup() {
+        return agentMetricGroup;
+    }
+
+    @Override
+    public FlinkAgentsMetricGroupImpl getActionMetricGroup() {
+        return agentMetricGroup.getSubGroup(actionName);
+    }
 
     @Override
     public void sendEvent(Event event) {
+        mailboxThreadChecker.run();
         try {
             JsonUtils.checkSerializable(event);
         } catch (JsonProcessingException e) {
@@ -47,6 +79,7 @@ public class RunnerContextImpl implements RunnerContext {
     }
 
     public List<Event> drainEvents() {
+        mailboxThreadChecker.run();
         List<Event> list = new ArrayList<>(this.pendingEvents);
         this.pendingEvents.clear();
         return list;
@@ -55,5 +88,11 @@ public class RunnerContextImpl implements RunnerContext {
     public void checkNoPendingEvents() {
         Preconditions.checkState(
                 this.pendingEvents.isEmpty(), "There are pending events remaining in the context.");
+    }
+
+    @Override
+    public MemoryObject getShortTermMemory() throws Exception {
+        mailboxThreadChecker.run();
+        return new MemoryObjectImpl(store, MemoryObjectImpl.ROOT_KEY, mailboxThreadChecker);
     }
 }

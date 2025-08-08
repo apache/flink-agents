@@ -57,6 +57,10 @@ class Event(BaseModel, ABC, extra="allow"):
     @model_validator(mode='after')
     def validate_extra(self) -> 'Event':
         """Ensure init fields is serializable."""
+
+    @model_validator(mode="after")
+    def validate_extra(self) -> "Event":
+        """Ensure init fields is serializable."""
         self.model_dump_json()
         return self
 

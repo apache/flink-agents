@@ -1,0 +1,24 @@
+{
+    "name": "foo",
+    "description": "Function for testing ToolMetadata",
+    "args_schema": {
+        "properties": {
+            "bar": {
+                "description": "The bar value.",
+                "title": "Bar",
+                "type": "integer"
+            },
+            "baz": {
+                "description": "The baz value.",
+                "title": "Baz",
+                "type": "string"
+            }
+        },
+        "required": [
+            "bar",
+            "baz"
+        ],
+        "title": "foo",
+        "type": "object"
+    }
+}

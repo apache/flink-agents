@@ -20,7 +20,10 @@ package org.apache.flink.agents.runtime.python.context;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
+import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.util.Preconditions;
 
 import javax.annotation.concurrent.NotThreadSafe;
@@ -28,6 +31,13 @@ import javax.annotation.concurrent.NotThreadSafe;
 /** A specialized {@link RunnerContext} that is specifically used when executing Python actions. */
 @NotThreadSafe
 public class PythonRunnerContextImpl extends RunnerContextImpl {
+
+    public PythonRunnerContextImpl(
+            MapState<String, MemoryObjectImpl.MemoryItem> store,
+            FlinkAgentsMetricGroupImpl agentMetricGroup,
+            Runnable mailboxThreadChecker) {
+        super(store, agentMetricGroup, mailboxThreadChecker);
+    }
 
     @Override
     public void sendEvent(Event event) {

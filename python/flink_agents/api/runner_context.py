@@ -16,8 +16,12 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, Tuple
 
-from flink_agents.api.event import Event
+from flink_agents.api.events.event import Event
+from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.metric_group import MetricGroup
+from flink_agents.api.resource import Resource, ResourceType
 
 
 class RunnerContext(ABC):
@@ -34,4 +38,71 @@ class RunnerContext(ABC):
         ----------
         event : Event
             The event to be processed by the agent system.
+        """
+
+    @abstractmethod
+    def get_resource(self, name: str, type: ResourceType) -> Resource:
+        """Get resource from context.
+
+        Parameters
+        ----------
+        name : str
+            The name of the resource.
+        type : ResourceType
+            The type of the resource.
+        """
+
+    @abstractmethod
+    def get_short_term_memory(self) -> MemoryObject:
+        """Get the short-term memory.
+
+        Returns:
+        -------
+        MemoryObject
+          The root object of the short-term memory.
+        """
+
+    @abstractmethod
+    def get_agent_metric_group(self) -> MetricGroup:
+        """Get the metric group for flink agents.
+
+        Returns:
+        -------
+        MetricGroup
+            The metric group shared across all actions.
+        """
+
+    @abstractmethod
+    def get_action_metric_group(self) -> MetricGroup:
+        """Get the individual metric group dedicated for each action.
+
+        Returns:
+        -------
+        MetricGroup
+            The individual metric group specific to the current action.
+        """
+
+    @abstractmethod
+    def execute_async(
+        self,
+        func: Callable[[Any], Any],
+        *args: Tuple[Any, ...],
+        **kwargs: Dict[str, Any],
+    ) -> Any:
+        """Asynchronously execute the provided function. Access to memory
+         is prohibited within the function.
+
+        Parameters
+        ----------
+        func : Callable
+            The function need to be asynchronously processing.
+        *args : tuple
+            Positional arguments to pass to the function.
+        **kwargs : dict
+            Keyword arguments to pass to the function.
+
+        Returns:
+        -------
+        Any
+            The result of the function.
         """

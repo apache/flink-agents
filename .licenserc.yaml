@@ -27,6 +27,7 @@ header:
     - '.gitignore'
     - '**/*.json'
     - '**/*.txt'
+    - '**/dependency-reduced-pom.xml'
   comment: on-failure
   dependency:
     files:

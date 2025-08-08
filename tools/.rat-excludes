@@ -1,0 +1,16 @@
+.github/*
+.rat-excludes
+build
+.git
+.gitignore
+.*\.lock$
+.venv/*
+.idea/*
+.*\.iml$
+.*\.xml$
+.*\.txt$
+target/*
+README.md
+.pytest_cache/*
+.ruff_cache/*
+.*\.egg-info/*

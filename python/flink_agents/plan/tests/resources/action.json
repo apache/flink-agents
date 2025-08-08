@@ -6,6 +6,6 @@
         "func_type": "PythonFunction"
     },
     "listen_event_types": [
-        "flink_agents.api.event.InputEvent"
+        "flink_agents.api.events.event.InputEvent"
     ]
 }

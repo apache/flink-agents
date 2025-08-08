@@ -25,9 +25,10 @@ import org.apache.flink.agents.runtime.python.event.PythonEvent;
 /** Utilities related to the {@link Event}. */
 public class EventUtil {
 
-    public static final String PYTHON_INPUT_EVENT_NAME = "flink_agents.api.event.InputEvent";
+    public static final String PYTHON_INPUT_EVENT_NAME = "flink_agents.api.events.event.InputEvent";
 
-    public static final String PYTHON_OUTPUT_EVENT_NAME = "flink_agents.api.event.OutputEvent";
+    public static final String PYTHON_OUTPUT_EVENT_NAME =
+            "flink_agents.api.events.event.OutputEvent";
 
     public static boolean isInputEvent(Event event) {
         if (event instanceof InputEvent) {

@@ -41,4 +41,3 @@ class AgentRunner(ABC):
             The key of the input that was processed, will be automatically
             generated if necessary.
         """
-

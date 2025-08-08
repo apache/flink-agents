@@ -1,0 +1,32 @@
+{
+    "name": "foo",
+    "metadata": {
+        "name": "foo",
+        "description": "Function for testing ToolMetadata.\n",
+        "args_schema": {
+            "properties": {
+                "bar": {
+                    "description": "The bar value.",
+                    "title": "Bar",
+                    "type": "integer"
+                },
+                "baz": {
+                    "description": "The baz value.",
+                    "title": "Baz",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "bar",
+                "baz"
+            ],
+            "title": "foo",
+            "type": "object"
+        }
+    },
+    "func": {
+        "module": "flink_agents.plan.tests.tools.test_function_tool",
+        "qualname": "foo",
+        "func_type": "PythonFunction"
+    }
+}
