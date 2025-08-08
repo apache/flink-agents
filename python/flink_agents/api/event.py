@@ -16,17 +16,13 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC
-from typing import Any
+from typing import Any, Dict, override
+
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, model_validator
 from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
-
-
-def row_serializer(row: Row) -> dict:
-    """Serialize a PyFlink Row object to a dictionary for JSON serialization."""
-    return {"type": "Row", "values": row._values}
 
 
 class Event(BaseModel, ABC, extra="allow"):
@@ -41,90 +37,33 @@ class Event(BaseModel, ABC, extra="allow"):
 
     id: UUID = Field(default_factory=uuid4)
 
-    @model_validator(mode="after")
-    def validate_extra(self) -> "Event":
-        """Ensure init fields is serializable."""
-        try:
-            self.model_dump_json()
-        except Exception as e:
-            # If normal JSON serialization fails, check if it's only due to Row objects
-            if self._contains_only_row_serialization_issues():
-                # If it's only Row objects, that's acceptable
-                return self
-            # Otherwise, convert to ValidationError for model validation
-            event_name = "Event"
-            error_msg = "Fields must be JSON serializable"
-            raise ValidationError.from_exception_data(
-                event_name,
-                [
-                    {
-                        "type": "value_error",
-                        "loc": (),
-                        "msg": error_msg,
-                        "input": str(e),
-                        "ctx": {"error": str(e)},
-                    }
-                ],
-            ) from e
-        return self
-
-    def _serialize_with_row_support(self) -> str:
-        """Serialize the event with support for Row objects."""
-        import json
-
-        def custom_serializer(obj: Any) -> Any:
-            if isinstance(obj, Row):
-                return row_serializer(obj)
-            elif isinstance(obj, UUID):
-                return str(obj)
-            elif hasattr(obj, "model_dump"):
-                return obj.model_dump()
-            error_msg = f"Object of type {type(obj)} is not JSON serializable"
-            raise TypeError(error_msg)
-
-        data = self.model_dump()
-        return json.dumps(data, default=custom_serializer)
-
-    def _contains_only_row_serialization_issues(self) -> bool:
-        """Check if serialization issues are only due to Row objects."""
-        # Check if all non-serializable objects are Row objects
-        for value in self.model_dump().values():
-            if not self._is_json_serializable(value):
-                if not isinstance(value, Row):
-                    return False
-        return True
-
-    def _is_json_serializable(self, obj: Any) -> bool:
-        """Check if an object is JSON serializable."""
-        import json
-
-        try:
-            json.dumps(obj)
-        except (TypeError, ValueError):
-            return False
+    @staticmethod
+    def __serialize_unknown(field: Any) -> Dict[str, Any]:
+        """Handle serialization of unknown types, specifically Row objects."""
+        if isinstance(field, Row):
+            return {"type": "Row", "values": field._values}
         else:
-            return True
+            err_msg = f"Unable to serialize unknown type: {field.__class__}"
+            raise PydanticSerializationError(err_msg)
 
+    @override
     def model_dump_json(self, **kwargs: Any) -> str:
-        """Override model_dump_json to handle Row objects."""
-        try:
-            return super().model_dump_json(**kwargs)
-        except Exception:
-            return self._serialize_with_row_support()
+        """Override model_dump_json to handle Row objects using fallback."""
+        # Set fallback if not provided in kwargs
+        if 'fallback' not in kwargs:
+            kwargs['fallback'] = self.__serialize_unknown
+        return super().model_dump_json(**kwargs)
+
+    @model_validator(mode='after')
+    def validate_extra(self) -> 'Event':
+        """Ensure init fields is serializable."""
+        self.model_dump_json()
+        return self
 
     def __setattr__(self, name: str, value: Any) -> None:
         super().__setattr__(name, value)
         # Ensure added property can be serialized.
-        try:
-            self.model_dump_json()
-        except Exception as e:
-            # If normal JSON serialization fails, check if it's only due to Row objects
-            if not self._contains_only_row_serialization_issues():
-                # If it's not only Row objects, re-raise the original exception
-                if isinstance(e, PydanticSerializationError):
-                    raise
-                else:
-                    raise PydanticSerializationError(str(e)) from e
+        self.model_dump_json()
 
 
 class InputEvent(Event):
