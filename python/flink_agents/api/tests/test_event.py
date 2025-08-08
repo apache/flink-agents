@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Type
+from typing import Any, Type
 
 import pytest
 from pydantic import ValidationError
@@ -70,7 +70,7 @@ def test_event_json_serialization_with_row() -> None:  # noqa D103
     assert "Row" in json_str
 
 
-def test_efficient_row_serialization_with_fallback() -> None:  # noqa D103
+def test_efficient_row_serialization_with_fallback() -> None:
     """Test that the new fallback-based serialization works efficiently."""
     row_data = {"a": 1, "b": "test", "c": [1, 2, 3]}
     event = InputEvent(input=Row(row_data))
@@ -83,19 +83,20 @@ def test_efficient_row_serialization_with_fallback() -> None:  # noqa D103
     assert parsed["input"]["values"] == [row_data]
     assert "id" in parsed  # UUID should be present
 
-    def custom_fallback(obj):
+    def custom_fallback(obj: Any) -> dict[str, Any]:
         if isinstance(obj, Row):
             return {"custom_type": "CustomRow", "data": obj._values}
-        raise ValueError("Unknown type")
-    
+        msg = "Unknown type"
+        raise ValueError(msg)
+
     custom_json = event.model_dump_json(fallback=custom_fallback)
     custom_parsed = json.loads(custom_json)
-    
+
     assert custom_parsed["input"]["custom_type"] == "CustomRow"
     assert custom_parsed["input"]["data"] == [row_data]
 
 
-def test_event_with_mixed_serializable_types() -> None:  # noqa D103
+def test_event_with_mixed_serializable_types() -> None:
     """Test event with mix of normal and Row types."""
     event = InputEvent(input={
         "normal_data": {"key": "value"},
@@ -103,16 +104,16 @@ def test_event_with_mixed_serializable_types() -> None:  # noqa D103
         "list_data": [1, 2, 3],
         "nested_row": {"inner": Row({"nested": True})}
     })
-    
+
     json_str = event.model_dump_json()
 
     import json
     parsed = json.loads(json_str)
-    
+
     # Normal data should be serialized normally
     assert parsed["input"]["normal_data"]["key"] == "value"
     assert parsed["input"]["list_data"] == [1, 2, 3]
-    
+
     # Row data should use fallback serializer
     assert parsed["input"]["row_data"]["type"] == "Row"
     assert parsed["input"]["nested_row"]["inner"]["type"] == "Row"
