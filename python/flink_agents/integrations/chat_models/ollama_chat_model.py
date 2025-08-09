@@ -15,8 +15,9 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import re
 import uuid
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from ollama import Client, Message
 from pydantic import Field
@@ -67,6 +68,10 @@ class OllamaChatModel(BaseChatModel):
         default="5m",
         description="controls how long the model will stay loaded into memory following the request(default: 5m)",
     )
+    extract_reasoning: bool = Field(
+        default=False,
+        description="If True, extracts content within <think></think> tags from the response and stores it in additional_kwargs.",
+    )
 
     __client: Client = None
     __tools: Sequence[Mapping[str, Any]] = []
@@ -80,6 +85,7 @@ class OllamaChatModel(BaseChatModel):
         request_timeout: Optional[float] = DEFAULT_REQUEST_TIMEOUT,
         additional_kwargs: Optional[Dict[str, Any]] = None,
         keep_alive: Optional[Union[float, str]] = None,
+        extract_reasoning: Optional[bool] = False,
         **kwargs: Any,
     ) -> None:
         """Init method."""
@@ -93,6 +99,7 @@ class OllamaChatModel(BaseChatModel):
             request_timeout=request_timeout,
             additional_kwargs=additional_kwargs,
             keep_alive=keep_alive,
+            extract_reasoning=extract_reasoning,
             **kwargs,
         )
         # bind tools
@@ -125,6 +132,34 @@ class OllamaChatModel(BaseChatModel):
             **self.additional_kwargs,
         }
 
+    @staticmethod
+    def __extract_think_tags(content: str) -> Tuple[str, Optional[str]]:
+        """Extract content within <think></think> tags and clean the remaining content.
+
+        Args:
+            content: Original content text
+
+        Returns:
+            Tuple containing (cleaned_content, reasoning_content)
+        """
+        think_pattern = r"<think>(.*?)</think>"
+        reasoning = None
+
+        # Find all <think> tag content
+        think_matches = re.findall(think_pattern, content, re.DOTALL)
+        if think_matches:
+            reasoning = "\n".join(think_matches)
+
+        # Remove <think> tags and their content from the original text
+        cleaned_content = re.sub(think_pattern, "", content, flags=re.DOTALL)
+
+        # Clean up any extra whitespace that might have been created
+        cleaned_content = re.sub(r'\n{3,}', '\n\n', cleaned_content)
+        cleaned_content = re.sub(r' {2,}', ' ', cleaned_content)
+        cleaned_content = cleaned_content.strip()
+
+        return cleaned_content, reasoning
+
     def chat(self, messages: Sequence[ChatMessage]) -> ChatMessage:
         """Process a sequence of messages, and return a response."""
         if self.prompt is not None:
@@ -156,10 +191,22 @@ class OllamaChatModel(BaseChatModel):
                 },
             }
             tool_calls.append(tool_call)
+
+        content = response.message.content
+        extra_args = {}
+
+        # Process reasoning if extract_reasoning is enabled
+        if self.extract_reasoning and content:
+            cleaned_content, reasoning = self.__extract_think_tags(content)
+            content = cleaned_content
+            if reasoning:
+                extra_args["reasoning"] = reasoning
+
         return ChatMessage(
             role=MessageRole(response.message.role),
-            content=response.message.content,
+            content=content,
             tool_calls=tool_calls,
+            extra_args=extra_args,
         )
 
     @staticmethod
