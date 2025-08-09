@@ -16,10 +16,16 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC
-from typing import Any
+from typing import Any, Dict
+
+try:
+    from typing import override
+except ImportError:
+    from typing_extensions import override
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
+from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
 
@@ -35,13 +41,26 @@ class Event(BaseModel, ABC, extra="allow"):
 
     id: UUID = Field(default_factory=uuid4)
 
+    @staticmethod
+    def __serialize_unknown(field: Any) -> Dict[str, Any]:
+        """Handle serialization of unknown types, specifically Row objects."""
+        if isinstance(field, Row):
+            return {"type": "Row", "values": field._values}
+        else:
+            err_msg = f"Unable to serialize unknown type: {field.__class__}"
+            raise PydanticSerializationError(err_msg)
+
+    @override
+    def model_dump_json(self, **kwargs: Any) -> str:
+        """Override model_dump_json to handle Row objects using fallback."""
+        # Set fallback if not provided in kwargs
+        if 'fallback' not in kwargs:
+            kwargs['fallback'] = self.__serialize_unknown
+        return super().model_dump_json(**kwargs)
+
     @model_validator(mode="after")
     def validate_extra(self) -> "Event":
         """Ensure init fields is serializable."""
-        # TODO: support Event contains Row field be json serializable
-        for value in self.model_dump().values():
-            if isinstance(value, Row):
-                return self
         self.model_dump_json()
         return self
 
