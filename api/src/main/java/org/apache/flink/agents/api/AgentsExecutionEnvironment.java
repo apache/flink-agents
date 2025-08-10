@@ -18,12 +18,15 @@
 
 package org.apache.flink.agents.api;
 
+import org.apache.flink.agents.api.listener.EventListener;
+import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -34,6 +37,8 @@ import java.util.List;
  */
 public abstract class AgentsExecutionEnvironment {
 
+    protected EventLogger eventLogger;
+    protected List<EventListener> eventListeners = new ArrayList<>();
     /**
      * Get agents execution environment.
      *
@@ -84,6 +89,34 @@ public abstract class AgentsExecutionEnvironment {
      */
     public static AgentsExecutionEnvironment getExecutionEnvironment() {
         return getExecutionEnvironment(null);
+    }
+
+    /**
+     * Set an event logger for the execution environment.
+     *
+     * <p>This method allows users to set a custom EventLogger that will be used to log events
+     * during agent execution. This is useful for monitoring and debugging agent behavior.
+     *
+     * @param eventLogger Custom EventLogger instance.
+     * @return The current AgentsExecutionEnvironment instance for method chaining.
+     */
+    public AgentsExecutionEnvironment setEventLogger(EventLogger eventLogger) {
+        this.eventLogger = eventLogger;
+        return this;
+    }
+
+    /**
+     * Register an event listener for the execution environment.
+     *
+     * <p>This method allows users to register custom EventListeners that will be notified of
+     * events during agent execution. This is useful for implementing custom event handling logic.
+     *
+     * @param listener Custom EventListener instance to be registered.
+     * @return The current AgentsExecutionEnvironment instance for method chaining.
+     */
+    public AgentsExecutionEnvironment registerEventListener(EventListener listener) {
+        eventListeners.add(listener);
+        return this;
     }
 
     /**

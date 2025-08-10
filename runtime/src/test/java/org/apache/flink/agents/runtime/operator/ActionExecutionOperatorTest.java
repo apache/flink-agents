@@ -51,7 +51,8 @@ public class ActionExecutionOperatorTest {
     void testExecuteAgent() throws Exception {
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getAgentPlan(false), true, null, null),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
@@ -77,7 +78,8 @@ public class ActionExecutionOperatorTest {
     void testSameKeyDataAreProcessedInOrder() throws Exception {
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getAgentPlan(false), true, null, null),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
@@ -115,7 +117,8 @@ public class ActionExecutionOperatorTest {
     void testDifferentKeyDataCanRunConcurrently() throws Exception {
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getAgentPlan(false), true, null, null),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
@@ -148,7 +151,8 @@ public class ActionExecutionOperatorTest {
     void testMemoryAccessProhibitedOutsideMailboxThread() throws Exception {
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(true), true),
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getAgentPlan(true), true, null, null),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
