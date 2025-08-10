@@ -108,8 +108,8 @@ public abstract class AgentsExecutionEnvironment {
     /**
      * Register an event listener for the execution environment.
      *
-     * <p>This method allows users to register custom EventListeners that will be notified of
-     * events during agent execution. This is useful for implementing custom event handling logic.
+     * <p>This method allows users to register custom EventListeners that will be notified of events
+     * during agent execution. This is useful for implementing custom event handling logic.
      *
      * @param listener Custom EventListener instance to be registered.
      * @return The current AgentsExecutionEnvironment instance for method chaining.
