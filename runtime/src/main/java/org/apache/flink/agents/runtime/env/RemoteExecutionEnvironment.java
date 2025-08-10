@@ -21,6 +21,8 @@ package org.apache.flink.agents.runtime.env;
 import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.AgentBuilder;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.listener.EventListener;
+import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.CompileUtils;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -55,13 +57,14 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
     @Override
     public <T, K> AgentBuilder fromDataStream(DataStream<T> input, KeySelector<T, K> keySelector) {
-        return new RemoteAgentBuilder<>(input, keySelector, env);
+        return new RemoteAgentBuilder<>(input, keySelector, env, eventLogger, eventListeners);
     }
 
     @Override
     public <K> AgentBuilder fromTable(
             Table input, StreamTableEnvironment tableEnv, KeySelector<Object, K> keySelector) {
-        return new RemoteAgentBuilder<>(input, tableEnv, keySelector, env);
+        return new RemoteAgentBuilder<>(
+                input, tableEnv, keySelector, env, eventLogger, eventListeners);
     }
 
     @Override
@@ -76,6 +79,8 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         private final KeySelector<T, K> keySelector;
         private final StreamExecutionEnvironment env;
         private final StreamTableEnvironment tableEnv;
+        private final EventLogger eventLogger;
+        private final List<EventListener> eventListeners;
 
         private AgentPlan agentPlan;
         private DataStream<Object> outputDataStream;
@@ -84,11 +89,15 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         public RemoteAgentBuilder(
                 DataStream<T> inputDataStream,
                 KeySelector<T, K> keySelector,
-                StreamExecutionEnvironment env) {
+                StreamExecutionEnvironment env,
+                EventLogger eventLogger,
+                List<EventListener> eventListeners) {
             this.inputDataStream = inputDataStream;
             this.keySelector = keySelector;
             this.env = env;
             this.tableEnv = null;
+            this.eventLogger = eventLogger;
+            this.eventListeners = eventListeners;
         }
 
         // Constructor for Table input
@@ -97,11 +106,15 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                 Table inputTable,
                 StreamTableEnvironment tableEnv,
                 KeySelector<Object, K> keySelector,
-                StreamExecutionEnvironment env) {
+                StreamExecutionEnvironment env,
+                EventLogger eventLogger,
+                List<EventListener> eventListeners) {
             this.inputDataStream = (DataStream<T>) tableEnv.toDataStream(inputTable);
             this.keySelector = (KeySelector<T, K>) keySelector;
             this.env = env;
             this.tableEnv = tableEnv;
+            this.eventLogger = eventLogger;
+            this.eventListeners = eventListeners;
         }
 
         @Override
@@ -129,11 +142,21 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
             if (outputDataStream == null) {
                 if (keySelector != null) {
                     outputDataStream =
-                            CompileUtils.connectToAgent(inputDataStream, keySelector, agentPlan);
+                            CompileUtils.connectToAgent(
+                                    inputDataStream,
+                                    keySelector,
+                                    agentPlan,
+                                    eventLogger,
+                                    eventListeners);
                 } else {
                     // If no key selector provided, use a simple pass-through key selector
                     outputDataStream =
-                            CompileUtils.connectToAgent(inputDataStream, x -> x, agentPlan);
+                            CompileUtils.connectToAgent(
+                                    inputDataStream,
+                                    x -> x,
+                                    agentPlan,
+                                    eventLogger,
+                                    eventListeners);
                 }
             }
 

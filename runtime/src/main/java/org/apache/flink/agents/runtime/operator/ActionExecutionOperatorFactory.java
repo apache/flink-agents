@@ -17,23 +17,34 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import org.apache.flink.agents.api.listener.EventListener;
+import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperatorFactory;
 import org.apache.flink.streaming.api.operators.StreamOperator;
 import org.apache.flink.streaming.api.operators.StreamOperatorParameters;
 
+import java.util.List;
+
 /** Operator factory for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorFactory<IN, OUT>
         implements OneInputStreamOperatorFactory<IN, OUT> {
 
     private final AgentPlan agentPlan;
-
     private final Boolean inputIsJava;
+    private final EventLogger eventLogger;
+    private final List<EventListener> eventListeners;
 
-    public ActionExecutionOperatorFactory(AgentPlan agentPlan, Boolean inputIsJava) {
+    public ActionExecutionOperatorFactory(
+            AgentPlan agentPlan,
+            Boolean inputIsJava,
+            EventLogger eventLogger,
+            List<EventListener> eventListeners) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
+        this.eventLogger = eventLogger;
+        this.eventListeners = eventListeners;
     }
 
     @Override
@@ -44,7 +55,9 @@ public class ActionExecutionOperatorFactory<IN, OUT>
                         agentPlan,
                         inputIsJava,
                         parameters.getProcessingTimeService(),
-                        parameters.getMailboxExecutor());
+                        parameters.getMailboxExecutor(),
+                        eventLogger,
+                        eventListeners);
         op.setup(
                 parameters.getContainingTask(),
                 parameters.getStreamConfig(),

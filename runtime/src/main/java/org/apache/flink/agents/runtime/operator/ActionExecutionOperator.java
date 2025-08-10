@@ -17,15 +17,16 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
-import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.*;
+import org.apache.flink.agents.api.listener.EventListener;
+import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
+import org.apache.flink.agents.runtime.logger.FlinkStateEventLogger;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
@@ -121,16 +122,23 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // processed.
     private transient ListState<Object> currentProcessingKeysOpState;
 
+    private final transient EventLogger eventLogger;
+    private final transient List<EventListener> eventListeners;
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
             ProcessingTimeService processingTimeService,
-            MailboxExecutor mailboxExecutor) {
+            MailboxExecutor mailboxExecutor,
+            EventLogger eventLogger,
+            List<EventListener> eventListeners) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
         this.processingTimeService = processingTimeService;
         this.chainingStrategy = ChainingStrategy.ALWAYS;
         this.mailboxExecutor = mailboxExecutor;
+        this.eventLogger = eventLogger;
+        this.eventListeners = eventListeners;
     }
 
     @Override
@@ -176,11 +184,24 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         mailboxProcessor = getMailboxProcessor();
 
+        // Initialize the event logger if it is set.
+        initEventLogger();
+
         // Since an operator restart may change the key range it manages due to changes in
         // parallelism,
         // and {@link tryProcessActionTaskForKey} mails might be lost,
         // it is necessary to reprocess all keys to ensure correctness.
         tryResumeProcessActionTasks();
+    }
+
+    private void initEventLogger() throws Exception {
+        if (eventLogger == null) {
+            return;
+        }
+        if (eventLogger instanceof FlinkStateEventLogger) {
+            ((FlinkStateEventLogger) eventLogger).setStreamingRuntimeContext(getRuntimeContext());
+        }
+        eventLogger.open();
     }
 
     @Override
@@ -207,6 +228,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
      * `tryProcessActionTaskForKey` to continue processing.
      */
     private void processEvent(Object key, Event event) throws Exception {
+        EventContext eventContext = new EventContext(key);
+        if (eventLogger != null) {
+            // If event logging is enabled, we log the event along with its context.
+            eventLogger.append(eventContext, event);
+        }
+        if (eventListeners != null) {
+            // Notify all registered event listeners about the event.
+            for (EventListener listener : eventListeners) {
+                listener.onEventProcessed(eventContext, event);
+            }
+        }
         boolean isInputEvent = EventUtil.isInputEvent(event);
         builtInMetrics.markEventProcessed();
         if (EventUtil.isOutputEvent(event)) {
