@@ -45,15 +45,24 @@ public class FlinkStateEventLogger implements EventLogger {
 
     @Override
     public void append(EventContext context, Event event) throws Exception {
+        if (eventLogState == null) {
+            throw new IllegalStateException("EventLogger is not initialized. Call open() first.");
+        }
         eventLogState.add(new EventLogRecord(context, event));
     }
 
     @Override
     public void close() throws Exception {
-        // No specific cleanup needed for Flink state, but can be overridden if necessary.
         // The state will be automatically managed by Flink's state backend.
     }
 
+    /**
+     * Sets the StreamingRuntimeContext for this logger.
+     *
+     * <p>This method must be called before open() to ensure the logger is properly initialized.
+     *
+     * @param runtimeContext The StreamingRuntimeContext to set
+     */
     public void setStreamingRuntimeContext(StreamingRuntimeContext runtimeContext) {
         this.runtimeContext = runtimeContext;
     }
