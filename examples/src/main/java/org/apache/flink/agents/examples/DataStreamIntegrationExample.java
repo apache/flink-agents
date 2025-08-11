@@ -18,10 +18,7 @@
 
 package org.apache.flink.agents.examples;
 
-import org.apache.flink.agents.api.AgentsExecutionEnvironment;
-import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.EventFilter;
+import org.apache.flink.agents.api.*;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -107,10 +104,7 @@ public class DataStreamIntegrationExample {
         // Create agents execution environment
         AgentsExecutionEnvironment agentsEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env)
-                        .enableEventLogger(
-                                EventLogger.withFilter(
-                                        new TestEventLogger(),
-                                        EventFilter.byEventType(SimpleAgent.ProcessedEvent.class)))
+                        .enableEventLogger(new TestEventLogger())
                         .registerEventListener(new TestEventListener());
 
         // Apply agent to the DataStream
