@@ -20,9 +20,10 @@ package org.apache.flink.agents.api.logger;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
+import org.apache.flink.agents.api.EventFilter;
 
 /**
- * Interface for logging events in the Flink Agents framework.
+ * Interface for logging action events in the Flink Agents framework.
  *
  * <p>EventLogger provides a unified interface for capturing, filtering, and persisting events as
  * they flow through the agent execution pipeline. Implementations can target different storage
@@ -64,4 +65,52 @@ public interface EventLogger extends AutoCloseable {
      */
     @Override
     void close() throws Exception;
+
+    /**
+     * Unwraps the EventLogger if it is wrapped by another logger or filter.
+     *
+     * <p>This method can be overridden by implementations that wrap other loggers or filters to
+     * return the underlying logger.
+     *
+     * @return the underlying EventLogger instance
+     */
+    default EventLogger unwrap() {
+        return this;
+    }
+
+    /**
+     * Creates a new EventLogger that filters events based on the provided EventFilter.
+     *
+     * <p>This method allows wrapping an existing EventLogger with a filter to control which events
+     * are logged. Only events accepted by the filter will be passed to the delegate logger.
+     *
+     * @param delegate the original EventLogger to wrap
+     * @param filter the EventFilter to apply
+     * @return a new EventLogger that applies the filter
+     */
+    static EventLogger withFilter(EventLogger delegate, EventFilter filter) {
+        return new EventLogger() {
+            @Override
+            public void open() throws Exception {
+                delegate.open();
+            }
+
+            @Override
+            public void append(EventContext context, Event event) throws Exception {
+                if (filter.accept(event, context)) {
+                    delegate.append(context, event);
+                }
+            }
+
+            @Override
+            public void close() throws Exception {
+                delegate.close();
+            }
+
+            @Override
+            public EventLogger unwrap() {
+                return delegate;
+            }
+        };
+    }
 }

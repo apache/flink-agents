@@ -92,16 +92,30 @@ public abstract class AgentsExecutionEnvironment {
     }
 
     /**
-     * Set an event logger for the execution environment.
+     * Enable an event logger for the execution environment.
      *
      * <p>This method allows users to set a custom EventLogger that will be used to log events
-     * during agent execution. This is useful for monitoring and debugging agent behavior.
+     * during agent execution.
      *
      * @param eventLogger Custom EventLogger instance.
      * @return The current AgentsExecutionEnvironment instance for method chaining.
      */
-    public AgentsExecutionEnvironment setEventLogger(EventLogger eventLogger) {
-        this.eventLogger = eventLogger;
+    public AgentsExecutionEnvironment enableEventLogger(EventLogger eventLogger) {
+        return enableEventLogger(eventLogger, EventFilter.ACCEPT_ALL);
+    }
+
+    /**
+     * Enable an event logger with a filter for the execution environment.
+     *
+     * <p>This method allows users to set a custom EventLogger along with an EventFilter to control
+     * which events are logged. This is useful for reducing noise and focusing on relevant events.
+     *
+     * @param logger Custom EventLogger instance.
+     * @param filter EventFilter to apply to logged events.
+     * @return The current AgentsExecutionEnvironment instance for method chaining.
+     */
+    public AgentsExecutionEnvironment enableEventLogger(EventLogger logger, EventFilter filter) {
+        this.eventLogger = EventLogger.withFilter(logger, filter);
         return this;
     }
 

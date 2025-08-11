@@ -198,7 +198,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (eventLogger == null) {
             return;
         }
-        if (eventLogger instanceof FlinkStateEventLogger) {
+        if (eventLogger.unwrap() instanceof FlinkStateEventLogger) {
             ((FlinkStateEventLogger) eventLogger).setStreamingRuntimeContext(getRuntimeContext());
         }
         eventLogger.open();
