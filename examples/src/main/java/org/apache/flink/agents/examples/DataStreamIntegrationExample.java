@@ -18,9 +18,7 @@
 
 package org.apache.flink.agents.examples;
 
-import org.apache.flink.agents.api.*;
-import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.EventLogger;
+import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -65,28 +63,6 @@ public class DataStreamIntegrationExample {
         }
     }
 
-    private static class TestEventLogger implements EventLogger {
-        @Override
-        public void open() {}
-
-        @Override
-        public void append(EventContext context, Event event) {
-            // Log the event to in-memory storage
-            System.out.println("Logged event: " + event);
-        }
-
-        @Override
-        public void close() {}
-    }
-
-    private static class TestEventListener implements EventListener {
-        @Override
-        public void onEventProcessed(EventContext context, Event event) {
-            // Handle the processed event
-            System.out.println("Processed event: " + event);
-        }
-    }
-
     public static void main(String[] args) throws Exception {
         // Create the execution environment
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
@@ -103,9 +79,7 @@ public class DataStreamIntegrationExample {
 
         // Create agents execution environment
         AgentsExecutionEnvironment agentsEnv =
-                AgentsExecutionEnvironment.getExecutionEnvironment(env)
-                        .enableEventLogger(new TestEventLogger())
-                        .registerEventListener(new TestEventListener());
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
 
         // Apply agent to the DataStream
         DataStream<Object> outputStream =

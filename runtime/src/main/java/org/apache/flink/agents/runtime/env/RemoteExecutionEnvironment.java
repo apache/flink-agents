@@ -22,7 +22,7 @@ import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.AgentBuilder;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.EventLogger;
+import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.CompileUtils;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -57,14 +57,14 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
     @Override
     public <T, K> AgentBuilder fromDataStream(DataStream<T> input, KeySelector<T, K> keySelector) {
-        return new RemoteAgentBuilder<>(input, keySelector, env, eventLogger, eventListeners);
+        return new RemoteAgentBuilder<>(input, keySelector, env, eventLoggerConfig, eventListeners);
     }
 
     @Override
     public <K> AgentBuilder fromTable(
             Table input, StreamTableEnvironment tableEnv, KeySelector<Object, K> keySelector) {
         return new RemoteAgentBuilder<>(
-                input, tableEnv, keySelector, env, eventLogger, eventListeners);
+                input, tableEnv, keySelector, env, eventLoggerConfig, eventListeners);
     }
 
     @Override
@@ -79,7 +79,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         private final KeySelector<T, K> keySelector;
         private final StreamExecutionEnvironment env;
         private final StreamTableEnvironment tableEnv;
-        private final EventLogger eventLogger;
+        private final EventLoggerConfig eventLoggerConfig;
         private final List<EventListener> eventListeners;
 
         private AgentPlan agentPlan;
@@ -90,13 +90,13 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                 DataStream<T> inputDataStream,
                 KeySelector<T, K> keySelector,
                 StreamExecutionEnvironment env,
-                EventLogger eventLogger,
+                EventLoggerConfig eventLoggerConfig,
                 List<EventListener> eventListeners) {
             this.inputDataStream = inputDataStream;
             this.keySelector = keySelector;
             this.env = env;
             this.tableEnv = null;
-            this.eventLogger = eventLogger;
+            this.eventLoggerConfig = eventLoggerConfig;
             this.eventListeners = eventListeners;
         }
 
@@ -107,13 +107,13 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                 StreamTableEnvironment tableEnv,
                 KeySelector<Object, K> keySelector,
                 StreamExecutionEnvironment env,
-                EventLogger eventLogger,
+                EventLoggerConfig eventLoggerConfig,
                 List<EventListener> eventListeners) {
             this.inputDataStream = (DataStream<T>) tableEnv.toDataStream(inputTable);
             this.keySelector = (KeySelector<T, K>) keySelector;
             this.env = env;
             this.tableEnv = tableEnv;
-            this.eventLogger = eventLogger;
+            this.eventLoggerConfig = eventLoggerConfig;
             this.eventListeners = eventListeners;
         }
 
@@ -146,7 +146,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                                     inputDataStream,
                                     keySelector,
                                     agentPlan,
-                                    eventLogger,
+                                    eventLoggerConfig,
                                     eventListeners);
                 } else {
                     // If no key selector provided, use a simple pass-through key selector
@@ -155,7 +155,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                                     inputDataStream,
                                     x -> x,
                                     agentPlan,
-                                    eventLogger,
+                                    eventLoggerConfig,
                                     eventListeners);
                 }
             }

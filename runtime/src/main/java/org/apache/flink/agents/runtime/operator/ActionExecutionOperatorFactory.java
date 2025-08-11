@@ -18,7 +18,7 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.EventLogger;
+import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperatorFactory;
@@ -33,17 +33,17 @@ public class ActionExecutionOperatorFactory<IN, OUT>
 
     private final AgentPlan agentPlan;
     private final Boolean inputIsJava;
-    private final EventLogger eventLogger;
+    private final EventLoggerConfig eventLoggerConfig;
     private final List<EventListener> eventListeners;
 
     public ActionExecutionOperatorFactory(
             AgentPlan agentPlan,
             Boolean inputIsJava,
-            EventLogger eventLogger,
+            EventLoggerConfig eventLoggerConfig,
             List<EventListener> eventListeners) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
-        this.eventLogger = eventLogger;
+        this.eventLoggerConfig = eventLoggerConfig;
         this.eventListeners = eventListeners;
     }
 
@@ -56,7 +56,7 @@ public class ActionExecutionOperatorFactory<IN, OUT>
                         inputIsJava,
                         parameters.getProcessingTimeService(),
                         parameters.getMailboxExecutor(),
-                        eventLogger,
+                        eventLoggerConfig,
                         eventListeners);
         op.setup(
                 parameters.getContainingTask(),

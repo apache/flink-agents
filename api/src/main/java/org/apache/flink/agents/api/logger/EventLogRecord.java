@@ -20,13 +20,20 @@ package org.apache.flink.agents.api.logger;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 /**
  * Represents a record in the event log, containing the event context and the event itself.
  *
  * <p>This class is used to encapsulate the details of an event as it is logged, allowing for
  * structured logging and retrieval of event information.
+ *
+ * <p>The class uses custom JSON serialization/deserialization to handle polymorphic Event types by
+ * leveraging the eventType information stored in the EventContext.
  */
+@JsonSerialize(using = EventLogRecordJsonSerializer.class)
+@JsonDeserialize(using = EventLogRecordJsonDeserializer.class)
 public class EventLogRecord {
     private final EventContext context;
     private final Event event;

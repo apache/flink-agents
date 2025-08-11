@@ -18,36 +18,35 @@
 
 package org.apache.flink.agents.api;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
 
-/**
- * Context for events in the Flink Agents API.
- *
- * <p>EventContext provides metadata about the event, including event key, timestamp, and additional
- * attributes that can be used to filter or categorize events.
- */
+/** Contextual information about an event, such as its type and timestamp. */
 public class EventContext {
-    private final Object key;
-    private final Instant timestamp;
-    private final Map<String, Object> attributes;
+    // Type of the event, the class name of the event
+    private final String eventType;
+    // Timestamp of when the event occurred
+    private final String timestamp;
 
-    public EventContext(Object key) {
-        this.key = key;
-        this.timestamp = Instant.now();
-        this.attributes = new HashMap<>();
+    public EventContext(Event event) {
+        this(event.getClass().getName(), Instant.now().toString());
     }
 
-    public Object getKey() {
-        return key;
+    @JsonCreator
+    public EventContext(
+            @JsonProperty("eventType") String eventType,
+            @JsonProperty("timestamp") String timestamp) {
+        this.eventType = eventType;
+        this.timestamp = timestamp;
     }
 
-    public Instant getTimestamp() {
+    public String getEventType() {
+        return eventType;
+    }
+
+    public String getTimestamp() {
         return timestamp;
-    }
-
-    public Map<String, Object> getAttributes() {
-        return attributes;
     }
 }
