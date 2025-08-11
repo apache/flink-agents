@@ -28,11 +28,11 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 
 /**
- * FlinkStateEventLogger is an implementation of EventLogger that uses Flink's state management
- * to log events.
+ * FlinkStateEventLogger is an implementation of EventLogger that uses Flink's state management to
+ * log events.
  *
- * <p>This logger stores events in a ListState, allowing for efficient state management and
- * recovery in Flink streaming applications.
+ * <p>This logger stores events in a ListState, allowing for efficient state management and recovery
+ * in Flink streaming applications.
  */
 public class FlinkStateEventLogger implements EventLogger {
     private StreamingRuntimeContext runtimeContext;
