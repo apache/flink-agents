@@ -18,8 +18,6 @@
 
 package org.apache.flink.agents.api;
 
-import java.io.Serializable;
-
 /**
  * Interface for filtering events in event logging and listening.
  *
@@ -27,8 +25,7 @@ import java.io.Serializable;
  * event listeners. Implementations can filter based on event type, attributes, or custom logic.
  */
 @FunctionalInterface
-public interface EventFilter extends Serializable {
-
+public interface EventFilter {
     /**
      * Determines whether an event should be processed.
      *
@@ -56,19 +53,6 @@ public interface EventFilter extends Serializable {
         };
     }
 
-    /**
-     * Creates a filter that accepts events with a specific attribute value.
-     *
-     * @param attributeName The name of the attribute to check
-     * @param expectedValue The expected value of the attribute
-     * @return An EventFilter that accepts events with the specified attribute value
-     */
-    static EventFilter byAttribute(String attributeName, Object expectedValue) {
-        return (event, context) -> {
-            Object actualValue = event.getAttr(attributeName);
-            return expectedValue != null ? expectedValue.equals(actualValue) : actualValue == null;
-        };
-    }
     /** A filter that accepts all events. */
     EventFilter ACCEPT_ALL = (event, context) -> true;
 
