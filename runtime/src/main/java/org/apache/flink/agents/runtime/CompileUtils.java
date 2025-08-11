@@ -19,7 +19,7 @@
 package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.EventLogger;
+import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -39,7 +39,7 @@ public class CompileUtils {
     public static DataStream<byte[]> connectToAgent(
             KeyedStream<Row, Row> inputDataStream,
             String agentPlanJson,
-            EventLogger eventLogger,
+            EventLoggerConfig eventLoggerConfig,
             List<EventListener> eventListeners)
             throws JsonProcessingException {
         // deserialize agent plan json.
@@ -49,7 +49,7 @@ public class CompileUtils {
                 agentPlan,
                 TypeInformation.of(byte[].class),
                 false,
-                eventLogger,
+                eventLoggerConfig,
                 eventListeners);
     }
 
@@ -58,23 +58,23 @@ public class CompileUtils {
             DataStream<IN> inputStream,
             KeySelector<IN, K> keySelector,
             AgentPlan agentPlan,
-            EventLogger eventLogger,
+            EventLoggerConfig eventLoggerConfig,
             List<EventListener> eventListeners) {
         return connectToAgent(
-                inputStream.keyBy(keySelector), agentPlan, eventLogger, eventListeners);
+                inputStream.keyBy(keySelector), agentPlan, eventLoggerConfig, eventListeners);
     }
 
     public static <IN, K> DataStream<Object> connectToAgent(
             KeyedStream<IN, K> keyedInputStream,
             AgentPlan agentPlan,
-            EventLogger eventLogger,
+            EventLoggerConfig eventLoggerConfig,
             List<EventListener> eventListeners) {
         return connectToAgent(
                 keyedInputStream,
                 agentPlan,
                 TypeInformation.of(Object.class),
                 true,
-                eventLogger,
+                eventLoggerConfig,
                 eventListeners);
     }
 
@@ -101,7 +101,7 @@ public class CompileUtils {
             AgentPlan agentPlan,
             TypeInformation<OUT> outTypeInformation,
             boolean inputIsJava,
-            EventLogger eventLogger,
+            EventLoggerConfig eventLoggerConfig,
             List<EventListener> eventListeners) {
         return (DataStream<OUT>)
                 keyedInputStream
@@ -109,7 +109,7 @@ public class CompileUtils {
                                 "action-execute-operator",
                                 outTypeInformation,
                                 new ActionExecutionOperatorFactory(
-                                        agentPlan, inputIsJava, eventLogger, eventListeners))
+                                        agentPlan, inputIsJava, eventLoggerConfig, eventListeners))
                         .setParallelism(keyedInputStream.getParallelism());
     }
 }

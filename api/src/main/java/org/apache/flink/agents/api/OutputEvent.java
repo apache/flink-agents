@@ -18,6 +18,12 @@
 
 package org.apache.flink.agents.api;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
+
+import java.util.Map;
+import java.util.UUID;
+
 /**
  * Event representing a result from agent. By generating an OutputEvent, actions can emit output
  * data.
@@ -27,6 +33,15 @@ public class OutputEvent extends Event {
 
     public OutputEvent(Object output) {
         super();
+        this.output = output;
+    }
+
+    @JsonCreator
+    public OutputEvent(
+            @JsonProperty("id") UUID id,
+            @JsonProperty("attributes") Map<String, Object> attributes,
+            @JsonProperty("output") Object output) {
+        super(id, attributes);
         this.output = output;
     }
 

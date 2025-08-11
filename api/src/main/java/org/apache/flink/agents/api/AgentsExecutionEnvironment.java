@@ -19,7 +19,7 @@
 package org.apache.flink.agents.api;
 
 import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.EventLogger;
+import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -37,7 +37,7 @@ import java.util.List;
  */
 public abstract class AgentsExecutionEnvironment {
 
-    protected EventLogger eventLogger;
+    protected EventLoggerConfig eventLoggerConfig;
     protected List<EventListener> eventListeners = new ArrayList<>();
     /**
      * Get agents execution environment.
@@ -92,33 +92,18 @@ public abstract class AgentsExecutionEnvironment {
     }
 
     /**
-     * Enable an event logger for the execution environment.
+     * Enable event logging for the execution environment.
      *
-     * <p>This method allows users to set a custom EventLogger that will be used to log events
-     * during agent execution.
+     * <p>This method configures the execution environment to log events using the specified
+     * EventLoggerConfig. This is useful for monitoring and debugging agent execution.
      *
-     * @param eventLogger Custom EventLogger instance.
+     * @param config Configuration for the event logger.
      * @return The current AgentsExecutionEnvironment instance for method chaining.
      */
-    public AgentsExecutionEnvironment enableEventLogger(EventLogger eventLogger) {
-        return enableEventLogger(eventLogger, EventFilter.ACCEPT_ALL);
-    }
-
-    /**
-     * Enable an event logger with a filter for the execution environment.
-     *
-     * <p>This method allows users to set a custom EventLogger along with an EventFilter to control
-     * which events are logged. This is useful for reducing noise and focusing on relevant events.
-     *
-     * @param logger Custom EventLogger instance.
-     * @param filter EventFilter to apply to logged events.
-     * @return The current AgentsExecutionEnvironment instance for method chaining.
-     */
-    public AgentsExecutionEnvironment enableEventLogger(EventLogger logger, EventFilter filter) {
-        this.eventLogger = EventLogger.withFilter(logger, filter);
+    public AgentsExecutionEnvironment enableEventLogger(EventLoggerConfig config) {
+        this.eventLoggerConfig = config;
         return this;
     }
-
     /**
      * Register an event listener for the execution environment.
      *

@@ -20,7 +20,6 @@ package org.apache.flink.agents.api.logger;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.EventFilter;
 
 /**
  * Interface for logging action events in the Flink Agents framework.
@@ -32,15 +31,16 @@ import org.apache.flink.agents.api.EventFilter;
 public interface EventLogger extends AutoCloseable {
 
     /**
-     * Initialize the event logger.
+     * Opens the event logger with the provided parameters.
      *
-     * <p>This method is called once during setup to prepare the logging infrastructure.
-     * Implementations should establish connections, initialize state, and prepare for logging
-     * operations.
+     * <p>This method is called before any events are logged. Implementations should initialize any
+     * resources needed for logging, such as opening connections to external systems or preparing
+     * buffers.
      *
-     * @throws Exception if initialization fails
+     * @param params parameters for opening the event logger, including configuration and context
+     * @throws Exception if the open operation fails
      */
-    void open() throws Exception;
+    void open(EventLoggerOpenParams params) throws Exception;
 
     /**
      * Appends an event along with its associated context to the logger.
@@ -56,6 +56,16 @@ public interface EventLogger extends AutoCloseable {
     void append(EventContext context, Event event) throws Exception;
 
     /**
+     * Flush any buffered events to the underlying storage.
+     *
+     * <p>This method is called to ensure that all logged events are persisted. Implementations
+     * should flush any in-memory buffers or caches to the target storage system.
+     *
+     * @throws Exception if flushing fails
+     */
+    void flush() throws Exception;
+
+    /**
      * Close the event logger and release resources.
      *
      * <p>This method is called during cleanup. Implementations should flush any remaining records
@@ -65,52 +75,4 @@ public interface EventLogger extends AutoCloseable {
      */
     @Override
     void close() throws Exception;
-
-    /**
-     * Unwraps the EventLogger if it is wrapped by another logger or filter.
-     *
-     * <p>This method can be overridden by implementations that wrap other loggers or filters to
-     * return the underlying logger.
-     *
-     * @return the underlying EventLogger instance
-     */
-    default EventLogger unwrap() {
-        return this;
-    }
-
-    /**
-     * Creates a new EventLogger that filters events based on the provided EventFilter.
-     *
-     * <p>This method allows wrapping an existing EventLogger with a filter to control which events
-     * are logged. Only events accepted by the filter will be passed to the delegate logger.
-     *
-     * @param delegate the original EventLogger to wrap
-     * @param filter the EventFilter to apply
-     * @return a new EventLogger that applies the filter
-     */
-    static EventLogger withFilter(EventLogger delegate, EventFilter filter) {
-        return new EventLogger() {
-            @Override
-            public void open() throws Exception {
-                delegate.open();
-            }
-
-            @Override
-            public void append(EventContext context, Event event) throws Exception {
-                if (filter.accept(event, context)) {
-                    delegate.append(context, event);
-                }
-            }
-
-            @Override
-            public void close() throws Exception {
-                delegate.close();
-            }
-
-            @Override
-            public EventLogger unwrap() {
-                return delegate;
-            }
-        };
-    }
 }
