@@ -228,19 +228,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
      * `tryProcessActionTaskForKey` to continue processing.
      */
     private void processEvent(Object key, Event event) throws Exception {
-        EventContext eventContext = new EventContext(key);
-        if (eventLogger != null) {
-            // If event logging is enabled, we log the event along with its context.
-            eventLogger.append(eventContext, event);
-        }
-        if (eventListeners != null) {
-            // Notify all registered event listeners about the event.
-            for (EventListener listener : eventListeners) {
-                listener.onEventProcessed(eventContext, event);
-            }
-        }
+        notifyEventProcessed(key, event);
+
         boolean isInputEvent = EventUtil.isInputEvent(event);
-        builtInMetrics.markEventProcessed();
         if (EventUtil.isOutputEvent(event)) {
             // If the event is an OutputEvent, we send it downstream.
             OUT outputData = getOutputFromOutputEvent(event);
@@ -264,6 +254,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // If the event is an InputEvent, we submit a new mail to try processing the actions.
             mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
         }
+    }
+
+    private void notifyEventProcessed(Object key, Event event) throws Exception {
+        EventContext eventContext = new EventContext(key);
+        if (eventLogger != null) {
+            // If event logging is enabled, we log the event along with its context.
+            eventLogger.append(eventContext, event);
+        }
+        if (eventListeners != null) {
+            // Notify all registered event listeners about the event.
+            for (EventListener listener : eventListeners) {
+                listener.onEventProcessed(eventContext, event);
+            }
+        }
+        builtInMetrics.markEventProcessed();
     }
 
     private void tryProcessActionTaskForKey(Object key) {
