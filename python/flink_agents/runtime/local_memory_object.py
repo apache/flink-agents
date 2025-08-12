@@ -15,9 +15,10 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Union
 
 from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.memory_reference import MemoryRef
 
 
 class LocalMemoryObject(MemoryObject):
@@ -53,31 +54,39 @@ class LocalMemoryObject(MemoryObject):
         if self.ROOT_KEY not in self.__store:
             self.__store[self.ROOT_KEY] = _ObjMarker()
 
-    def get(self, path: str) -> Any:
-        """Get the value of a (direct or indirect) field in the object.
+    def get(self, path_or_ref: Union[str,MemoryRef]) -> Any:
+        """Get the value of a (direct or indirect) field or a MemoryRef in the object.
 
         Parameters
         ----------
-        path: str
-          Relative path from the current object to the target field.
+        path_or_ref: Union[str,MemoryRef]
+          Relative path from the current object to the target field or
+          a MemoryRef instance.
 
         Returns:
         -------
         Any
-          If the field is a direct field, returns the concrete data stored.
+          If the input is a MemoryRef, resolve the reference and return the data.
+          If the field is a direct field, return the concrete data stored.
           If the field is an indirect field, another MemoryObject will be returned.
-          If the field doesn't exist, returns None.
+          If the field doesn't exist, return None.
         """
-        abs_path = self._full_path(path)
+        if isinstance(path_or_ref, MemoryRef):
+            abs_path = path_or_ref.path
+        else:
+            abs_path = self._full_path(path_or_ref)
+
         if abs_path in self.__store:
             value = self.__store[abs_path]
             if self._is_nested_object(value):
                 return LocalMemoryObject(self.__store, abs_path)
-            return value
+
+            stored_value, _ = value
+            return stored_value
         return None
 
-    def set(self, path: str, value: Any) -> None:
-        """Set the value of a direct field in the object.
+    def set(self, path: str, value: Any) -> MemoryRef:
+        """Set the value of a direct field in the object and return a reference to it.
         This will also create the intermediate objects if not exist.
 
         Parameters
@@ -86,24 +95,30 @@ class LocalMemoryObject(MemoryObject):
           Relative path from the current object to the target field.
         value: Any
           New value of the field. The type of the value must be a primary type.
+
+        Returns:
+        -------
+        MemoryRef
+          A newly created reference to the data just set.
         """
         if isinstance(value, LocalMemoryObject):
             msg = "Do not set a MemoryObject instance directly; use new_object()."
             raise TypeError(msg)
 
         abs_path = self._full_path(path)
-        parts = abs_path.split(self.__SEPARATOR)
-
-        self._fill_parents(parts)
-
-        parent_path = self._parent_of(parts)
-        self._add_subfield(parent_path, parts[-1])
 
         if abs_path in self.__store and self._is_nested_object(self.__store[abs_path]):
             msg = f"Cannot overwrite object field '{abs_path}' with primitive."
             raise ValueError(msg)
 
-        self.__store[abs_path] = value
+        parts = abs_path.split(self.__SEPARATOR)
+        self._fill_parents(parts)
+        parent_path = self._parent_of(parts)
+        self._add_subfield(parent_path, parts[-1])
+
+        type_name = f"{value.__class__.__qualname__}"
+        self.__store[abs_path] = (value,type_name)
+        return MemoryRef(path=abs_path, type_name=type_name)
 
     def new_object(self, path: str, *, overwrite: bool = False) -> "LocalMemoryObject":
         """Create a new object as the value of an indirect field in the object.
@@ -175,10 +190,12 @@ class LocalMemoryObject(MemoryObject):
         result = {}
         for name in self.get_field_names():
             abs_path = self._full_path(name)
-            value = self.__store[abs_path]
-            result[name] = (
-                self.__NESTED_MARK if self._is_nested_object(value) else value
-            )
+            stored_item = self.__store[abs_path]
+            if self._is_nested_object(stored_item):
+                result[name] = self.__NESTED_MARK
+            else:
+                value, _ = stored_item
+                result[name] = value
         return result
 
     def _full_path(self, rel: str) -> str:
