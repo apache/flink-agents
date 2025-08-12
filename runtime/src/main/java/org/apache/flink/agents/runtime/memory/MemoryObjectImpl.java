@@ -18,8 +18,10 @@
 package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.api.common.state.MapState;
 
+import java.io.Serializable;
 import java.util.*;
 
 public class MemoryObjectImpl implements MemoryObject {
@@ -62,7 +64,12 @@ public class MemoryObjectImpl implements MemoryObject {
     }
 
     @Override
-    public void set(String path, Object value) throws Exception {
+    public MemoryObject get(MemoryRef ref) throws Exception {
+        return get(ref.getPath());
+    }
+
+    @Override
+    public MemoryRef set(String path, Object value) throws Exception {
         mailboxThreadChecker.run();
         String absPath = fullPath(path);
         String[] parts = absPath.split("\\.");
@@ -83,6 +90,9 @@ public class MemoryObjectImpl implements MemoryObject {
 
         MemoryItem val = new MemoryItem(value);
         store.put(absPath, val);
+
+        String typeName = (value != null) ? value.getClass().getSimpleName() : "null";
+        return MemoryRef.create(absPath, typeName);
     }
 
     @Override
@@ -197,16 +207,18 @@ public class MemoryObjectImpl implements MemoryObject {
     }
 
     /** Represents an item (nested object or primitive value) stored in the short-term memory. */
-    public static final class MemoryItem {
+    public static final class MemoryItem implements Serializable {
         private final ItemType type;
         private final Object value;
         private final Set<String> subKeys;
+        private final String typeName;
 
         // if the field stores a primitive value
         MemoryItem(Object value) {
             this.type = ItemType.VALUE;
             this.value = value;
             this.subKeys = Collections.emptySet();
+            this.typeName = (value != null) ? value.getClass().getName() : null;
         }
 
         // if the field represents a nested object
@@ -214,6 +226,7 @@ public class MemoryObjectImpl implements MemoryObject {
             this.type = ItemType.OBJECT;
             this.value = null;
             this.subKeys = new HashSet<>();
+            this.typeName = null;
         }
 
         public ItemType getType() {
