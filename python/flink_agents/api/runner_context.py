@@ -16,13 +16,14 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Tuple
 
 from flink_agents.api.events.event import Event
-from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 
+if TYPE_CHECKING:
+    from flink_agents.api.memory_object import MemoryObject
 
 class RunnerContext(ABC):
     """Abstract base class providing context for agent execution.
@@ -53,7 +54,7 @@ class RunnerContext(ABC):
         """
 
     @abstractmethod
-    def get_short_term_memory(self) -> MemoryObject:
+    def get_short_term_memory(self) -> "MemoryObject":
         """Get the short-term memory.
 
         Returns:
