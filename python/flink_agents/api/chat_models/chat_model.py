@@ -23,9 +23,7 @@ from typing_extensions import override
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
-
-if TYPE_CHECKING:
-    from flink_agents.api.tools.mcp import MCPServer
+from flink_agents.api.tools.mcp import MCPServer
 
 
 class BaseChatModel(Resource, ABC):
@@ -38,13 +36,13 @@ class BaseChatModel(Resource, ABC):
         or str indicate the Prompt resource in Agent.
     tools : Optional[List[str]] = None
         Tools name can be call by the ChatModel.
-    mcp_servers : Optional[List["MCPServer"]] = None
+    mcp_servers : Optional[List[MCPServer]] = None
         MCP servers whose tools should be available to the ChatModel.
     """
 
     prompt: Optional[Union[Prompt, str]] = None
     tools: Optional[List[str]] = None
-    mcp_servers: Optional[List["MCPServer"]] = None
+    mcp_servers: Optional[List[MCPServer]] = None
 
     @classmethod
     @override
