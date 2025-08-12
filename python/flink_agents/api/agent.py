@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Tuple, Type
 from flink_agents.api.chat_models.chat_model import BaseChatModel
 from flink_agents.api.events.event import Event
 from flink_agents.api.prompts.prompt import Prompt
+from flink_agents.api.tools.mcp import MCPServer
 
 
 class Agent(ABC):
@@ -57,6 +58,7 @@ class Agent(ABC):
     _actions: Dict[str, Tuple[List[Type[Event]], Callable]]
     _prompts: Dict[str, Prompt]
     _tools: Dict[str, Callable]
+    _mcp_servers: Dict[str, MCPServer]
     _chat_models: Dict[str, Tuple[Type[BaseChatModel], Dict[str, Any]]]
 
     def __init__(self) -> None:
@@ -65,6 +67,7 @@ class Agent(ABC):
         self._prompts = {}
         self._tools = {}
         self._chat_models = {}
+        self._mcp_servers = {}
 
     def add_action(self, name: str, events: List[Type[Event]], func: Callable) -> "Agent":
         """Add action to agent.
@@ -153,4 +156,28 @@ class Agent(ABC):
             raise ValueError(msg)
         kwargs["name"] = name
         self._chat_models[name] = (chat_model, kwargs)
+        return self
+
+    def add_mcp_server(self, name: str, mcp_server: MCPServer) -> "Agent":
+        """Add an MCP server to the agent.
+
+        Parameters
+        ----------
+        name : str
+            The name of the MCP server, should be unique in the same Agent.
+        mcp_server : MCPServer
+            The MCP server resource instance.
+
+        Returns:
+        -------
+        Agent
+            The modified Agent instance.
+        """
+        if name in self._mcp_servers:
+            msg = f"MCP server {name} already defined"
+            raise ValueError(msg)
+        # ensure the resource carries its own name for cross-resource lookup
+        if getattr(mcp_server, "name", None) != name:
+            mcp_server.name = name
+        self._mcp_servers[name] = mcp_server
         return self
