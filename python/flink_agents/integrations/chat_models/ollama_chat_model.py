@@ -25,6 +25,7 @@ from pydantic import Field
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModel
 from flink_agents.api.resource import ResourceType
+from flink_agents.api.tools.mcp import MCPServer
 
 DEFAULT_CONTEXT_WINDOW = 2048
 DEFAULT_REQUEST_TIMEOUT = 30.0
