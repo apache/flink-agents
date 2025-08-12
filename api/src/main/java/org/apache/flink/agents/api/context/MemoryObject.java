@@ -40,15 +40,26 @@ public interface MemoryObject {
     MemoryObject get(String path) throws Exception;
 
     /**
+     * Returns a MemoryObject that represents the path of the given reference.
+     *
+     * @param ref a reference to a data item in the short-term memory
+     * @return a MemoryObject instance pointing to the referenced field. Returns null if the path of
+     *     the reference does not exist.
+     * @throws Exception if an error occurs during state access
+     */
+    MemoryObject get(MemoryRef ref) throws Exception;
+
+    /**
      * Sets the value of a direct field in the current object; any missing intermediate objects will
      * be created automatically.
      *
      * @param path relative path from the current object to the target field
      * @param value new value of the field
+     * @return a {@link MemoryRef} instance pointing to the data just set
      * @throws Exception if trying to overwrite a nested object with a primitive value or set a
      *     MemoryObject directly
      */
-    void set(String path, Object value) throws Exception;
+    MemoryRef set(String path, Object value) throws Exception;
 
     /**
      * Creates a new MemoryObject as an indirect field in the current object.
