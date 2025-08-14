@@ -114,23 +114,7 @@ public abstract class AgentsExecutionEnvironment {
      * @return The current AgentsExecutionEnvironment instance for method chaining.
      */
     public AgentsExecutionEnvironment registerEventListener(EventListener listener) {
-        return registerEventListener(listener, EventFilter.ACCEPT_ALL);
-    }
-
-    /**
-     * Register an event listener with a filter for the execution environment.
-     *
-     * <p>This method allows users to register custom EventListeners that will only be notified of
-     * events matching the specified EventFilter. This is useful for filtering events before
-     * processing them in the listener.
-     *
-     * @param listener Custom EventListener instance to be registered.
-     * @param filter EventFilter to apply to the events processed by the listener.
-     * @return The current AgentsExecutionEnvironment instance for method chaining.
-     */
-    public AgentsExecutionEnvironment registerEventListener(
-            EventListener listener, EventFilter filter) {
-        eventListeners.add(EventListener.withFilter(listener, filter));
+        this.eventListeners.add(listener);
         return this;
     }
 

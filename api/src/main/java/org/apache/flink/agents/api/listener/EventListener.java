@@ -20,7 +20,6 @@ package org.apache.flink.agents.api.listener;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.EventFilter;
 
 /**
  * Interface for event listeners that are notified when events are processed.
@@ -49,43 +48,4 @@ public interface EventListener {
      * @param event The event that was processed
      */
     void onEventProcessed(EventContext context, Event event);
-
-    /**
-     * Unwraps the EventListener to its original form.
-     *
-     * <p>This method is used to retrieve the original EventListener instance if it has been wrapped
-     * or decorated. It allows for introspection or further processing of the listener.
-     *
-     * @return The original EventListener instance
-     */
-    default EventListener unwrap() {
-        return this;
-    }
-
-    /**
-     * Creates a new EventListener that filters events based on the provided EventFilter.
-     *
-     * <p>This method wraps the given delegate listener and applies the filter to events before
-     * passing them to the delegate. If the filter accepts the event, it is processed by the
-     * delegate; otherwise, it is ignored.
-     *
-     * @param delegate The original EventListener to wrap
-     * @param filter The EventFilter to apply
-     * @return A new EventListener that applies the filter to events
-     */
-    static EventListener withFilter(EventListener delegate, EventFilter filter) {
-        return new EventListener() {
-            @Override
-            public void onEventProcessed(EventContext context, Event event) {
-                if (filter.accept(event, context)) {
-                    delegate.onEventProcessed(context, event);
-                }
-            }
-
-            @Override
-            public EventListener unwrap() {
-                return delegate;
-            }
-        };
-    }
 }

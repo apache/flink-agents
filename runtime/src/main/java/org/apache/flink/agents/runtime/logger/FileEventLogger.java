@@ -2,6 +2,7 @@ package org.apache.flink.agents.runtime.logger;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
+import org.apache.flink.agents.api.EventFilter;
 import org.apache.flink.agents.api.logger.EventLogRecord;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
@@ -52,10 +53,12 @@ public class FileEventLogger implements EventLogger {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final FileEventLoggerConfig config;
+    private final EventFilter eventFilter;
     private PrintWriter writer;
 
     public FileEventLogger(FileEventLoggerConfig config) {
         this.config = config;
+        this.eventFilter = config.getEventFilter();
     }
 
     @Override
@@ -81,6 +84,11 @@ public class FileEventLogger implements EventLogger {
     public void append(EventContext context, Event event) throws Exception {
         if (writer == null) {
             throw new IllegalStateException("FileEventLogger not initialized. Call open() first.");
+        }
+
+        // Apply event filter
+        if (!eventFilter.accept(event, context)) {
+            return; // Skip this event
         }
 
         EventLogRecord record = new EventLogRecord(context, event);
