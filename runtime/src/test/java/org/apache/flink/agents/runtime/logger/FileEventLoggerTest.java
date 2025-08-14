@@ -47,17 +47,13 @@ import static org.mockito.Mockito.when;
 
 class FileEventLoggerTest {
 
-    @TempDir
-    Path tempDir;
+    @TempDir Path tempDir;
 
-    @Mock
-    private StreamingRuntimeContext runtimeContext;
+    @Mock private StreamingRuntimeContext runtimeContext;
 
-    @Mock
-    private JobInfo jobInfo;
+    @Mock private JobInfo jobInfo;
 
-    @Mock
-    private TaskInfo taskInfo;
+    @Mock private TaskInfo taskInfo;
 
     private FileEventLogger logger;
     private FileEventLoggerConfig config;
@@ -79,9 +75,7 @@ class FileEventLoggerTest {
         when(taskInfo.getIndexOfThisSubtask()).thenReturn(testSubTaskId);
 
         // Create config and logger
-        config = FileEventLoggerConfig.builder()
-                .baseEventLogDir(tempDir.toString())
-                .build();
+        config = FileEventLoggerConfig.builder().baseEventLogDir(tempDir.toString()).build();
         logger = new FileEventLogger(config);
         openParams = new EventLoggerOpenParams(runtimeContext);
     }
@@ -118,14 +112,19 @@ class FileEventLoggerTest {
         List<String> lines = Files.readAllLines(logFile);
         assertEquals(1, lines.size(), "Should have written one line");
 
-        EventLogRecord deserializedRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
+        EventLogRecord deserializedRecord =
+                objectMapper.readValue(lines.get(0), EventLogRecord.class);
         assertNotNull(deserializedRecord, "Deserialized record should not be null");
         assertNotNull(deserializedRecord.getContext(), "Deserialized context should not be null");
         assertNotNull(deserializedRecord.getEvent(), "Deserialized event should not be null");
 
-        assertEquals("org.apache.flink.agents.api.InputEvent",
-                     deserializedRecord.getContext().getEventType());
-        assertInstanceOf(InputEvent.class, deserializedRecord.getEvent(), "Deserialized event should be InputEvent");
+        assertEquals(
+                "org.apache.flink.agents.api.InputEvent",
+                deserializedRecord.getContext().getEventType());
+        assertInstanceOf(
+                InputEvent.class,
+                deserializedRecord.getEvent(),
+                "Deserialized event should be InputEvent");
         assertEquals("test input", ((InputEvent) deserializedRecord.getEvent()).getInput());
     }
 
@@ -144,7 +143,6 @@ class FileEventLoggerTest {
         Path logFile = getExpectedLogFilePath();
         List<String> lines = Files.readAllLines(logFile);
         assertEquals(2, lines.size(), "Should have written two lines");
-
 
         // Verify first event (InputEvent) - deserialization
         EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
@@ -175,18 +173,21 @@ class FileEventLoggerTest {
 
         // Verify JSON structure
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
-        assertEquals("org.apache.flink.agents.runtime.logger.FileEventLoggerTest$TestCustomEvent",
-                     jsonNode.get("context").get("eventType").asText());
+        assertEquals(
+                "org.apache.flink.agents.runtime.logger.FileEventLoggerTest$TestCustomEvent",
+                jsonNode.get("context").get("eventType").asText());
 
         JsonNode eventNode = jsonNode.get("event");
         assertEquals("custom data", eventNode.get("customData").asText());
         assertEquals(42, eventNode.get("customNumber").asInt());
 
         // Verify deserialization works correctly
-        EventLogRecord deserializedRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
+        EventLogRecord deserializedRecord =
+                objectMapper.readValue(lines.get(0), EventLogRecord.class);
         assertNotNull(deserializedRecord);
-        assertTrue(deserializedRecord.getEvent() instanceof TestCustomEvent,
-                   "Deserialized event should be TestCustomEvent");
+        assertTrue(
+                deserializedRecord.getEvent() instanceof TestCustomEvent,
+                "Deserialized event should be TestCustomEvent");
 
         TestCustomEvent deserializedEvent = (TestCustomEvent) deserializedRecord.getEvent();
         assertEquals("custom data", deserializedEvent.getCustomData());
@@ -254,8 +255,10 @@ class FileEventLoggerTest {
         logger2.close();
 
         // Then - verify separate files
-        Path subtask0File = tempDir.resolve(testJobId.toString()).resolve("0").resolve("events.log");
-        Path subtask1File = tempDir.resolve(testJobId.toString()).resolve("1").resolve("events.log");
+        Path subtask0File =
+                tempDir.resolve(testJobId.toString()).resolve("0").resolve("events.log");
+        Path subtask1File =
+                tempDir.resolve(testJobId.toString()).resolve("1").resolve("events.log");
 
         assertTrue(Files.exists(subtask0File), "Subtask 0 file should exist");
         assertTrue(Files.exists(subtask1File), "Subtask 1 file should exist");
@@ -274,11 +277,13 @@ class FileEventLoggerTest {
         assertEquals("subtask 1 event", subtask1EventJson.get("event").get("input").asText());
 
         // Verify deserialization
-        EventLogRecord subtask0Record = objectMapper.readValue(subtask0Lines.get(0), EventLogRecord.class);
+        EventLogRecord subtask0Record =
+                objectMapper.readValue(subtask0Lines.get(0), EventLogRecord.class);
         assertTrue(subtask0Record.getEvent() instanceof InputEvent);
         assertEquals("subtask 0 event", ((InputEvent) subtask0Record.getEvent()).getInput());
 
-        EventLogRecord subtask1Record = objectMapper.readValue(subtask1Lines.get(0), EventLogRecord.class);
+        EventLogRecord subtask1Record =
+                objectMapper.readValue(subtask1Lines.get(0), EventLogRecord.class);
         assertTrue(subtask1Record.getEvent() instanceof InputEvent);
         assertEquals("subtask 1 event", ((InputEvent) subtask1Record.getEvent()).getInput());
     }
@@ -286,10 +291,11 @@ class FileEventLoggerTest {
     @Test
     void testEventFilterAcceptAll() throws Exception {
         // Given - config with ACCEPT_ALL filter (default behavior)
-        config = FileEventLoggerConfig.builder()
-                .baseEventLogDir(tempDir.toString())
-                .eventFilter(EventFilter.ACCEPT_ALL)
-                .build();
+        config =
+                FileEventLoggerConfig.builder()
+                        .baseEventLogDir(tempDir.toString())
+                        .eventFilter(EventFilter.ACCEPT_ALL)
+                        .build();
         logger = new FileEventLogger(config);
 
         logger.open(openParams);
@@ -317,10 +323,11 @@ class FileEventLoggerTest {
     @Test
     void testEventFilterRejectAll() throws Exception {
         // Given - config with REJECT_ALL filter
-        config = FileEventLoggerConfig.builder()
-                .baseEventLogDir(tempDir.toString())
-                .eventFilter(EventFilter.REJECT_ALL)
-                .build();
+        config =
+                FileEventLoggerConfig.builder()
+                        .baseEventLogDir(tempDir.toString())
+                        .eventFilter(EventFilter.REJECT_ALL)
+                        .build();
         logger = new FileEventLogger(config);
 
         logger.open(openParams);
@@ -334,17 +341,19 @@ class FileEventLoggerTest {
 
         // Then - no events should be logged (file should not exist or be empty)
         Path logFile = getExpectedLogFilePath();
-        assertTrue(!Files.exists(logFile) || Files.readAllLines(logFile).isEmpty(),
-                   "No events should be logged with REJECT_ALL filter");
+        assertTrue(
+                !Files.exists(logFile) || Files.readAllLines(logFile).isEmpty(),
+                "No events should be logged with REJECT_ALL filter");
     }
 
     @Test
     void testEventFilterByEventType() throws Exception {
         // Given - config with filter that only accepts InputEvents
-        config = FileEventLoggerConfig.builder()
-                .baseEventLogDir(tempDir.toString())
-                .eventFilter(EventFilter.byEventType(InputEvent.class))
-                .build();
+        config =
+                FileEventLoggerConfig.builder()
+                        .baseEventLogDir(tempDir.toString())
+                        .eventFilter(EventFilter.byEventType(InputEvent.class))
+                        .build();
         logger = new FileEventLogger(config);
 
         logger.open(openParams);
@@ -371,10 +380,11 @@ class FileEventLoggerTest {
     @Test
     void testEventFilterByMultipleEventTypes() throws Exception {
         // Given - config with filter that accepts InputEvents and OutputEvents
-        config = FileEventLoggerConfig.builder()
-                .baseEventLogDir(tempDir.toString())
-                .eventFilter(EventFilter.byEventType(InputEvent.class, OutputEvent.class))
-                .build();
+        config =
+                FileEventLoggerConfig.builder()
+                        .baseEventLogDir(tempDir.toString())
+                        .eventFilter(EventFilter.byEventType(InputEvent.class, OutputEvent.class))
+                        .build();
         logger = new FileEventLogger(config);
 
         logger.open(openParams);
@@ -405,17 +415,19 @@ class FileEventLoggerTest {
     @Test
     void testCustomEventFilter() throws Exception {
         // Given - config with custom filter that only accepts events with specific content
-        EventFilter customFilter = (event, context) -> {
-            if (event instanceof InputEvent) {
-                return ((InputEvent) event).getInput().toString().contains("important");
-            }
-            return false;
-        };
+        EventFilter customFilter =
+                (event, context) -> {
+                    if (event instanceof InputEvent) {
+                        return ((InputEvent) event).getInput().toString().contains("important");
+                    }
+                    return false;
+                };
 
-        config = FileEventLoggerConfig.builder()
-                .baseEventLogDir(tempDir.toString())
-                .eventFilter(customFilter)
-                .build();
+        config =
+                FileEventLoggerConfig.builder()
+                        .baseEventLogDir(tempDir.toString())
+                        .eventFilter(customFilter)
+                        .build();
         logger = new FileEventLogger(config);
 
         logger.open(openParams);
@@ -442,9 +454,7 @@ class FileEventLoggerTest {
     @Test
     void testDefaultEventFilterBehavior() throws Exception {
         // Given - config without explicit eventFilter (should default to ACCEPT_ALL)
-        config = FileEventLoggerConfig.builder()
-                .baseEventLogDir(tempDir.toString())
-                .build();
+        config = FileEventLoggerConfig.builder().baseEventLogDir(tempDir.toString()).build();
         logger = new FileEventLogger(config);
 
         logger.open(openParams);
@@ -472,9 +482,7 @@ class FileEventLoggerTest {
         return tempDir.resolve(testJobId.toString()).resolve("0").resolve("events.log");
     }
 
-    /**
-     * Custom test event class for testing polymorphic serialization.
-     */
+    /** Custom test event class for testing polymorphic serialization. */
     public static class TestCustomEvent extends Event {
         private String customData;
         private int customNumber;
@@ -503,5 +511,4 @@ class FileEventLoggerTest {
             this.customNumber = customNumber;
         }
     }
-
 }

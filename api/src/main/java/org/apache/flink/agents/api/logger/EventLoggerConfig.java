@@ -10,10 +10,10 @@ import org.apache.flink.agents.api.EventFilter;
  * such as event filtering capabilities.
  */
 public interface EventLoggerConfig {
-    
+
     /**
      * Gets the event filter for this logger configuration.
-     * 
+     *
      * @return the EventFilter to apply, or {@link EventFilter#ACCEPT_ALL} if no filtering is needed
      */
     default EventFilter getEventFilter() {
