@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.logger;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
+import org.apache.flink.agents.api.EventFilter;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.logger.EventLogRecord;
@@ -280,6 +281,191 @@ class FileEventLoggerTest {
         EventLogRecord subtask1Record = objectMapper.readValue(subtask1Lines.get(0), EventLogRecord.class);
         assertTrue(subtask1Record.getEvent() instanceof InputEvent);
         assertEquals("subtask 1 event", ((InputEvent) subtask1Record.getEvent()).getInput());
+    }
+
+    @Test
+    void testEventFilterAcceptAll() throws Exception {
+        // Given - config with ACCEPT_ALL filter (default behavior)
+        config = FileEventLoggerConfig.builder()
+                .baseEventLogDir(tempDir.toString())
+                .eventFilter(EventFilter.ACCEPT_ALL)
+                .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("input data");
+        OutputEvent outputEvent = new OutputEvent("output data");
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.flush();
+
+        // Then - both events should be logged
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(2, lines.size(), "Both events should be logged with ACCEPT_ALL filter");
+
+        // Verify both events were deserialized correctly
+        EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
+        assertInstanceOf(InputEvent.class, inputRecord.getEvent());
+
+        EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
+        assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
+    }
+
+    @Test
+    void testEventFilterRejectAll() throws Exception {
+        // Given - config with REJECT_ALL filter
+        config = FileEventLoggerConfig.builder()
+                .baseEventLogDir(tempDir.toString())
+                .eventFilter(EventFilter.REJECT_ALL)
+                .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("input data");
+        OutputEvent outputEvent = new OutputEvent("output data");
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.flush();
+
+        // Then - no events should be logged (file should not exist or be empty)
+        Path logFile = getExpectedLogFilePath();
+        assertTrue(!Files.exists(logFile) || Files.readAllLines(logFile).isEmpty(),
+                   "No events should be logged with REJECT_ALL filter");
+    }
+
+    @Test
+    void testEventFilterByEventType() throws Exception {
+        // Given - config with filter that only accepts InputEvents
+        config = FileEventLoggerConfig.builder()
+                .baseEventLogDir(tempDir.toString())
+                .eventFilter(EventFilter.byEventType(InputEvent.class))
+                .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("input data");
+        OutputEvent outputEvent = new OutputEvent("output data");
+        TestCustomEvent customEvent = new TestCustomEvent("custom data", 42);
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.append(new EventContext(customEvent), customEvent);
+        logger.flush();
+
+        // Then - only InputEvent should be logged
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size(), "Only InputEvent should be logged");
+
+        EventLogRecord record = objectMapper.readValue(lines.get(0), EventLogRecord.class);
+        assertInstanceOf(InputEvent.class, record.getEvent());
+        assertEquals("input data", ((InputEvent) record.getEvent()).getInput());
+    }
+
+    @Test
+    void testEventFilterByMultipleEventTypes() throws Exception {
+        // Given - config with filter that accepts InputEvents and OutputEvents
+        config = FileEventLoggerConfig.builder()
+                .baseEventLogDir(tempDir.toString())
+                .eventFilter(EventFilter.byEventType(InputEvent.class, OutputEvent.class))
+                .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("input data");
+        OutputEvent outputEvent = new OutputEvent("output data");
+        TestCustomEvent customEvent = new TestCustomEvent("custom data", 42);
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.append(new EventContext(customEvent), customEvent);
+        logger.flush();
+
+        // Then - InputEvent and OutputEvent should be logged, but not TestCustomEvent
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(2, lines.size(), "InputEvent and OutputEvent should be logged");
+
+        EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
+        assertInstanceOf(InputEvent.class, inputRecord.getEvent());
+        assertEquals("input data", ((InputEvent) inputRecord.getEvent()).getInput());
+
+        EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
+        assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
+        assertEquals("output data", ((OutputEvent) outputRecord.getEvent()).getOutput());
+    }
+
+    @Test
+    void testCustomEventFilter() throws Exception {
+        // Given - config with custom filter that only accepts events with specific content
+        EventFilter customFilter = (event, context) -> {
+            if (event instanceof InputEvent) {
+                return ((InputEvent) event).getInput().toString().contains("important");
+            }
+            return false;
+        };
+
+        config = FileEventLoggerConfig.builder()
+                .baseEventLogDir(tempDir.toString())
+                .eventFilter(customFilter)
+                .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent importantEvent = new InputEvent("important data");
+        InputEvent regularEvent = new InputEvent("regular data");
+        OutputEvent outputEvent = new OutputEvent("output data");
+
+        // When
+        logger.append(new EventContext(importantEvent), importantEvent);
+        logger.append(new EventContext(regularEvent), regularEvent);
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.flush();
+
+        // Then - only the "important" InputEvent should be logged
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size(), "Only important InputEvent should be logged");
+
+        EventLogRecord record = objectMapper.readValue(lines.get(0), EventLogRecord.class);
+        assertInstanceOf(InputEvent.class, record.getEvent());
+        assertEquals("important data", ((InputEvent) record.getEvent()).getInput());
+    }
+
+    @Test
+    void testDefaultEventFilterBehavior() throws Exception {
+        // Given - config without explicit eventFilter (should default to ACCEPT_ALL)
+        config = FileEventLoggerConfig.builder()
+                .baseEventLogDir(tempDir.toString())
+                .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("input data");
+        OutputEvent outputEvent = new OutputEvent("output data");
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.flush();
+
+        // Then - both events should be logged (default ACCEPT_ALL behavior)
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(2, lines.size(), "Both events should be logged with default filter");
+
+        EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
+        assertInstanceOf(InputEvent.class, inputRecord.getEvent());
+
+        EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
+        assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
     }
 
     private Path getExpectedLogFilePath() {
