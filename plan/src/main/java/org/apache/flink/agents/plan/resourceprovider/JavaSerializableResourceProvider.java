@@ -22,6 +22,8 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Modifier;
 import java.util.concurrent.Callable;
 
 /**
@@ -39,14 +41,18 @@ public class JavaSerializableResourceProvider extends SerializableResourceProvid
 
     @Override
     public Resource provide(Callable<Resource> getResource) throws Exception {
-        // This provider is expected to be used with a Callable that returns a SerializableResource
-        // instance.
-        // The actual resource creation logic should be implemented in the Callable.
-        Resource resource = getResource.call();
-        if (!(resource instanceof SerializableResource)) {
-            throw new IllegalArgumentException(
-                    "Expected a SerializableResource, but got: " + resource.getClass().getName());
+        // Instantiate the resource reflectively to avoid recursion back into AgentPlan.getResource
+        Class<?> resourceClass = Class.forName(getClazz());
+        Constructor<?> ctor = resourceClass.getDeclaredConstructor();
+        if (!Modifier.isPublic(resourceClass.getModifiers())
+                || !Modifier.isPublic(ctor.getModifiers())) {
+            ctor.setAccessible(true);
         }
-        return resource;
+        Object instance = ctor.newInstance();
+        if (!(instance instanceof SerializableResource)) {
+            throw new IllegalArgumentException(
+                    "Expected a SerializableResource, but got: " + resourceClass.getName());
+        }
+        return (Resource) instance;
     }
 }
