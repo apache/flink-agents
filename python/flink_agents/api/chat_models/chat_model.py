@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import List, Optional, Sequence, Union, TYPE_CHECKING
+from typing import List, Optional, Sequence, Union, Dict, Any
 
 from typing_extensions import override
 
@@ -24,6 +24,7 @@ from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.tools.mcp import MCPServer
+from flink_agents.api.tools.tool import ToolMetadata
 
 
 class BaseChatModel(Resource, ABC):
@@ -63,4 +64,21 @@ class BaseChatModel(Resource, ABC):
         -------
         ChatMessage
             Response from the ChatModel.
+        """
+
+    @abstractmethod
+    def convert_tool_to_model_format(self, tool_metadata: ToolMetadata) -> Dict[str, Any]:
+        """Convert tool metadata to the format expected by this chat model.
+
+        This method allows different chat models to implement their own tool format.
+
+        Parameters
+        ----------
+        tool_metadata : ToolMetadata
+            The tool metadata to convert.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The tool in the format expected by this chat model.
         """

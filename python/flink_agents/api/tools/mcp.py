@@ -17,72 +17,62 @@
 #################################################################################
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Any, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 from typing_extensions import override
 
-from flink_agents.api.resource import ResourceType
-from flink_agents.api.chat_models.chat_model import BaseChatModel
+from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.tools.tool import BaseTool, ToolMetadata, ToolType
+from flink_agents.api.prompts.prompt import Prompt
 
 
-class MCPToolDefinition(BaseModel, ABC):
-    """MCP tool definition returned by list_tools or get_tool_definition."""
+class MCPToolDefinition(BaseTool, ABC):
+    """MCP tool definition that can be called directly.
 
-    name: str
-    description: str
-    parameters: Dict[str, Any] = Field(default_factory=dict)
-
-    def to_model_tool(self, chat_model: BaseChatModel) -> Dict[str, Any]:
-        """Convert this MCP tool definition to a model-specific tool dict.
-
-        Default implementation is not provided; subclasses must override.
-        """
-        raise NotImplementedError(
-            "to_model_tool must be implemented by MCPToolDefinition subclasses"
-        )
-
-
-class MCPPrompt(BaseModel):
-    """MCP prompt definition returned by list_prompts/get_prompt."""
-
-    name: str
-    description: Optional[str] = None
-    arguments: Dict[str, Any] = Field(default_factory=dict)
-
-
-class MCPServer(BaseTool, ABC):
-    """Resource representing an MCP server and exposing its tools/prompts.
-
-    This is a logical tool container; it is not directly invokable with call().
+    This represents a single tool from an MCP server.
     """
-
-    endpoint: str
-    metadata: ToolMetadata = Field(  # default metadata for the server wrapper
-        default_factory=lambda: ToolMetadata(
-            name="mcp_server",
-            description="A container for tools provided by an MCP server.",
-            args_schema=BaseModel,  # not used
-        )
-    )
-
-    @classmethod
-    @override
-    def resource_type(cls) -> ResourceType:  # type: ignore[override]
-        return ResourceType.MCP_SERVER
 
     @classmethod
     @override
     def tool_type(cls) -> ToolType:
         return ToolType.MCP
 
-    def call_tool(self, name: str,*args: Any, **kwargs: Any) -> Any:  # noqa: D401
-        """MCPServer isn't directly invokable; raise to signal misuse."""
-        raise NotImplementedError("MCPServer does not support direct call().")
+    @classmethod
+    @override
+    def call(self, *args: Any, **kwargs: Any) -> Any:
+        """Call the MCP tool with the given arguments."""
+        raise NotImplementedError
 
-    # Listing and retrieval APIs
+
+class MCPPrompt(Prompt):
+    """MCP prompt definition that extends the base Prompt class.
+
+    This represents a prompt template from an MCP server.
+    """
+
+    name: str
+    description: Optional[str] = None
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+
+
+
+
+class MCPServer(Resource, ABC):
+    """Resource representing an MCP server and exposing its tools/prompts.
+
+    This is a logical container for MCP tools and prompts; it is not directly invokable.
+    """
+
+    endpoint: str
+
+    @classmethod
+    @override
+    def resource_type(cls) -> ResourceType:
+        return ResourceType.MCP_SERVER
+
+    # Tool listing and retrieval APIs
     def list_tools(self, cursor: Optional[str] = None) -> Tuple[List[MCPToolDefinition], Optional[str]]:
         """List available tool definitions from the MCP server and an optional cursor.
 
@@ -98,10 +88,29 @@ class MCPServer(BaseTool, ABC):
         """
         raise NotImplementedError
 
-    def get_tool_definition(self, name: str) -> MCPToolDefinition:
-        """Get a single tool definition by name."""
+    def get_tool(self, name: str) -> MCPToolDefinition:
+        """Get a single callable tool by name.
+
+        Parameters
+        ----------
+        name : str
+            The name of the tool to retrieve.
+
+        Returns
+        -------
+        MCPToolDefinition
+            A callable tool that can be invoked directly.
+        """
         raise NotImplementedError
 
+    def get_tool_definition(self, name: str) -> ToolMetadata:
+        """Get a single tool definition metadata by name.
+
+        This returns the metadata without the callable implementation.
+        """
+        raise NotImplementedError
+
+    # Prompt listing and retrieval APIs
     def list_prompts(self, cursor: Optional[str] = None) -> Tuple[List[MCPPrompt], Optional[str]]:
         """List available prompts from the MCP server and an optional cursor.
 
@@ -120,13 +129,3 @@ class MCPServer(BaseTool, ABC):
     def get_prompt(self, name: str) -> MCPPrompt:
         """Get a single prompt definition by name."""
         raise NotImplementedError
-
-    # Conversion helpers
-    def to_model_tool(self, name: str, chat_model: BaseChatModel) -> Dict[str, Any]:
-        """Convert a named MCP tool to a model-specific tool dict.
-
-        Default behavior is not implemented; subclasses should override.
-        """
-        raise NotImplementedError(
-            "MCPServer.to_model_tool must be implemented by subclasses"
-        )

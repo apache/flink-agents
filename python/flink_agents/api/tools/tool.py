@@ -27,6 +27,7 @@ from flink_agents.api.resource import ResourceType, SerializableResource
 from flink_agents.api.tools.utils import create_model_from_schema
 
 
+
 class ToolType(Enum):
     """Tool type enum.
 
