@@ -51,7 +51,6 @@ class ItemData(BaseModel):
 class MyEvent(Event):  # noqa D101
     value: Any
 
-
 class DataStreamAgent(Agent):
     """Agent used for explaining integrating agents with DataStream.
 
@@ -86,38 +85,33 @@ class DataStreamAgent(Agent):
             print(f"[log_to_stdout] Logging input={input}, total reviews now={total}")
             return True
 
-        input = event.input
-
+        input_data = event.input
         stm = ctx.get_short_term_memory()
-        status = stm.new_object("status", overwrite=True)
 
-        total = 0
-        if stm.is_exist("status.total_reviews"):
-            total = status.get("total_reviews")
-        total += 1
-        status.set("total_reviews", total)
+        current_total = stm.get("status.total_reviews") or 0
+        total = current_total + 1
+        stm.set("status.total_reviews", total)
 
-        log_success = yield from ctx.execute_async(log_to_stdout, input, total)
+        log_success = yield from ctx.execute_async(log_to_stdout, input_data, total)
 
-        content = copy.deepcopy(input)
+        content = copy.deepcopy(input_data)
         content.review += " first action, log success=" + str(log_success) + ","
-        ctx.send_event(MyEvent(value=content))
+        content.memory_info = {"total_reviews": total}
+
+        data_ref = stm.set(f"processed_items.item_{content.id}", content)
+        ctx.send_event(MyEvent(value=data_ref.model_dump()))
 
     @action(MyEvent)
     @staticmethod
     def second_action(event: Event, ctx: RunnerContext):  # noqa D102
-        input = event.value
-
+        input_data = event.value
         stm = ctx.get_short_term_memory()
-        memory_info = {
-            "total_reviews": stm.get("status.total_reviews"),
-        }
+        resolved_data: ItemData = stm.get(input_data)
 
-        content = copy.deepcopy(input)
+        content = copy.deepcopy(resolved_data)
         content.review += " second action"
         tool = ctx.get_resource("my_tool", ResourceType.TOOL)
         content.review = tool.call(content.review)
-        content.memory_info = memory_info
         ctx.send_event(OutputEvent(output=content))
 
 

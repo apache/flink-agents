@@ -16,10 +16,12 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Union
 
 from pydantic import BaseModel
 
+if TYPE_CHECKING:
+    from flink_agents.api.memory_reference import MemoryRef
 
 class MemoryObject(BaseModel, ABC):
     """Representation of an object in the short-term memory.
@@ -30,25 +32,27 @@ class MemoryObject(BaseModel, ABC):
     """
 
     @abstractmethod
-    def get(self, path: str) -> Any:
-        """Get the value of a (direct or indirect) field in the object.
+    def get(self, path: Union[str,"MemoryRef"] ) -> Any:
+        """Get the value of a (direct or indirect) field or a MemoryRef in the object.
 
         Parameters
         ----------
-        path: str
-          Relative path from the current object to the target field.
+        path_or_ref: Union[str,MemoryRef]
+          Relative path from the current object to the target field or
+          a MemoryRef instance.
 
         Returns:
         -------
         Any
-          If the field is a direct field, returns the concrete data stored.
+          If the input is a MemoryRef, resolve the reference and returns the data.
+          If the field is a direct field, return the concrete data stored.
           If the field is an indirect field, another MemoryObject will be returned.
-          If the field doesn't exist, returns None.
+          If the field doesn't exist, return None.
         """
 
     @abstractmethod
-    def set(self, path: str, value: Any) -> None:
-        """Set the value of an indirect field in the object.
+    def set(self, path: str, value: Any) -> "MemoryRef":
+        """Set the value of a direct field in the object and return a reference to it.
         This will also create the intermediate objects if not exist.
 
         Parameters
@@ -57,6 +61,11 @@ class MemoryObject(BaseModel, ABC):
           Relative path from the current object to the target field.
         value: Any
           New value of the field. The type of the value must be a primary type.
+
+        Returns:
+        -------
+        MemoryRef
+          A newly created reference to the data just set.
         """
 
     @abstractmethod

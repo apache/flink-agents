@@ -15,7 +15,9 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
+
+from python.flink_agents.api.memory_reference import MemoryRef
 
 from flink_agents.api.memory_object import MemoryObject
 
@@ -32,27 +34,36 @@ class FlinkMemoryObject(MemoryObject):
         """Initialize with a Java MemoryObject instance."""
         self._j_memory_object = j_memory_object
 
-    def get(self, path: str) -> Any:
-        """Get a nested object or value by path.
+    def get(self, path_or_ref: Union[str, MemoryRef]) -> Any:
+        """Get a nested object or value by path or MemoryRef.
 
-        If the field is an object, returns a new FlinkMemoryObject.
-        Returns None if the field does not exist.
+        If the input is a MemoryRef, resolve the reference and return the data.
+        If the field is a direct field, return the concrete data stored.
+        If the field is an indirect object, return a new FlinkMemoryObject.
+        Return None if the field does not exist.
         """
         try:
-            j_result = self._j_memory_object.get(path)
+            path_to_get: str
+            if isinstance(path_or_ref, dict) and 'path' in path_or_ref:
+                path_to_get = path_or_ref['path']
+            elif isinstance(path_or_ref, str):
+                path_to_get = path_or_ref
+            j_result = self._j_memory_object.get(path_to_get)
             if j_result is None:
                 return None
-            if not j_result.isNestedObject():
+            if j_result.isNestedObject():
+                return FlinkMemoryObject(j_result)
+            else:
                 return j_result.getValue()
-            return FlinkMemoryObject(j_result)
         except Exception as e:
-            msg = f"Failed to get field '{path}' from short-term memory"
+            msg = f"Failed to get field '{path_or_ref}' from short-term memory"
             raise MemoryObjectError(msg) from e
 
-    def set(self, path: str, value: Any) -> None:
+    def set(self, path: str, value: Any) -> MemoryRef:
         """Set a value at the given path. Creates intermediate objects if needed."""
         try:
-            self._j_memory_object.set(path, value)
+            j_ref = self._j_memory_object.set(path, value)
+            return MemoryRef(path=j_ref.getPath(),type_name=j_ref.getTypeName())
         except Exception as e:
             msg = f"Failed to set value at path '{path}'"
             raise MemoryObjectError(msg) from e
