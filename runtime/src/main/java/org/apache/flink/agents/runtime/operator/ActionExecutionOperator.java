@@ -18,8 +18,14 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.listener.EventListener;
+import org.apache.flink.agents.api.logger.EventLogger;
+import org.apache.flink.agents.api.logger.EventLoggerConfig;
+import org.apache.flink.agents.api.logger.EventLoggerFactory;
+import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -36,17 +42,14 @@ import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
-import org.apache.flink.api.common.state.*;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
+import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.python.env.PythonDependencyInfo;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
-import org.apache.flink.streaming.api.operators.BoundedOneInput;
-import org.apache.flink.streaming.api.operators.ChainingStrategy;
-import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
+import org.apache.flink.streaming.api.operators.*;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxExecutorImpl;
@@ -61,9 +64,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
 
-import static org.apache.flink.agents.runtime.utils.StateUtil.listStateNotEmpty;
-import static org.apache.flink.agents.runtime.utils.StateUtil.pollFromListState;
-import static org.apache.flink.agents.runtime.utils.StateUtil.removeFromListState;
+import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
@@ -121,16 +122,26 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // processed.
     private transient ListState<Object> currentProcessingKeysOpState;
 
+    private transient EventLogger eventLogger;
+    private final transient List<EventListener> eventListeners;
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
             ProcessingTimeService processingTimeService,
-            MailboxExecutor mailboxExecutor) {
+            MailboxExecutor mailboxExecutor,
+            EventLoggerConfig eventLoggerConfig,
+            List<EventListener> eventListeners) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
         this.processingTimeService = processingTimeService;
         this.chainingStrategy = ChainingStrategy.ALWAYS;
         this.mailboxExecutor = mailboxExecutor;
+        if (eventLoggerConfig != null) {
+            // If event logging is enabled, we create an EventLogger instance using the factory.
+            this.eventLogger = EventLoggerFactory.createLogger(eventLoggerConfig);
+        }
+        this.eventListeners = eventListeners;
     }
 
     @Override
@@ -176,11 +187,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         mailboxProcessor = getMailboxProcessor();
 
+        // Initialize the event logger if it is set.
+        initEventLogger(getRuntimeContext());
+
         // Since an operator restart may change the key range it manages due to changes in
         // parallelism,
         // and {@link tryProcessActionTaskForKey} mails might be lost,
         // it is necessary to reprocess all keys to ensure correctness.
         tryResumeProcessActionTasks();
+    }
+
+    private void initEventLogger(StreamingRuntimeContext runtimeContext) throws Exception {
+        if (eventLogger == null) {
+            return;
+        }
+        eventLogger.open(new EventLoggerOpenParams(runtimeContext));
     }
 
     @Override
@@ -207,8 +228,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
      * `tryProcessActionTaskForKey` to continue processing.
      */
     private void processEvent(Object key, Event event) throws Exception {
+        notifyEventProcessed(event);
+
         boolean isInputEvent = EventUtil.isInputEvent(event);
-        builtInMetrics.markEventProcessed();
         if (EventUtil.isOutputEvent(event)) {
             // If the event is an OutputEvent, we send it downstream.
             OUT outputData = getOutputFromOutputEvent(event);
@@ -232,6 +254,25 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // If the event is an InputEvent, we submit a new mail to try processing the actions.
             mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
         }
+    }
+
+    private void notifyEventProcessed(Event event) throws Exception {
+        EventContext eventContext = new EventContext(event);
+        if (eventLogger != null) {
+            // If event logging is enabled, we log the event along with its context.
+            eventLogger.append(eventContext, event);
+            // For now, we flush the event logger after each event to ensure immediate logging.
+            // This is a temporary solution to ensure that events are logged immediately.
+            // TODO: In the future, we may want to implement a more efficient batching mechanism.
+            eventLogger.flush();
+        }
+        if (eventListeners != null) {
+            // Notify all registered event listeners about the event.
+            for (EventListener listener : eventListeners) {
+                listener.onEventProcessed(eventContext, event);
+            }
+        }
+        builtInMetrics.markEventProcessed();
     }
 
     private void tryProcessActionTaskForKey(Object key) {
@@ -347,6 +388,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void close() throws Exception {
         if (pythonActionExecutor != null) {
             pythonActionExecutor.close();
+        }
+        if (eventLogger != null) {
+            eventLogger.close();
         }
 
         super.close();
