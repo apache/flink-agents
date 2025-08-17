@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Callable;
 
 /**
@@ -79,10 +80,15 @@ public class PythonResourceProvider extends ResourceProvider {
         }
 
         PythonResourceProvider that = (PythonResourceProvider) o;
-        return this.getName().equals(that.getName())
-                && this.getType().equals(that.getType())
-                && this.module.equals(that.module)
-                && this.clazz.equals(that.clazz)
-                && this.kwargs.equals(that.kwargs);
+        return Objects.equals(this.getName(), that.getName())
+                && Objects.equals(this.getType(), that.getType())
+                && Objects.equals(this.module, that.module)
+                && Objects.equals(this.clazz, that.clazz)
+                && Objects.equals(this.kwargs, that.kwargs);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(this.getName(), this.getType(), module, clazz, kwargs);
     }
 }

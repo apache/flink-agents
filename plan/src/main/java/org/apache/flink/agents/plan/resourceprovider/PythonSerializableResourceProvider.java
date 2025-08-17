@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Callable;
 
 /**
@@ -84,10 +85,16 @@ public class PythonSerializableResourceProvider extends SerializableResourceProv
         }
 
         PythonSerializableResourceProvider that = (PythonSerializableResourceProvider) o;
-        return this.getName().equals(that.getName())
-                && this.getType().equals(that.getType())
-                && this.getModule().equals(that.getModule())
-                && this.getClazz().equals(that.getClazz())
-                && this.serialized.equals(that.serialized);
+        return Objects.equals(this.getName(), that.getName())
+                && Objects.equals(this.getType(), that.getType())
+                && Objects.equals(this.getModule(), that.getModule())
+                && Objects.equals(this.getClazz(), that.getClazz())
+                && Objects.equals(this.serialized, that.serialized);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(
+                this.getName(), this.getType(), this.getModule(), this.getClazz(), serialized);
     }
 }

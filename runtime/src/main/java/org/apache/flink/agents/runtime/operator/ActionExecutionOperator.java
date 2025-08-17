@@ -367,10 +367,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         checkState(EventUtil.isOutputEvent(event));
         if (event instanceof OutputEvent) {
             return (OUT) ((OutputEvent) event).getOutput();
-        } else {
+        } else if (event instanceof PythonEvent) {
             Object outputFromOutputEvent =
                     pythonActionExecutor.getOutputFromOutputEvent(((PythonEvent) event).getEvent());
             return (OUT) outputFromOutputEvent;
+        } else {
+            throw new IllegalStateException(
+                    "Unsupported event type: " + event.getClass().getName());
         }
     }
 

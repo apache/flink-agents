@@ -22,6 +22,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonPro
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.Objects;
 
 /** Represent a Java function. */
 public class JavaFunction implements Function {
@@ -89,9 +90,14 @@ public class JavaFunction implements Function {
         }
 
         JavaFunction that = (JavaFunction) o;
-        return this.qualName.equals(that.qualName)
-                && this.methodName.equals(that.methodName)
+        return Objects.equals(this.qualName, that.qualName)
+                && Objects.equals(this.methodName, that.methodName)
                 && Arrays.equals(this.parameterTypes, that.parameterTypes);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(qualName, methodName, Arrays.hashCode(parameterTypes));
     }
 
     @Override
