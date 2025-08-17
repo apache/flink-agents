@@ -79,7 +79,7 @@ public class TableIntegrationExample {
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
 
         // Define output schema
-        Schema outputSchema = Schema.newBuilder().column("result", DataTypes.STRING()).build();
+        Schema outputSchema = Schema.newBuilder().column("f0", DataTypes.STRING()).build();
 
         // Apply agent to the Table
         Table outputTable =

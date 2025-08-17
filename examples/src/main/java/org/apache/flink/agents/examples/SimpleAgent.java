@@ -53,7 +53,7 @@ public class SimpleAgent extends Agent {
      * @param ctx The runner context for sending events
      */
     @Action(listenEvents = {InputEvent.class})
-    public void processInput(Event event, RunnerContext ctx) {
+    public static void processInput(Event event, RunnerContext ctx) {
         InputEvent inputEvent = (InputEvent) event;
         Object input = inputEvent.getInput();
 
@@ -71,7 +71,7 @@ public class SimpleAgent extends Agent {
      * @param ctx The runner context for sending events
      */
     @Action(listenEvents = {ProcessedEvent.class})
-    public void generateOutput(Event event, RunnerContext ctx) {
+    public static void generateOutput(Event event, RunnerContext ctx) {
         ProcessedEvent processedEvent = (ProcessedEvent) event;
         String processedData = processedEvent.getProcessedData();
 
