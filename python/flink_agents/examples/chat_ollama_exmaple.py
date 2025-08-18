@@ -58,7 +58,7 @@ class MyAgent(Agent):
         """ChatModel which focus on math, and reuse ChatModelServer."""
         return OllamaChatModelSetup, {
             "name": "math_chat_model",
-            "server": "ollama_server",
+            "connection": "ollama_server",
             "tools": ["add"],
         }
 
@@ -68,7 +68,7 @@ class MyAgent(Agent):
         """ChatModel which focus on text generate, and reuse ChatModelServer."""
         return OllamaChatModelSetup, {
             "name": "creative_chat_model",
-            "server": "ollama_server",
+            "connection": "ollama_server",
         }
 
     @tool
