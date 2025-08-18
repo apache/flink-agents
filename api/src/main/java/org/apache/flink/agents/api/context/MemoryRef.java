@@ -22,29 +22,26 @@ import java.util.Objects;
 
 /**
  * A serializable, persistent reference to a specific data item in Short-Term Memory. It acts as a
- * lightweight pointer, containing the path and original type name of the data, allowing for
- * efficient passing of large objects between Actions.
+ * lightweight pointer, containing the path of the data, allowing for efficient passing of large
+ * objects between Actions.
  */
 public final class MemoryRef implements Serializable {
     private static final long serialVersionUID = 1L;
 
     private final String path;
-    private final String typeName;
 
-    private MemoryRef(String path, String typeName) {
+    private MemoryRef(String path) {
         this.path = path;
-        this.typeName = typeName;
     }
 
     /**
-     * Creates a new MemoryRef instance with the given path and type name.
+     * Creates a new MemoryRef instance with the given path.
      *
      * @param path The absolute path of the data in Short-Term Memory.
-     * @param typeName The fully qualified name of the data's original Java type.
      * @return A new MemoryRef instance.
      */
-    public static MemoryRef create(String path, String typeName) {
-        return new MemoryRef(path, typeName);
+    public static MemoryRef create(String path) {
+        return new MemoryRef(path);
     }
 
     /**
@@ -62,25 +59,21 @@ public final class MemoryRef implements Serializable {
         return path;
     }
 
-    public String getTypeName() {
-        return typeName;
-    }
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         MemoryRef memoryRef = (MemoryRef) o;
-        return path.equals(memoryRef.path) && typeName.equals(memoryRef.typeName);
+        return path.equals(memoryRef.path);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(path, typeName);
+        return Objects.hash(path);
     }
 
     @Override
     public String toString() {
-        return "MemoryRef{" + "path='" + path + '\'' + ", typeName='" + typeName + '\'' + '}';
+        return "MemoryRef{" + "path='" + path + '\'' + '}';
     }
 }

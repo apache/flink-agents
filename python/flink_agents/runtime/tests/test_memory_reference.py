@@ -50,7 +50,7 @@ class User:  # noqa: D101
 def test_set_get_involved_ref() -> None:  # noqa: D103
     mem = create_memory()
 
-    # Test cases: (path, value, expected_type_name)
+    # Test cases: (path, value, type_name)
     test_cases = [
         ("my_int", 1, "int"),
         ("my_float", 3.14, "float"),
@@ -61,11 +61,10 @@ def test_set_get_involved_ref() -> None:  # noqa: D103
         ("my_user", User("Alice", 30), "User"),
     ]
 
-    for path, value, expected_type_name in test_cases:
+    for path, value, _expected_type_name in test_cases:
         ref = mem.set(path, value)
         assert isinstance(ref, MemoryRef)
         assert ref.path == path
-        assert ref.type_name == expected_type_name
 
         retrieved_value = mem.get(ref)
         assert retrieved_value == value
@@ -73,12 +72,10 @@ def test_set_get_involved_ref() -> None:  # noqa: D103
 
 def test_memory_ref_create() -> None:  # noqa: D103
     path = "a.b.c"
-    type_name = "str"
-    ref = MemoryRef.create(path, type_name)
+    ref = MemoryRef.create(path)
 
     assert isinstance(ref, MemoryRef)
     assert ref.path == path
-    assert ref.type_name == type_name
 
 
 def test_memory_ref_resolve() -> None:  # noqa: D103
@@ -106,7 +103,7 @@ def test_get_with_ref_to_nested_object() -> None:  # noqa: D103
     obj = mem.new_object("a.b")
     obj.set("c", 10)
 
-    ref = MemoryRef.create("a", "NestedObject")
+    ref = MemoryRef.create("a")
 
     resolved_obj = mem.get(ref)
     assert isinstance(resolved_obj, LocalMemoryObject)
@@ -116,25 +113,23 @@ def test_get_with_ref_to_nested_object() -> None:  # noqa: D103
 def test_get_with_non_existent_ref() -> None:  # noqa: D103
     mem = create_memory()
 
-    non_existent_ref = MemoryRef.create("this.path.does.not.exist", "str")
+    non_existent_ref = MemoryRef.create("this.path.does.not.exist")
 
     assert mem.get(non_existent_ref) is None
 
 
 def test_ref_equality_and_hashing() -> None:  # noqa: D103
-    ref1 = MemoryRef(path="a.b", type_name="t")
-    ref2 = MemoryRef(path="a.b", type_name="t")
-    ref3 = MemoryRef(path="a.c", type_name="t")
-    ref4 = MemoryRef(path="a.b", type_name="u")
+    ref1 = MemoryRef(path="a.b")
+    ref2 = MemoryRef(path="a.b")
+    ref3 = MemoryRef(path="a.c")
 
     assert ref1 == ref2
     assert ref1 != ref3
-    assert ref1 != ref4
 
     assert hash(ref1) == hash(ref2)
+    assert hash(ref1) != hash(ref3)
 
-    ref_set = {ref1, ref2, ref3, ref4}
-    assert len(ref_set) == 3
+    ref_set = {ref1, ref2, ref3}
+    assert len(ref_set) == 2
     assert ref1 in ref_set
     assert ref3 in ref_set
-    assert ref4 in ref_set

@@ -101,19 +101,16 @@ public class MemoryRefTest {
     void testSetAndGetInvolvedRef() throws Exception {
         MemoryRef intRef = memory.set("my_int", 123);
         assertEquals("my_int", intRef.getPath());
-        assertEquals("Integer", intRef.getTypeName());
         assertEquals(123, memory.get(intRef).getValue());
 
         MemoryRef strRef = memory.set("my_str", "hello");
         assertEquals("my_str", strRef.getPath());
-        assertEquals("String", strRef.getTypeName());
         assertEquals("hello", memory.get(strRef).getValue());
 
         // List
         List<String> list = Arrays.asList("a", "b");
         MemoryRef listRef = memory.set("my_list", list);
         assertEquals("my_list", listRef.getPath());
-        assertEquals("ArrayList", listRef.getTypeName());
         assertEquals(list, memory.get(listRef).getValue());
 
         // Map
@@ -121,21 +118,18 @@ public class MemoryRefTest {
         map.put("x", 10);
         MemoryRef mapRef = memory.set("my_map", map);
         assertEquals("my_map", mapRef.getPath());
-        assertEquals("HashMap", mapRef.getTypeName());
         assertEquals(map, memory.get(mapRef).getValue());
 
         // Set
         Set<Integer> set = new HashSet<>(Arrays.asList(1, 2, 3));
         MemoryRef setRef = memory.set("my_set", set);
         assertEquals("my_set", setRef.getPath());
-        assertEquals("HashSet", setRef.getTypeName());
         assertEquals(set, memory.get(setRef).getValue());
 
         // Custom POJO
         Person alice = new Person("Alice", 23);
         MemoryRef personRef = memory.set("pojo", alice);
         assertEquals("pojo", personRef.getPath());
-        assertEquals(Person.class.getSimpleName(), personRef.getTypeName());
         assertEquals(alice, memory.get(personRef).getValue());
     }
 
@@ -143,11 +137,10 @@ public class MemoryRefTest {
     void testMemoryRefCreate() {
         String path = "a.b.c";
         String typeName = "String";
-        MemoryRef ref = MemoryRef.create(path, typeName);
+        MemoryRef ref = MemoryRef.create(path);
 
         assertNotNull(ref);
         assertEquals(path, ref.getPath());
-        assertEquals(typeName, ref.getTypeName());
     }
 
     @Test
@@ -173,7 +166,7 @@ public class MemoryRefTest {
         MemoryObject obj = memory.newObject("a.b", false);
         obj.set("c", 10);
 
-        MemoryRef ref = MemoryRef.create("a", "MemoryObject");
+        MemoryRef ref = MemoryRef.create("a");
 
         MemoryObject resolvedObj = memory.get(ref);
         assertNotNull(resolvedObj);
@@ -183,27 +176,25 @@ public class MemoryRefTest {
 
     @Test
     void testGetWithNonExistentRef() throws Exception {
-        MemoryRef nonExistentRef = MemoryRef.create("this.path.does.not.exist", "String");
+        MemoryRef nonExistentRef = MemoryRef.create("this.path.does.not.exist");
         assertNull(memory.get(nonExistentRef));
     }
 
     @Test
     void testRefEqualityAndHashing() {
-        MemoryRef ref1 = MemoryRef.create("a.b", "t");
-        MemoryRef ref2 = MemoryRef.create("a.b", "t");
-        MemoryRef ref3 = MemoryRef.create("a.c", "t");
-        MemoryRef ref4 = MemoryRef.create("a.b", "u");
+        MemoryRef ref1 = MemoryRef.create("a.b");
+        MemoryRef ref2 = MemoryRef.create("a.b");
+        MemoryRef ref3 = MemoryRef.create("a.c");
 
         assertEquals(ref1, ref2);
         assertNotEquals(ref1, ref3);
-        assertNotEquals(ref1, ref4);
 
         assertEquals(ref1.hashCode(), ref2.hashCode());
+        assertNotEquals(ref1.hashCode(), ref3.hashCode());
 
-        Set<MemoryRef> refSet = new HashSet<>(Arrays.asList(ref1, ref2, ref3, ref4));
-        assertEquals(3, refSet.size());
+        Set<MemoryRef> refSet = new HashSet<>(Arrays.asList(ref1, ref2, ref3));
+        assertEquals(2, refSet.size());
         assertTrue(refSet.contains(ref1));
         assertTrue(refSet.contains(ref3));
-        assertTrue(refSet.contains(ref4));
     }
 }

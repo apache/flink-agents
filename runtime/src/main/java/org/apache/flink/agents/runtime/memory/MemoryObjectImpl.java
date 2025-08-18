@@ -91,8 +91,7 @@ public class MemoryObjectImpl implements MemoryObject {
         MemoryItem val = new MemoryItem(value);
         store.put(absPath, val);
 
-        String typeName = (value != null) ? value.getClass().getSimpleName() : "null";
-        return MemoryRef.create(absPath, typeName);
+        return MemoryRef.create(absPath);
     }
 
     @Override
@@ -211,14 +210,12 @@ public class MemoryObjectImpl implements MemoryObject {
         private final ItemType type;
         private final Object value;
         private final Set<String> subKeys;
-        private final String typeName;
 
         // if the field stores a primitive value
         MemoryItem(Object value) {
             this.type = ItemType.VALUE;
             this.value = value;
             this.subKeys = Collections.emptySet();
-            this.typeName = (value != null) ? value.getClass().getName() : null;
         }
 
         // if the field represents a nested object
@@ -226,7 +223,6 @@ public class MemoryObjectImpl implements MemoryObject {
             this.type = ItemType.OBJECT;
             this.value = null;
             this.subKeys = new HashSet<>();
-            this.typeName = null;
         }
 
         public ItemType getType() {

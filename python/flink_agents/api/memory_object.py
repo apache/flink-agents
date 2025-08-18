@@ -32,7 +32,7 @@ class MemoryObject(BaseModel, ABC):
     """
 
     @abstractmethod
-    def get(self, path: Union[str,"MemoryRef"] ) -> Any:
+    def get(self, path_or_ref: Union[str,"MemoryRef"] ) -> Any:
         """Get the value of a (direct or indirect) field or a MemoryRef in the object.
 
         Parameters

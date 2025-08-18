@@ -29,27 +29,24 @@ class MemoryRef(BaseModel):
     """Reference to a specific data item in the Short-Term Memory."""
 
     path: str
-    type_name: str
 
     model_config = ConfigDict(frozen=True)
 
     @staticmethod
-    def create(path: str, type_name: str) -> MemoryRef:
-        """Create a new MemoryRef instance based on the given path and type name.
+    def create(path: str) -> MemoryRef:
+        """Create a new MemoryRef instance based on the given path.
 
         Parameters
         ----------
         path: str
             The absolute path of the data in the Short-Term Memory.
-        type_name: str
-            The original Python type name of the data.
 
         Returns:
         -------
         MemoryRef
             A new MemoryRef instance.
         """
-        return MemoryRef(path=path, type_name=type_name)
+        return MemoryRef(path=path)
 
     def resolve(self, ctx: RunnerContext) -> Any:
         """Resolve the reference to get the actual data.

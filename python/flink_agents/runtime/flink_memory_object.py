@@ -63,7 +63,7 @@ class FlinkMemoryObject(MemoryObject):
         """Set a value at the given path. Creates intermediate objects if needed."""
         try:
             j_ref = self._j_memory_object.set(path, value)
-            return MemoryRef(path=j_ref.getPath(),type_name=j_ref.getTypeName())
+            return MemoryRef(path=j_ref.getPath())
         except Exception as e:
             msg = f"Failed to set value at path '{path}'"
             raise MemoryObjectError(msg) from e

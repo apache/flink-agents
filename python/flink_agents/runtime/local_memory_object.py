@@ -80,9 +80,7 @@ class LocalMemoryObject(MemoryObject):
             value = self.__store[abs_path]
             if self._is_nested_object(value):
                 return LocalMemoryObject(self.__store, abs_path)
-
-            stored_value, _ = value
-            return stored_value
+            return value
         return None
 
     def set(self, path: str, value: Any) -> MemoryRef:
@@ -116,9 +114,8 @@ class LocalMemoryObject(MemoryObject):
         parent_path = self._parent_of(parts)
         self._add_subfield(parent_path, parts[-1])
 
-        type_name = f"{value.__class__.__qualname__}"
-        self.__store[abs_path] = (value,type_name)
-        return MemoryRef(path=abs_path, type_name=type_name)
+        self.__store[abs_path] = value
+        return MemoryRef(path=abs_path)
 
     def new_object(self, path: str, *, overwrite: bool = False) -> "LocalMemoryObject":
         """Create a new object as the value of an indirect field in the object.
@@ -190,12 +187,10 @@ class LocalMemoryObject(MemoryObject):
         result = {}
         for name in self.get_field_names():
             abs_path = self._full_path(name)
-            stored_item = self.__store[abs_path]
-            if self._is_nested_object(stored_item):
-                result[name] = self.__NESTED_MARK
-            else:
-                value, _ = stored_item
-                result[name] = value
+            value = self.__store[abs_path]
+            result[name] = (
+                self.__NESTED_MARK if self._is_nested_object(value) else value
+            )
         return result
 
     def _full_path(self, rel: str) -> str:
