@@ -18,8 +18,6 @@
 
 package org.apache.flink.agents.runtime;
 
-import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -30,52 +28,27 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.types.Row;
 
-import java.util.List;
-
 /** A utility class that bridges Flink DataStream/SQL with the Flink Agents agent. */
 public class CompileUtils {
 
     // ============================ invoke by python ====================================
     public static DataStream<byte[]> connectToAgent(
-            KeyedStream<Row, Row> inputDataStream,
-            String agentPlanJson,
-            EventLoggerConfig eventLoggerConfig,
-            List<EventListener> eventListeners)
+            KeyedStream<Row, Row> inputDataStream, String agentPlanJson)
             throws JsonProcessingException {
         // deserialize agent plan json.
         AgentPlan agentPlan = new ObjectMapper().readValue(agentPlanJson, AgentPlan.class);
-        return connectToAgent(
-                inputDataStream,
-                agentPlan,
-                TypeInformation.of(byte[].class),
-                false,
-                eventLoggerConfig,
-                eventListeners);
+        return connectToAgent(inputDataStream, agentPlan, TypeInformation.of(byte[].class), false);
     }
 
     // ============================ invoke by java ====================================
     public static <IN, K> DataStream<Object> connectToAgent(
-            DataStream<IN> inputStream,
-            KeySelector<IN, K> keySelector,
-            AgentPlan agentPlan,
-            EventLoggerConfig eventLoggerConfig,
-            List<EventListener> eventListeners) {
-        return connectToAgent(
-                inputStream.keyBy(keySelector), agentPlan, eventLoggerConfig, eventListeners);
+            DataStream<IN> inputStream, KeySelector<IN, K> keySelector, AgentPlan agentPlan) {
+        return connectToAgent(inputStream.keyBy(keySelector), agentPlan);
     }
 
     public static <IN, K> DataStream<Object> connectToAgent(
-            KeyedStream<IN, K> keyedInputStream,
-            AgentPlan agentPlan,
-            EventLoggerConfig eventLoggerConfig,
-            List<EventListener> eventListeners) {
-        return connectToAgent(
-                keyedInputStream,
-                agentPlan,
-                TypeInformation.of(Object.class),
-                true,
-                eventLoggerConfig,
-                eventListeners);
+            KeyedStream<IN, K> keyedInputStream, AgentPlan agentPlan) {
+        return connectToAgent(keyedInputStream, agentPlan, TypeInformation.of(Object.class), true);
     }
 
     // ============================ basic ====================================
@@ -100,16 +73,13 @@ public class CompileUtils {
             KeyedStream<IN, K> keyedInputStream,
             AgentPlan agentPlan,
             TypeInformation<OUT> outTypeInformation,
-            boolean inputIsJava,
-            EventLoggerConfig eventLoggerConfig,
-            List<EventListener> eventListeners) {
+            boolean inputIsJava) {
         return (DataStream<OUT>)
                 keyedInputStream
                         .transform(
                                 "action-execute-operator",
                                 outTypeInformation,
-                                new ActionExecutionOperatorFactory(
-                                        agentPlan, inputIsJava, eventLoggerConfig, eventListeners))
+                                new ActionExecutionOperatorFactory(agentPlan, inputIsJava))
                         .setParallelism(keyedInputStream.getParallelism());
     }
 }

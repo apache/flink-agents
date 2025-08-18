@@ -18,15 +18,12 @@
 
 package org.apache.flink.agents.api;
 
-import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -37,8 +34,6 @@ import java.util.List;
  */
 public abstract class AgentsExecutionEnvironment {
 
-    protected EventLoggerConfig eventLoggerConfig;
-    protected List<EventListener> eventListeners = new ArrayList<>();
     /**
      * Get agents execution environment.
      *
@@ -89,33 +84,6 @@ public abstract class AgentsExecutionEnvironment {
      */
     public static AgentsExecutionEnvironment getExecutionEnvironment() {
         return getExecutionEnvironment(null);
-    }
-
-    /**
-     * Enable event logging for the execution environment.
-     *
-     * <p>This method configures the execution environment to log events using the specified
-     * EventLoggerConfig. This is useful for monitoring and debugging agent execution.
-     *
-     * @param config Configuration for the event logger.
-     * @return The current AgentsExecutionEnvironment instance for method chaining.
-     */
-    public AgentsExecutionEnvironment enableEventLogger(EventLoggerConfig config) {
-        this.eventLoggerConfig = config;
-        return this;
-    }
-    /**
-     * Register an event listener for the execution environment.
-     *
-     * <p>This method allows users to register custom EventListeners that will be notified of events
-     * during agent execution. This is useful for implementing custom event handling logic.
-     *
-     * @param listener Custom EventListener instance to be registered.
-     * @return The current AgentsExecutionEnvironment instance for method chaining.
-     */
-    public AgentsExecutionEnvironment registerEventListener(EventListener listener) {
-        this.eventListeners.add(listener);
-        return this;
     }
 
     /**

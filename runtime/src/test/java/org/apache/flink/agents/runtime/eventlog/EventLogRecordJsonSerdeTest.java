@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api.logger;
+package org.apache.flink.agents.runtime.eventlog;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
@@ -103,7 +103,7 @@ class EventLogRecordJsonSerdeTest {
         // Then
         JsonNode jsonNode = objectMapper.readTree(json);
         assertEquals(
-                "org.apache.flink.agents.api.logger.EventLogRecordJsonSerdeTest$CustomTestEvent",
+                "org.apache.flink.agents.runtime.eventlog.EventLogRecordJsonSerdeTest$CustomTestEvent",
                 jsonNode.get("context").get("eventType").asText());
 
         JsonNode eventNode = jsonNode.get("event");

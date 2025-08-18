@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api.logger;
+package org.apache.flink.agents.runtime.eventlog;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;

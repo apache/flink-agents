@@ -60,6 +60,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
@@ -122,26 +123,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // processed.
     private transient ListState<Object> currentProcessingKeysOpState;
 
-    private transient EventLogger eventLogger;
+    private final transient EventLogger eventLogger;
     private final transient List<EventListener> eventListeners;
 
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
             ProcessingTimeService processingTimeService,
-            MailboxExecutor mailboxExecutor,
-            EventLoggerConfig eventLoggerConfig,
-            List<EventListener> eventListeners) {
+            MailboxExecutor mailboxExecutor) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
         this.processingTimeService = processingTimeService;
         this.chainingStrategy = ChainingStrategy.ALWAYS;
         this.mailboxExecutor = mailboxExecutor;
-        if (eventLoggerConfig != null) {
-            // If event logging is enabled, we create an EventLogger instance using the factory.
-            this.eventLogger = EventLoggerFactory.createLogger(eventLoggerConfig);
-        }
-        this.eventListeners = eventListeners;
+        this.eventLogger = EventLoggerFactory.createLogger(EventLoggerConfig.builder().build());
+        this.eventListeners = new ArrayList<>();
     }
 
     @Override

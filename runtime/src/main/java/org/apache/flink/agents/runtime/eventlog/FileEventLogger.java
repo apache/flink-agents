@@ -16,13 +16,13 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.runtime.logger;
+package org.apache.flink.agents.runtime.eventlog;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.EventFilter;
-import org.apache.flink.agents.api.logger.EventLogRecord;
 import org.apache.flink.agents.api.logger.EventLogger;
+import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -34,11 +34,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * A file-based event logger that logs events to a file specific to each subtask.
+ * A file-based event logger that logs events to files with structured names in a flat directory.
  *
- * <p>This logger creates a unique directory structure for each subtask based on the job name and
- * subtask ID, ensuring no file conflicts in multi-TaskManager deployments. Events are appended to a
- * log file named "events.log" within that directory in JSON Lines format.
+ * <p>This logger creates uniquely named log files for each subtask using a structured naming
+ * convention that includes job ID, task name, and subtask ID. This approach aligns with Flink's
+ * logging conventions and ensures no file conflicts in multi-TaskManager deployments. Events are
+ * appended to log files in JSON Lines format.
  *
  * <h3>Thread Safety</h3>
  *
@@ -54,27 +55,38 @@ import java.nio.file.Paths;
  *
  * <h3>File Structure</h3>
  *
- * <p>The logger creates the following directory structure:
+ * <p>The logger creates log files in a flat directory structure with structured names that align
+ * with Flink's logging conventions:
  *
  * <pre>
  * {baseLogDir}/
- *   └── {jobId}/
- *       ├── 0/
- *       │   └── events.log    (subtask 0)
- *       ├── 1/
- *       │   └── events.log    (subtask 1)
- *       └── 2/
- *           └── events.log    (subtask 2)
+ *   ├── events-{jobId}-{taskName}-{subtaskId}.log
+ *   ├── events-{jobId}-{taskName}-{subtaskId}.log
+ *   └── events-{jobId}-{taskName}-{subtaskId}.log
+ * </pre>
+ *
+ * <p>For example:
+ *
+ * <pre>
+ * /tmp/flink-agents/
+ *   ├── events-abc123-action-execute-operator-0.log
+ *   ├── events-abc123-action-execute-operator-1.log
+ *   └── events-def456-action-execute-operator-2.log
  * </pre>
  */
 public class FileEventLogger implements EventLogger {
+    public static final String BASE_LOG_DIR_PROPERTY_KEY = "baseLogDir";
+    // The default base log directory if not specified in the configuration
+    private static final String DEFAULT_BASE_LOG_DIR =
+            Paths.get(System.getProperty("java.io.tmpdir"), "flink-agents").toString();
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final FileEventLoggerConfig config;
+    private final EventLoggerConfig config;
     private final EventFilter eventFilter;
     private PrintWriter writer;
 
-    public FileEventLogger(FileEventLoggerConfig config) {
+    public FileEventLogger(EventLoggerConfig config) {
         this.config = config;
         this.eventFilter = config.getEventFilter();
     }
@@ -82,7 +94,7 @@ public class FileEventLogger implements EventLogger {
     @Override
     public void open(EventLoggerOpenParams params) throws Exception {
         String logFilePath = generateSubTaskLogFilePath(params);
-        // Create directory structure
+        // Create base directory if it doesn't exist
         Path logPath = Paths.get(logFilePath).getParent();
         if (!Files.exists(logPath)) {
             Files.createDirectories(logPath);
@@ -92,10 +104,15 @@ public class FileEventLogger implements EventLogger {
     }
 
     private String generateSubTaskLogFilePath(EventLoggerOpenParams params) {
-        String baseLogDir = config.getBaseEventLogDir();
+        // Get base log directory from properties
+        String baseLogDir =
+                (String)
+                        config.getProperties()
+                                .getOrDefault(BASE_LOG_DIR_PROPERTY_KEY, DEFAULT_BASE_LOG_DIR);
         String jobId = params.getRuntimeContext().getJobInfo().getJobId().toString();
+        String taskName = params.getRuntimeContext().getTaskInfo().getTaskName();
         int subTaskId = params.getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
-        return String.format("%s/%s/%d/events.log", baseLogDir, jobId, subTaskId);
+        return String.format("%s/events-%s-%s-%d.log", baseLogDir, jobId, taskName, subTaskId);
     }
 
     @Override

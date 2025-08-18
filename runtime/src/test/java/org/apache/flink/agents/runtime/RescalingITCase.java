@@ -320,9 +320,7 @@ public class RescalingITCase extends TestLogger {
         input =
                 CompileUtils.connectToAgent(
                                 (KeyedStream<Integer, Integer>) input,
-                                new AgentPlan(new TestAgent()),
-                                null,
-                                null)
+                                new AgentPlan(new TestAgent()))
                         .map(
                                 new MapFunction<Object, Integer>() {
                                     @Override

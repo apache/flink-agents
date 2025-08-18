@@ -16,14 +16,14 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.runtime.logger;
+package org.apache.flink.agents.runtime.eventlog;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.EventFilter;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
-import org.apache.flink.agents.api.logger.EventLogRecord;
+import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.JobInfo;
@@ -56,11 +56,12 @@ class FileEventLoggerTest {
     @Mock private TaskInfo taskInfo;
 
     private FileEventLogger logger;
-    private FileEventLoggerConfig config;
+    private EventLoggerConfig config;
     private EventLoggerOpenParams openParams;
     private ObjectMapper objectMapper;
 
     private final JobID testJobId = JobID.generate();
+    private final String testTaskName = "action-execute-operator";
     private final int testSubTaskId = 0;
 
     @BeforeEach
@@ -72,10 +73,15 @@ class FileEventLoggerTest {
         when(runtimeContext.getJobInfo()).thenReturn(jobInfo);
         when(runtimeContext.getTaskInfo()).thenReturn(taskInfo);
         when(jobInfo.getJobId()).thenReturn(testJobId);
+        when(taskInfo.getTaskName()).thenReturn(testTaskName);
         when(taskInfo.getIndexOfThisSubtask()).thenReturn(testSubTaskId);
 
         // Create config and logger
-        config = FileEventLoggerConfig.builder().baseEventLogDir(tempDir.toString()).build();
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
+                        .build();
         logger = new FileEventLogger(config);
         openParams = new EventLoggerOpenParams(runtimeContext);
     }
@@ -88,15 +94,12 @@ class FileEventLoggerTest {
     }
 
     @Test
-    void testOpenCreatesDirectoryStructure() throws Exception {
+    void testOpenCreatesLogFile() throws Exception {
         logger.open(openParams);
 
-        Path expectedDir = tempDir.resolve(testJobId.toString()).resolve("0");
-        assertTrue(Files.exists(expectedDir), "Expected directory should be created");
-        assertTrue(Files.isDirectory(expectedDir), "Path should be a directory");
-
-        Path expectedLogFile = expectedDir.resolve("events.log");
+        Path expectedLogFile = getExpectedLogFilePath();
         assertTrue(Files.exists(expectedLogFile), "Log file should be created");
+        assertTrue(Files.isRegularFile(expectedLogFile), "Path should be a regular file");
     }
 
     @Test
@@ -174,7 +177,7 @@ class FileEventLoggerTest {
         // Verify JSON structure
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
         assertEquals(
-                "org.apache.flink.agents.runtime.logger.FileEventLoggerTest$TestCustomEvent",
+                "org.apache.flink.agents.runtime.eventlog.FileEventLoggerTest$TestCustomEvent",
                 jsonNode.get("context").get("eventType").asText());
 
         JsonNode eventNode = jsonNode.get("event");
@@ -254,11 +257,15 @@ class FileEventLoggerTest {
         logger2.flush();
         logger2.close();
 
-        // Then - verify separate files
+        // Then - verify separate files with structured names
         Path subtask0File =
-                tempDir.resolve(testJobId.toString()).resolve("0").resolve("events.log");
+                tempDir.resolve(
+                        String.format(
+                                "events-%s-%s-%d.log", testJobId.toString(), testTaskName, 0));
         Path subtask1File =
-                tempDir.resolve(testJobId.toString()).resolve("1").resolve("events.log");
+                tempDir.resolve(
+                        String.format(
+                                "events-%s-%s-%d.log", testJobId.toString(), testTaskName, 1));
 
         assertTrue(Files.exists(subtask0File), "Subtask 0 file should exist");
         assertTrue(Files.exists(subtask1File), "Subtask 1 file should exist");
@@ -292,8 +299,9 @@ class FileEventLoggerTest {
     void testEventFilterAcceptAll() throws Exception {
         // Given - config with ACCEPT_ALL filter (default behavior)
         config =
-                FileEventLoggerConfig.builder()
-                        .baseEventLogDir(tempDir.toString())
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
                         .eventFilter(EventFilter.ACCEPT_ALL)
                         .build();
         logger = new FileEventLogger(config);
@@ -324,8 +332,9 @@ class FileEventLoggerTest {
     void testEventFilterRejectAll() throws Exception {
         // Given - config with REJECT_ALL filter
         config =
-                FileEventLoggerConfig.builder()
-                        .baseEventLogDir(tempDir.toString())
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
                         .eventFilter(EventFilter.REJECT_ALL)
                         .build();
         logger = new FileEventLogger(config);
@@ -350,8 +359,9 @@ class FileEventLoggerTest {
     void testEventFilterByEventType() throws Exception {
         // Given - config with filter that only accepts InputEvents
         config =
-                FileEventLoggerConfig.builder()
-                        .baseEventLogDir(tempDir.toString())
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
                         .eventFilter(EventFilter.byEventType(InputEvent.class))
                         .build();
         logger = new FileEventLogger(config);
@@ -381,8 +391,9 @@ class FileEventLoggerTest {
     void testEventFilterByMultipleEventTypes() throws Exception {
         // Given - config with filter that accepts InputEvents and OutputEvents
         config =
-                FileEventLoggerConfig.builder()
-                        .baseEventLogDir(tempDir.toString())
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
                         .eventFilter(EventFilter.byEventType(InputEvent.class, OutputEvent.class))
                         .build();
         logger = new FileEventLogger(config);
@@ -424,8 +435,9 @@ class FileEventLoggerTest {
                 };
 
         config =
-                FileEventLoggerConfig.builder()
-                        .baseEventLogDir(tempDir.toString())
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
                         .eventFilter(customFilter)
                         .build();
         logger = new FileEventLogger(config);
@@ -454,7 +466,11 @@ class FileEventLoggerTest {
     @Test
     void testDefaultEventFilterBehavior() throws Exception {
         // Given - config without explicit eventFilter (should default to ACCEPT_ALL)
-        config = FileEventLoggerConfig.builder().baseEventLogDir(tempDir.toString()).build();
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .build();
         logger = new FileEventLogger(config);
 
         logger.open(openParams);
@@ -479,7 +495,9 @@ class FileEventLoggerTest {
     }
 
     private Path getExpectedLogFilePath() {
-        return tempDir.resolve(testJobId.toString()).resolve("0").resolve("events.log");
+        return tempDir.resolve(
+                String.format(
+                        "events-%s-%s-%d.log", testJobId.toString(), testTaskName, testSubTaskId));
     }
 
     /** Custom test event class for testing polymorphic serialization. */
