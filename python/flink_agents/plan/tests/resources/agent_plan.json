@@ -81,5 +81,10 @@
                 "__resource_provider_type__": "PythonResourceProvider"
             }
         }
+    },
+    "config": {
+        "conf_data": {
+            "mock.key": "mock.value"
+        }
     }
 }

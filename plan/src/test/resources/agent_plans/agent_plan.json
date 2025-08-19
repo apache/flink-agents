@@ -34,5 +34,13 @@
     "org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializerTest$MyEvent": [
       "second_action"
     ]
+  },
+  "config": {
+    "conf_data": {
+      "key1": 1,
+      "key2": 1.5,
+      "key3": true,
+      "key4": "v1"
+    }
   }
 }

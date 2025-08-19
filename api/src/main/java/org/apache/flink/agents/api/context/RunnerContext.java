@@ -18,6 +18,7 @@
 package org.apache.flink.agents.api.context;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -65,4 +66,11 @@ public interface RunnerContext {
      * @throws Exception if the resource cannot be found or created
      */
     Resource getResource(String name, ResourceType type) throws Exception;
+
+    /**
+     * Gets the configuration for Flink Agents.
+     *
+     * @return the configuration for Flink Agents.
+     */
+    ReadableConfiguration getConfig();
 }

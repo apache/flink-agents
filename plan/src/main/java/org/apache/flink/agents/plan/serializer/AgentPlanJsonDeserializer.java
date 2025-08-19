@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.serializer;
 
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.Action;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JacksonException;
@@ -29,6 +30,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.Deseriali
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JavaType;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonDeserializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 
 import java.io.IOException;
@@ -119,6 +121,18 @@ public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
             }
         }
 
-        return new AgentPlan(actions, actionsByEvent, resourceProviders);
+        // Deserialize config data
+        JsonNode configNode = node.get("config");
+        Map<String, Object> configData = new HashMap<>();
+        if (configNode != null && configNode.isObject()) {
+            JsonNode configDataNode = configNode.get("conf_data");
+            if (configDataNode != null && configDataNode.isObject()) {
+                ObjectMapper mapper = new ObjectMapper();
+                configData = mapper.convertValue(configDataNode, Map.class);
+            }
+        }
+        AgentConfiguration config = new AgentConfiguration(configData);
+
+        return new AgentPlan(actions, actionsByEvent, resourceProviders, config);
     }
 }

@@ -50,6 +50,7 @@ echo "tmpdir：$tempdir"
 
 jar_path=e2e-test/agent-plan-compatibility-test/target/flink-agents*.jar
 run_test "Agent plan compatibility end-to-end test" "bash e2e-test/test-scripts/test_agent_plan_compatibility.sh $tempdir $jar_path"
+run_test "Cross-Language Config Option end-to-end test" "bash e2e-test/test-scripts/test_java_config_in_python.sh"
 
 printf "\n$PASSED/$TOTAL bash e2e-tests passed\n"
 

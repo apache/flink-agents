@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api;
 
+import org.apache.flink.agents.api.configuration.Configuration;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -85,6 +86,13 @@ public abstract class AgentsExecutionEnvironment {
     public static AgentsExecutionEnvironment getExecutionEnvironment() {
         return getExecutionEnvironment(null);
     }
+
+    /**
+     * Returns a writable configuration object for setting configuration values.
+     *
+     * @return the WritableConfiguration instance used to modify configuration settings
+     */
+    public abstract Configuration getConfig();
 
     /**
      * Set input for agents from a list. Used for local execution.

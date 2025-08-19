@@ -15,22 +15,28 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import sys
 from pathlib import Path
 
-from flink_agents.plan.agent_plan import AgentPlan
-from flink_agents.plan.configuration import AgentConfiguration
-from flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent import (
-    PythonAgentPlanCompatibilityTestAgent,
-)
+from pyflink.util.java_utils import add_jars_to_context_class_loader
 
-# The agent plan json will be checked by
-# flink-agents/plan/src/test/java/org/apache/flink/agents/plan
-# /compatibility/GenerateAgentPlanJson.java
-# correspond modification should be applied to it when modify this file.
+from flink_agents.api.core_options import AgentConfigOptions
+
+# This script is used to verify that Java-defined configuration options
+# (e.g., AgentConfigOptions) are correctly exposed and accessible in the
+# Python environment via the JAR file. It loads a Java JAR into the Python
+# context and performs basic assertions on the configuration keys, types,
+# and default values to ensure compatibility between Java and Python layers.
+#
+# The JAR file path is relative to this script and should be updated if
+# the build structure changes.
 if __name__ == "__main__":
-    json_path = sys.argv[1]
-    agent_plan = AgentPlan.from_agent(PythonAgentPlanCompatibilityTestAgent(), AgentConfiguration())
-    json_value = agent_plan.model_dump_json(serialize_as_any=True, indent=4)
-    with Path(json_path).open("w") as f:
-        f.write(json_value)
+    current_dir = Path(__file__).parent
+    add_jars_to_context_class_loader(
+        [
+            f"file:///{current_dir}/../../../../../api/target/flink-agents-api-0.1-SNAPSHOT.jar"
+        ]
+    )
+
+    assert AgentConfigOptions.BASE_LOG_DIR.get_key() == "baseLogDir"
+    assert AgentConfigOptions.BASE_LOG_DIR.get_type() is str
+    assert AgentConfigOptions.BASE_LOG_DIR.get_default_value() is None

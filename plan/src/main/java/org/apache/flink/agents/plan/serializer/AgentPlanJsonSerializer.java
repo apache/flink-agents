@@ -105,5 +105,24 @@ public class AgentPlanJsonSerializer extends StdSerializer<AgentPlan> {
             jsonGenerator.writeEndObject();
         }
         jsonGenerator.writeEndObject();
+
+        // Serialize config data
+        jsonGenerator.writeFieldName("config");
+        jsonGenerator.writeStartObject();
+        jsonGenerator.writeFieldName("conf_data");
+        jsonGenerator.writeStartObject();
+        agentPlan
+                .getConfigData()
+                .forEach(
+                        (key, value) -> {
+                            try {
+                                jsonGenerator.writeFieldName(key);
+                                jsonGenerator.writeObject(value);
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        });
+        jsonGenerator.writeEndObject();
+        jsonGenerator.writeEndObject();
     }
 }

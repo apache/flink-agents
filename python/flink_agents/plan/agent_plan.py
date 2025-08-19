@@ -24,6 +24,7 @@ from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
 from flink_agents.plan.actions.tool_call_action import TOOL_CALL_ACTION
+from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.resource_provider import (
     JavaResourceProvider,
@@ -53,6 +54,7 @@ class AgentPlan(BaseModel):
     actions: Dict[str, Action]
     actions_by_event: Dict[str, List[str]]
     resource_providers: Optional[Dict[ResourceType, Dict[str, ResourceProvider]]] = None
+    config: Optional[AgentConfiguration] = None
     __resources: Dict[ResourceType, Dict[str, Resource]] = {}
 
     @field_serializer("resource_providers")
@@ -116,7 +118,7 @@ class AgentPlan(BaseModel):
         return self
 
     @staticmethod
-    def from_agent(agent: Agent) -> "AgentPlan":
+    def from_agent(agent: Agent, config: AgentConfiguration) -> "AgentPlan":
         """Build a AgentPlan from user defined agent."""
         actions = {}
         actions_by_event = {}
@@ -142,6 +144,7 @@ class AgentPlan(BaseModel):
             actions=actions,
             actions_by_event=actions_by_event,
             resource_providers=resource_providers,
+            config=config,
         )
 
     def get_actions(self, event_type: str) -> List[Action]:
@@ -173,7 +176,7 @@ class AgentPlan(BaseModel):
             self.__resources[type] = {}
         if name not in self.__resources[type]:
             resource_provider = self.resource_providers[type][name]
-            resource = resource_provider.provide(get_resource=self.get_resource)
+            resource = resource_provider.provide(get_resource=self.get_resource, config=self.config)
             self.__resources[type][name] = resource
         return self.__resources[type][name]
 

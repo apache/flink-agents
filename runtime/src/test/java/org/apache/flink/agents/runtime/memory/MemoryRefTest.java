@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.memory;
 
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -87,6 +88,11 @@ public class MemoryRefTest {
 
         @Override
         public Resource getResource(String name, ResourceType type) throws Exception {
+            return null;
+        }
+
+        @Override
+        public ReadableConfiguration getConfig() {
             return null;
         }
     }

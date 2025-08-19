@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, Tuple
 import cloudpickle
 from typing_extensions import override
 
+from flink_agents.api.configuration import ReadableConfiguration
 from flink_agents.api.events.event import Event
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -128,6 +129,17 @@ class FlinkRunnerContext(RunnerContext):
             #  operator is notified directly once the future is completed.
             yield
         return future.result()
+
+    @override
+    def get_config(self) -> ReadableConfiguration:
+        """Get the readable configuration for flink agents.
+
+        Returns:
+        -------
+        ReadableConfiguration
+            The configuration for flink agents.
+        """
+        return self.__agent_plan.config
 
 
 def create_flink_runner_context(
