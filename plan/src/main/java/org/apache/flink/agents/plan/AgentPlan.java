@@ -61,6 +61,8 @@ public class AgentPlan implements Serializable {
     /** Two-level mapping of resource type to resource name to resource provider. */
     private Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
 
+    private AgentConfiguration config;
+
     /** Cache for instantiated resources. */
     private transient Map<ResourceType, Map<String, Resource>> resourceCache;
 
@@ -68,6 +70,7 @@ public class AgentPlan implements Serializable {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = new HashMap<>();
+        this.config = new AgentConfiguration();
         this.resourceCache = new ConcurrentHashMap<>();
     }
 
@@ -79,6 +82,19 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = resourceProviders;
         this.resourceCache = new ConcurrentHashMap<>();
+        this.config = new AgentConfiguration();
+    }
+
+    public AgentPlan(
+            Map<String, Action> actions,
+            Map<String, List<Action>> actionsByEvent,
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            AgentConfiguration config) {
+        this.actions = actions;
+        this.actionsByEvent = actionsByEvent;
+        this.resourceProviders = resourceProviders;
+        this.resourceCache = new ConcurrentHashMap<>();
+        this.config = config;
     }
 
     /**
@@ -89,9 +105,14 @@ public class AgentPlan implements Serializable {
      * @throws Exception if there's an error creating actions from the agent
      */
     public AgentPlan(Agent agent) throws Exception {
+        this(agent, new AgentConfiguration());
+    }
+
+    public AgentPlan(Agent agent, AgentConfiguration config) throws Exception {
         this(new HashMap<>(), new HashMap<>());
         extractActionsFromAgent(agent);
         extractResourceProvidersFromAgent(agent);
+        this.config = config;
     }
 
     public Map<String, Action> getActions() {
@@ -141,6 +162,14 @@ public class AgentPlan implements Serializable {
         return resource;
     }
 
+    public AgentConfiguration getConfig() {
+        return config;
+    }
+
+    public Map<String, Object> getConfigData() {
+        return config.getConfData();
+    }
+
     private void writeObject(ObjectOutputStream out) throws IOException {
         String serializedStr = new ObjectMapper().writeValueAsString(this);
         out.writeUTF(serializedStr);
@@ -152,6 +181,7 @@ public class AgentPlan implements Serializable {
         this.actions = agentPlan.getActions();
         this.actionsByEvent = agentPlan.getActionsByEvent();
         this.resourceProviders = agentPlan.getResourceProviders();
+        this.config = agentPlan.getConfig();
         this.resourceCache = new ConcurrentHashMap<>();
     }
 
