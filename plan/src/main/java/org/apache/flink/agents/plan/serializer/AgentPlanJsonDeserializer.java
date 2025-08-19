@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.serializer;
 
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.Action;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JacksonException;
@@ -119,6 +120,23 @@ public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
             }
         }
 
-        return new AgentPlan(actions, actionsByEvent, resourceProviders);
+        // Deserialize config data
+        JsonNode configNode = node.get("config");
+        Map<String, Object> configData = new HashMap<>();
+        if (configNode != null && configNode.isObject()) {
+            JsonNode configDataNode = configNode.get("conf_data");
+            if (configDataNode != null && configDataNode.isObject()) {
+                Iterator<Map.Entry<String, JsonNode>> iterator = configDataNode.fields();
+                while (iterator.hasNext()) {
+                    Map.Entry<String, JsonNode> entry = iterator.next();
+                    String key = entry.getKey();
+                    Object value = entry.getValue();
+                    configData.put(key, value);
+                }
+            }
+        }
+        AgentConfiguration config = new AgentConfiguration(configData);
+
+        return new AgentPlan(actions, actionsByEvent, resourceProviders, config);
     }
 }

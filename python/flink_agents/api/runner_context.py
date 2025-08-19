@@ -18,6 +18,7 @@
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Callable, Dict, Tuple
 
+from flink_agents.api.configuration import ReadableConfiguration
 from flink_agents.api.events.event import Event
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
@@ -106,4 +107,14 @@ class RunnerContext(ABC):
         -------
         Any
             The result of the function.
+        """
+
+    @abstractmethod
+    def get_config(self) -> ReadableConfiguration:
+        """Get the readable configuration for flink agents.
+
+        Returns:
+        -------
+        ReadableConfiguration
+            The configuration for flink agents.
         """
