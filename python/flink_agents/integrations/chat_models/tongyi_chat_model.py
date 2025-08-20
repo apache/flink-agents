@@ -1,0 +1,231 @@
+################################################################################
+#  Licensed to the Apache Software Foundation (ASF) under one
+#  or more contributor license agreements.  See the NOTICE file
+#  distributed with this work for additional information
+#  regarding copyright ownership.  The ASF licenses this file
+#  to you under the Apache License, Version 2.0 (the
+#  "License"); you may not use this file except in compliance
+#  with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+# limitations under the License.
+#################################################################################
+import contextlib
+import json
+import os
+import uuid
+from typing import Any, Dict, List, Optional, Sequence, cast
+
+import dashscope
+from dashscope import Generation
+from pydantic import Field
+
+from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.chat_model import (
+    BaseChatModelConnection,
+    BaseChatModelSetup,
+)
+from flink_agents.api.tools.tool import BaseTool
+
+DEFAULT_REQUEST_TIMEOUT = 60.0
+DEFAULT_MODEL = "qwen-plus"
+
+
+class TongyiChatModelConnection(BaseChatModelConnection):
+    """Tongyi ChatModelConnection which manages the connection to the Tongyi API server.
+
+    Attributes:
+    ----------
+    api_key : str
+        Your DashScope API key.
+    model : str
+        Model name to use.
+    request_timeout : float
+        The timeout for making http request to Tongyi API server.
+    """
+
+    api_key: str = Field(
+        default_factory=lambda: os.environ.get("DASHSCOPE_API_KEY"),
+        description="Your DashScope API key.",
+    )
+    model: str = Field(default=DEFAULT_MODEL, description="Model name to use.")
+    request_timeout: float = Field(
+        default=DEFAULT_REQUEST_TIMEOUT,
+        description="The timeout for making http request to Tongyi API server.",
+    )
+
+    def __init__(
+        self,
+        model: str = DEFAULT_MODEL,
+        api_key: Optional[str] = None,
+        request_timeout: Optional[float] = DEFAULT_REQUEST_TIMEOUT,
+        **kwargs: Any,
+    ) -> None:
+        """Init method."""
+        resolved_api_key = api_key or os.environ.get("DASHSCOPE_API_KEY")
+        if not resolved_api_key:
+            msg = (
+                "DashScope API key is not provided. "
+                "Please pass it as an argument or set the 'DASHSCOPE_API_KEY' environment variable."
+            )
+            raise ValueError(msg)
+
+        dashscope.api_key = resolved_api_key
+
+        super().__init__(
+            model=model,
+            api_key=resolved_api_key,
+            request_timeout=request_timeout,
+            **kwargs,
+        )
+
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: Optional[List[BaseTool]] = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        """Process a sequence of messages, and return a response."""
+        tongyi_messages = self.__convert_to_tongyi_messages(messages)
+
+        # Convert tool format
+        tongyi_tools: Optional[List[Dict[str, Any]]] = (
+            [tool.metadata.to_dashscope_tool() for tool in tools] if tools else None
+        )
+
+        response = Generation.call(
+            model=self.model,
+            messages=tongyi_messages,
+            tools=tongyi_tools,
+            result_format="message",
+            timeout=self.request_timeout,
+            **kwargs,
+        )
+        if getattr(response, "status_code", 200) != 200:
+            msg = f"DashScope call failed: {getattr(response, 'message', 'unknown error')}"
+            raise RuntimeError(
+                msg
+            )
+
+        choice = response.output["choices"][0]
+        response_message: Dict[str, Any] = choice["message"]
+
+        tool_calls: List[Dict[str, Any]] = []
+        for tc in response_message.get("tool_calls", []) or []:
+            fn = tc.get("function", {}) or {}
+            args = fn.get("arguments")
+            if isinstance(args, str):
+                with contextlib.suppress(Exception):
+                    args = json.loads(args)
+            tool_call_dict = {
+                "id": uuid.uuid4(),
+                "type": "function",
+                "function": {
+                    "name": fn.get("name"),
+                    "arguments": args,
+                },
+                "additional_kwargs": {"original_tool_call_id": tc.get("id")},
+            }
+            tool_calls.append(tool_call_dict)
+
+        return ChatMessage(
+            role=MessageRole(response_message.get("role", "assistant")),
+            content=response_message.get("content") or "",
+            tool_calls=tool_calls,
+        )
+
+    @staticmethod
+    def __convert_to_tongyi_messages(
+        messages: Sequence[ChatMessage],
+    ) -> List[Dict[str, Any]]:
+        tongyi_messages : List[Dict[str, Any]] = []
+        for message in messages:
+            msg_dict: Dict[str, Any] = {"role": message.role.value, "content": message.content}
+
+            if message.tool_calls:
+                if message.role == MessageRole.ASSISTANT:
+                    msg_dict["tool_calls"] = [
+                        {
+                            "id": tc.get("additional_kwargs", {}).get(
+                                "original_tool_call_id", str(tc.get("id", ""))
+                            ),
+                            "type": "function",
+                            "function": {
+                                "name": tc["function"]["name"],
+                                "arguments": json.dumps(tc["function"]["arguments"]),
+                            },
+                        }
+                        for tc in message.tool_calls
+                    ]
+                elif message.role == MessageRole.TOOL:
+                    tool_call_info = message.tool_calls[0]
+                    # Restore original tool_call_id for Tongyi API
+                    original_id = tool_call_info.get("additional_kwargs", {}).get(
+                        "original_tool_call_id"
+                    )
+                    if original_id:
+                        msg_dict["tool_call_id"] = original_id
+                    elif "id" in tool_call_info:
+                        # Fallback for safety
+                        msg_dict["tool_call_id"] = str(tool_call_info["id"])
+
+            tongyi_messages.append(msg_dict)
+        return cast("List[Dict[str, Any]]", tongyi_messages)
+
+
+class TongyiChatModelSetup(BaseChatModelSetup):
+    """Tongyi chat model setup which manages chat configuration and will internally
+    call Tongyi chat model connection to do chat.
+
+    Attributes:
+    ----------
+    temperature : float
+        The temperature to use for sampling.
+    additional_kwargs : Dict[str, Any]
+        Additional model parameters for the Tongyi API.
+    """
+
+    temperature: float = Field(
+        default=0.7,
+        description="The temperature to use for sampling.",
+        ge=0.0,
+        le=2.0,
+    )
+    additional_kwargs: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional model parameters for the Tongyi API.",
+    )
+
+    def __init__(
+        self,
+        connection: str,
+        temperature: float = 0.7,
+        additional_kwargs: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Init method."""
+        if additional_kwargs is None:
+            additional_kwargs = {}
+        super().__init__(
+            connection=connection,
+            temperature=temperature,
+            additional_kwargs=additional_kwargs,
+            **kwargs,
+        )
+
+    @property
+    def model_kwargs(self) -> Dict[str, Any]:
+        """Return Tongyi model configuration."""
+        base_kwargs = {
+            "temperature": self.temperature,
+        }
+        return {
+            **base_kwargs,
+            **self.additional_kwargs,
+        }
+

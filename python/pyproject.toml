@@ -49,6 +49,7 @@ dependencies = [
     "docstring-parser==0.16",
     #TODO: Seperate integration dependencies from project
     "ollama==0.4.8",
+    "dashscope~=1.24.2",
 ]
 
 # Optional dependencies (dependency groups)
