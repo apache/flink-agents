@@ -42,16 +42,20 @@ public class DataStreamIntegrationExample {
         public final int id;
         public final String name;
         public final double value;
+        public int visit_count;
 
         public ItemData(int id, String name, double value) {
             this.id = id;
             this.name = name;
             this.value = value;
+            this.visit_count = 0;
         }
 
         @Override
         public String toString() {
-            return String.format("ItemData{id=%d, name='%s', value=%.2f}", id, name, value);
+            return String.format(
+                    "ItemData{id=%d, name='%s', value=%.2f，visit_count=%d}",
+                    id, name, value, visit_count);
         }
     }
 
@@ -75,7 +79,8 @@ public class DataStreamIntegrationExample {
                         new ItemData(2, "item2", 20.0),
                         new ItemData(3, "item3", 15.7),
                         new ItemData(1, "item1_updated", 12.3),
-                        new ItemData(2, "item2_updated", 22.1));
+                        new ItemData(2, "item2_updated", 22.1),
+                        new ItemData(1, "item1_updated_again", 15.3));
 
         // Create agents execution environment
         AgentsExecutionEnvironment agentsEnv =
@@ -85,7 +90,7 @@ public class DataStreamIntegrationExample {
         DataStream<Object> outputStream =
                 agentsEnv
                         .fromDataStream(inputStream, new ItemKeySelector())
-                        .apply(new SimpleAgent())
+                        .apply(new DataStreamAgent())
                         .toDataStream();
 
         // Print the results

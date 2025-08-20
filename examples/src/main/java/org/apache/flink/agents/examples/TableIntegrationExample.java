@@ -60,6 +60,7 @@ public class TableIntegrationExample {
 
         // Create the table environment
         StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+        tableEnv.getConfig().set("table.exec.result.display.max-column-width", "100");
 
         // Create input table from sample data
         Table inputTable =
@@ -72,7 +73,8 @@ public class TableIntegrationExample {
                         Row.of(2, "Bob", 92.0),
                         Row.of(3, "Charlie", 78.3),
                         Row.of(1, "Alice", 87.2),
-                        Row.of(2, "Bob", 94.1));
+                        Row.of(2, "Bob", 94.1),
+                        Row.of(1, "Alice", 90.3));
 
         // Create agents execution environment
         AgentsExecutionEnvironment agentsEnv =
@@ -85,10 +87,13 @@ public class TableIntegrationExample {
         Table outputTable =
                 agentsEnv
                         .fromTable(inputTable, tableEnv, new RowKeySelector())
-                        .apply(new SimpleAgent())
+                        .apply(new TableAgent())
                         .toTable(outputSchema);
 
-        // Print the results
+        // Print the results to fully display the data
+        tableEnv.toDataStream(outputTable).print();
+        env.execute();
+        // Print the results in table format
         outputTable.execute().print();
     }
 }
