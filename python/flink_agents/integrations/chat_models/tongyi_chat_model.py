@@ -18,6 +18,7 @@
 import contextlib
 import json
 import os
+import re
 import uuid
 from typing import Any, Dict, List, Optional, Sequence, cast
 
@@ -84,6 +85,25 @@ class TongyiChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
+    @staticmethod
+    def __extract_think_tags(content: str) -> tuple[str, Optional[str]]:
+        """Extract content within <think></think> tags and clean the remaining content.
+
+        Returns (cleaned_content, reasoning).
+        """
+        think_pattern = r"<think>(.*?)</think>"
+        reasoning = None
+
+        matches = re.findall(think_pattern, content, re.DOTALL)
+        if matches:
+            reasoning = "\n".join(matches)
+
+        cleaned = re.sub(think_pattern, "", content, flags=re.DOTALL)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        cleaned = re.sub(r" {2,}", " ", cleaned)
+        cleaned = cleaned.strip()
+        return cleaned, reasoning
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -93,10 +113,11 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         """Process a sequence of messages, and return a response."""
         tongyi_messages = self.__convert_to_tongyi_messages(messages)
 
-        # Convert tool format
         tongyi_tools: Optional[List[Dict[str, Any]]] = (
             [tool.metadata.to_dashscope_tool() for tool in tools] if tools else None
         )
+
+        extract_reasoning = bool(kwargs.pop("extract_reasoning", False))
 
         response = Generation.call(
             model=self.model,
@@ -106,6 +127,7 @@ class TongyiChatModelConnection(BaseChatModelConnection):
             timeout=self.request_timeout,
             **kwargs,
         )
+
         if getattr(response, "status_code", 200) != 200:
             msg = f"DashScope call failed: {getattr(response, 'message', 'unknown error')}"
             raise RuntimeError(
@@ -125,27 +147,37 @@ class TongyiChatModelConnection(BaseChatModelConnection):
             tool_call_dict = {
                 "id": uuid.uuid4(),
                 "type": "function",
-                "function": {
-                    "name": fn.get("name"),
-                    "arguments": args,
-                },
+                "function": {"name": fn.get("name"),"arguments": args,},
                 "additional_kwargs": {"original_tool_call_id": tc.get("id")},
             }
             tool_calls.append(tool_call_dict)
 
+        content = response_message.get("content") or ""
+        extra_args: Dict[str, Any] = {}
+
+        if extract_reasoning and content:
+            cleaned, reasoning = self.__extract_think_tags(content)
+            content = cleaned
+            if reasoning:
+                extra_args["reasoning"] = reasoning
+
         return ChatMessage(
             role=MessageRole(response_message.get("role", "assistant")),
-            content=response_message.get("content") or "",
+            content=content,
             tool_calls=tool_calls,
+            extra_args=extra_args,
         )
 
     @staticmethod
     def __convert_to_tongyi_messages(
         messages: Sequence[ChatMessage],
     ) -> List[Dict[str, Any]]:
-        tongyi_messages : List[Dict[str, Any]] = []
+        tongyi_messages: List[Dict[str, Any]] = []
         for message in messages:
-            msg_dict: Dict[str, Any] = {"role": message.role.value, "content": message.content}
+            msg_dict: Dict[str, Any] = {
+                "role": message.role.value,
+                "content": message.content,
+            }
 
             if message.tool_calls:
                 if message.role == MessageRole.ASSISTANT:
@@ -164,14 +196,12 @@ class TongyiChatModelConnection(BaseChatModelConnection):
                     ]
                 elif message.role == MessageRole.TOOL:
                     tool_call_info = message.tool_calls[0]
-                    # Restore original tool_call_id for Tongyi API
                     original_id = tool_call_info.get("additional_kwargs", {}).get(
                         "original_tool_call_id"
                     )
                     if original_id:
                         msg_dict["tool_call_id"] = original_id
                     elif "id" in tool_call_info:
-                        # Fallback for safety
                         msg_dict["tool_call_id"] = str(tool_call_info["id"])
 
             tongyi_messages.append(msg_dict)
@@ -188,6 +218,9 @@ class TongyiChatModelSetup(BaseChatModelSetup):
         The temperature to use for sampling.
     additional_kwargs : Dict[str, Any]
         Additional model parameters for the Tongyi API.
+    extract_reasoning : bool
+        If True, extracts content within <think></think> tags from the response and
+        stores it in additional_kwargs.
     """
 
     temperature: float = Field(
@@ -200,12 +233,17 @@ class TongyiChatModelSetup(BaseChatModelSetup):
         default_factory=dict,
         description="Additional model parameters for the Tongyi API.",
     )
+    extract_reasoning: bool = Field(
+        default=False,
+        description="If True, extracts content within <think></think> tags from the response and stores it.",
+    )
 
     def __init__(
         self,
         connection: str,
         temperature: float = 0.7,
         additional_kwargs: Optional[Dict[str, Any]] = None,
+        extract_reasoning: Optional[bool] = False,
         **kwargs: Any,
     ) -> None:
         """Init method."""
@@ -215,6 +253,7 @@ class TongyiChatModelSetup(BaseChatModelSetup):
             connection=connection,
             temperature=temperature,
             additional_kwargs=additional_kwargs,
+            extract_reasoning=extract_reasoning,
             **kwargs,
         )
 
@@ -223,9 +262,9 @@ class TongyiChatModelSetup(BaseChatModelSetup):
         """Return Tongyi model configuration."""
         base_kwargs = {
             "temperature": self.temperature,
+            "extract_reasoning": self.extract_reasoning,
         }
         return {
             **base_kwargs,
             **self.additional_kwargs,
         }
-

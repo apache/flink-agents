@@ -16,6 +16,8 @@
 # limitations under the License.
 #################################################################################
 import os
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -93,3 +95,94 @@ def test_tongyi_chat_with_tools() -> None:
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
     assert add(**tool_call["function"]["arguments"]) == 3
+
+def test_extract_think_tags() -> None:
+    """Test the static method that extracts content from <think></think> tags."""
+    # Test with a think tag at the beginning (most common case)
+    content = "<think>First, I need to understand the question.\nThen I need to formulate an answer.</think>The answer is 42."
+    cleaned, reasoning = (
+        TongyiChatModelConnection._TongyiChatModelConnection__extract_think_tags(content)  # type: ignore[attr-defined]
+    )
+    assert cleaned == "The answer is 42."
+    assert (
+        reasoning
+        == "First, I need to understand the question.\nThen I need to formulate an answer."
+    )
+
+    # Test with a think tag only
+    content = "<think>This is just my thought process.</think>"
+    cleaned, reasoning = (
+        TongyiChatModelConnection._TongyiChatModelConnection__extract_think_tags(content)  # type: ignore[attr-defined]
+    )
+    assert cleaned == ""
+    assert reasoning == "This is just my thought process."
+
+    # Test with no think tags
+    content = "This is a regular response without any thinking tags."
+    cleaned, reasoning = (
+        TongyiChatModelConnection._TongyiChatModelConnection__extract_think_tags(content)  # type: ignore[attr-defined]
+    )
+    assert cleaned == content
+    assert reasoning is None
+
+
+def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that extract_reasoning functionality works correctly (mock DashScope)."""
+    raw_content = (
+        "<think>To answer what the meaning of life is, I should consider "
+        "philosophical perspectives. The question is often associated with the number 42 "
+        "from Hitchhiker's Guide to the Galaxy.</think>"
+        "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
+    )
+
+    mocked_response = SimpleNamespace(
+        status_code=200,
+        output={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": raw_content,
+                        "tool_calls": None,
+                    }
+                }
+            ]
+        },
+    )
+
+    mock_call = MagicMock(return_value=mocked_response)
+
+    monkeypatch.setattr(
+        "flink_agents.integrations.chat_models.tongyi_chat_model.Generation.call",
+        mock_call,
+    )
+
+    connection = TongyiChatModelConnection(
+        name="tongyi",
+        model=test_model,
+        api_key=os.environ.get("DASHSCOPE_API_KEY", "fake-key"),
+    )
+
+    def get_resource(name: str, type: ResourceType) -> Resource:
+        return connection
+
+    llm = TongyiChatModelSetup(
+        name="tongyi",
+        connection="tongyi",
+        extract_reasoning=True,
+        get_resource=get_resource,
+    )
+
+    response = llm.chat(
+        [ChatMessage(role=MessageRole.USER, content="What's the meaning of life?")]
+    )
+
+    mock_call.assert_called_once()
+
+    assert (
+        response.content
+        == "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
+    )
+    assert "reasoning" in response.extra_args
+    assert "philosophical perspectives" in response.extra_args["reasoning"]
+    assert "Hitchhiker's Guide to the Galaxy" in response.extra_args["reasoning"]
