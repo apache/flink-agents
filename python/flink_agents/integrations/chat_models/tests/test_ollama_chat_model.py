@@ -123,7 +123,7 @@ def test_extract_think_tags() -> None:
     # Test with a think tag at the beginning (most common case)
     content = "<think>First, I need to understand the question.\nThen I need to formulate an answer.</think>The answer is 42."
     cleaned, reasoning = (
-        OllamaChatModelConnection._OllamaChatModelConnection__extract_think_tags(content)
+        OllamaChatModelConnection._extract_reasoning(content)
     )
     assert cleaned == "The answer is 42."
     assert (
@@ -133,7 +133,7 @@ def test_extract_think_tags() -> None:
     # Test with a think tag only
     content = "<think>This is just my thought process.</think>"
     cleaned, reasoning = (
-        OllamaChatModelConnection._OllamaChatModelConnection__extract_think_tags(content)
+        OllamaChatModelConnection._extract_reasoning(content)
     )
     assert cleaned == ""
     assert reasoning == "This is just my thought process."
@@ -141,7 +141,7 @@ def test_extract_think_tags() -> None:
     # Test with no think tags
     content = "This is a regular response without any thinking tags."
     cleaned, reasoning = (
-        OllamaChatModelConnection._OllamaChatModelConnection__extract_think_tags(content)
+        OllamaChatModelConnection._extract_reasoning(content)
     )
     assert cleaned == content
     assert reasoning is None

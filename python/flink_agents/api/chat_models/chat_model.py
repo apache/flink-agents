@@ -15,8 +15,9 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import re
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, ClassVar, Dict, List, Optional, Sequence, Tuple, Union
 
 from pydantic import Field
 from typing_extensions import override
@@ -47,6 +48,34 @@ class BaseChatModelConnection(Resource, ABC):
     def resource_type(cls) -> ResourceType:
         """Return resource type of class."""
         return ResourceType.CHAT_MODEL_CONNECTION
+
+    _THINK_RE: ClassVar[re.Pattern[str]] = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+
+    @staticmethod
+    def _extract_reasoning(content: str) -> Tuple[str, Optional[str]]:
+        """Extract content within <think></think> tags and clean the remaining content.
+
+        Parameters
+        ----------
+        content: str
+          Original content text
+
+        Returns:
+        -------
+        Tuple[str, Optional[str]]
+          The cleaned content and the reasoning part.
+        """
+        if not content:
+            return "", None
+
+        matches = BaseChatModelConnection._THINK_RE.findall(content)
+        reasoning = "\n".join(matches) if matches else None
+
+        cleaned = BaseChatModelConnection._THINK_RE.sub("", content)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        cleaned = re.sub(r" {2,}", " ", cleaned)
+        cleaned = cleaned.strip()
+        return cleaned, reasoning
 
     @abstractmethod
     def chat(

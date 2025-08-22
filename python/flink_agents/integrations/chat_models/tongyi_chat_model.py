@@ -18,7 +18,6 @@
 import contextlib
 import json
 import os
-import re
 import uuid
 from typing import Any, Dict, List, Optional, Sequence, cast
 
@@ -85,25 +84,6 @@ class TongyiChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
-    @staticmethod
-    def __extract_think_tags(content: str) -> tuple[str, Optional[str]]:
-        """Extract content within <think></think> tags and clean the remaining content.
-
-        Returns (cleaned_content, reasoning).
-        """
-        think_pattern = r"<think>(.*?)</think>"
-        reasoning = None
-
-        matches = re.findall(think_pattern, content, re.DOTALL)
-        if matches:
-            reasoning = "\n".join(matches)
-
-        cleaned = re.sub(think_pattern, "", content, flags=re.DOTALL)
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        cleaned = re.sub(r" {2,}", " ", cleaned)
-        cleaned = cleaned.strip()
-        return cleaned, reasoning
-
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -156,8 +136,7 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         extra_args: Dict[str, Any] = {}
 
         if extract_reasoning and content:
-            cleaned, reasoning = self.__extract_think_tags(content)
-            content = cleaned
+            content, reasoning = self._extract_reasoning(content)
             if reasoning:
                 extra_args["reasoning"] = reasoning
 

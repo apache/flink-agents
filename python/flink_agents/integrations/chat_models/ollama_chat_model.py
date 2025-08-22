@@ -15,9 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import re
 import uuid
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from ollama import Client, Message
 from pydantic import Field
@@ -86,34 +85,6 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             self.__client = Client(host=self.base_url, timeout=self.request_timeout)
         return self.__client
 
-    @staticmethod
-    def __extract_think_tags(content: str) -> Tuple[str, Optional[str]]:
-        """Extract content within <think></think> tags and clean the remaining content.
-
-        Args:
-            content: Original content text
-
-        Returns:
-            Tuple containing (cleaned_content, reasoning_content)
-        """
-        think_pattern = r"<think>(.*?)</think>"
-        reasoning = None
-
-        # Find all <think> tag content
-        think_matches = re.findall(think_pattern, content, re.DOTALL)
-        if think_matches:
-            reasoning = "\n".join(think_matches)
-
-        # Remove <think> tags and their content from the original text
-        cleaned_content = re.sub(think_pattern, "", content, flags=re.DOTALL)
-
-        # Clean up any extra whitespace that might have been created
-        cleaned_content = re.sub(r"\n{3,}", "\n\n", cleaned_content)
-        cleaned_content = re.sub(r" {2,}", " ", cleaned_content)
-        cleaned_content = cleaned_content.strip()
-
-        return cleaned_content, reasoning
-
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -157,8 +128,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
 
         # Process reasoning if extract_reasoning is enabled
         if kwargs.get("extract_reasoning") and content:
-            cleaned_content, reasoning = self.__extract_think_tags(content)
-            content = cleaned_content
+            content, reasoning = self._extract_reasoning(content)
             if reasoning:
                 extra_args["reasoning"] = reasoning
 
