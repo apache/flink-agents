@@ -24,7 +24,12 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
-from flink_agents.api.decorators import action, chat_model, chat_model_server, tool
+from flink_agents.api.decorators import (
+    action,
+    chat_model_connection,
+    chat_model_setup,
+    tool,
+)
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import (
     InputEvent,
@@ -43,32 +48,32 @@ model = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b")
 class MyAgent(Agent):
     """Example agent demonstrating the new ChatModel architecture."""
 
-    @chat_model_server
+    @chat_model_connection
     @staticmethod
-    def ollama_server() -> Tuple[Type[BaseChatModelConnection], Dict[str, Any]]:
+    def ollama_connection() -> Tuple[Type[BaseChatModelConnection], Dict[str, Any]]:
         """ChatModelServer responsible for model service connection."""
         return OllamaChatModelConnection, {
-            "name": "ollama_server",
+            "name": "ollama_connection",
             "model": model,
         }
 
-    @chat_model
+    @chat_model_setup
     @staticmethod
     def math_chat_model() -> Tuple[Type[BaseChatModelSetup], Dict[str, Any]]:
         """ChatModel which focus on math, and reuse ChatModelServer."""
         return OllamaChatModelSetup, {
             "name": "math_chat_model",
-            "connection": "ollama_server",
+            "connection": "ollama_connection",
             "tools": ["add"],
         }
 
-    @chat_model
+    @chat_model_setup
     @staticmethod
     def creative_chat_model() -> Tuple[Type[BaseChatModelSetup], Dict[str, Any]]:
         """ChatModel which focus on text generate, and reuse ChatModelServer."""
         return OllamaChatModelSetup, {
             "name": "creative_chat_model",
-            "connection": "ollama_server",
+            "connection": "ollama_connection",
         }
 
     @tool

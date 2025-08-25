@@ -26,8 +26,8 @@ from flink_agents.api.chat_models.chat_model import (
 )
 from flink_agents.api.decorators import (
     action,
-    chat_model,
-    chat_model_server,
+    chat_model_connection,
+    chat_model_setup,
     prompt,
     tool,
 )
@@ -121,7 +121,7 @@ class MyAgent(Agent):
             text="Please call the appropriate tool to do the following task: {task}",
         )
 
-    @chat_model_server
+    @chat_model_connection
     @staticmethod
     def mock_connection() -> Tuple[Type[BaseChatModelConnection], Dict[str, Any]]:
         """Chat model server can be used by ChatModel."""
@@ -129,7 +129,7 @@ class MyAgent(Agent):
             "name": "mock_connection",
         }
 
-    @chat_model
+    @chat_model_setup
     @staticmethod
     def mock_chat_model() -> Tuple[Type[BaseChatModelSetup], Dict[str, Any]]:
         """Chat model can be used in action."""

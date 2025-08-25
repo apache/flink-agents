@@ -15,34 +15,3 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List
-from uuid import UUID
-
-from flink_agents.api.events.event import Event
-
-
-class ToolRequestEvent(Event):
-    """Event representing a tool call request.
-
-    Attributes:
-    ----------
-    tool_calls : List[Dict[str, Any]]
-        tool calls that should be executed in batch.
-    """
-
-    tool_calls: List[Dict[str, Any]]
-
-
-class ToolResponseEvent(Event):
-    """Event representing a result from tool call.
-
-    Attributes:
-    ----------
-    request : ToolRequestEvent
-        The correspond request of the response.
-    responses : Dict[UUID, Any]
-        The dict maps tool call id to result.
-    """
-
-    request: ToolRequestEvent
-    responses: Dict[UUID, Any]

@@ -52,8 +52,8 @@ def action(*listen_events: Type[Event]) -> Callable:
     return decorator
 
 
-def chat_model_server(func: Callable) -> Callable:
-    """Decorator for marking a function declaring a chat model server.
+def chat_model_connection(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a chat model connection.
 
     Parameters
     ----------
@@ -66,12 +66,12 @@ def chat_model_server(func: Callable) -> Callable:
         Decorator function that marks the target function declare a chat model
         connection.
     """
-    func._is_chat_model_server = True
+    func._is_chat_model_connection = True
     return func
 
 
-def chat_model(func: Callable) -> Callable:
-    """Decorator for marking a function declaring a chat model.
+def chat_model_setup(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a chat model setup.
 
     Parameters
     ----------
@@ -83,7 +83,7 @@ def chat_model(func: Callable) -> Callable:
     Callable
         Decorator function that marks the target function declare a chat model.
     """
-    func._is_chat_model = True
+    func._is_chat_model_setup = True
     return func
 
 

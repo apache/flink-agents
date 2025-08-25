@@ -17,13 +17,20 @@
 #################################################################################
 import importlib
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 from pyflink.common import TypeInformation
 from pyflink.datastream import DataStream, KeySelector, StreamExecutionEnvironment
 from pyflink.table import Schema, StreamTableEnvironment, Table
 
 from flink_agents.api.agent import Agent
+from flink_agents.api.chat_models.chat_model import (
+    BaseChatModelConnection,
+    BaseChatModelSetup,
+)
+from flink_agents.api.events.event import Event
+from flink_agents.api.prompts.prompt import Prompt
+from flink_agents.api.resource import ResourceType
 
 
 class AgentBuilder(ABC):
@@ -82,6 +89,26 @@ class AgentBuilder(ABC):
 
 class AgentsExecutionEnvironment(ABC):
     """Base class for agent execution environment."""
+
+    _actions: Dict[str, Tuple[List[Type[Event]], Callable]]
+    _resources: Dict[ResourceType, Dict[str, Any]]
+
+    def __init__(self) -> None:
+        """Init method."""
+        self._actions = {}
+        self._resources = {}
+        for type in ResourceType:
+            self._resources[type] = {}
+
+    @property
+    def resources(self) -> Dict[ResourceType, Dict[str, Any]]:
+        """Get registered resources."""
+        return self._resources
+
+    @property
+    def actions(self) -> Dict[str, Tuple[List[Type[Event]], Callable]]:
+        """Get registered actions."""
+        return self._actions
 
     @staticmethod
     def get_execution_environment(
@@ -170,3 +197,122 @@ class AgentsExecutionEnvironment(ABC):
     @abstractmethod
     def execute(self) -> None:
         """Execute agent individually."""
+
+    def add_action(
+        self, name: str, events: List[Type[Event]], func: Callable
+    ) -> "AgentsExecutionEnvironment":
+        """Register action to agent execution environment.
+
+        Parameters
+        ----------
+        name : str
+            The name of the action, should be unique in the same Agent.
+        events: List[Type[Event]]
+            The type of events listened by this action.
+        func: Callable
+            The function to be executed when receive listened events.
+
+        Returns:
+        -------
+        AgentsExecutionEnvironment
+            The environment contains registered action.  .
+        """
+        if name in self._actions:
+            msg = f"Action {name} already defined"
+            raise ValueError(msg)
+        self._actions[name] = (events, func)
+        return self
+
+    def add_prompt(self, name: str, prompt: Prompt) -> "AgentsExecutionEnvironment":
+        """Register prompt to agent execution environment.
+
+        Parameters
+        ----------
+        name : str
+            The name of the prompt, should be unique in the same Agent.
+        prompt: Prompt
+            The prompt to be used in the agent.
+
+        Returns:
+        -------
+        AgentsExecutionEnvironment
+            The environment contains registered prompt.
+        """
+        if name in self._resources[ResourceType.PROMPT]:
+            msg = f"Prompt {name} already defined"
+            raise ValueError(msg)
+        self._resources[ResourceType.PROMPT][name] = prompt
+        return self
+
+    def add_tool(self, name: str, func: Callable) -> "AgentsExecutionEnvironment":
+        """Register function tool to agent execution environment.
+
+        Parameters
+        ----------
+        name : str
+            The name of the tool, should be unique in the same Agent.
+        func: Callable
+            The execution function of the tool.
+
+        Returns:
+        -------
+        AgentsExecutionEnvironment
+            The environment contains registered tool.
+        """
+        if name in self._resources[ResourceType.TOOL]:
+            msg = f"Function tool {name} already defined"
+            raise ValueError(msg)
+        self._resources[ResourceType.TOOL][name] = func
+        return self
+
+    def add_chat_model_connection(
+        self, name: str, connection: Type[BaseChatModelConnection], **kwargs: Any
+    ) -> "AgentsExecutionEnvironment":
+        """Register chat model connection to agent execution environment.
+
+        Parameters
+        ----------
+        name : str
+            The name of the chat model connection, should be unique in the same Agent.
+        connection: Type[BaseChatModelConnection]
+            The type of chat model connection.
+        **kwargs: Any
+            Initialize keyword arguments passed to the chat model connection.
+
+        Returns:
+        -------
+        AgentsExecutionEnvironment
+            The environment contains registered chat model connection.
+        """
+        if name in self._resources[ResourceType.CHAT_MODEL_CONNECTION]:
+            msg = f"Chat model connection {name} already defined"
+            raise ValueError(msg)
+        kwargs["name"] = name
+        self._resources[ResourceType.CHAT_MODEL_CONNECTION][name] = (connection, kwargs)
+        return self
+
+    def add_chat_model_setup(
+        self, name: str, chat_model: Type[BaseChatModelSetup], **kwargs: Any
+    ) -> "AgentsExecutionEnvironment":
+        """Register chat model setup to agent execution environment.
+
+        Parameters
+        ----------
+        name : str
+            The name of the chat model, should be unique in the same Agent.
+        chat_model: Type[BaseChatModel]
+            The type of chat model.
+        **kwargs: Any
+            Initialize keyword arguments passed to the chat model.
+
+        Returns:
+        -------
+        AgentsExecutionEnvironment
+            The environment contains registered chat model setup.
+        """
+        if name in self._resources[ResourceType.CHAT_MODEL]:
+            msg = f"Chat model setup {name} already defined"
+            raise ValueError(msg)
+        kwargs["name"] = name
+        self._resources[ResourceType.CHAT_MODEL][name] = (chat_model, kwargs)
+        return self

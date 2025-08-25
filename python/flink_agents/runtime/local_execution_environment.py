@@ -54,6 +54,14 @@ class LocalAgentBuilder(AgentBuilder):
         if self.__runner is not None:
             err_msg = "LocalAgentBuilder doesn't support apply multiple agents."
             raise RuntimeError(err_msg)
+        # inspect refer actions and resources from env to agent.
+        for action_name in agent._action_names:
+            agent.actions[action_name] = self.__env.actions[action_name]
+        for type, names in agent._resource_names.items():
+            if type not in agent.resources:
+                agent.resources[type] = {}
+            for name in names:
+                agent.resources[type][name] = self.__env.resources[type][name]
         self.__runner = LocalRunner(agent)
         self.__env.set_agent(self.__input, self.__output, self.__runner)
         return self

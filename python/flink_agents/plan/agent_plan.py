@@ -232,7 +232,7 @@ def _get_actions(agent: Agent) -> List[Action]:
 def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
     resource_providers = []
     for name, value in agent.__class__.__dict__.items():
-        if hasattr(value, "_is_chat_model"):
+        if hasattr(value, "_is_chat_model_setup"):
             if isinstance(value, staticmethod):
                 value = value.__func__
 
@@ -246,7 +246,7 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
                     kwargs=kwargs,
                 )
                 resource_providers.append(provider)
-        elif hasattr(value, "_is_chat_model_server"):
+        elif hasattr(value, "_is_chat_model_connection"):
             if isinstance(value, staticmethod):
                 value = value.__func__
 
@@ -282,18 +282,18 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
                 )
             )
 
-    for name, prompt in agent._prompts.items():
+    for name, prompt in agent.resources[ResourceType.PROMPT].items():
         resource_providers.append(
             PythonSerializableResourceProvider.from_resource(name=name, resource=prompt)
         )
 
-    for name, func in agent._tools.items():
+    for name, func in agent.resources[ResourceType.TOOL].items():
         tool = from_callable(name=name, func=func)
         resource_providers.append(
             PythonSerializableResourceProvider.from_resource(name=name, resource=tool)
         )
 
-    for name, chat_model in agent._chat_models.items():
+    for name, chat_model in agent.resources[ResourceType.CHAT_MODEL].items():
         clazz, kwargs = chat_model
         provider = PythonResourceProvider(
             name=name,
@@ -304,7 +304,7 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
         )
         resource_providers.append(provider)
 
-    for name, connection in agent._chat_model_servers.items():
+    for name, connection in agent.resources[ResourceType.CHAT_MODEL_CONNECTION].items():
         clazz, kwargs = connection
         provider = PythonResourceProvider(
             name=name,

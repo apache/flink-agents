@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 import cloudpickle
 from pyflink.common import TypeInformation
@@ -32,10 +32,12 @@ from pyflink.table import Schema, StreamTableEnvironment, Table
 from pyflink.util.java_utils import invoke_method
 
 from flink_agents.api.agent import Agent
+from flink_agents.api.events.event import Event
 from flink_agents.api.execution_environment import (
     AgentBuilder,
     AgentsExecutionEnvironment,
 )
+from flink_agents.api.resource import ResourceType
 from flink_agents.plan.agent_plan import AgentPlan
 
 
@@ -46,13 +48,21 @@ class RemoteAgentBuilder(AgentBuilder):
     __agent_plan: AgentPlan = None
     __output: DataStream = None
     __t_env: StreamTableEnvironment
+    __actions: Dict[str, Tuple[List[Type[Event]], Callable]] = None
+    __resources: Dict[ResourceType, Dict[str, Any]] = None
 
     def __init__(
-        self, input: DataStream, t_env: Optional[StreamTableEnvironment] = None
+        self,
+        input: DataStream,
+        t_env: Optional[StreamTableEnvironment] = None,
+        actions: Optional[Dict[str, Tuple[List[Type[Event]], Callable]]] = None,
+        resources: Optional[Dict[ResourceType, Dict[str, Any]]] = None,
     ) -> None:
         """Init method of RemoteAgentBuilder."""
         self.__input = input
         self.__t_env = t_env
+        self.__actions = actions
+        self.__resources = resources
 
     def apply(self, agent: Agent) -> "AgentBuilder":
         """Set agent of execution environment.
@@ -65,6 +75,16 @@ class RemoteAgentBuilder(AgentBuilder):
         if self.__agent_plan is not None:
             err_msg = "RemoteAgentBuilder doesn't support apply multiple agents yet."
             raise RuntimeError(err_msg)
+
+        # inspect refer actions and resources from env to agent.
+        for action_name in agent._action_names:
+            agent.actions[action_name] = self.__actions[action_name]
+        for type, names in agent._resource_names.items():
+            if type not in agent.resources:
+                agent.resources[type] = {}
+            for name in names:
+                agent.resources[type][name] = self.__resources[type][name]
+
         self.__agent_plan = AgentPlan.from_agent(agent)
         return self
 
@@ -136,6 +156,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
 
     def __init__(self, env: StreamExecutionEnvironment) -> None:
         """Init method of RemoteExecutionEnvironment."""
+        super().__init__()
         self.__env = env
 
     @staticmethod

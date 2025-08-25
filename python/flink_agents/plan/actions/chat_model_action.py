@@ -25,59 +25,65 @@ from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.function import PythonFunction
 
+TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
+
 
 def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> None:
     """Built-in action for processing a chat request or tool response."""
+    short_term_memory = ctx.get_short_term_memory()
     if isinstance(event, ChatRequestEvent):
         chat_model = ctx.get_resource(event.model, ResourceType.CHAT_MODEL)
         # TODO: support async execution of chat.
         response = chat_model.chat(event.messages)
+
+        request_id = event.id
         # call tool
         if len(response.tool_calls) > 0:
-            for tool_call in response.tool_calls:
-                # store the tool call context in short term memory
-                state = ctx.get_short_term_memory()
-                # TODO: Because memory doesn't support remove currently, so we use
-                #  dict to store tool context in memory and remove the specific
-                #  tool context from dict after consuming. This will cause some
-                #  overhead for we need get the whole dict and overwrite it to memory
-                #  each time we update a specific tool context.
-                #  After memory supports remove, we can use
-                #  "__tool_context/tool_call_id" to store and remove the specific tool
-                #  context directly.
-                if not state.is_exist("__tool_context"):
-                    state.set("__tool_context", {})
-                tool_context = state.get("__tool_context")
-                tool_call_id = tool_call["id"]
-                tool_context[tool_call_id] = event
-                tool_context[tool_call_id].messages.append(response)
-                state.set("__tool_context", tool_context)
-                ctx.send_event(
-                    ToolRequestEvent(
-                        id=tool_call_id,
-                        tool=tool_call["function"]["name"],
-                        kwargs=tool_call["function"]["arguments"],
-                    )
+            # TODO: Because memory doesn't support remove currently, so we use
+            #  dict to store tool context in memory and remove the specific
+            #  tool context from dict after consuming. This will cause write and
+            #  read amplification for we need get the whole dict and overwrite it
+            #  to memory each time we update a specific tool context.
+            #  After memory supports remove, we can use "TOOL_CALL_CONTEXT/request_id"
+            #  to store and remove the specific tool context directly.
+            # save tool call context
+            tool_call_context = short_term_memory.get(TOOL_CALL_CONTEXT)
+            if not tool_call_context:
+                tool_call_context = {}
+            if request_id not in tool_call_context:
+                tool_call_context[request_id] = event
+            # append response to request event messages
+            tool_call_context[request_id].messages.append(response)
+            # update short term memory
+            short_term_memory.set(TOOL_CALL_CONTEXT, tool_call_context)
+            ctx.send_event(
+                ToolRequestEvent(
+                    id=event.id,
+                    tool_calls=response.tool_calls,
                 )
-
+            )
         # send response
         else:
+            # clear tool call context related to specific request id
+            tool_call_context = short_term_memory.get(TOOL_CALL_CONTEXT)
+            if tool_call_context and request_id in tool_call_context:
+                tool_call_context.pop(request_id)
+                short_term_memory.set(TOOL_CALL_CONTEXT, tool_call_context)
             ctx.send_event(ChatResponseEvent(request=event, response=response))
     elif isinstance(event, ToolResponseEvent):
-        state = ctx.get_short_term_memory()
-
-        if state.is_exist("__tool_context"):
-            tool_context = state.get("__tool_context")
-            tool_call_id = event.request.id
-            if tool_context is not None and tool_call_id in tool_context:
-                # get the specific tool call context from short term memory
-                specific_tool_ctx = tool_context.pop(tool_call_id)
-                specific_tool_ctx.messages.append(
-                    ChatMessage(role=MessageRole.TOOL, content=str(event.response))
-                )
-                ctx.send_event(specific_tool_ctx)
-                # update short term memory to remove the specific tool call context
-                state.set("__tool_context", tool_context)
+        request_id = event.request.id
+        responses = event.responses
+        # get tool call context
+        tool_call_context = short_term_memory.get(TOOL_CALL_CONTEXT)
+        for response in responses.values():
+            tool_call_context[request_id].messages.append(
+                ChatMessage(role=MessageRole.TOOL, content=str(response))
+            )
+        # update tool call context
+        short_term_memory.set(TOOL_CALL_CONTEXT, tool_call_context)
+        process_chat_request_or_tool_response(
+            event=tool_call_context[request_id], ctx=ctx
+        )
 
 
 CHAT_MODEL_ACTION = Action(
