@@ -16,54 +16,32 @@
 # limitations under the License.
 #################################################################################
 import os
-import subprocess
-import sys
-from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from ollama import Client
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.integrations.chat_models.ollama_chat_model import (
-    OllamaChatModelConnection,
-    OllamaChatModelSetup,
+from flink_agents.integrations.chat_models.tongyi_chat_model import (
+    TongyiChatModelConnection,
+    TongyiChatModelSetup,
 )
 from flink_agents.plan.tools.function_tool import FunctionTool, from_callable
 
-test_model = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:0.6b")
-current_dir = Path(__file__).parent
-
-try:
-    # only auto setup ollama in ci with python3.9 to reduce ci cost.
-    if "3.9" in sys.version:
-        subprocess.run(
-            ["bash", f"{current_dir}/start_ollama_server.sh"], timeout=300, check=True
-        )
-    client = Client()
-    models = client.list()
-
-    model_found = False
-    for model in models["models"]:
-        if model.model == test_model:
-            model_found = True
-            break
-
-    if not model_found:
-        client = None  # type: ignore
-except Exception:
-    client = None  # type: ignore
+test_model = os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus")
+api_key_available = "DASHSCOPE_API_KEY" in os.environ
 
 
-@pytest.mark.skipif(
-    client is None, reason="Ollama client is not available or test model is missing"
-)
-def test_ollama_chat() -> None:  # noqa :D103
-    server = OllamaChatModelConnection(name="ollama", model=test_model)
-    response = server.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
+@pytest.mark.skipif(not api_key_available, reason="DashScope API key is not set")
+def test_tongyi_chat() -> None:
+    """Test basic chat functionality of TongyiChatModelConnection."""
+    connection = TongyiChatModelConnection(name="tongyi", model=test_model)
+    response = connection.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
     assert response is not None
-    assert str(response).strip() != ""
+    assert response.content is not None
+    assert response.content.strip() != ""
+    assert response.role == MessageRole.ASSISTANT
 
 
 def add(a: int, b: int) -> int:
@@ -84,15 +62,15 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-def get_tool(name: str, type: ResourceType) -> FunctionTool:  # noqa :D103
+def get_tool(name: str, type: ResourceType) -> FunctionTool:
+    """Helper function to create a tool for testing."""
     return from_callable(name=name, func=add)
 
 
-@pytest.mark.skipif(
-    client is None, reason="Ollama client is not available or test model is missing"
-)
-def test_ollama_chat_with_tools() -> None:  # noqa :D103
-    connection = OllamaChatModelConnection(name="ollama", model=test_model)
+@pytest.mark.skipif(not api_key_available, reason="DashScope API key is not set")
+def test_tongyi_chat_with_tools() -> None:
+    """Test chat functionality with tool calling."""
+    connection = TongyiChatModelConnection(name="tongyi", model=test_model)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.TOOL:
@@ -100,9 +78,10 @@ def test_ollama_chat_with_tools() -> None:  # noqa :D103
         else:
             return connection
 
-    llm = OllamaChatModelSetup(
-        name="ollama", connection="ollama", tools=["add"], get_resource=get_resource
+    llm = TongyiChatModelSetup(
+        name="tongyi", connection="tongyi", tools=["add"], get_resource=get_resource,
     )
+
     response = llm.chat(
         [
             ChatMessage(
@@ -123,17 +102,18 @@ def test_extract_think_tags() -> None:
     # Test with a think tag at the beginning (most common case)
     content = "<think>First, I need to understand the question.\nThen I need to formulate an answer.</think>The answer is 42."
     cleaned, reasoning = (
-        OllamaChatModelConnection._extract_reasoning(content)
+        TongyiChatModelConnection._extract_reasoning(content)
     )
     assert cleaned == "The answer is 42."
     assert (
         reasoning
         == "First, I need to understand the question.\nThen I need to formulate an answer."
     )
+
     # Test with a think tag only
     content = "<think>This is just my thought process.</think>"
     cleaned, reasoning = (
-        OllamaChatModelConnection._extract_reasoning(content)
+        TongyiChatModelConnection._extract_reasoning(content)
     )
     assert cleaned == ""
     assert reasoning == "This is just my thought process."
@@ -141,59 +121,69 @@ def test_extract_think_tags() -> None:
     # Test with no think tags
     content = "This is a regular response without any thinking tags."
     cleaned, reasoning = (
-        OllamaChatModelConnection._extract_reasoning(content)
+        TongyiChatModelConnection._extract_reasoning(content)
     )
     assert cleaned == content
     assert reasoning is None
 
 
-def test_ollama_chat_with_extract_reasoning() -> None:
-    """Test that extract_reasoning functionality works correctly."""
-    # Create mock objects for client and response
-    mock_client = MagicMock()
-    mock_response = MagicMock()
-    # Use a more realistic reasoning pattern at the beginning
-    mock_response.message.content = "<think>To answer what the meaning of life is, I should consider philosophical perspectives. The question is often associated with the number 42 from Hitchhiker's Guide to the Galaxy.</think>The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
-    mock_response.message.role = "assistant"
-    mock_response.message.tool_calls = None
+def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that extract_reasoning functionality works correctly (mock DashScope)."""
+    raw_content = (
+        "<think>To answer what the meaning of life is, I should consider "
+        "philosophical perspectives. The question is often associated with the number 42 "
+        "from Hitchhiker's Guide to the Galaxy.</think>"
+        "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
+    )
 
-    # Configure mock client to return our mock response
-    mock_client.chat.return_value = mock_response
-    # Create model with mocked client
-    connection = OllamaChatModelConnection(name="ollama", model=test_model)
+    mocked_response = SimpleNamespace(
+        status_code=200,
+        output={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": raw_content,
+                        "tool_calls": None,
+                    }
+                }
+            ]
+        },
+    )
+
+    mock_call = MagicMock(return_value=mocked_response)
+
+    monkeypatch.setattr(
+        "flink_agents.integrations.chat_models.tongyi_chat_model.Generation.call",
+        mock_call,
+    )
+
+    connection = TongyiChatModelConnection(
+        name="tongyi",
+        model=test_model,
+        api_key=os.environ.get("DASHSCOPE_API_KEY", "fake-key"),
+    )
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         return connection
 
-    llm = OllamaChatModelSetup(
-        name="ollama",
-        connection="ollama",
+    llm = TongyiChatModelSetup(
+        name="tongyi",
+        connection="tongyi",
         extract_reasoning=True,
         get_resource=get_resource,
     )
 
-    # Replace the real client with our mock client
-    connection._OllamaChatModelConnection__client = mock_client
-
-    # Call the chat method
     response = llm.chat(
-        [
-            ChatMessage(
-                role=MessageRole.USER,
-                content="What's the meaning of life?",
-            )
-        ]
+        [ChatMessage(role=MessageRole.USER, content="What's the meaning of life?")]
     )
 
-    # Verify our mock was called correctly
-    mock_client.chat.assert_called_once()
+    mock_call.assert_called_once()
 
-    # Check that the response content has been cleaned
     assert (
         response.content
         == "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
     )
-    # Check that the reasoning has been extracted and stored
     assert "reasoning" in response.extra_args
     assert "philosophical perspectives" in response.extra_args["reasoning"]
     assert "Hitchhiker's Guide to the Galaxy" in response.extra_args["reasoning"]
