@@ -29,6 +29,7 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
+from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
 
 
@@ -43,7 +44,7 @@ class AgentForTest(Agent):  # noqa D101
 
 def test_from_agent():  # noqa D102
     agent = AgentForTest()
-    agent_plan = AgentPlan.from_agent(agent)
+    agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())
     event_type = f"{InputEvent.__module__}.{InputEvent.__name__}"
     actions = agent_plan.get_actions(event_type)
     assert len(actions) == 1
@@ -66,7 +67,7 @@ class InvalidAgent(Agent):  # noqa D101
 def test_to_agent_invalid_signature() -> None:  # noqa D103
     agent = InvalidAgent()
     with pytest.raises(TypeError):
-        AgentPlan.from_agent(agent)
+        AgentPlan.from_agent(agent, AgentConfiguration())
 
 
 class MyEvent(Event):
@@ -116,7 +117,7 @@ class MyAgent(Agent):  # noqa: D101
 
 @pytest.fixture(scope="module")
 def agent_plan() -> AgentPlan:  # noqa: D103
-    return AgentPlan.from_agent(MyAgent())
+    return AgentPlan.from_agent(MyAgent(), AgentConfiguration({"mock.key": "mock.value"}))
 
 
 current_dir = Path(__file__).parent
@@ -139,7 +140,7 @@ def test_agent_plan_deserialize(agent_plan: AgentPlan) -> None:  # noqa: D103
 
 
 def test_get_resource() -> None:  # noqa: D103
-    agent_plan = AgentPlan.from_agent(MyAgent())
+    agent_plan = AgentPlan.from_agent(MyAgent(), AgentConfiguration())
     mock = agent_plan.get_resource("mock", ResourceType.CHAT_MODEL)
     assert (
         mock.chat(ChatMessage(role=MessageRole.USER, content="")).content
@@ -162,7 +163,7 @@ def test_add_action_and_resource_to_agent() -> None:  # noqa: D103
         desc="mock resource just for testing.",
         connection="mock",
     )
-    agent_plan = AgentPlan.from_agent(my_agent)
+    agent_plan = AgentPlan.from_agent(my_agent, AgentConfiguration({"mock.key": "mock.value"}))
     json_value = agent_plan.model_dump_json(serialize_as_any=True, indent=4)
     with Path.open(Path(f"{current_dir}/resources/agent_plan.json")) as f:
         expected_json = f.read()
