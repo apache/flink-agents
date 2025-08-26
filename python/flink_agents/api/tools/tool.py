@@ -115,23 +115,6 @@ class ToolMetadata(BaseModel):
             },
         }
 
-    def to_dashscope_tool(self, skip_length_check: bool = False) -> typing.Dict[str, Any]:  # noqa:FBT001
-        """To DashScope tool."""
-        if not skip_length_check and len(self.description) > 1024:
-            msg = (
-                "Tool description exceeds maximum length of 1024 characters. "
-                "Please shorten your description or move it to the prompt."
-            )
-            raise ValueError(msg)
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.__get_parameters_dict(),
-            },
-        }
-
 
 class BaseTool(SerializableResource, ABC):
     """Base abstract class of all kinds of tools.

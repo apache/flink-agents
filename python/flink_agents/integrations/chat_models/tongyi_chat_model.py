@@ -21,7 +21,6 @@ import os
 import uuid
 from typing import Any, Dict, List, Optional, Sequence, cast
 
-import dashscope
 from dashscope import Generation
 from pydantic import Field
 
@@ -30,10 +29,28 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
-from flink_agents.api.tools.tool import BaseTool
+from flink_agents.api.tools.tool import BaseTool, ToolMetadata
 
 DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_MODEL = "qwen-plus"
+
+
+def to_dashscope_tool(metadata: ToolMetadata, skip_length_check: bool = False) -> Dict[str, Any]:  # noqa:FBT001
+    """To DashScope tool."""
+    if not skip_length_check and len(metadata.description) > 1024:
+        msg = (
+            "Tool description exceeds maximum length of 1024 characters. "
+            "Please shorten your description or move it to the prompt."
+        )
+        raise ValueError(msg)
+    return {
+        "type": "function",
+        "function": {
+            "name": metadata.name,
+            "description": metadata.description,
+            "parameters": metadata._ToolMetadata__get_parameters_dict(),
+        },
+    }
 
 
 class TongyiChatModelConnection(BaseChatModelConnection):
@@ -75,7 +92,6 @@ class TongyiChatModelConnection(BaseChatModelConnection):
             )
             raise ValueError(msg)
 
-        dashscope.api_key = resolved_api_key
 
         super().__init__(
             model=model,
@@ -94,10 +110,12 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         tongyi_messages = self.__convert_to_tongyi_messages(messages)
 
         tongyi_tools: Optional[List[Dict[str, Any]]] = (
-            [tool.metadata.to_dashscope_tool() for tool in tools] if tools else None
+            [to_dashscope_tool(tool.metadata) for tool in tools] if tools else None
         )
 
         extract_reasoning = bool(kwargs.pop("extract_reasoning", False))
+
+        req_api_key = kwargs.pop("api_key", self.api_key)
 
         response = Generation.call(
             model=self.model,
@@ -105,6 +123,7 @@ class TongyiChatModelConnection(BaseChatModelConnection):
             tools=tongyi_tools,
             result_format="message",
             timeout=self.request_timeout,
+            api_key=req_api_key,
             **kwargs,
         )
 
