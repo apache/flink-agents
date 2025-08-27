@@ -36,12 +36,28 @@ public interface WritableConfiguration {
     void setInt(String key, int value);
 
     /**
+     * Set the long configuration value using the key.
+     *
+     * @param key The configuration key to set
+     * @param value The long value to set for the key
+     */
+    void setLong(String key, long value);
+
+    /**
      * Set the float configuration value using the key.
      *
      * @param key The configuration key to set
      * @param value The float value to set for the key
      */
     void setFloat(String key, float value);
+
+    /**
+     * Set the double configuration value using the key.
+     *
+     * @param key The configuration key to set
+     * @param value The double value to set for the key
+     */
+    void setDouble(String key, double value);
 
     /**
      * Set the boolean configuration value using the key.

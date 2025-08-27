@@ -28,7 +28,7 @@ def test_load_configuration_from_file() -> None:
     """Test loading configuration from a YAML file."""
     # Create a temporary YAML file with test data
     test_data = {
-        "Agent": {
+        "agent": {
             "database": {
                 "host": "localhost",
                 "port": 5432,
@@ -107,8 +107,7 @@ def test_get_int() -> None:
     assert config.get_int('missing_key', 999) == 999
 
     # Test default value when no default specified
-    with pytest.raises(KeyError, match="Missing key: missing_key"):
-        config.get_int('missing_key')
+    assert config.get_int('missing_key') is None
 
     # Test invalid value that cannot be converted to int
     with pytest.raises(ValueError, match="Invalid value for invalid_key: not_an_int"):
@@ -132,8 +131,7 @@ def test_get_float() -> None:
     assert config.get_float('missing_key', 1.23) == 1.23
 
     # Test default value when no default specified
-    with pytest.raises(KeyError, match="Missing key: missing_key"):
-        config.get_float('missing_key')
+    assert config.get_float('missing_key') is None
 
     # Test invalid value that cannot be converted to float
     with pytest.raises(ValueError, match="Invalid value for invalid_key: not_a_float"):
@@ -152,8 +150,7 @@ def test_get_bool() -> None:
     assert config.get_bool('missing_key', True) is True
 
     # Test default value when no default specified
-    with pytest.raises(KeyError, match="Missing key: missing_key"):
-        config.get_bool('missing_key')
+    assert config.get_bool('missing_key') is None
 
     # Note: bool() in Python behaves differently than might be expected
     # bool('true') is True, but that's Python behavior, not a bug in our code
@@ -177,9 +174,7 @@ def test_get_str() -> None:
     assert config.get_str('missing_key', 'default') == 'default'
 
     # Test default value when no default specified
-    with pytest.raises(KeyError, match="Missing key: missing_key"):
-        config.get_str('missing_key')
+    assert config.get_str('missing_key') is None
 
     # Test None value
-    with pytest.raises(KeyError, match="Missing key: none_key"):
-        config.get_str('none_key')
+    assert config.get_str('none_key') is None

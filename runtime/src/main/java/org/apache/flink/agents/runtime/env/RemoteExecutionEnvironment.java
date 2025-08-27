@@ -50,15 +50,12 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
     private final AgentConfiguration config;
 
+    public static final String FLINK_CONF_FILENAME = "config.yaml";
+
     public RemoteExecutionEnvironment(StreamExecutionEnvironment env) {
         this.env = env;
         final String configDir = System.getenv(ConfigConstants.ENV_FLINK_CONF_DIR);
-        if (configDir == null) {
-            this.config = new AgentConfiguration();
-        } else {
-            final Map<String, Object> configData = loadAgentConfiguration(configDir);
-            this.config = new AgentConfiguration(configData);
-        }
+        this.config = loadAgentConfiguration(configDir);
     }
 
     @Override
@@ -88,11 +85,18 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         env.execute();
     }
 
-    private static Map<String, Object> loadAgentConfiguration(String configDir) {
+    @SuppressWarnings("unchecked")
+    public static AgentConfiguration loadAgentConfiguration(String configDir) {
         try {
-            return (Map<String, Object>)
-                    YamlParserUtils.loadYamlFile(new File(configDir, "config.yaml"))
-                            .getOrDefault("Agent", new HashMap<>());
+            if (configDir == null) {
+                return new AgentConfiguration();
+            }
+            final Map<String, Object> configData =
+                    (Map<String, Object>)
+                            YamlParserUtils.loadYamlFile(new File(configDir, FLINK_CONF_FILENAME))
+                                    .getOrDefault("agent", new HashMap<>());
+
+            return new AgentConfiguration(configData);
         } catch (Exception e) {
             throw new RuntimeException(
                     "Failed to load Flink Agents configuration from " + configDir, e);

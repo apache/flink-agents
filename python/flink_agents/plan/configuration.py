@@ -16,17 +16,15 @@
 # limitations under the License.
 #################################################################################
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Type
 
 import yaml
 from pydantic import BaseModel
-from pyflink.common import Configuration
 from typing_extensions import override
 
 from flink_agents.api.configuration import (
     ConfigOption,
-    ReadableConfiguration,
-    WritableConfiguration,
+    FullConfiguration,
 )
 
 
@@ -57,7 +55,7 @@ def flatten_dict(d: Dict, parent_key: str = '', sep: str = '.') -> Dict[str, Any
             items[new_key] = v
     return items
 
-class AgentConfiguration(BaseModel, WritableConfiguration, ReadableConfiguration):
+class AgentConfiguration(BaseModel, FullConfiguration):
     """Base class for config objects in the system.
     Provides a flat dict interface to access nested config values.
     """
@@ -71,79 +69,47 @@ class AgentConfiguration(BaseModel, WritableConfiguration, ReadableConfiguration
         else:
             super().__init__(conf_data = conf_data)
 
-    @override
-    def get_int(self, key: str, default: Optional[int]=None) -> int:
+    def get_value_with_type(self, key: str, config_type: Type[Any], default: Any) -> Any:
+        """Helper method for all the get_xxx functions to avoid duplicate code.
+
+        Args:
+            key: The configuration key to retrieve
+            config_type: The expected type of the configuration value (int, float, str,
+            or bool)
+            default: The default value to return if key is not found
+
+        Returns:
+            The value associated with the key or the default value
+        """
         value = self.conf_data.get(key)
         if value is None:
-            if default is None:
-                msg = f"Missing key: {key}"
-                raise KeyError(msg)
             return default
 
         try:
-            return int(value)
+            return config_type(value)
         except (ValueError, TypeError) as e:
             msg = f"Invalid value for {key}: {value}"
             raise ValueError(msg) from e
+
+    @override
+    def get_int(self, key: str, default: Optional[int]=None) -> int:
+        return self.get_value_with_type(key, int, default)
 
     @override
     def get_float(self, key: str, default: Optional[float]=None) -> float:
-        value = self.conf_data.get(key)
-        if value is None:
-            if default is None:
-                msg = f"Missing key: {key}"
-                raise KeyError(msg)
-            return default
-
-        try:
-            return float(value)
-        except (ValueError, TypeError) as e:
-            msg = f"Invalid value for {key}: {value}"
-            raise ValueError(msg) from e
+        return self.get_value_with_type(key, float, default)
 
     @override
     def get_bool(self, key: str, default: Optional[bool]=None) -> bool:
-        value = self.conf_data.get(key)
-        if value is None:
-            if default is None:
-                msg = f"Missing key: {key}"
-                raise KeyError(msg)
-            return default
-
-        try:
-            return bool(value)
-        except (ValueError, TypeError) as e:
-            msg = f"Invalid value for {key}: {value}"
-            raise ValueError(msg) from e
+        return self.get_value_with_type(key, bool, default)
 
     @override
     def get_str(self, key: str, default: Optional[str]=None) -> str:
-        value = self.conf_data.get(key)
-        if value is None:
-            if default is None:
-                msg = f"Missing key: {key}"
-                raise KeyError(msg)
-            return default
-
-        try:
-            return str(value)
-        except (ValueError, TypeError) as e:
-            msg = f"Invalid value for {key}: {value}"
-            raise ValueError(msg) from e
+        return self.get_value_with_type(key, str, default)
 
     @override
     def get(self, option: ConfigOption) -> Any:
-        value = self.conf_data.get(option.get_key())
-        if value is None:
-            if option.get_default_value() is None:
-                msg = f"Missing key: {option.get_key()}"
-                raise KeyError(msg)
-            return option.get_default_value()
-        try:
-            return option.get_type()(value)
-        except (ValueError, TypeError) as e:
-            msg = f"Invalid value for {option.get_key()}: {value}"
-            raise ValueError(msg) from e
+        return self.get_value_with_type(option.get_key(), option.get_type(), option.get_default_value())
 
     @override
     def set_str(self, key: str, value: str) -> None:
@@ -175,7 +141,7 @@ class AgentConfiguration(BaseModel, WritableConfiguration, ReadableConfiguration
             path = Path(config_path)
             with path.open() as f:
                 raw_config = yaml.safe_load(f)
-                self.conf_data.update(flatten_dict(raw_config.get('Agent', {})))
+                self.conf_data.update(flatten_dict(raw_config.get('agent', {})))
 
     def get_conf_data(self) -> dict:
         """Get the configuration data dictionary.
@@ -185,25 +151,8 @@ class AgentConfiguration(BaseModel, WritableConfiguration, ReadableConfiguration
         """
         return self.conf_data
 
-    def revert_to_flink_config(self) -> Configuration:
-        """Revert LocalConfiguration to Flink configuration."""
-        flink_config = Configuration()
-        for key in self.conf_data:
-            value = self.conf_data[key]
-            if isinstance(value, bool):
-                flink_config.set_boolean(key, value)
-            elif isinstance(value, int):
-                flink_config.set_integer(key, value)
-            elif isinstance(value, float):
-                flink_config.set_float(key, value)
-            elif isinstance(value, str):
-                flink_config.set_string(key, value)
-            else:
-                flink_config.set_string(key, str(value))
-        return flink_config
-
     def get_config_data_by_prefix(self, prefix: str) -> dict:
-        """Extract configuration items for a specific module from the configuration
+        """Extract configuration items for a specific prefix from the configuration
         data.
 
         Parameters:

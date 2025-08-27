@@ -99,11 +99,11 @@ class PythonResourceProvider(ResourceProvider):
 
         final_kwargs = {}
 
-        clazz_kwargs = config.get_config_data_by_prefix(self.clazz)
+        resource_class_config = config.get_config_data_by_prefix(self.clazz)
         resource_kwargs = config.get_config_data_by_prefix(self.name)
 
         final_kwargs.update(self.kwargs)
-        final_kwargs.update(clazz_kwargs)
+        final_kwargs.update(resource_class_config)
         final_kwargs.update(resource_kwargs)
 
         resource = cls(**final_kwargs, get_resource=get_resource)

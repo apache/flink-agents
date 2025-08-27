@@ -223,8 +223,6 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
 
     def execute(self) -> None:
         """Execute agent."""
-        flink_config = self.__config.revert_to_flink_config()
-        self.__env.configure(flink_config)
         self.__env.execute()
 
 

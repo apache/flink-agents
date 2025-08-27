@@ -18,15 +18,14 @@
 package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.configuration.ConfigOption;
-import org.apache.flink.agents.api.configuration.ReadableConfiguration;
-import org.apache.flink.agents.api.configuration.WritableConfiguration;
+import org.apache.flink.agents.api.configuration.FullConfiguration;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
 /** Agent configuration which stores key/value pairs. */
-public class AgentConfiguration implements ReadableConfiguration, WritableConfiguration {
+public class AgentConfiguration implements FullConfiguration {
     private final Map<String, Object> confData;
 
     public AgentConfiguration() {
@@ -52,7 +51,17 @@ public class AgentConfiguration implements ReadableConfiguration, WritableConfig
     }
 
     @Override
+    public void setLong(String key, long value) {
+        confData.put(key, value);
+    }
+
+    @Override
     public void setFloat(String key, float value) {
+        confData.put(key, value);
+    }
+
+    @Override
+    public void setDouble(String key, double value) {
         confData.put(key, value);
     }
 
@@ -69,27 +78,40 @@ public class AgentConfiguration implements ReadableConfiguration, WritableConfig
         confData.put(option.getKey(), value);
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public int getInt(String key, Integer defaultValue) {
+    public int getInt(String key, int defaultValue) {
         return Optional.ofNullable(confData.get(key))
                 .map(Object::toString)
                 .map(Integer::parseInt)
                 .orElse(defaultValue);
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public float getFloat(String key, Float defaultValue) {
+    public long getLong(String key, long defaultValue) {
+        return Optional.ofNullable(confData.get(key))
+                .map(Object::toString)
+                .map(Long::parseLong)
+                .orElse(defaultValue);
+    }
+
+    @Override
+    public float getFloat(String key, float defaultValue) {
         return Optional.ofNullable(confData.get(key))
                 .map(Object::toString)
                 .map(Float::parseFloat)
                 .orElse(defaultValue);
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public boolean getBool(String key, Boolean defaultValue) {
+    public double getDouble(String key, double defaultValue) {
+        return Optional.ofNullable(confData.get(key))
+                .map(Object::toString)
+                .map(Double::parseDouble)
+                .orElse(defaultValue);
+    }
+
+    @Override
+    public boolean getBool(String key, boolean defaultValue) {
         return Optional.ofNullable(confData.get(key))
                 .map(Object::toString)
                 .map(Boolean::valueOf)
@@ -129,6 +151,7 @@ public class AgentConfiguration implements ReadableConfiguration, WritableConfig
         }
     }
 
+    @SuppressWarnings("unchecked")
     private static Map<String, Object> flatten(
             Map<String, Object> config, String keyPrefix, String keySeparator) {
         final Map<String, Object> flattenedMap = new HashMap<>();

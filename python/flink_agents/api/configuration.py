@@ -25,7 +25,8 @@ class ConfigOption:
 
     Args:
         key: The configuration key name
-        type: The expected type of the configuration value (int, float, str, or bool)
+        config_type: The expected type of the configuration value (int, float, str,
+        or bool)
         default: The default value for this configuration option
     """
 
@@ -161,3 +162,8 @@ class ReadableConfiguration(ABC):
         Returns:
             The value of the given option
         """
+
+class FullConfiguration(WritableConfiguration, ReadableConfiguration, ABC):
+    """A full configuration object that provides both read and write access to a
+    configuration object.
+    """

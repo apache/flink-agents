@@ -113,7 +113,6 @@ public class RunnerContextImpl implements RunnerContext {
 
     @Override
     public ReadableConfiguration getConfig() {
-        System.out.println(agentPlan.getConfigData());
         return agentPlan.getConfig();
     }
 }

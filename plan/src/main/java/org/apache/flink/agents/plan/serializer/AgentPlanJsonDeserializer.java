@@ -30,6 +30,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.Deseriali
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JavaType;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonDeserializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 
 import java.io.IOException;
@@ -126,13 +127,8 @@ public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
         if (configNode != null && configNode.isObject()) {
             JsonNode configDataNode = configNode.get("conf_data");
             if (configDataNode != null && configDataNode.isObject()) {
-                Iterator<Map.Entry<String, JsonNode>> iterator = configDataNode.fields();
-                while (iterator.hasNext()) {
-                    Map.Entry<String, JsonNode> entry = iterator.next();
-                    String key = entry.getKey();
-                    Object value = entry.getValue();
-                    configData.put(key, value);
-                }
+                ObjectMapper mapper = new ObjectMapper();
+                configData = mapper.convertValue(configDataNode, Map.class);
             }
         }
         AgentConfiguration config = new AgentConfiguration(configData);
