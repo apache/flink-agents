@@ -24,7 +24,7 @@ from typing_extensions import override
 
 from flink_agents.api.configuration import (
     ConfigOption,
-    FullConfiguration,
+    Configuration,
 )
 
 
@@ -55,7 +55,7 @@ def flatten_dict(d: Dict, parent_key: str = '', sep: str = '.') -> Dict[str, Any
             items[new_key] = v
     return items
 
-class AgentConfiguration(BaseModel, FullConfiguration):
+class AgentConfiguration(BaseModel, Configuration):
     """Base class for config objects in the system.
     Provides a flat dict interface to access nested config values.
     """

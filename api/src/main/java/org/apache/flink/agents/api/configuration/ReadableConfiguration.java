@@ -26,7 +26,7 @@ public interface ReadableConfiguration {
      * @param defaultValue The default value to return if key is not found
      * @return The integer value associated with the key or the default value
      */
-    int getInt(String key, int defaultValue);
+    Integer getInt(String key, Integer defaultValue);
 
     /**
      * Get the long configuration value by key.
@@ -35,7 +35,7 @@ public interface ReadableConfiguration {
      * @param defaultValue The default value to return if key is not found
      * @return The long value associated with the key or the default value
      */
-    long getLong(String key, long defaultValue);
+    Long getLong(String key, Long defaultValue);
 
     /**
      * Get the float configuration value by key.
@@ -44,7 +44,7 @@ public interface ReadableConfiguration {
      * @param defaultValue The default value to return if key is not found
      * @return The float value associated with the key or the default value
      */
-    float getFloat(String key, float defaultValue);
+    Float getFloat(String key, Float defaultValue);
 
     /**
      * Get the double configuration value by key.
@@ -53,7 +53,7 @@ public interface ReadableConfiguration {
      * @param defaultValue The default value to return if key is not found
      * @return The double value associated with the key or the default value
      */
-    double getDouble(String key, double defaultValue);
+    Double getDouble(String key, Double defaultValue);
 
     /**
      * Get the boolean configuration value by key.
@@ -62,7 +62,7 @@ public interface ReadableConfiguration {
      * @param defaultValue The default value to return if key is not found
      * @return The boolean value associated with the key or the default value
      */
-    boolean getBool(String key, boolean defaultValue);
+    Boolean getBool(String key, Boolean defaultValue);
 
     /**
      * Get the string configuration value by key.

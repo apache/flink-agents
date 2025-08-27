@@ -18,14 +18,14 @@
 package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.configuration.ConfigOption;
-import org.apache.flink.agents.api.configuration.FullConfiguration;
+import org.apache.flink.agents.api.configuration.Configuration;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
 /** Agent configuration which stores key/value pairs. */
-public class AgentConfiguration implements FullConfiguration {
+public class AgentConfiguration implements Configuration {
     private final Map<String, Object> confData;
 
     public AgentConfiguration() {
@@ -79,7 +79,7 @@ public class AgentConfiguration implements FullConfiguration {
     }
 
     @Override
-    public int getInt(String key, int defaultValue) {
+    public Integer getInt(String key, Integer defaultValue) {
         return Optional.ofNullable(confData.get(key))
                 .map(Object::toString)
                 .map(Integer::parseInt)
@@ -87,7 +87,7 @@ public class AgentConfiguration implements FullConfiguration {
     }
 
     @Override
-    public long getLong(String key, long defaultValue) {
+    public Long getLong(String key, Long defaultValue) {
         return Optional.ofNullable(confData.get(key))
                 .map(Object::toString)
                 .map(Long::parseLong)
@@ -95,7 +95,7 @@ public class AgentConfiguration implements FullConfiguration {
     }
 
     @Override
-    public float getFloat(String key, float defaultValue) {
+    public Float getFloat(String key, Float defaultValue) {
         return Optional.ofNullable(confData.get(key))
                 .map(Object::toString)
                 .map(Float::parseFloat)
@@ -103,7 +103,7 @@ public class AgentConfiguration implements FullConfiguration {
     }
 
     @Override
-    public double getDouble(String key, double defaultValue) {
+    public Double getDouble(String key, Double defaultValue) {
         return Optional.ofNullable(confData.get(key))
                 .map(Object::toString)
                 .map(Double::parseDouble)
@@ -111,7 +111,7 @@ public class AgentConfiguration implements FullConfiguration {
     }
 
     @Override
-    public boolean getBool(String key, boolean defaultValue) {
+    public Boolean getBool(String key, Boolean defaultValue) {
         return Optional.ofNullable(confData.get(key))
                 .map(Object::toString)
                 .map(Boolean::valueOf)
@@ -138,8 +138,12 @@ public class AgentConfiguration implements FullConfiguration {
             return targetType.cast(rawValue.toString());
         } else if (Integer.class.equals(targetType)) {
             return targetType.cast(Integer.parseInt(rawValue.toString()));
+        } else if (Long.class.equals(targetType)) {
+            return targetType.cast(Long.parseLong(rawValue.toString()));
         } else if (Float.class.equals(targetType)) {
             return targetType.cast(Float.parseFloat(rawValue.toString()));
+        } else if (Double.class.equals(targetType)) {
+            return targetType.cast(Double.parseDouble(rawValue.toString()));
         } else if (Boolean.class.equals(targetType)) {
             return targetType.cast(Boolean.parseBoolean(rawValue.toString()));
         } else {

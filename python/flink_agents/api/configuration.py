@@ -163,7 +163,7 @@ class ReadableConfiguration(ABC):
             The value of the given option
         """
 
-class FullConfiguration(WritableConfiguration, ReadableConfiguration, ABC):
-    """A full configuration object that provides both read and write access to a
+class Configuration(WritableConfiguration, ReadableConfiguration, ABC):
+    """A configuration object that provides both read and write access to a
     configuration object.
     """

@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from flink_agents.api.configuration import ConfigOption
 from flink_agents.plan.configuration import AgentConfiguration
 
 
@@ -178,3 +179,50 @@ def test_get_str() -> None:
 
     # Test None value
     assert config.get_str('none_key') is None
+
+def test_get_with_config_option() -> None:  # noqa: D103
+    data = {
+        "config.str": "config.value",
+        "config.int": 6789,
+        "config.float": "45.5",
+        "config.boolean": True,
+    }
+
+    config = AgentConfiguration(data)
+
+    str_option = ConfigOption("config.str", str, "default_str")
+    int_option = ConfigOption("config.int", int, 123)
+    float_option = ConfigOption("config.float", float, 0.0)
+    bool_option = ConfigOption("config.boolean", bool, False)
+
+    assert config.get(str_option) == "config.value"
+    assert config.get(int_option) == 6789
+    assert config.get(float_option) == 45.5
+    assert config.get(bool_option) is True
+
+    missing_option = ConfigOption("missing.key1", int, 22)
+    assert config.get(missing_option) == 22
+
+    missing_key = ConfigOption("missing.key2", int, None)
+    assert config.get(missing_key) is None
+
+
+def test_get_with_default_value() -> None:  # noqa: D103
+    default_str = ConfigOption("default.str", str, "default_value")
+    default_int = ConfigOption("default.int", int, 100)
+    default_double = ConfigOption("default.double", float, 2.5)
+
+    config = AgentConfiguration()
+
+    assert config.get(default_str) == "default_value"
+    assert config.get(default_int) == 100
+    assert config.get(default_double) == 2.5
+
+
+def test_get_with_null_and_default() -> None:  # noqa: D103
+    nullable_str = ConfigOption("nullable.str", str, "default")
+
+    config = AgentConfiguration()
+    config.set_str("nullable.str", None)
+
+    assert config.get(nullable_str) == "default"

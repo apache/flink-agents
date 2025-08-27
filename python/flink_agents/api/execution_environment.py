@@ -24,7 +24,7 @@ from pyflink.datastream import DataStream, KeySelector, StreamExecutionEnvironme
 from pyflink.table import Schema, StreamTableEnvironment, Table
 
 from flink_agents.api.agent import Agent
-from flink_agents.api.configuration import FullConfiguration
+from flink_agents.api.configuration import Configuration
 
 
 class AgentBuilder(ABC):
@@ -110,7 +110,7 @@ class AgentsExecutionEnvironment(ABC):
             ).create_instance(env=env, **kwargs)
 
     @abstractmethod
-    def get_config(self, path: Optional[str] = None) -> FullConfiguration:
+    def get_config(self, path: Optional[str] = None) -> Configuration:
         """Get the writable configuration for flink agents.
 
         Returns:

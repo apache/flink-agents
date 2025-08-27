@@ -21,4 +21,4 @@ package org.apache.flink.agents.api.configuration;
  * A configuration interface that provides both read and write access. Combines the capabilities of
  * {@link ReadableConfiguration} and {@link WritableConfiguration}.
  */
-public interface FullConfiguration extends ReadableConfiguration, WritableConfiguration {}
+public interface Configuration extends ReadableConfiguration, WritableConfiguration {}
