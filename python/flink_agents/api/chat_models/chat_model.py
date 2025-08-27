@@ -49,10 +49,19 @@ class BaseChatModelConnection(Resource, ABC):
         """Return resource type of class."""
         return ResourceType.CHAT_MODEL_CONNECTION
 
-    _THINK_RE: ClassVar[re.Pattern[str]] = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+    DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str],...]] = (
+        re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE),
+        re.compile(r"<analysis>(.*?)</analysis>", re.DOTALL | re.IGNORECASE),
+        re.compile(r"<reasoning>(.*?)</reasoning>", re.DOTALL | re.IGNORECASE),
+        re.compile(r"```(?:think|reasoning|thought)\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE),
+        re.compile(r"(?:^|\n)Reasoning:\s*(.*?)(?:\n{2,}|$)", re.DOTALL | re.IGNORECASE),
+    )
 
     @staticmethod
-    def _extract_reasoning(content: str) -> Tuple[str, Optional[str]]:
+    def _extract_reasoning(
+        content: str,
+        patterns: List[re.Pattern[str]] = DEFAULT_REASONING_PATTERNS,
+    ) -> Tuple[str, Optional[str]]:
         """Extract content within <think></think> tags and clean the remaining content.
 
         Parameters
@@ -68,10 +77,16 @@ class BaseChatModelConnection(Resource, ABC):
         if not content:
             return "", None
 
-        matches = BaseChatModelConnection._THINK_RE.findall(content)
-        reasoning = "\n".join(matches) if matches else None
+        reasoning_chunks: List[str] = []
+        cleaned = content
 
-        cleaned = BaseChatModelConnection._THINK_RE.sub("", content)
+        for pat in patterns:
+            matches = pat.findall(cleaned)
+            if matches:
+                reasoning_chunks.extend(m.strip() for m in matches if m.strip())
+                cleaned = pat.sub("", cleaned)
+
+        reasoning = "\n\n".join(reasoning_chunks) if reasoning_chunks else None
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         cleaned = re.sub(r" {2,}", " ", cleaned)
         cleaned = cleaned.strip()
