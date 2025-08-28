@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 from pydantic import BaseModel, Field
 
@@ -61,7 +61,7 @@ class ChatMessage(BaseModel):
     """
 
     role: MessageRole = MessageRole.USER
-    content: str = Field(default_factory=str)
+    content: Union[str, List[Any]] = Field(default_factory=str)
     tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
     extra_args: Dict[str, Any] = Field(default_factory=dict)
 

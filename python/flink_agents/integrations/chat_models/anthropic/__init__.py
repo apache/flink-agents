@@ -15,39 +15,3 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Optional
-
-from flink_agents.api.events.event import Event
-
-
-class ToolRequestEvent(Event):
-    """Event representing a tool call request.
-
-    Attributes:
-    ----------
-    tool : str
-        The name of the tool to be called.
-    kwargs : dict
-        The arguments passed to the tool.
-    external_id : Optional[str]
-        Optional identifier for storing original tool call IDs from external systems (e.g., Anthropic tool_use_id).
-    """
-
-    tool: str
-    kwargs: dict
-    external_id: Optional[str] = None
-
-
-class ToolResponseEvent(Event):
-    """Event representing a result from tool call.
-
-    Attributes:
-    ----------
-    request : ToolRequestEvent
-        The correspond request of the response.
-    response : Any
-        The response from the tool.
-    """
-
-    request: ToolRequestEvent
-    response: Any

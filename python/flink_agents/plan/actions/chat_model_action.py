@@ -57,6 +57,7 @@ def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> N
                         id=tool_call_id,
                         tool=tool_call["function"]["name"],
                         kwargs=tool_call["function"]["arguments"],
+                        external_id=tool_call.get("original_id"),
                     )
                 )
 
@@ -73,7 +74,11 @@ def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> N
                 # get the specific tool call context from short term memory
                 specific_tool_ctx = tool_context.pop(tool_call_id)
                 specific_tool_ctx.messages.append(
-                    ChatMessage(role=MessageRole.TOOL, content=str(event.response))
+                    ChatMessage(
+                        role=MessageRole.TOOL, 
+                        content=str(event.response),
+                        extra_args={"external_id": event.request.external_id} if event.request.external_id else {}
+                    )
                 )
                 ctx.send_event(specific_tool_ctx)
                 # update short term memory to remove the specific tool call context
