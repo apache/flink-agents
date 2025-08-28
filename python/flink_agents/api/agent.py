@@ -24,6 +24,7 @@ from flink_agents.api.chat_models.chat_model import (
 )
 from flink_agents.api.events.event import Event
 from flink_agents.api.prompts.prompt import Prompt
+from flink_agents.api.resource import ResourceType
 
 
 class Agent(ABC):
@@ -71,20 +72,24 @@ class Agent(ABC):
     """
 
     _actions: Dict[str, Tuple[List[Type[Event]], Callable]]
-    _prompts: Dict[str, Prompt]
-    _tools: Dict[str, Callable]
-    _chat_model_connections: Dict[
-        str, Tuple[Type[BaseChatModelConnection], Dict[str, Any]]
-    ]
-    _chat_model_setups: Dict[str, Tuple[Type[BaseChatModelSetup], Dict[str, Any]]]
+    _resources: Dict[ResourceType, Dict[str, Any]]
 
     def __init__(self) -> None:
         """Init method."""
         self._actions = {}
-        self._prompts = {}
-        self._tools = {}
-        self._chat_model_connections = {}
-        self._chat_model_setups = {}
+        self._resources = {}
+        for type in ResourceType:
+            self._resources[type] = {}
+
+    @property
+    def actions(self) -> Dict[str, Tuple[List[Type[Event]], Callable]]:
+        """Get added actions."""
+        return self._actions
+
+    @property
+    def resources(self) -> Dict[ResourceType, Dict[str, Any]]:
+        """Get added resources."""
+        return self._resources
 
     def add_action(
         self, name: str, events: List[Type[Event]], func: Callable
@@ -126,10 +131,12 @@ class Agent(ABC):
         Agent
             The modified Agent instance.
         """
-        if name in self._prompts:
+        if ResourceType.PROMPT not in self._resources:
+            self._resources[ResourceType.PROMPT] = {}
+        if name in self._resources[ResourceType.PROMPT]:
             msg = f"Prompt {name} already defined"
             raise ValueError(msg)
-        self._prompts[name] = prompt
+        self._resources[ResourceType.PROMPT][name] = prompt
         return self
 
     def add_tool(self, name: str, func: Callable) -> "Agent":
@@ -147,10 +154,12 @@ class Agent(ABC):
         Agent
             The modified Agent instance.
         """
-        if name in self._tools:
+        if ResourceType.TOOL not in self._resources:
+            self._resources[ResourceType.TOOL] = {}
+        if name in self._resources[ResourceType.TOOL]:
             msg = f"Function tool {name} already defined"
             raise ValueError(msg)
-        self._tools[name] = func
+        self._resources[ResourceType.TOOL][name] = func
         return self
 
     def add_chat_model_connection(
@@ -172,11 +181,13 @@ class Agent(ABC):
         Agent
             The modified Agent instance.
         """
-        if name in self._chat_model_connections:
+        if ResourceType.CHAT_MODEL_CONNECTION not in self._resources:
+            self._resources[ResourceType.CHAT_MODEL_CONNECTION] = {}
+        if name in self._resources[ResourceType.CHAT_MODEL_CONNECTION]:
             msg = f"Chat model connection {name} already defined"
             raise ValueError(msg)
         kwargs["name"] = name
-        self._chat_model_connections[name] = (connection, kwargs)
+        self._resources[ResourceType.CHAT_MODEL_CONNECTION][name] = (connection, kwargs)
         return self
 
     def add_chat_model_setup(
@@ -191,16 +202,18 @@ class Agent(ABC):
         chat_model: Type[BaseChatModel]
             The type of chat model.
         **kwargs: Any
-            Initialize keyword arguments passed to the chat model.
+            Initialize keyword arguments passed to the chat model setup.
 
         Returns:
         -------
         Agent
             The modified Agent instance.
         """
-        if name in self._chat_model_setups:
+        if ResourceType.CHAT_MODEL not in self._resources:
+            self._resources[ResourceType.CHAT_MODEL] = {}
+        if name in self._resources[ResourceType.CHAT_MODEL]:
             msg = f"Chat model setup {name} already defined"
             raise ValueError(msg)
         kwargs["name"] = name
-        self._chat_model_setups[name] = (chat_model, kwargs)
+        self._resources[ResourceType.CHAT_MODEL][name] = (chat_model, kwargs)
         return self
