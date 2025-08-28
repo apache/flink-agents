@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 from typing import List
+from uuid import UUID
 
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.events.event import Event
@@ -41,11 +42,11 @@ class ChatResponseEvent(Event):
 
     Attributes:
     ----------
-    request : ChatRequestEvent
-        The correspond request of the response.
+    request_id : UUID
+        The id of the request event.
     response : ChatMessage
         The response from the chat model.
     """
 
-    request: ChatRequestEvent
+    request_id: UUID
     response: ChatMessage
