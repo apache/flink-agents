@@ -17,9 +17,8 @@
 #################################################################################
 from typing import Any, Dict, List, Union
 
-from python.flink_agents.api.memory_reference import MemoryRef
-
 from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.memory_reference import MemoryRef
 
 
 class FlinkMemoryObject(MemoryObject):

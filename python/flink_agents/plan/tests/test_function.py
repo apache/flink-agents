@@ -35,7 +35,7 @@ from flink_agents.plan.function import (
 )
 
 if TYPE_CHECKING:
-    from python.flink_agents.plan.function import Function
+    from flink_agents.plan.function import Function
 
 
 def check_class(input_event: InputEvent, output_event: OutputEvent) -> None:  # noqa: D103
