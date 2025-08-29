@@ -47,6 +47,7 @@ dependencies = [
     "apache-flink==1.20.1",
     "pydantic==2.11.4",
     "docstring-parser==0.16",
+    "mcp>=1.8.0",  # Official MCP Python SDK with streamable HTTP transport (requires 1.8.0+)
     #TODO: Seperate integration dependencies from project
     "ollama==0.4.8",
 ]
