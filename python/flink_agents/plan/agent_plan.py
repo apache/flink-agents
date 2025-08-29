@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, field_serializer, model_validator
 
@@ -162,6 +162,21 @@ class AgentPlan(BaseModel):
         """
         return [self.actions[name] for name in self.actions_by_event[event_type]]
 
+    def get_action_params(self, name: str) -> Dict[str, Any]:
+        """Get additional parameters of action.
+
+        Parameters
+        ----------
+        name : str
+            The name of the action.
+
+        Returns:
+        -------
+        Dict[str, Any]
+            The additional parameters of action.
+        """
+        return self.actions[name].params
+
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         """Get resource from agent plan.
 
@@ -218,7 +233,7 @@ def _get_actions(agent: Agent) -> List[Action]:
                     ],
                 )
             )
-    for name, action in agent._actions.items():
+    for name, action in agent.actions.items():
         actions.append(
             Action(
                 name=name,
@@ -227,6 +242,7 @@ def _get_actions(agent: Agent) -> List[Action]:
                     f"{event_type.__module__}.{event_type.__name__}"
                     for event_type in action[0]
                 ],
+                params=action[2],
             )
         )
     return actions

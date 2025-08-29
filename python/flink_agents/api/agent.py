@@ -71,7 +71,7 @@ class Agent(ABC):
                                           connection="my_connection")
     """
 
-    _actions: Dict[str, Tuple[List[Type[Event]], Callable]]
+    _actions: Dict[str, Tuple[List[Type[Event]], Callable, Dict[str, Any]]]
     _resources: Dict[ResourceType, Dict[str, Any]]
 
     def __init__(self) -> None:
@@ -82,7 +82,7 @@ class Agent(ABC):
             self._resources[type] = {}
 
     @property
-    def actions(self) -> Dict[str, Tuple[List[Type[Event]], Callable]]:
+    def actions(self) -> Dict[str, Tuple[List[Type[Event]], Callable, Dict[str, Any]]]:
         """Get added actions."""
         return self._actions
 
@@ -92,7 +92,7 @@ class Agent(ABC):
         return self._resources
 
     def add_action(
-        self, name: str, events: List[Type[Event]], func: Callable
+        self, name: str, events: List[Type[Event]], func: Callable, **params: Any
     ) -> "Agent":
         """Add action to agent.
 
@@ -104,6 +104,8 @@ class Agent(ABC):
             The type of events listened by this action.
         func: Callable
             The function to be executed when receive listened events.
+        **params: Any
+            Key named arguments can be used by this action in runtime.
 
         Returns:
         -------
@@ -113,7 +115,7 @@ class Agent(ABC):
         if name in self._actions:
             msg = f"Action {name} already defined"
             raise ValueError(msg)
-        self._actions[name] = (events, func)
+        self._actions[name] = (events, func, params)
         return self
 
     def add_prompt(self, name: str, prompt: Prompt) -> "Agent":
