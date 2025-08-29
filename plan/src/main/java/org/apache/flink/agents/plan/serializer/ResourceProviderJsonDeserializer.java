@@ -24,6 +24,7 @@ import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourcePro
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ToolResourceProvider;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonParser;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.DeserializationContext;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
@@ -50,22 +51,25 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
             JsonParser jsonParser, DeserializationContext deserializationContext)
             throws IOException {
         JsonNode node = jsonParser.getCodec().readTree(jsonParser);
-        String providerType = node.get("__resource_provider_type__").asText();
+        JsonNode marker = node.get("__resource_provider_type__");
+        if (marker == null) {
+            throw new IOException("Missing __resource_provider_type__ in ResourceProvider JSON");
+        }
+        String providerType = marker.asText();
 
-        ResourceProvider provider;
         if (PythonResourceProvider.class.getSimpleName().equals(providerType)) {
-            provider = deserializePythonResourceProvider(node);
+            return deserializePythonResourceProvider(node);
         } else if (PythonSerializableResourceProvider.class.getSimpleName().equals(providerType)) {
-            provider = deserializePythonSerializableResourceProvider(node);
+            return deserializePythonSerializableResourceProvider(node);
         } else if (JavaResourceProvider.class.getSimpleName().equals(providerType)) {
-            provider = deserializeJavaResourceProvider(node);
+            return deserializeJavaResourceProvider(node);
         } else if (JavaSerializableResourceProvider.class.getSimpleName().equals(providerType)) {
-            provider = deserializeJavaSerializableResourceProvider(node);
+            return deserializeJavaSerializableResourceProvider(node);
+        } else if (ToolResourceProvider.class.getSimpleName().equals(providerType)) {
+            return deserializeToolResourceProvider(node);
         } else {
             throw new IOException("Unsupported resource provider type: " + providerType);
         }
-
-        return provider;
     }
 
     private PythonResourceProvider deserializePythonResourceProvider(JsonNode node) {
@@ -113,6 +117,24 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
         String clazz = node.get("clazz").asText();
         return new JavaSerializableResourceProvider(
                 name, ResourceType.fromValue(type), module, clazz);
+    }
+
+    private ToolResourceProvider deserializeToolResourceProvider(JsonNode node) {
+        String name = node.get("name").asText();
+        String declaringClass = node.get("declaringClass").asText();
+        String methodName = node.get("methodName").asText();
+        List<String> typeNames = new ArrayList<>();
+        JsonNode arr = node.get("parameterTypeNames");
+        if (arr != null && arr.isArray()) {
+            arr.forEach(n -> typeNames.add(n.asText()));
+        }
+        // Optional: validate tool_type == function, if present
+        JsonNode toolType = node.get("tool_type");
+        if (toolType != null && !"function".equalsIgnoreCase(toolType.asText())) {
+            // Non-blocking: could log or throw. Keep non-blocking for compatibility.
+        }
+        return new ToolResourceProvider(
+                name, declaringClass, methodName, typeNames.toArray(new String[0]));
     }
 
     private Object parseJsonNode(JsonNode node) {
