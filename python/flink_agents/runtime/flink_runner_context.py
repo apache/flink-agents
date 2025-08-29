@@ -73,6 +73,10 @@ class FlinkRunnerContext(RunnerContext):
         return self.__agent_plan.get_resource(name, type)
 
     @override
+    def get_action_params(self, name: str) -> Dict[str, Any]:
+        return self.__agent_plan.get_action_params(name)
+
+    @override
     def get_short_term_memory(self) -> FlinkMemoryObject:
         """Get the short-term memory object associated with this context.
 

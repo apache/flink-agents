@@ -23,11 +23,19 @@ from flink_agents.plan.function import PythonFunction
 
 
 def process_tool_request(event: ToolRequestEvent, ctx: RunnerContext) -> None:
-    """Built-in action for processing a tool call request."""
-    tool = ctx.get_resource(event.tool, ResourceType.TOOL)
-    # TODO: support async execution of tool call.
-    response = tool.call(**event.kwargs)
-    ctx.send_event(ToolResponseEvent(request=event, response=response))
+    """Built-in action for processing tool call requests."""
+    responses = {}
+    for tool_call in event.tool_calls:
+        id = tool_call["id"]
+        name = tool_call["function"]["name"]
+        kwargs = tool_call["function"]["arguments"]
+        tool = ctx.get_resource(name, ResourceType.TOOL)
+        if not tool:
+            response = f"Tool `{name}` does not exist."
+        else:
+            response = tool.call(**kwargs)
+        responses[id] = response
+    ctx.send_event(ToolResponseEvent(request=event, responses=responses))
 
 
 TOOL_CALL_ACTION = Action(

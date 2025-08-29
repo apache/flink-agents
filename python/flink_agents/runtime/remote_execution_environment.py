@@ -36,6 +36,7 @@ from flink_agents.api.execution_environment import (
     AgentBuilder,
     AgentsExecutionEnvironment,
 )
+from flink_agents.api.resource import ResourceType
 from flink_agents.plan.agent_plan import AgentPlan
 
 
@@ -46,13 +47,18 @@ class RemoteAgentBuilder(AgentBuilder):
     __agent_plan: AgentPlan = None
     __output: DataStream = None
     __t_env: StreamTableEnvironment
+    __resources: Dict[ResourceType, Dict[str, Any]] = None
 
     def __init__(
-        self, input: DataStream, t_env: Optional[StreamTableEnvironment] = None
+        self,
+        input: DataStream,
+        t_env: Optional[StreamTableEnvironment] = None,
+        resources: Optional[Dict[ResourceType, Dict[str, Any]]] = None,
     ) -> None:
         """Init method of RemoteAgentBuilder."""
         self.__input = input
         self.__t_env = t_env
+        self.__resources = resources
 
     def apply(self, agent: Agent) -> "AgentBuilder":
         """Set agent of execution environment.
@@ -65,6 +71,11 @@ class RemoteAgentBuilder(AgentBuilder):
         if self.__agent_plan is not None:
             err_msg = "RemoteAgentBuilder doesn't support apply multiple agents yet."
             raise RuntimeError(err_msg)
+
+        # inspect refer actions and resources from env to agent.
+        for type, name_to_resource in self.__resources.items():
+            agent.resources[type] = name_to_resource | agent.resources[type]
+
         self.__agent_plan = AgentPlan.from_agent(agent)
         return self
 
@@ -136,6 +147,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
 
     def __init__(self, env: StreamExecutionEnvironment) -> None:
         """Init method of RemoteExecutionEnvironment."""
+        super().__init__()
         self.__env = env
 
     @staticmethod
@@ -166,7 +178,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         """
         input = self.__process_input_datastream(input, key_selector)
 
-        return RemoteAgentBuilder(input=input)
+        return RemoteAgentBuilder(input=input, resources=self.resources)
 
     def from_table(
         self,
@@ -190,7 +202,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         input = input.map(lambda x: x, output_type=PickledBytesTypeInfo())
 
         input = self.__process_input_datastream(input, key_selector)
-        return RemoteAgentBuilder(input=input, t_env=t_env)
+        return RemoteAgentBuilder(input=input, t_env=t_env, resources=self.resources)
 
     def from_list(self, input: List[Dict[str, Any]]) -> "AgentsExecutionEnvironment":
         """Set input list of agent execution.

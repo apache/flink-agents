@@ -25,6 +25,7 @@ from flink_agents.api.resource import Resource, ResourceType
 if TYPE_CHECKING:
     from flink_agents.api.memory_object import MemoryObject
 
+
 class RunnerContext(ABC):
     """Abstract base class providing context for agent execution.
 
@@ -51,6 +52,16 @@ class RunnerContext(ABC):
             The name of the resource.
         type : ResourceType
             The type of the resource.
+        """
+
+    @abstractmethod
+    def get_action_params(self, name: str) -> Dict[str, Any]:
+        """Get additional parameters of action.
+
+        Parameters
+        ----------
+        name : str
+            The name of the action.
         """
 
     @abstractmethod

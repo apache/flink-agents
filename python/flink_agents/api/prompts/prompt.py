@@ -18,7 +18,7 @@
 from typing import List, Sequence, Union
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.prompts.utils import FORMATTER
+from flink_agents.api.prompts.utils import format_string
 from flink_agents.api.resource import ResourceType, SerializableResource
 
 
@@ -51,11 +51,11 @@ class Prompt(SerializableResource):
     def format_string(self, **kwargs: str) -> str:
         """Generate text string from template with input arguments."""
         if isinstance(self.template, str):
-            return FORMATTER.format(self.template, **kwargs)
+            return format_string(self.template, **kwargs)
         else:
             msgs = []
             for m in self.template:
-                msg = f"{m.role.value}: {FORMATTER.format(m.content, **kwargs)}"
+                msg = f"{m.role.value}: {format_string(m.content, **kwargs)}"
                 if m.extra_args is not None and len(m.extra_args) > 0:
                     msg += f"{m.extra_args}"
                 msgs.append(msg)
@@ -67,15 +67,13 @@ class Prompt(SerializableResource):
         """Generate list of ChatMessage from template with input arguments."""
         if isinstance(self.template, str):
             return [
-                ChatMessage(
-                    role=role, content=FORMATTER.format(self.template, **kwargs)
-                )
+                ChatMessage(role=role, content=format_string(self.template, **kwargs))
             ]
         else:
             msgs = []
             for m in self.template:
                 msg = ChatMessage(
-                    role=m.role, content=FORMATTER.format(m.content, **kwargs)
+                    role=m.role, content=format_string(m.content, **kwargs)
                 )
                 msgs.append(msg)
             return msgs
