@@ -27,6 +27,7 @@ from flink_agents.api.resource import (
     ResourceType,
     SerializableResource,
 )
+from flink_agents.plan.configuration import AgentConfiguration
 
 
 class ResourceProvider(BaseModel, ABC):
@@ -45,13 +46,16 @@ class ResourceProvider(BaseModel, ABC):
     type: ResourceType
 
     @abstractmethod
-    def provide(self, get_resource: Callable) -> Resource:
+    def provide(self, get_resource: Callable, config: AgentConfiguration) -> Resource:
         """Create resource in runtime.
 
         Parameters
         ----------
         get_resource : Callable
             The helper function to get other resource declared in the same Agent.
+
+        config : AgentConfiguration
+            Configuration for Flink Agents.
         """
 
 
@@ -88,11 +92,21 @@ class PythonResourceProvider(ResourceProvider):
     clazz: str
     kwargs: Dict[str, Any]
 
-    def provide(self, get_resource: Callable) -> Resource:
+    def provide(self, get_resource: Callable, config: AgentConfiguration) -> Resource:
         """Create resource in runtime."""
         module = importlib.import_module(self.module)
         cls = getattr(module, self.clazz)
-        resource = cls(**self.kwargs, get_resource=get_resource)
+
+        final_kwargs = {}
+
+        resource_class_config = config.get_config_data_by_prefix(self.clazz)
+        resource_config = config.get_config_data_by_prefix(self.name)
+
+        final_kwargs.update(self.kwargs)
+        final_kwargs.update(resource_class_config)
+        final_kwargs.update(resource_config)
+
+        resource = cls(**final_kwargs, get_resource=get_resource)
         return resource
 
 
@@ -124,7 +138,7 @@ class PythonSerializableResourceProvider(SerializableResourceProvider):
             resource=resource,
         )
 
-    def provide(self, get_resource: Callable) -> Resource:
+    def provide(self, get_resource: Callable, config: AgentConfiguration) -> Resource:
         """Get or deserialize resource in runtime."""
         if self.resource is None:
             module = importlib.import_module(self.module)
@@ -140,7 +154,7 @@ class JavaResourceProvider(ResourceProvider):
     Currently, this class only used for deserializing Java agent plan json
     """
 
-    def provide(self, get_resource: Callable) -> Resource:
+    def provide(self, get_resource: Callable, config: AgentConfiguration) -> Resource:
         """Create resource in runtime."""
         err_msg = (
             "Currently, flink-agents doesn't support create resource "
@@ -156,7 +170,7 @@ class JavaSerializableResourceProvider(SerializableResourceProvider):
     Currently, this class only used for deserializing Java agent plan json
     """
 
-    def provide(self, get_resource: Callable) -> Resource:
+    def provide(self, get_resource: Callable, config: AgentConfiguration) -> Resource:
         """Get or deserialize resource in runtime."""
         err_msg = (
             "Currently, flink-agents doesn't support create resource "

@@ -21,15 +21,20 @@ package org.apache.flink.agents.runtime.env;
 import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.AgentBuilder;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.CompileUtils;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.configuration.ConfigConstants;
+import org.apache.flink.configuration.YamlParserUtils;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 
+import java.io.File;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -43,8 +48,19 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
     private final StreamExecutionEnvironment env;
 
+    private final AgentConfiguration config;
+
+    public static final String FLINK_CONF_FILENAME = "config.yaml";
+
     public RemoteExecutionEnvironment(StreamExecutionEnvironment env) {
         this.env = env;
+        final String configDir = System.getenv(ConfigConstants.ENV_FLINK_CONF_DIR);
+        this.config = loadAgentConfiguration(configDir);
+    }
+
+    @Override
+    public AgentConfiguration getConfig() {
+        return config;
     }
 
     @Override
@@ -55,18 +71,36 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
     @Override
     public <T, K> AgentBuilder fromDataStream(DataStream<T> input, KeySelector<T, K> keySelector) {
-        return new RemoteAgentBuilder<>(input, keySelector, env);
+        return new RemoteAgentBuilder<>(input, keySelector, env, config);
     }
 
     @Override
     public <K> AgentBuilder fromTable(
             Table input, StreamTableEnvironment tableEnv, KeySelector<Object, K> keySelector) {
-        return new RemoteAgentBuilder<>(input, tableEnv, keySelector, env);
+        return new RemoteAgentBuilder<>(input, tableEnv, keySelector, env, config);
     }
 
     @Override
     public void execute() throws Exception {
         env.execute();
+    }
+
+    @SuppressWarnings("unchecked")
+    public static AgentConfiguration loadAgentConfiguration(String configDir) {
+        try {
+            if (configDir == null) {
+                return new AgentConfiguration();
+            }
+            final Map<String, Object> configData =
+                    (Map<String, Object>)
+                            YamlParserUtils.loadYamlFile(new File(configDir, FLINK_CONF_FILENAME))
+                                    .getOrDefault("agent", new HashMap<>());
+
+            return new AgentConfiguration(configData);
+        } catch (Exception e) {
+            throw new RuntimeException(
+                    "Failed to load Flink Agents configuration from " + configDir, e);
+        }
     }
 
     /** Implementation of AgentBuilder for remote execution environment. */
@@ -76,6 +110,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         private final KeySelector<T, K> keySelector;
         private final StreamExecutionEnvironment env;
         private final StreamTableEnvironment tableEnv;
+        private final AgentConfiguration config;
 
         private AgentPlan agentPlan;
         private DataStream<Object> outputDataStream;
@@ -84,11 +119,13 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         public RemoteAgentBuilder(
                 DataStream<T> inputDataStream,
                 KeySelector<T, K> keySelector,
-                StreamExecutionEnvironment env) {
+                StreamExecutionEnvironment env,
+                AgentConfiguration config) {
             this.inputDataStream = inputDataStream;
             this.keySelector = keySelector;
             this.env = env;
             this.tableEnv = null;
+            this.config = config;
         }
 
         // Constructor for Table input
@@ -97,17 +134,19 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                 Table inputTable,
                 StreamTableEnvironment tableEnv,
                 KeySelector<Object, K> keySelector,
-                StreamExecutionEnvironment env) {
+                StreamExecutionEnvironment env,
+                AgentConfiguration config) {
             this.inputDataStream = (DataStream<T>) tableEnv.toDataStream(inputTable);
             this.keySelector = (KeySelector<T, K>) keySelector;
             this.env = env;
             this.tableEnv = tableEnv;
+            this.config = config;
         }
 
         @Override
         public AgentBuilder apply(Agent agent) {
             try {
-                this.agentPlan = new AgentPlan(agent);
+                this.agentPlan = new AgentPlan(agent, config);
                 return this;
             } catch (Exception e) {
                 throw new RuntimeException("Failed to create agent plan from agent", e);

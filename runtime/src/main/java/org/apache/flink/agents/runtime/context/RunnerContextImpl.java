@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
@@ -108,5 +109,10 @@ public class RunnerContextImpl implements RunnerContext {
             throw new IllegalStateException("AgentPlan is not available in this context");
         }
         return agentPlan.getResource(name, type);
+    }
+
+    @Override
+    public ReadableConfiguration getConfig() {
+        return agentPlan.getConfig();
     }
 }

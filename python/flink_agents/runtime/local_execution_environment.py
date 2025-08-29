@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pyflink.common import TypeInformation
 from pyflink.datastream import DataStream, KeySelector, StreamExecutionEnvironment
@@ -26,6 +26,7 @@ from flink_agents.api.execution_environment import (
     AgentBuilder,
     AgentsExecutionEnvironment,
 )
+from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.local_runner import LocalRunner
 
 
@@ -37,15 +38,16 @@ class LocalAgentBuilder(AgentBuilder):
     __output: List[Any]
     __runner: LocalRunner = None
     __executed: bool = False
+    __config: AgentConfiguration
 
     def __init__(
-        self, env: "LocalExecutionEnvironment", input: List[Dict[str, Any]]
+        self, env: "LocalExecutionEnvironment", input: List[Dict[str, Any]], config: AgentConfiguration
     ) -> None:
         """Init empty output list."""
         self.__env = env
         self.__input = input
         self.__output = []
-
+        self.__config = config
     def apply(self, agent: Agent) -> AgentBuilder:
         """Create local runner to execute given agent.
 
@@ -54,7 +56,7 @@ class LocalAgentBuilder(AgentBuilder):
         if self.__runner is not None:
             err_msg = "LocalAgentBuilder doesn't support apply multiple agents."
             raise RuntimeError(err_msg)
-        self.__runner = LocalRunner(agent)
+        self.__runner = LocalRunner(agent, self.__config)
         self.__env.set_agent(self.__input, self.__output, self.__runner)
         return self
 
@@ -86,6 +88,13 @@ class LocalExecutionEnvironment(AgentsExecutionEnvironment):
     __output: List[Any] = None
     __runner: LocalRunner = None
     __executed: bool = False
+    __config: AgentConfiguration = AgentConfiguration()
+
+    def get_config(self, path: Optional[str] = None) -> AgentConfiguration:
+        """Get configuration of execution environment."""
+        if path is not None:
+            self.__config.load_from_file(path)
+        return self.__config
 
     def from_list(self, input: list) -> LocalAgentBuilder:
         """Set input list of execution environment."""
@@ -94,7 +103,7 @@ class LocalExecutionEnvironment(AgentsExecutionEnvironment):
             raise RuntimeError(err_msg)
 
         self.__input = input
-        return LocalAgentBuilder(env=self, input=input)
+        return LocalAgentBuilder(env=self, input=input, config=self.__config)
 
     def set_agent(self, input: list, output: list, runner: LocalRunner) -> None:
         """Set agent input, output and runner."""
