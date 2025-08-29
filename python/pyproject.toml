@@ -50,6 +50,7 @@ dependencies = [
     #TODO: Seperate integration dependencies from project
     "ollama==0.4.8",
     "dashscope~=1.24.2",
+    "openai>=1.66.3"
 ]
 
 # Optional dependencies (dependency groups)

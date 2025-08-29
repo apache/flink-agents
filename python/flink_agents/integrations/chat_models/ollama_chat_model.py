@@ -27,6 +27,7 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelSetup,
 )
 from flink_agents.api.tools.tool import BaseTool
+from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
 
 DEFAULT_CONTEXT_WINDOW = 2048
 DEFAULT_REQUEST_TIMEOUT = 30.0
@@ -97,7 +98,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         # Convert tool format
         ollama_tools = None
         if tools is not None:
-            ollama_tools = [tool.metadata.to_openai_tool() for tool in tools]
+            ollama_tools = [to_openai_tool(tool.metadata) for tool in tools]
 
         response = self.client.chat(
             model=self.model,
