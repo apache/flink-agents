@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
@@ -30,6 +31,9 @@ import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
+import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
@@ -63,6 +67,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
@@ -126,6 +131,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final transient EventLogger eventLogger;
     private final transient List<EventListener> eventListeners;
 
+    private final transient ActionStateStore actionStateStore;
+    // Action state for each action, used to store the action's internal state.
+    private final transient Map<Action, ActionState> actionStates;
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
@@ -138,6 +147,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.mailboxExecutor = mailboxExecutor;
         this.eventLogger = EventLoggerFactory.createLogger(EventLoggerConfig.builder().build());
         this.eventListeners = new ArrayList<>();
+        this.actionStateStore = new KafkaActionStateStore();
+        this.actionStates = new HashMap<>();
     }
 
     @Override
@@ -191,6 +202,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // and {@link tryProcessActionTaskForKey} mails might be lost,
         // it is necessary to reprocess all keys to ensure correctness.
         tryResumeProcessActionTasks();
+    }
+
+    private void recoverActionState(Object key) {
+        actionStates.putAll(actionStateStore.getAll(key));
     }
 
     private void initEventLogger(StreamingRuntimeContext runtimeContext) throws Exception {
@@ -301,7 +316,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         // 2. Invoke the action task.
         createAndSetRunnerContext(actionTask);
+        initActionState(key, actionTask.action, actionTask.event);
         ActionTask.ActionTaskResult actionTaskResult = actionTask.invoke();
+        addMemoryUpdates(key, actionTask.action, actionTaskResult.getMemoryUpdates());
+        addOutputEvents(key, actionTask.action, actionTaskResult.getOutputEvents());
         for (Event actionOutputEvent : actionTaskResult.getOutputEvents()) {
             processEvent(key, actionOutputEvent);
         }
@@ -479,9 +497,28 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         Iterable<Object> keys = currentProcessingKeysOpState.get();
         if (keys != null) {
             for (Object key : keys) {
+                recoverActionState(key);
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key), "process action task");
             }
+        }
+    }
+
+    private void initActionState(Object key, Action action, Event event) {
+        ActionState actionState = new ActionState();
+        actionState.addEvent(event);
+        actionStateStore.put(key, action, actionState);
+    }
+
+    private void addMemoryUpdates(Object key, Action action, List<MemoryUpdate> memoryUpdates) {
+        for (MemoryUpdate memoryUpdate : memoryUpdates) {
+            actionStateStore.get(key, action).addMemoryUpdate(memoryUpdate);
+        }
+    }
+
+    private void addOutputEvents(Object key, Action action, List<Event> events) {
+        for (Event event : events) {
+            actionStateStore.get(key, action).addEvent(event);
         }
     }
 

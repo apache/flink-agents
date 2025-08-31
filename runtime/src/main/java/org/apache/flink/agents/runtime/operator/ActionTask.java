@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.slf4j.Logger;
@@ -25,6 +26,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -77,14 +79,24 @@ public abstract class ActionTask {
         private final boolean finished;
         private final List<Event> outputEvents;
         private final Optional<ActionTask> generatedActionTaskOpt;
+        private final List<MemoryUpdate> memoryUpdates;
 
         public ActionTaskResult(
                 boolean finished,
                 List<Event> outputEvents,
                 @Nullable ActionTask generatedActionTask) {
+            this(finished, outputEvents, generatedActionTask, Collections.emptyList());
+        }
+
+        public ActionTaskResult(
+                boolean finished,
+                List<Event> outputEvents,
+                @Nullable ActionTask generatedActionTask,
+                List<MemoryUpdate> memoryUpdates) {
             this.finished = finished;
             this.outputEvents = outputEvents;
             this.generatedActionTaskOpt = Optional.ofNullable(generatedActionTask);
+            this.memoryUpdates = memoryUpdates;
         }
 
         public boolean isFinished() {
@@ -97,6 +109,10 @@ public abstract class ActionTask {
 
         public Optional<ActionTask> getGeneratedActionTask() {
             return generatedActionTaskOpt;
+        }
+
+        public List<MemoryUpdate> getMemoryUpdates() {
+            return memoryUpdates;
         }
 
         @Override
