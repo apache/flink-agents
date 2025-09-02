@@ -15,18 +15,17 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import typing
 import uuid
+from typing import Sequence, Optional, List, Any, Dict
 
+from anthropic import Anthropic
+from anthropic._types import NOT_GIVEN
+from anthropic.types import MessageParam, ToolParam, TextBlockParam
 from pydantic import Field, PrivateAttr
-from typing import Sequence, Optional, List, Any, Dict, Iterable
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModelConnection, BaseChatModelSetup
 from flink_agents.api.tools.tool import BaseTool, ToolMetadata
-from anthropic import Anthropic
-from anthropic.types import MessageParam, ToolParam, TextBlockParam
-from anthropic._types import NOT_GIVEN
 
 
 def to_anthropic_tool(*, metadata: ToolMetadata, skip_length_check: bool = False) -> ToolParam:
@@ -74,10 +73,10 @@ def convert_to_anthropic_system_prompts(messages: Sequence[ChatMessage]) -> List
     """Convert system messages to Anthropic system prompts: https://docs.anthropic.com/en/api/messages#body-system"""
     system_messages = [message for message in messages if message.role == MessageRole.SYSTEM]
     return [
-        {
-            "type": "text",
-            "text": message.content
-        }
+        TextBlockParam(
+            type="text",
+            text=message.content
+        )
         for message in system_messages
     ]
 
@@ -169,11 +168,12 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
                 tool_calls=tool_calls
             )
         else:
+            # TODO: handle other stop_reason values according to Anthropic API:
+            #  https://docs.anthropic.com/en/api/messages#response-stop-reason
             return ChatMessage(
                 role=MessageRole(message.role),
                 content=message.content[0].text,
             )
-
 
 
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
