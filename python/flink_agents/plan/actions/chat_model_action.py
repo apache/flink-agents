@@ -75,7 +75,7 @@ def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> N
                 specific_tool_ctx = tool_context.pop(tool_call_id)
                 specific_tool_ctx.messages.append(
                     ChatMessage(
-                        role=MessageRole.TOOL, 
+                        role=MessageRole.TOOL,
                         content=str(event.response),
                         extra_args={"external_id": event.request.external_id} if event.request.external_id else {}
                     )

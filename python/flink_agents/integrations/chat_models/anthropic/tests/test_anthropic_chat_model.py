@@ -16,16 +16,16 @@
 # limitations under the License.
 #################################################################################
 import os
+
 import pytest
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.resource import ResourceType, Resource
+from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import (
     AnthropicChatModelConnection,
     AnthropicChatModelSetup,
 )
 from flink_agents.plan.tools.function_tool import from_callable
-
 
 test_model = os.environ.get("TEST_MODEL")
 api_key = os.environ.get("TEST_API_KEY")

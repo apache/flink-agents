@@ -30,7 +30,8 @@ class ToolRequestEvent(Event):
     kwargs : dict
         The arguments passed to the tool.
     external_id : Optional[str]
-        Optional identifier for storing original tool call IDs from external systems (e.g., Anthropic tool_use_id).
+        Optional identifier for storing original tool call IDs from external systems
+        (e.g., Anthropic tool_use_id).
     """
 
     tool: str

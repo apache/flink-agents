@@ -16,20 +16,23 @@
 # limitations under the License.
 #################################################################################
 import uuid
-from typing import Sequence, Optional, List, Any, Dict
+from typing import Any, Dict, List, Optional, Sequence
 
 from anthropic import Anthropic
 from anthropic._types import NOT_GIVEN
-from anthropic.types import MessageParam, ToolParam, TextBlockParam
+from anthropic.types import MessageParam, TextBlockParam, ToolParam
 from pydantic import Field, PrivateAttr
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.chat_models.chat_model import BaseChatModelConnection, BaseChatModelSetup
+from flink_agents.api.chat_models.chat_model import (
+    BaseChatModelConnection,
+    BaseChatModelSetup,
+)
 from flink_agents.api.tools.tool import BaseTool, ToolMetadata
 
 
 def to_anthropic_tool(*, metadata: ToolMetadata, skip_length_check: bool = False) -> ToolParam:
-    """Convert to Anthropic tool: https://docs.anthropic.com/en/api/messages#body-tools"""
+    """Convert to Anthropic tool: https://docs.anthropic.com/en/api/messages#body-tools."""
     if not skip_length_check and len(metadata.description) > 1024:
         msg = (
             "Tool description exceeds maximum length of 1024 characters. "
@@ -44,6 +47,7 @@ def to_anthropic_tool(*, metadata: ToolMetadata, skip_length_check: bool = False
 
 
 def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
+    """Convert ChatMessage to Anthropic MessageParam format."""
     if message.role == MessageRole.TOOL:
         return {
             "role": MessageRole.USER.value,
@@ -63,14 +67,19 @@ def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
 
 
 def convert_to_anthropic_messages(messages: Sequence[ChatMessage]) -> List[MessageParam]:
-    """Convert user/assistant messages to Anthropic input messages:
-    https://docs.anthropic.com/en/api/messages#body-messages"""
+    """Convert user/assistant messages to Anthropic input messages.
+
+    See: https://docs.anthropic.com/en/api/messages#body-messages
+    """
     return [convert_to_anthropic_message(message) for message in messages if
             message.role in [MessageRole.USER, MessageRole.ASSISTANT, MessageRole.TOOL]]
 
 
 def convert_to_anthropic_system_prompts(messages: Sequence[ChatMessage]) -> List[TextBlockParam]:
-    """Convert system messages to Anthropic system prompts: https://docs.anthropic.com/en/api/messages#body-system"""
+    """Convert system messages to Anthropic system prompts.
+
+    See: https://docs.anthropic.com/en/api/messages#body-system
+    """
     system_messages = [message for message in messages if message.role == MessageRole.SYSTEM]
     return [
         TextBlockParam(
@@ -116,6 +125,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             timeout: float = 60.0,
             **kwargs: Any,
     ) -> None:
+        """Initialize the Anthropic chat model connection."""
         super().__init__(
             api_key=api_key,
             max_retries=max_retries,
@@ -127,6 +137,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
 
     @property
     def client(self) -> Anthropic:
+        """Get or create the Anthropic client instance."""
         if self._client is None:
             self._client = Anthropic(api_key=self.api_key, max_retries=self.max_retries, timeout=self.timeout)
         return self._client
@@ -149,18 +160,19 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         )
 
         if message.stop_reason == "tool_use":
-            tool_calls = []
-            for content_block in message.content:
-                if content_block.type == 'tool_use':
-                    tool_calls.append({
-                        "id": uuid.uuid4(),
-                        "type": "function",
-                        "function": {
-                            "name": content_block.name,
-                            "arguments": content_block.input,
-                        },
-                        "original_id": content_block.id,
-                    })
+            tool_calls = [
+                {
+                    "id": uuid.uuid4(),
+                    "type": "function",
+                    "function": {
+                        "name": content_block.name,
+                        "arguments": content_block.input,
+                    },
+                    "original_id": content_block.id,
+                }
+                for content_block in message.content
+                if content_block.type == 'tool_use'
+            ]
 
             return ChatMessage(
                 role=MessageRole(message.role),
@@ -229,4 +241,5 @@ class AnthropicChatModelSetup(BaseChatModelSetup):
 
     @property
     def model_kwargs(self) -> Dict[str, Any]:
+        """Get model-specific keyword arguments."""
         return {"model": self.model, "max_tokens": self.max_tokens, "temperature": self.temperature}
