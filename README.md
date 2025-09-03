@@ -29,45 +29,40 @@ mvn clean install -DskipTests
 
 ### Python Build
 
-#### Using uv (Recommended)
-
-Firstly, install uv and build dependencies:
+#### Using uv (Recommended) — Build and Install
 
 ```shell
+cd python
+
+# Install uv (fast Python package manager)
 pip install uv
-cd python
+
+# Create env and install build dependencies
 uv sync --extra build
-```
 
-Then build the package:
-
-```shell
+# Build sdist and wheel into python/dist/
 uv run python -m build
+
+# Install the built wheel into the environment
+uv pip install dist/*.whl
 ```
 
-#### Using pip (Traditional)
 
-Alternatively, you can use traditional pip:
+#### Using pip (Alternative) — Build and Install
 
 ```shell
 cd python
+
+# Install project (editable) with 'build' extra/tools
 pip install -e .[build]
+
+# Build sdist and wheel into python/dist/
 python -m build
+
+# Install the built wheel into the environment
+python -m pip install dist/*.whl
 ```
 
-The sdist and wheel package of flink-agents will be found under `./python/dist/`. Either of them could be
-used for installation:
-
-```shell
-# Using uv
-uv pip install python/dist/*.whl
-
-# Using pip
-python -m pip install python/dist/*.whl
-```
-
-> **Note**: The `requirements/*.txt` files are deprecated. Please use the modern `pyproject.toml` 
-> dependency groups. See [python/MIGRATION_GUIDE.md](python/MIGRATION_GUIDE.md) for details.
 
 ## How to Contribute
 
