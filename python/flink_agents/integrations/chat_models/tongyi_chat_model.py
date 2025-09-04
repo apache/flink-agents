@@ -48,7 +48,7 @@ def to_dashscope_tool(metadata: ToolMetadata, skip_length_check: bool = False) -
         "function": {
             "name": metadata.name,
             "description": metadata.description,
-            "parameters": metadata._ToolMetadata__get_parameters_dict(),
+            "parameters": metadata.get_parameters_dict(),
         },
     }
 
