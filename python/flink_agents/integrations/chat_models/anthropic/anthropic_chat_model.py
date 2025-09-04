@@ -42,7 +42,7 @@ def to_anthropic_tool(*, metadata: ToolMetadata, skip_length_check: bool = False
     return {
         "name": metadata.name,
         "description": metadata.description,
-        "input_schema": metadata._ToolMetadata__get_parameters_dict()
+        "input_schema": metadata.get_parameters_dict()
     }
 
 
