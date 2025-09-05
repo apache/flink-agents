@@ -74,16 +74,13 @@ class RemoteAgentBuilder(AgentBuilder):
         if self.__agent_plan is not None:
             err_msg = "RemoteAgentBuilder doesn't support apply multiple agents yet."
             raise RuntimeError(err_msg)
-        self.__agent_plan = AgentPlan.from_agent(agent, self.__config)
 
         # inspect refer actions and resources from env to agent.
-        for type, names in agent._resource_names.items():
-            if type not in agent.resources:
-                agent.resources[type] = {}
-            for name in names:
-                agent.resources[type][name] = self.__resources[type][name]
+        for type, name_to_resource in self.__resources.items():
+            agent.resources[type] = name_to_resource | agent.resources[type]
 
-        self.__agent_plan = AgentPlan.from_agent(agent)
+        self.__agent_plan = AgentPlan.from_agent(agent, self.__config)
+
         return self
 
     def to_datastream(

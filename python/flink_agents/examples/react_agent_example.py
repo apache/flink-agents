@@ -15,16 +15,15 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import argparse
 import os
 
 from pydantic import BaseModel
-from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
 from flink_agents.api.agents.react_agent import ReActAgent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
+from flink_agents.examples.common_tools import add, multiply
 from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
@@ -43,65 +42,7 @@ class OutputData(BaseModel):  # noqa: D101
     result: int
 
 
-def get_output_schema() -> type[OutputData]:
-    """Get the output schema."""
-    return OutputData
-
-
-def get_output_row_type() -> RowTypeInfo:
-    """Get the output row type."""
-    return RowTypeInfo(
-        [BasicTypeInfo.INT_TYPE_INFO()],
-        ["result"],
-    )
-
-
-def add(a: int, b: int) -> int:
-    """Calculate the sum of a and b.
-
-    Parameters
-    ----------
-    a : int
-        The first operand
-    b : int
-        The second operand
-
-    Returns:
-    -------
-    int:
-        The sum of a and b
-    """
-    return a + b
-
-
-def multiply(a: int, b: int) -> int:
-    """Useful function to multiply two numbers.
-
-    Parameters
-    ----------
-    a : int
-        The first operand
-    b : int
-        The second operand
-
-    Returns:
-    -------
-    int:
-        The product of a and b
-    """
-    return a * b
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--output_row",
-        type=bool,
-        default=False,
-        help="Whether the agent should output row.",
-    )
-    args = parser.parse_args()
-
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     # register resource to execution environment
@@ -131,9 +72,7 @@ if __name__ == "__main__":
         connection="ollama",
         prompt=prompt,
         tools=["add", "multiply"],
-        output_schema_provider=get_output_row_type
-        if args.output_row
-        else get_output_schema,
+        output_schema=OutputData,
     )
 
     # execute agent

@@ -15,13 +15,13 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import importlib
 import json
-from collections.abc import Callable
-from typing import Any, List, Optional, cast
+from typing import Any, List, Optional, Union, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, model_serializer, model_validator
 from pyflink.common import Row
-from pyflink.common.typeinfo import RowTypeInfo
+from pyflink.common.typeinfo import BasicType, BasicTypeInfo, RowTypeInfo
 
 from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -33,11 +33,55 @@ from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 
-DEFAULT_CHAT_MODEL = "_default_chat_model"
-DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt"
-DEFAULT_USER_PROMPT = "_default_user_prompt"
-OUTPUT_PARSER = "_output_parser"
-OUTPUT_SCHEMA = "_output_schema"
+_DEFAULT_CHAT_MODEL = "_default_chat_model"
+_DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt"
+_DEFAULT_USER_PROMPT = "_default_user_prompt"
+_OUTPUT_SCHEMA = "_output_schema"
+
+
+class OutputSchema(BaseModel):
+    """Util class to help serialize and deserialize output schema json."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    output_schema: Union[type[BaseModel], RowTypeInfo]
+
+    @model_serializer
+    def __custom_serializer(self) -> dict[str, Any]:
+        if isinstance(self.output_schema, RowTypeInfo):
+            data = {
+                "output_schema": {
+                    "names": self.output_schema.get_field_names(),
+                    "types": [
+                        type._basic_type.value
+                        for type in self.output_schema.get_field_types()
+                    ],
+                },
+            }
+        else:
+            data = {
+                "output_schema": {
+                    "module": self.output_schema.__module__,
+                    "class": self.output_schema.__name__,
+                }
+            }
+        return data
+
+    @model_validator(mode="before")
+    def __custom_deserialize(self) -> "OutputSchema":
+        output_schema = self["output_schema"]
+        if isinstance(output_schema, dict):
+            if "names" in output_schema:
+                self["output_schema"] = RowTypeInfo(
+                    field_types=[
+                        BasicTypeInfo(BasicType(type))
+                        for type in output_schema["types"]
+                    ],
+                    field_names=output_schema["names"],
+                )
+            else:
+                module = importlib.import_module(output_schema["module"])
+                self["output_schema"] = getattr(module, output_schema["class"])
+        return self
 
 
 class ReActAgent(Agent):
@@ -57,9 +101,6 @@ class ReActAgent(Agent):
             class OutputData(BaseModel):
                 result: int
 
-            def get_output_schema() -> type[OutputData]:
-                \"\"\"Get the output schema.\"\"\"
-                return OutputData
 
             env = AgentsExecutionEnvironment.get_execution_environment()
 
@@ -80,9 +121,10 @@ class ReActAgent(Agent):
                         role=MessageRole.SYSTEM,
                         content='An example of output is {"result": 30.32}.',
                     ),
-                    ChatMessage(role=MessageRole.USER,
-                                content="What is ({a} + {b}) * {c}"),
-                ]
+                    ChatMessage(
+                        role=MessageRole.USER, content="What is ({a} + {b}) * {c}"
+                    ),
+                ],
             )
 
             # create ReAct agent.
@@ -91,7 +133,7 @@ class ReActAgent(Agent):
                 connection="ollama",
                 prompt=prompt,
                 tools=["add", "multiply"],
-                output_schema_provider=get_output_schema
+                output_schema=OutputData,
             )
     """
 
@@ -102,8 +144,7 @@ class ReActAgent(Agent):
         connection: str,
         prompt: Optional[Prompt] = None,
         tools: Optional[List[str]] = None,
-        output_schema_provider: Optional[Callable] = None,
-        output_parser: Optional[Callable] = None,
+        output_schema: Optional[Union[type[BaseModel], RowTypeInfo]] = None,
         **kwargs: Any,
     ) -> None:
         """Init method of ReActAgent.
@@ -121,32 +162,27 @@ class ReActAgent(Agent):
         tools : Optional[List[str]]
             Tools names can be used in this ReAct agent. The tools should be registered
             in environment.
-        output_schema_provider : Optional[Callable]
-            A function to provide output schema, the schema should be RowTypeInfo or
-            subclass of BaseModel. When user provide output schema, ReAct agent will
-            add system prompt to instruct response format of llm, and add output parser
-            according to the schema.
-        output_parser: Optional[Callable]
-            A function to parse response from llm. When user provide output parser,
-            ReAct agent will use it rather than construct according to output schema.
+        output_schema : Optional[Union[type[BaseModel], RowTypeInfo]] = None
+            The schema should be RowTypeInfo or subclass of BaseModel. When user
+            provide output schema, ReAct agent will add system prompt to instruct
+            response format of llm, and add output parser according to the schema.
         **kwargs: Any
             The initialize arguments of chat_model_setup.
         """
         super().__init__()
         settings = {
-            "name": DEFAULT_CHAT_MODEL,
+            "name": _DEFAULT_CHAT_MODEL,
             "connection": connection,
             "tools": tools,
         }
         settings.update(kwargs)
-        self._resources[ResourceType.CHAT_MODEL][DEFAULT_CHAT_MODEL] = (
+        self._resources[ResourceType.CHAT_MODEL][_DEFAULT_CHAT_MODEL] = (
             chat_model_setup,
             settings,
         )
 
-        if output_schema_provider:
-            output_schema = output_schema_provider()
-            if issubclass(output_schema, BaseModel):
+        if output_schema:
+            if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
                 json_schema = output_schema.model_json_schema()
             elif isinstance(output_schema, RowTypeInfo):
                 json_schema = str(output_schema)
@@ -154,15 +190,19 @@ class ReActAgent(Agent):
                 err_msg = f"Output schema {output_schema.__class__} is not supported."
                 raise TypeError(err_msg)
             schema_prompt = f"The final response should be json format, and match the schema {json_schema}."
-            self._resources[ResourceType.PROMPT][DEFAULT_SCHEMA_PROMPT] = (
+            self._resources[ResourceType.PROMPT][_DEFAULT_SCHEMA_PROMPT] = (
                 Prompt.from_text(name="output_schema", text=schema_prompt)
             )
 
-            self._resources[ResourceType.TOOL][OUTPUT_SCHEMA] = output_schema_provider
         if prompt:
-            self._resources[ResourceType.PROMPT][DEFAULT_USER_PROMPT] = prompt
-        if output_parser:
-            self._resources[ResourceType.TOOL][OUTPUT_PARSER] = output_parser
+            self._resources[ResourceType.PROMPT][_DEFAULT_USER_PROMPT] = prompt
+
+        self.add_action(
+            name="stop_action",
+            events=[ChatResponseEvent],
+            func=self.stop_action,
+            output_schema=OutputSchema(output_schema=output_schema),
+        )
 
     @action(InputEvent)
     @staticmethod
@@ -172,7 +212,7 @@ class ReActAgent(Agent):
 
         try:
             prompt = cast(
-                "Prompt", ctx.get_resource(DEFAULT_USER_PROMPT, ResourceType.PROMPT)
+                "Prompt", ctx.get_resource(_DEFAULT_USER_PROMPT, ResourceType.PROMPT)
             )
         except KeyError:
             prompt = None
@@ -200,7 +240,7 @@ class ReActAgent(Agent):
 
         try:
             schema_prompt = cast(
-                "Prompt", ctx.get_resource(DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT)
+                "Prompt", ctx.get_resource(_DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT)
             )
         except KeyError:
             schema_prompt = None
@@ -211,41 +251,28 @@ class ReActAgent(Agent):
 
         ctx.send_event(
             ChatRequestEvent(
-                model=DEFAULT_CHAT_MODEL,
+                model=_DEFAULT_CHAT_MODEL,
                 messages=usr_msgs,
             )
         )
 
-    @action(ChatResponseEvent)
     @staticmethod
     def stop_action(event: ChatResponseEvent, ctx: RunnerContext) -> None:
         """Stop action to output result."""
         output = event.response.content
-        try:
-            output_parser = ctx.get_resource(OUTPUT_PARSER, ResourceType.TOOL)
-        except KeyError:
-            output_parser = None
 
-        if output_parser:
-            output = output_parser.call(output)
-        else:
-            try:
-                output_schema = ctx.get_resource(OUTPUT_SCHEMA, ResourceType.TOOL)
-            except KeyError:
-                output_schema = None
-
-            # TODO: config error handle strategy by configuration.
-            if output_schema:
-                output_schema = output_schema.call()
-                if issubclass(output_schema, BaseModel):
-                    output = json.loads(output)
-                    output = output_schema.model_validate(output)
-                elif isinstance(output_schema, RowTypeInfo):
-                    output = json.loads(output)
-                    field_names = output_schema.get_field_names()
-                    values = {}
-                    for field_name in field_names:
-                        values[field_name] = output[field_name]
-                    output = Row(values)
-
+        # parse llm response to target schema.
+        # TODO: config error handle strategy by configuration.
+        output_schema = ctx.get_action_config_value(key="output_schema")
+        if output_schema:
+            output_schema = output_schema.output_schema
+            output = json.loads(output.strip())
+            if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
+                output = output_schema.model_validate(output)
+            elif isinstance(output_schema, RowTypeInfo):
+                field_names = output_schema.get_field_names()
+                values = {}
+                for field_name in field_names:
+                    values[field_name] = output[field_name]
+                output = Row(**values)
         ctx.send_event(OutputEvent(output=output))
