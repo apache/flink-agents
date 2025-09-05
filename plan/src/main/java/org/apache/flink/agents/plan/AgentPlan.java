@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ToolResourceProvider;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
@@ -40,6 +41,7 @@ import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -237,7 +239,7 @@ public class AgentPlan implements Serializable {
 
                 try {
                     Object fieldValue = field.get(agent);
-                    if (fieldValue != null && fieldValue instanceof Resource) {
+                    if (fieldValue instanceof Resource) {
                         Resource resource = (Resource) fieldValue;
                         ResourceProvider provider =
                                 createResourceProvider(
@@ -254,6 +256,30 @@ public class AgentPlan implements Serializable {
                 }
             }
 
+            // Scan static methods annotated with @Tool (method-based tools)
+            for (Method method : agentClass.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(Tool.class)
+                        && Modifier.isStatic(method.getModifiers())) {
+                    Tool toolAnn = method.getAnnotation(Tool.class);
+                    String name = toolAnn.name().isEmpty() ? method.getName() : toolAnn.name();
+
+                    // Build parameter type names for reconstruction
+                    Class<?>[] paramTypes = method.getParameterTypes();
+                    String[] paramTypeNames = new String[paramTypes.length];
+                    for (int i = 0; i < paramTypes.length; i++) {
+                        paramTypeNames[i] = paramTypes[i].getName();
+                    }
+
+                    ResourceProvider provider =
+                            new ToolResourceProvider(
+                                    name,
+                                    method.getDeclaringClass().getName(),
+                                    method.getName(),
+                                    paramTypeNames);
+                    addResourceProvider(provider);
+                }
+            }
+
             // Check for @ChatModel annotation
             if (field.isAnnotationPresent(ChatModel.class)) {
                 ChatModel chatModelAnnotation = field.getAnnotation(ChatModel.class);
@@ -264,7 +290,7 @@ public class AgentPlan implements Serializable {
 
                 try {
                     Object fieldValue = field.get(agent);
-                    if (fieldValue != null && fieldValue instanceof Resource) {
+                    if (fieldValue instanceof Resource) {
                         Resource resource = (Resource) fieldValue;
                         ResourceProvider provider =
                                 createResourceProvider(

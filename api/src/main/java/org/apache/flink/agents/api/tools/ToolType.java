@@ -16,22 +16,25 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api.resource;
+package org.apache.flink.agents.api.tools;
 
-/**
- * Type enum of resource.
- *
- * <p>Currently, only support chat models and tools.
- */
-public enum ResourceType {
-    CHAT_MODEL("chat_model"),
-    TOOL("tool"),
-    PROMPT("prompt"),
-    ;
+/** Enumeration of tool types supported by Flink-Agents. */
+public enum ToolType {
+    /** Tool provided by the model provider (e.g., "web_search_preview" of OpenAI models). */
+    MODEL_BUILT_IN("model_built_in"),
+
+    /** Python/Java function defined by user. */
+    FUNCTION("function"),
+
+    /** Remote function indicated by name. */
+    REMOTE_FUNCTION("remote_function"),
+
+    /** Tool provided by MCP server. */
+    MCP("mcp");
 
     private final String value;
 
-    ResourceType(String value) {
+    ToolType(String value) {
         this.value = value;
     }
 
@@ -39,19 +42,17 @@ public enum ResourceType {
         return value;
     }
 
-    /**
-     * Get ResourceType from string value.
-     *
-     * @param value the string value
-     * @return the corresponding ResourceType
-     * @throws IllegalArgumentException if no matching ResourceType is found
-     */
-    public static ResourceType fromValue(String value) {
-        for (ResourceType type : ResourceType.values()) {
-            if (type.value.equals(value)) {
+    @Override
+    public String toString() {
+        return value;
+    }
+
+    public static ToolType fromString(String value) {
+        for (ToolType type : values()) {
+            if (type.value.equalsIgnoreCase(value)) {
                 return type;
             }
         }
-        throw new IllegalArgumentException("Unknown ResourceType value: " + value);
+        throw new IllegalArgumentException("Unknown tool type: " + value);
     }
 }
