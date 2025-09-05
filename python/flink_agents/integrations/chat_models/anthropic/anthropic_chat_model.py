@@ -59,6 +59,14 @@ def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
                 }
             ],
         }
+    elif message.role == MessageRole.ASSISTANT:
+        # Use original Anthropic content blocks if available for context
+        anthropic_content_blocks = message.extra_args.get("anthropic_content_blocks")
+        content = anthropic_content_blocks if anthropic_content_blocks is not None else message.content
+        return {
+            "role": message.role.value,
+            "content": content,  # type: ignore
+        }
     else:
         return {
             "role": message.role.value,
@@ -176,8 +184,12 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
 
             return ChatMessage(
                 role=MessageRole(message.role),
-                content=message.content,
-                tool_calls=tool_calls
+                content=message.content[0].text,
+                tool_calls=tool_calls,
+                extra_args={
+                    "anthropic_content_blocks": message.content
+                }
+
             )
         else:
             # TODO: handle other stop_reason values according to Anthropic API:
