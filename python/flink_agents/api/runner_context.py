@@ -56,13 +56,28 @@ class RunnerContext(ABC):
         """
 
     @abstractmethod
-    def get_action_params(self, name: str) -> Dict[str, Any]:
-        """Get additional parameters of action.
+    def get_action_config(self) -> Dict[str, Any]:
+        """Get config of the action.
+
+        Returns:
+        -------
+        Dict[str, Any]
+          The configuration of the action executed.
+        """
+
+    @abstractmethod
+    def get_action_config_value(self, key: str) -> Any:
+        """Get config option value of the action.
 
         Parameters
         ----------
-        name : str
-            The name of the action.
+        key: str
+            The key of the config option.
+
+        Returns:
+        -------
+        Any
+            The config option value.
         """
 
     @abstractmethod

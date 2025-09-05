@@ -41,15 +41,15 @@ public class Action {
     private final Function exec;
     private final List<String> listenEventTypes;
 
-    private final Map<String, Object> params;
+    private final Map<String, Object> config;
 
     public Action(
-            String name, Function exec, List<String> listenEventTypes, Map<String, Object> params)
+            String name, Function exec, List<String> listenEventTypes, Map<String, Object> config)
             throws Exception {
         this.name = name;
         this.exec = exec;
         this.listenEventTypes = listenEventTypes;
-        this.params = params;
+        this.config = config;
         exec.checkSignature(new Class[] {Event.class, RunnerContext.class});
     }
 
@@ -69,7 +69,7 @@ public class Action {
         return listenEventTypes;
     }
 
-    public Map<String, Object> getParams() {
-        return params;
+    public Map<String, Object> getConfig() {
+        return config;
     }
 }

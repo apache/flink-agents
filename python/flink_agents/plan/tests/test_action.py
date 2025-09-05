@@ -60,9 +60,9 @@ def action() -> Action:  # noqa: D103
         name="legal",
         exec=func,
         listen_event_types=[f"{InputEvent.__module__}.{InputEvent.__qualname__}"],
-        params={
+        config={
             "output_schema": OutputSchema(
-                schema=RowTypeInfo(
+                output_schema=RowTypeInfo(
                     [BasicTypeInfo.INT_TYPE_INFO()],
                     ["result"],
                 )

@@ -46,15 +46,15 @@ class Action(BaseModel):
     # TODO: Raise a warning when the action has a return value, as it will be ignored.
     exec: Union[PythonFunction, JavaFunction]
     listen_event_types: List[str]
-    params: Optional[Dict[str, Any]] = None
+    config: Optional[Dict[str, Any]] = None
 
-    @field_serializer("params")
-    def __serialize_params(self, params: Dict[str, Any]) -> Union[Dict[str, Any], None]:
-        if params is None:
-            return params
+    @field_serializer("config")
+    def __serialize_config(self, config: Dict[str, Any]) -> Union[Dict[str, Any], None]:
+        if config is None:
+            return config
         data = {}
-        data["params_type"] = "python"
-        for name, value in params.items():
+        data["config_type"] = "python"
+        for name, value in config.items():
             if isinstance(value, BaseModel):
                 data[name] = (
                     inspect.getmodule(value).__name__,
@@ -67,16 +67,16 @@ class Action(BaseModel):
 
     @model_validator(mode="before")
     def __custom_deserialize(self) -> "Action":
-        params = self["params"]
-        if params is not None and "params_type" in params:
-            self["params"].pop("params_type")
-            for name, value in params.items():
+        config = self["config"]
+        if config is not None and "config_type" in config:
+            self["config"].pop("config_type")
+            for name, value in config.items():
                 try:
                     module = importlib.import_module(value[0])
                     clazz = getattr(module, value[1])
-                    self["params"][name] = clazz.model_validate(value[2])
+                    self["config"][name] = clazz.model_validate(value[2])
                 except Exception:  # noqa : PERF203
-                    self["params"][name] = value
+                    self["config"][name] = value
         return self
 
     def __init__(
@@ -84,11 +84,11 @@ class Action(BaseModel):
         name: str,
         exec: Function,
         listen_event_types: List[str],
-        params: Optional[Dict[str, Any]] = None,
+        config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Action will check function signature when init."""
         super().__init__(
-            name=name, exec=exec, listen_event_types=listen_event_types, params=params
+            name=name, exec=exec, listen_event_types=listen_event_types, config=config
         )
         # TODO: Update expected signature after import State and Context.
         self.exec.check_signature(Event, RunnerContext)

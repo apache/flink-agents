@@ -162,20 +162,37 @@ class AgentPlan(BaseModel):
         """
         return [self.actions[name] for name in self.actions_by_event[event_type]]
 
-    def get_action_params(self, name: str) -> Dict[str, Any]:
-        """Get additional parameters of action.
+    def get_action_config(self, action_name: str) -> Dict[str, Any]:
+        """Get config of the action.
 
         Parameters
         ----------
-        name : str
+        action_name : str
             The name of the action.
 
         Returns:
         -------
         Dict[str, Any]
-            The additional parameters of action.
+            The config of action.
         """
-        return self.actions[name].params
+        return self.actions[action_name].config
+
+    def get_action_config_value(self, action_name: str, key: str) -> Any:
+        """Get config of the action.
+
+        Parameters
+        ----------
+        action_name : str
+            The name of the action.
+        key : str
+            The name of the option.
+
+        Returns:
+        -------
+        Dict[str, Any]
+            The option value of the action config.
+        """
+        return self.actions[action_name].config.get(key, None)
 
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         """Get resource from agent plan.
@@ -242,7 +259,7 @@ def _get_actions(agent: Agent) -> List[Action]:
                     f"{event_type.__module__}.{event_type.__name__}"
                     for event_type in action[0]
                 ],
-                params=action[2],
+                config=action[2],
             )
         )
     return actions

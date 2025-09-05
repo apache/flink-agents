@@ -69,14 +69,14 @@ public class ActionJsonSerializer extends StdSerializer<Action> {
         }
         jsonGenerator.writeEndArray();
 
-        // Write params field
-        Map<String, Object> params = action.getParams();
-        if (params == null) {
-            jsonGenerator.writeObjectField("params", null);
+        // Write config field
+        Map<String, Object> config = action.getConfig();
+        if (config == null) {
+            jsonGenerator.writeObjectField("config", null);
         } else {
-            jsonGenerator.writeFieldName("params");
+            jsonGenerator.writeFieldName("config");
             jsonGenerator.writeStartObject();
-            action.getParams()
+            action.getConfig()
                     .forEach(
                             (name, value) -> {
                                 try {

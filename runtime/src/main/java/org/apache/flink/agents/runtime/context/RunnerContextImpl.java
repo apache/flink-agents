@@ -115,4 +115,8 @@ public class RunnerContextImpl implements RunnerContext {
     public ReadableConfiguration getConfig() {
         return agentPlan.getConfig();
     }
+
+    public String getActionName() {
+        return actionName;
+    }
 }

@@ -67,14 +67,14 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
                 .forEach(eventTypeNode -> listenEventTypes.add(eventTypeNode.asText()));
 
         // Deserialize params
-        JsonNode paramsNode = node.get("params");
-        Map<String, Object> params = new HashMap<>();
-        if (paramsNode != null && paramsNode.isObject()) {
-            params = (Map<String, Object>) parseJsonNode(paramsNode);
+        JsonNode configNode = node.get("config");
+        Map<String, Object> config = new HashMap<>();
+        if (configNode != null && configNode.isObject()) {
+            config = (Map<String, Object>) parseJsonNode(configNode);
         }
 
         try {
-            return new Action(name, func, listenEventTypes, params);
+            return new Action(name, func, listenEventTypes, config);
         } catch (Exception e) {
             throw new RuntimeException(
                     String.format("Failed to create Action with name \"%s\"", name), e);

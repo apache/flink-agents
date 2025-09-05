@@ -92,7 +92,7 @@ class Agent(ABC):
         return self._resources
 
     def add_action(
-        self, name: str, events: List[Type[Event]], func: Callable, **params: Any
+        self, name: str, events: List[Type[Event]], func: Callable, **config: Any
     ) -> "Agent":
         """Add action to agent.
 
@@ -104,7 +104,7 @@ class Agent(ABC):
             The type of events listened by this action.
         func: Callable
             The function to be executed when receive listened events.
-        **params: Any
+        **config: Any
             Key named arguments can be used by this action in runtime.
 
         Returns:
@@ -115,7 +115,7 @@ class Agent(ABC):
         if name in self._actions:
             msg = f"Action {name} already defined"
             raise ValueError(msg)
-        self._actions[name] = (events, func, params)
+        self._actions[name] = (events, func, config if config else None)
         return self
 
     def add_prompt(self, name: str, prompt: Prompt) -> "Agent":
