@@ -38,6 +38,7 @@ from flink_agents.api.execution_environment import (
     AgentBuilder,
     AgentsExecutionEnvironment,
 )
+from flink_agents.api.resource import ResourceType
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 
@@ -50,14 +51,17 @@ class RemoteAgentBuilder(AgentBuilder):
     __output: DataStream = None
     __t_env: StreamTableEnvironment
     __config: AgentConfiguration
+    __resources: Dict[ResourceType, Dict[str, Any]] = None
 
     def __init__(
-        self, input: DataStream, config: AgentConfiguration, t_env: Optional[StreamTableEnvironment] = None
+        self, input: DataStream, config: AgentConfiguration, t_env: Optional[StreamTableEnvironment] = None,
+            resources: Optional[Dict[ResourceType, Dict[str, Any]]] = None,
     ) -> None:
         """Init method of RemoteAgentBuilder."""
         self.__input = input
         self.__t_env = t_env
         self.__config = config
+        self.__resources = resources
 
     def apply(self, agent: Agent) -> "AgentBuilder":
         """Set agent of execution environment.
@@ -70,7 +74,13 @@ class RemoteAgentBuilder(AgentBuilder):
         if self.__agent_plan is not None:
             err_msg = "RemoteAgentBuilder doesn't support apply multiple agents yet."
             raise RuntimeError(err_msg)
+
+        # inspect refer actions and resources from env to agent.
+        for type, name_to_resource in self.__resources.items():
+            agent.resources[type] = name_to_resource | agent.resources[type]
+
         self.__agent_plan = AgentPlan.from_agent(agent, self.__config)
+
         return self
 
     def to_datastream(
@@ -142,6 +152,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
 
     def __init__(self, env: StreamExecutionEnvironment) -> None:
         """Init method of RemoteExecutionEnvironment."""
+        super().__init__()
         self.__env = env
         self.__config = AgentConfiguration()
         flink_conf_dir = os.environ.get("FLINK_CONF_DIR")
@@ -187,7 +198,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         """
         input = self.__process_input_datastream(input, key_selector)
 
-        return RemoteAgentBuilder(input=input, config=self.__config)
+        return RemoteAgentBuilder(input=input, config=self.__config, resources=self.resources)
 
     def from_table(
         self,
@@ -211,7 +222,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         input = input.map(lambda x: x, output_type=PickledBytesTypeInfo())
 
         input = self.__process_input_datastream(input, key_selector)
-        return RemoteAgentBuilder(input=input, config=self.__config, t_env=t_env)
+        return RemoteAgentBuilder(input=input, config=self.__config, t_env=t_env, resources=self.resources)
 
     def from_list(self, input: List[Dict[str, Any]]) -> "AgentsExecutionEnvironment":
         """Set input list of agent execution.

@@ -20,7 +20,7 @@ from typing import Any, Dict, Sequence, Tuple, Type
 from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
-from flink_agents.api.decorators import action, chat_model, tool
+from flink_agents.api.decorators import action, chat_model_setup, tool
 from flink_agents.api.events.event import Event, InputEvent
 from flink_agents.api.runner_context import RunnerContext
 
@@ -54,7 +54,7 @@ class PythonAgentPlanCompatibilityTestAgent(Agent):
     def second_action(event: InputEvent, ctx: RunnerContext) -> None:
         """Test implementation."""
 
-    @chat_model
+    @chat_model_setup
     @staticmethod
     def chat_model() -> Tuple[Type[BaseChatModelSetup], Dict[str, Any]]:
         """ChatModel can be used in action."""

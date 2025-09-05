@@ -29,7 +29,9 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.deser.std
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Custom deserializer for {@link Action} that handles the deserialization of the function and event
@@ -64,8 +66,15 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
         node.get("listen_event_types")
                 .forEach(eventTypeNode -> listenEventTypes.add(eventTypeNode.asText()));
 
+        // Deserialize params
+        JsonNode configNode = node.get("config");
+        Map<String, Object> config = new HashMap<>();
+        if (configNode != null && configNode.isObject()) {
+            config = (Map<String, Object>) parseJsonNode(configNode);
+        }
+
         try {
-            return new Action(name, func, listenEventTypes);
+            return new Action(name, func, listenEventTypes, config);
         } catch (Exception e) {
             throw new RuntimeException(
                     String.format("Failed to create Action with name \"%s\"", name), e);
@@ -98,6 +107,24 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
                             "Failed to create JavaFunction with qualName \"%s\" and method name \"%s\"",
                             qualName, methodName),
                     e);
+        }
+    }
+
+    private Object parseJsonNode(JsonNode node) {
+        if (node.isObject()) {
+            Map<String, Object> map = new HashMap<>();
+            node.fields()
+                    .forEachRemaining(
+                            entry -> map.put(entry.getKey(), parseJsonNode(entry.getValue())));
+            return map;
+        } else if (node.isArray()) {
+            List<Object> list = new ArrayList<>();
+            node.forEach(element -> list.add(parseJsonNode(element)));
+            return list;
+        } else if (node.isValueNode()) {
+            return node.asText();
+        } else {
+            throw new UnsupportedOperationException("Unsupported node type: " + node.getNodeType());
         }
     }
 }

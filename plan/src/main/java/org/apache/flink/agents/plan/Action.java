@@ -26,6 +26,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotatio
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Representation of an agent action with event listening and function execution.
@@ -40,11 +41,20 @@ public class Action {
     private final Function exec;
     private final List<String> listenEventTypes;
 
-    public Action(String name, Function exec, List<String> listenEventTypes) throws Exception {
+    private final Map<String, Object> config;
+
+    public Action(
+            String name, Function exec, List<String> listenEventTypes, Map<String, Object> config)
+            throws Exception {
         this.name = name;
         this.exec = exec;
         this.listenEventTypes = listenEventTypes;
+        this.config = config;
         exec.checkSignature(new Class[] {Event.class, RunnerContext.class});
+    }
+
+    public Action(String name, Function exec, List<String> listenEventTypes) throws Exception {
+        this(name, exec, listenEventTypes, null);
     }
 
     public String getName() {
@@ -57,5 +67,9 @@ public class Action {
 
     public List<String> getListenEventTypes() {
         return listenEventTypes;
+    }
+
+    public Map<String, Object> getConfig() {
+        return config;
     }
 }

@@ -24,7 +24,7 @@ import pytest
 from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
-from flink_agents.api.decorators import action, chat_model
+from flink_agents.api.decorators import action, chat_model_setup
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -94,7 +94,7 @@ class MockChatModelImpl(BaseChatModelSetup):  # noqa: D101
 
 
 class MyAgent(Agent):  # noqa: D101
-    @chat_model
+    @chat_model_setup
     @staticmethod
     def mock() -> Tuple[Type[Resource], Dict[str, Any]]:  # noqa: D102
         return MockChatModelImpl, {
@@ -156,7 +156,7 @@ def test_add_action_and_resource_to_agent() -> None:  # noqa: D103
     my_agent.add_action(
         name="second_action", events=[InputEvent, MyEvent], func=MyAgent.second_action
     )
-    my_agent.add_chat_model(
+    my_agent.add_chat_model_setup(
         name="mock",
         chat_model=MockChatModelImpl,
         host="8.8.8.8",

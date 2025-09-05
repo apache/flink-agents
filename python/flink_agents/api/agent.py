@@ -24,6 +24,7 @@ from flink_agents.api.chat_models.chat_model import (
 )
 from flink_agents.api.events.event import Event
 from flink_agents.api.prompts.prompt import Prompt
+from flink_agents.api.resource import ResourceType
 
 
 class Agent(ABC):
@@ -42,17 +43,19 @@ class Agent(ABC):
                 def my_action(event: Event, ctx: RunnerContext) -> None:
                     action logic
 
-                @chat_model_server
+                @chat_model_connection
                 @staticmethod
-                def my_server() -> Tuple[Type[BaseChatModelServer], Dict[str, Any]]:
-                    return OllamaChatModelServer, {"name": "my_server",
-                                                   "model": "qwen2:7b",
-                                                   "base_url": "http://localhost:11434"}
+                def my_connection() -> Tuple[Type[BaseChatModelConnection],
+                                       Dict[str, Any]]:
+                    return OllamaChatModelConnection, {"name": "my_connection",
+                                                       "model": "qwen2:7b",
+                                                       "base_url": "http://localhost:11434"}
 
-                @chat_model
+                @chat_model_setup
                 @staticmethod
                 def my_chat_model() -> Tuple[Type[ChatModel], Dict[str, Any]]:
-                    return OllamaChatModel, {"name": "model", "server": "my_server"}
+                    return OllamaChatModel, {"name": "model",
+                                             "connection": "my_connection"}
         * Add actions and resources to an Agent instance
         ::
 
@@ -60,30 +63,36 @@ class Agent(ABC):
             my_agent.add_action(name="my_action",
                                 events=[InputEvent],
                                 func=action_function)
-                    .add_chat_model_server(name="my_server",
-                                              server=OllamaChatModelServer,
-                                              arg1=xxx)
-                    .add_chat_model(name="my_chat_model",
-                                    chat_model=OllamaChatModel,
-                                    server="my_server")
+                    .add_chat_model_connection(name="my_connection",
+                                               connection=OllamaChatModelConnection,
+                                               arg1=xxx)
+                    .add_chat_model_setup(name="my_chat_model",
+                                          chat_model=OllamaChatModelSetup,
+                                          connection="my_connection")
     """
 
-    _actions: Dict[str, Tuple[List[Type[Event]], Callable]]
-    _prompts: Dict[str, Prompt]
-    _tools: Dict[str, Callable]
-    _chat_model_servers: Dict[str, Tuple[Type[BaseChatModelConnection], Dict[str, Any]]]
-    _chat_models: Dict[str, Tuple[Type[BaseChatModelSetup], Dict[str, Any]]]
+    _actions: Dict[str, Tuple[List[Type[Event]], Callable, Dict[str, Any]]]
+    _resources: Dict[ResourceType, Dict[str, Any]]
 
     def __init__(self) -> None:
         """Init method."""
         self._actions = {}
-        self._prompts = {}
-        self._tools = {}
-        self._chat_model_servers = {}
-        self._chat_models = {}
+        self._resources = {}
+        for type in ResourceType:
+            self._resources[type] = {}
+
+    @property
+    def actions(self) -> Dict[str, Tuple[List[Type[Event]], Callable, Dict[str, Any]]]:
+        """Get added actions."""
+        return self._actions
+
+    @property
+    def resources(self) -> Dict[ResourceType, Dict[str, Any]]:
+        """Get added resources."""
+        return self._resources
 
     def add_action(
-        self, name: str, events: List[Type[Event]], func: Callable
+        self, name: str, events: List[Type[Event]], func: Callable, **config: Any
     ) -> "Agent":
         """Add action to agent.
 
@@ -95,6 +104,8 @@ class Agent(ABC):
             The type of events listened by this action.
         func: Callable
             The function to be executed when receive listened events.
+        **config: Any
+            Key named arguments can be used by this action in runtime.
 
         Returns:
         -------
@@ -104,7 +115,7 @@ class Agent(ABC):
         if name in self._actions:
             msg = f"Action {name} already defined"
             raise ValueError(msg)
-        self._actions[name] = (events, func)
+        self._actions[name] = (events, func, config if config else None)
         return self
 
     def add_prompt(self, name: str, prompt: Prompt) -> "Agent":
@@ -122,10 +133,12 @@ class Agent(ABC):
         Agent
             The modified Agent instance.
         """
-        if name in self._prompts:
+        if ResourceType.PROMPT not in self._resources:
+            self._resources[ResourceType.PROMPT] = {}
+        if name in self._resources[ResourceType.PROMPT]:
             msg = f"Prompt {name} already defined"
             raise ValueError(msg)
-        self._prompts[name] = prompt
+        self._resources[ResourceType.PROMPT][name] = prompt
         return self
 
     def add_tool(self, name: str, func: Callable) -> "Agent":
@@ -143,42 +156,46 @@ class Agent(ABC):
         Agent
             The modified Agent instance.
         """
-        if name in self._tools:
+        if ResourceType.TOOL not in self._resources:
+            self._resources[ResourceType.TOOL] = {}
+        if name in self._resources[ResourceType.TOOL]:
             msg = f"Function tool {name} already defined"
             raise ValueError(msg)
-        self._tools[name] = func
+        self._resources[ResourceType.TOOL][name] = func
         return self
 
-    def add_chat_model_server(
-        self, name: str, server: Type[BaseChatModelConnection], **kwargs: Any
+    def add_chat_model_connection(
+        self, name: str, connection: Type[BaseChatModelConnection], **kwargs: Any
     ) -> "Agent":
-        """Add chat model server to agent.
+        """Add chat model connection to agent.
 
         Parameters
         ----------
         name : str
-            The name of the chat model server, should be unique in the same Agent.
-        server: Type[BaseChatModelConnection]
-            The type of chat model server.
+            The name of the chat model connection, should be unique in the same Agent.
+        connection: Type[BaseChatModelConnection]
+            The type of chat model connection.
         **kwargs: Any
-            Initialize keyword arguments passed to the chat model server.
+            Initialize keyword arguments passed to the chat model connection.
 
         Returns:
         -------
         Agent
             The modified Agent instance.
         """
-        if name in self._chat_model_servers:
-            msg = f"Chat model server {name} already defined"
+        if ResourceType.CHAT_MODEL_CONNECTION not in self._resources:
+            self._resources[ResourceType.CHAT_MODEL_CONNECTION] = {}
+        if name in self._resources[ResourceType.CHAT_MODEL_CONNECTION]:
+            msg = f"Chat model connection {name} already defined"
             raise ValueError(msg)
         kwargs["name"] = name
-        self._chat_model_servers[name] = (server, kwargs)
+        self._resources[ResourceType.CHAT_MODEL_CONNECTION][name] = (connection, kwargs)
         return self
 
-    def add_chat_model(
+    def add_chat_model_setup(
         self, name: str, chat_model: Type[BaseChatModelSetup], **kwargs: Any
     ) -> "Agent":
-        """Add chat model to agent.
+        """Add chat model setup to agent.
 
         Parameters
         ----------
@@ -187,16 +204,18 @@ class Agent(ABC):
         chat_model: Type[BaseChatModel]
             The type of chat model.
         **kwargs: Any
-            Initialize keyword arguments passed to the chat model.
+            Initialize keyword arguments passed to the chat model setup.
 
         Returns:
         -------
         Agent
             The modified Agent instance.
         """
-        if name in self._chat_models:
-            msg = f"Chat model {name} already defined"
+        if ResourceType.CHAT_MODEL not in self._resources:
+            self._resources[ResourceType.CHAT_MODEL] = {}
+        if name in self._resources[ResourceType.CHAT_MODEL]:
+            msg = f"Chat model setup {name} already defined"
             raise ValueError(msg)
         kwargs["name"] = name
-        self._chat_models[name] = (chat_model, kwargs)
+        self._resources[ResourceType.CHAT_MODEL][name] = (chat_model, kwargs)
         return self

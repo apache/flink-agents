@@ -24,9 +24,17 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
-from flink_agents.api.decorators import action, chat_model, chat_model_server, tool
+from flink_agents.api.decorators import (
+    action,
+    chat_model_connection,
+    chat_model_setup,
+    tool,
+)
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import (
+    InputEvent,
+    OutputEvent,
+)
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.integrations.chat_models.ollama_chat_model import (
@@ -45,58 +53,58 @@ BACKENDS_TO_RUN: List[str] = ["Tongyi", "Ollama"]
 class MyAgent(Agent):
     """Example agent demonstrating the new ChatModel architecture."""
 
-    @chat_model_server
+    @chat_model_connection
     @staticmethod
-    def tongyi_server() -> Tuple[Type[BaseChatModelConnection], Dict[str, Any]]:
-        """ChatModelServer responsible for tongyi model service connection."""
+    def tongyi_connection() -> Tuple[Type[BaseChatModelConnection], Dict[str, Any]]:
+        """ChatModelConnection responsible for tongyi model service connection."""
         if not os.environ.get("DASHSCOPE_API_KEY"):
             msg = "Please set the 'DASHSCOPE_API_KEY' environment variable."
             raise ValueError(msg)
         return TongyiChatModelConnection, {
-            "name": "tongyi_server",
+            "name": "tongyi_connection",
             "model": TONGYI_MODEL,
         }
 
-    @chat_model_server
+    @chat_model_connection
     @staticmethod
-    def ollama_server() -> Tuple[Type[BaseChatModelConnection], Dict[str, Any]]:
-        """ChatModelServer responsible for ollama model service connection."""
+    def ollama_connection() -> Tuple[Type[BaseChatModelConnection], Dict[str, Any]]:
+        """ChatModelConnection responsible for ollama model service connection."""
         return OllamaChatModelConnection, {
-            "name": "ollama_server",
+            "name": "ollama_connection",
             "model": OLLAMA_MODEL,
         }
 
-    @chat_model
+    @chat_model_setup
     @staticmethod
     def math_chat_model() -> Tuple[Type[BaseChatModelSetup], Dict[str, Any]]:
-        """ChatModel which focus on math, and reuse ChatModelServer."""
+        """ChatModel which focus on math, and reuse ChatModelConnection."""
         if CURRENT_BACKEND == "Tongyi":
             return TongyiChatModelSetup, {
                 "name": "math_chat_model",
-                "connection": "tongyi_server",
+                "connection": "tongyi_connection",
                 "tools": ["add"],
             }
         else:
             return OllamaChatModelSetup, {
                 "name": "math_chat_model",
-                "connection": "ollama_server",
+                "connection": "ollama_connection",
                 "tools": ["add"],
                 "extract_reasoning": True,
             }
 
-    @chat_model
+    @chat_model_setup
     @staticmethod
     def creative_chat_model() -> Tuple[Type[BaseChatModelSetup], Dict[str, Any]]:
-        """ChatModel which focus on text generate, and reuse ChatModelServer."""
+        """ChatModel which focus on text generate, and reuse ChatModelConnection."""
         if CURRENT_BACKEND == "Tongyi":
             return TongyiChatModelSetup, {
                 "name": "creative_chat_model",
-                "connection": "tongyi_server",
+                "connection": "tongyi_connection",
             }
         else:
             return OllamaChatModelSetup, {
                 "name": "creative_chat_model",
-                "connection": "ollama_server",
+                "connection": "ollama_connection",
                 "extract_reasoning": True,
             }
 

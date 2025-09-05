@@ -25,6 +25,8 @@ package org.apache.flink.agents.api.resource;
  */
 public enum ResourceType {
     CHAT_MODEL("chat_model"),
+    CHAT_MODEL_CONNECTION("chat_model_connection"),
+    PROMPT("prompt"),
     TOOL("tool");
 
     private final String value;

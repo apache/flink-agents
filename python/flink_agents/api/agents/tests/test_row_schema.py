@@ -15,38 +15,21 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import List
-from uuid import UUID
 
-from flink_agents.api.chat_message import ChatMessage
-from flink_agents.api.events.event import Event
+from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
-
-class ChatRequestEvent(Event):
-    """Event representing a request to chat model.
-
-    Attributes:
-    ----------
-    model : str
-        The name of the chat model to be chatted with.
-    messages : List[ChatMessage]
-        The input to the chat model.
-    """
-
-    model: str
-    messages: List[ChatMessage]
+from flink_agents.api.agents.react_agent import OutputSchema
 
 
-class ChatResponseEvent(Event):
-    """Event representing a response from chat model.
+def test_output_schema_serializable() -> None:  # noqa: D103
+    schema = OutputSchema(
+        output_schema=RowTypeInfo(
+            [BasicTypeInfo.INT_TYPE_INFO()],
+            ["result"],
+        )
+    )
 
-    Attributes:
-    ----------
-    request_id : UUID
-        The id of the request event.
-    response : ChatMessage
-        The response from the chat model.
-    """
+    json_data = schema.model_dump_json()
 
-    request_id: UUID
-    response: ChatMessage
+    deserialize_schema = OutputSchema.model_validate_json(json_data)
+    assert schema == deserialize_schema

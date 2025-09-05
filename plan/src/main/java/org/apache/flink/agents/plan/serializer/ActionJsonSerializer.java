@@ -26,6 +26,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.Serialize
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ser.std.StdSerializer;
 
 import java.io.IOException;
+import java.util.Map;
 
 /**
  * Custom serializer for {@link Action} that handles the serialization of the function and event
@@ -67,6 +68,25 @@ public class ActionJsonSerializer extends StdSerializer<Action> {
             jsonGenerator.writeString(eventType);
         }
         jsonGenerator.writeEndArray();
+
+        // Write config field
+        Map<String, Object> config = action.getConfig();
+        if (config == null) {
+            jsonGenerator.writeObjectField("config", null);
+        } else {
+            jsonGenerator.writeFieldName("config");
+            jsonGenerator.writeStartObject();
+            action.getConfig()
+                    .forEach(
+                            (name, value) -> {
+                                try {
+                                    jsonGenerator.writeObjectField(name, value);
+                                } catch (IOException e) {
+                                    throw new RuntimeException("Error writing action: " + name, e);
+                                }
+                            });
+            jsonGenerator.writeEndObject();
+        }
 
         jsonGenerator.writeEndObject();
     }

@@ -9,7 +9,8 @@
             },
             "listen_event_types": [
                 "flink_agents.api.events.event.InputEvent"
-            ]
+            ],
+            "config": null
         },
         "second_action": {
             "name": "second_action",
@@ -21,7 +22,8 @@
             "listen_event_types": [
                 "flink_agents.api.events.event.InputEvent",
                 "flink_agents.plan.tests.test_agent_plan.MyEvent"
-            ]
+            ],
+            "config": null
         },
         "chat_model_action": {
             "name": "chat_model_action",
@@ -33,7 +35,8 @@
             "listen_event_types": [
                 "flink_agents.api.events.chat_event.ChatRequestEvent",
                 "flink_agents.api.events.tool_event.ToolResponseEvent"
-            ]
+            ],
+            "config": null
         },
         "tool_call_action": {
             "name": "tool_call_action",
@@ -44,7 +47,8 @@
             },
             "listen_event_types": [
                 "flink_agents.api.events.tool_event.ToolRequestEvent"
-            ]
+            ],
+            "config": null
         }
     },
     "actions_by_event": {

@@ -15,24 +15,27 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from string import Formatter
-from typing import Any
-
-from typing_extensions import override
+import re
+from typing import Dict, Optional
 
 
-class SafeFormatter(Formatter):
+class SafeFormatter:
     """Safe string formatter that does not raise KeyError if key is missing."""
 
-    @override
-    def get_value(self, key: Any, args: Any, kwargs: Any) -> Any:
-        if isinstance(key, int):
-            return args[key]
-        else:
-            if key in kwargs:
-                return kwargs[key]
-            else:
-                return str(key)
+    def __init__(self, kwargs: Optional[Dict[str, str]] = None) -> None:
+        """Init method."""
+        self.kwargs = kwargs or {}
+
+    def format(self, text: str) -> str:
+        """Format a text with key arguments."""
+        return re.sub(r"\{([^{}]+)\}", self._replace_match, text)
+
+    def _replace_match(self, match: re.Match) -> str:
+        key = match.group(1)
+        return str(self.kwargs.get(key, match.group(0)))
 
 
-FORMATTER = SafeFormatter()
+def format_string(text: str, **kwargs: str) -> str:
+    """Format a string with kwargs."""
+    formatter = SafeFormatter(kwargs=kwargs)
+    return formatter.format(text)

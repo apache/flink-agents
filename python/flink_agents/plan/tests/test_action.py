@@ -19,7 +19,9 @@ import json
 from pathlib import Path
 
 import pytest
+from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
+from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.events.event import InputEvent
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.actions.action import Action
@@ -58,6 +60,14 @@ def action() -> Action:  # noqa: D103
         name="legal",
         exec=func,
         listen_event_types=[f"{InputEvent.__module__}.{InputEvent.__qualname__}"],
+        config={
+            "output_schema": OutputSchema(
+                output_schema=RowTypeInfo(
+                    [BasicTypeInfo.INT_TYPE_INFO()],
+                    ["result"],
+                )
+            )
+        },
     )
 
 
@@ -65,7 +75,7 @@ current_dir = Path(__file__).parent
 
 
 def test_action_serialize(action: Action) -> None:  # noqa: D103
-    json_value = action.model_dump_json(serialize_as_any=True)
+    json_value = action.model_dump_json(serialize_as_any=True, indent=4)
     with Path.open(Path(f"{current_dir}/resources/action.json")) as f:
         expected_json = f.read()
     actual = json.loads(json_value)

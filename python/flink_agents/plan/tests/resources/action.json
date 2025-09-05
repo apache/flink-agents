@@ -1,11 +1,28 @@
 {
     "name": "legal",
     "exec": {
+        "func_type": "PythonFunction",
         "module": "flink_agents.plan.tests.test_action",
-        "qualname": "legal_signature",
-        "func_type": "PythonFunction"
+        "qualname": "legal_signature"
     },
     "listen_event_types": [
         "flink_agents.api.events.event.InputEvent"
-    ]
+    ],
+    "config": {
+        "config_type": "python",
+        "output_schema": [
+            "flink_agents.api.agents.react_agent",
+            "OutputSchema",
+            {
+                "output_schema": {
+                    "names": [
+                        "result"
+                    ],
+                    "types": [
+                        "Integer"
+                    ]
+                }
+            }
+        ]
+    }
 }

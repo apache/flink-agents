@@ -118,6 +118,14 @@ def test_prompt_lack_one_argument(text_prompt: Prompt) -> None:  # noqa: D103
         review="The headphones broke after one week of use. Very poor quality",
     ) == (
         "You ara a product review analyzer, please generate a score and the "
-        "dislike reasons(if any) for the review. The product 12345 is description, "
+        "dislike reasons(if any) for the review. The product 12345 is {description}, "
         "and user review is 'The headphones broke after one week of use. Very poor quality'."
     )
+
+
+def test_prompt_contain_json_schema() -> None:  # noqa: D103
+    prompt = Prompt.from_text(
+        name="prompt",
+        text=f"The json schema is {Prompt.model_json_schema(mode='serialization')}",
+    )
+    prompt.format_string()

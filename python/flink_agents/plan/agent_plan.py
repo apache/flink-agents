@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, field_serializer, model_validator
 
@@ -162,6 +162,38 @@ class AgentPlan(BaseModel):
         """
         return [self.actions[name] for name in self.actions_by_event[event_type]]
 
+    def get_action_config(self, action_name: str) -> Dict[str, Any]:
+        """Get config of the action.
+
+        Parameters
+        ----------
+        action_name : str
+            The name of the action.
+
+        Returns:
+        -------
+        Dict[str, Any]
+            The config of action.
+        """
+        return self.actions[action_name].config
+
+    def get_action_config_value(self, action_name: str, key: str) -> Any:
+        """Get config of the action.
+
+        Parameters
+        ----------
+        action_name : str
+            The name of the action.
+        key : str
+            The name of the option.
+
+        Returns:
+        -------
+        Dict[str, Any]
+            The option value of the action config.
+        """
+        return self.actions[action_name].config.get(key, None)
+
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         """Get resource from agent plan.
 
@@ -218,7 +250,7 @@ def _get_actions(agent: Agent) -> List[Action]:
                     ],
                 )
             )
-    for name, action in agent._actions.items():
+    for name, action in agent.actions.items():
         actions.append(
             Action(
                 name=name,
@@ -227,6 +259,7 @@ def _get_actions(agent: Agent) -> List[Action]:
                     f"{event_type.__module__}.{event_type.__name__}"
                     for event_type in action[0]
                 ],
+                config=action[2],
             )
         )
     return actions
@@ -235,7 +268,7 @@ def _get_actions(agent: Agent) -> List[Action]:
 def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
     resource_providers = []
     for name, value in agent.__class__.__dict__.items():
-        if hasattr(value, "_is_chat_model"):
+        if hasattr(value, "_is_chat_model_setup"):
             if isinstance(value, staticmethod):
                 value = value.__func__
 
@@ -249,7 +282,7 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
                     kwargs=kwargs,
                 )
                 resource_providers.append(provider)
-        elif hasattr(value, "_is_chat_model_server"):
+        elif hasattr(value, "_is_chat_model_connection"):
             if isinstance(value, staticmethod):
                 value = value.__func__
 
@@ -285,18 +318,18 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
                 )
             )
 
-    for name, prompt in agent._prompts.items():
+    for name, prompt in agent.resources[ResourceType.PROMPT].items():
         resource_providers.append(
             PythonSerializableResourceProvider.from_resource(name=name, resource=prompt)
         )
 
-    for name, func in agent._tools.items():
+    for name, func in agent.resources[ResourceType.TOOL].items():
         tool = from_callable(name=name, func=func)
         resource_providers.append(
             PythonSerializableResourceProvider.from_resource(name=name, resource=tool)
         )
 
-    for name, chat_model in agent._chat_models.items():
+    for name, chat_model in agent.resources[ResourceType.CHAT_MODEL].items():
         clazz, kwargs = chat_model
         provider = PythonResourceProvider(
             name=name,
@@ -307,7 +340,7 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
         )
         resource_providers.append(provider)
 
-    for name, connection in agent._chat_model_servers.items():
+    for name, connection in agent.resources[ResourceType.CHAT_MODEL_CONNECTION].items():
         clazz, kwargs = connection
         provider = PythonResourceProvider(
             name=name,

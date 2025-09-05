@@ -15,38 +15,39 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import List
-from uuid import UUID
-
-from flink_agents.api.chat_message import ChatMessage
-from flink_agents.api.events.event import Event
 
 
-class ChatRequestEvent(Event):
-    """Event representing a request to chat model.
+def add(a: int, b: int) -> int:
+    """Calculate the sum of a and b.
 
-    Attributes:
+    Parameters
     ----------
-    model : str
-        The name of the chat model to be chatted with.
-    messages : List[ChatMessage]
-        The input to the chat model.
+    a : int
+        The first operand
+    b : int
+        The second operand
+
+    Returns:
+    -------
+    int:
+        The sum of a and b
     """
-
-    model: str
-    messages: List[ChatMessage]
+    return a + b
 
 
-class ChatResponseEvent(Event):
-    """Event representing a response from chat model.
+def multiply(a: int, b: int) -> int:
+    """Useful function to multiply two numbers.
 
-    Attributes:
+    Parameters
     ----------
-    request_id : UUID
-        The id of the request event.
-    response : ChatMessage
-        The response from the chat model.
-    """
+    a : int
+        The first operand
+    b : int
+        The second operand
 
-    request_id: UUID
-    response: ChatMessage
+    Returns:
+    -------
+    int:
+        The product of a and b
+    """
+    return a * b
