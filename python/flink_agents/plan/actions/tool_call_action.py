@@ -25,17 +25,24 @@ from flink_agents.plan.function import PythonFunction
 def process_tool_request(event: ToolRequestEvent, ctx: RunnerContext) -> None:
     """Built-in action for processing tool call requests."""
     responses = {}
+    external_ids = {}
     for tool_call in event.tool_calls:
         id = tool_call["id"]
         name = tool_call["function"]["name"]
         kwargs = tool_call["function"]["arguments"]
         tool = ctx.get_resource(name, ResourceType.TOOL)
+        external_id = tool_call.get("original_id")
         if not tool:
             response = f"Tool `{name}` does not exist."
         else:
             response = tool.call(**kwargs)
         responses[id] = response
-    ctx.send_event(ToolResponseEvent(request=event, responses=responses))
+        external_ids[id] = external_id
+    ctx.send_event(
+        ToolResponseEvent(
+            request_id=event.id, responses=responses, external_ids=external_ids
+        )
+    )
 
 
 TOOL_CALL_ACTION = Action(

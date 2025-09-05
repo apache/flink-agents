@@ -16,29 +16,29 @@
 # limitations under the License.
 #################################################################################
 import copy
-from typing import List, cast
+from typing import TYPE_CHECKING, List, cast
 from uuid import UUID
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
-from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.function import PythonFunction
 
-TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
+if TYPE_CHECKING:
+    from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
+
+_TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
+_TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT"
 
 
 def chat(
-    request_id: UUID,
+    initial_request_id: UUID,
     model: str,
-    chat_model: BaseChatModelSetup,
     messages: List[ChatMessage],
-    short_term_memory: MemoryObject,
     ctx: RunnerContext,
 ) -> None:
     """Chat with llm.
@@ -47,8 +47,13 @@ def chat(
     otherwise, we generate tool request event according to the tool calls in chat model
     response, and save the request and response messages in tool call context.
     """
+    chat_model = cast(
+        "BaseChatModelSetup", ctx.get_resource(model, ResourceType.CHAT_MODEL)
+    )
+
     # TODO: support async execution of chat.
     response = chat_model.chat(messages)
+    short_term_memory = ctx.get_short_term_memory()
 
     # generate tool request event according tool calls in response
     if len(response.tool_calls) > 0:
@@ -60,33 +65,43 @@ def chat(
         #  After memory supports remove, we can use "TOOL_CALL_CONTEXT/request_id"
         #  to store and remove the specific tool context directly.
 
-        # get tool call context
-        tool_call_context = short_term_memory.get(TOOL_CALL_CONTEXT)
+        # save tool call context
+        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
         if not tool_call_context:
             tool_call_context = {}
-        if request_id not in tool_call_context:
-            tool_call_context[request_id] = copy.deepcopy(messages)
+        if initial_request_id not in tool_call_context:
+            tool_call_context[initial_request_id] = copy.deepcopy(messages)
         # append response to tool call context
-        tool_call_context[request_id].append(response)
+        tool_call_context[initial_request_id].append(response)
         # update tool call context
-        short_term_memory.set(TOOL_CALL_CONTEXT, tool_call_context)
-        ctx.send_event(
-            ToolRequestEvent(
-                id=request_id,
-                model=model,
-                tool_calls=response.tool_calls,
-            )
+        short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
+
+        tool_request_event = ToolRequestEvent(
+            model=model,
+            tool_calls=response.tool_calls,
         )
+
+        # save tool request event context
+        tool_request_event_context = tool_call_context.get(_TOOL_REQUEST_EVENT_CONTEXT)
+        if not tool_request_event_context:
+            tool_request_event_context = {}
+        tool_request_event_context[tool_request_event.id] = {
+            "initial_request_id": initial_request_id,
+            "model": model,
+        }
+        short_term_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, tool_request_event_context)
+
+        ctx.send_event(tool_request_event)
     # if there is no tool call generated, return chat response directly
     else:
         # clear tool call context related to specific request id
-        tool_call_context = short_term_memory.get(TOOL_CALL_CONTEXT)
-        if tool_call_context and request_id in tool_call_context:
-            tool_call_context.pop(request_id)
-            short_term_memory.set(TOOL_CALL_CONTEXT, tool_call_context)
+        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
+        if tool_call_context and initial_request_id in tool_call_context:
+            tool_call_context.pop(initial_request_id)
+            short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
         ctx.send_event(
             ChatResponseEvent(
-                request_id=request_id,
+                request_id=initial_request_id,
                 response=response,
             )
         )
@@ -100,43 +115,49 @@ def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> N
     """
     short_term_memory = ctx.get_short_term_memory()
     if isinstance(event, ChatRequestEvent):
-        chat_model = cast(
+        cast(
             "BaseChatModelSetup", ctx.get_resource(event.model, ResourceType.CHAT_MODEL)
         )
 
         chat(
-            request_id=event.id,
+            initial_request_id=event.id,
             model=event.model,
-            chat_model=chat_model,
             messages=event.messages,
-            short_term_memory=short_term_memory,
             ctx=ctx,
         )
 
     elif isinstance(event, ToolResponseEvent):
-        request_id = event.request.id
-        model = event.request.model
+        request_id = event.request_id
+
+        # get correspond tool request event context
+        tool_request_event_context = short_term_memory.get(_TOOL_REQUEST_EVENT_CONTEXT)
+        initial_request_id = tool_request_event_context[request_id][
+            "initial_request_id"
+        ]
+        model = tool_request_event_context[request_id]["model"]
+        # clear tool request event context
+        tool_request_event_context.pop(request_id)
+        short_term_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, tool_request_event_context)
+
         responses = event.responses
-
         # update tool call context
-        tool_call_context = short_term_memory.get(TOOL_CALL_CONTEXT)
-        for response in responses.values():
-            tool_call_context[request_id].append(
-                ChatMessage(role=MessageRole.TOOL, content=str(response),
-                            extra_args={"external_id": event.request.external_id} if event.request.external_id else {})
+        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
+        for id, response in responses.items():
+            tool_call_context[initial_request_id].append(
+                ChatMessage(
+                    role=MessageRole.TOOL,
+                    content=str(response),
+                    extra_args={"external_id": event.external_ids[id]}
+                    if event.external_ids[id]
+                    else {},
+                )
             )
-        short_term_memory.set(TOOL_CALL_CONTEXT, tool_call_context)
-
-        chat_model = cast(
-            "BaseChatModelSetup", ctx.get_resource(model, ResourceType.CHAT_MODEL)
-        )
+        short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
 
         chat(
-            request_id=request_id,
+            initial_request_id=initial_request_id,
             model=model,
-            chat_model=chat_model,
-            messages=tool_call_context[request_id],
-            short_term_memory=short_term_memory,
+            messages=tool_call_context[initial_request_id],
             ctx=ctx,
         )
 

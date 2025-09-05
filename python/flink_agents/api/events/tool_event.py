@@ -15,9 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from uuid import UUID
-from typing import Any, Optional
 
 from flink_agents.api.events.event import Event
 
@@ -31,14 +30,10 @@ class ToolRequestEvent(Event):
         name of the model that generated the tool request.
     tool_calls : List[Dict[str, Any]]
         tool calls that should be executed in batch.
-    external_id : Optional[str]
-        Optional identifier for storing original tool call IDs from external systems
-        (e.g., Anthropic tool_use_id).
     """
 
     model: str
     tool_calls: List[Dict[str, Any]]
-    external_id: Optional[str] = None
 
 
 class ToolResponseEvent(Event):
@@ -46,11 +41,15 @@ class ToolResponseEvent(Event):
 
     Attributes:
     ----------
-    request : ToolRequestEvent
-        The correspond request of the response.
+    request_id : UUID
+        The id of the request event.
     responses : Dict[UUID, Any]
         The dict maps tool call id to result.
+    external_ids : Dict[UUID, str]
+        Optional identifier for storing original tool call IDs from external systems
+        (e.g., Anthropic tool_use_id).
     """
 
-    request: ToolRequestEvent
+    request_id: UUID
     responses: Dict[UUID, Any]
+    external_ids: Dict[UUID, Optional[str]]
