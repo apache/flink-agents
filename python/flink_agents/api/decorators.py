@@ -87,6 +87,41 @@ def chat_model_setup(func: Callable) -> Callable:
     return func
 
 
+def embedding_model_connection(func: Callable) -> Callable:
+    """Decorator for marking a function declaring an embedding model connection.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare an embedding model
+        connection.
+    """
+    func._is_embedding_model_connection = True
+    return func
+
+
+def embedding_model_setup(func: Callable) -> Callable:
+    """Decorator for marking a function declaring an embedding model setup.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare an embedding model.
+    """
+    func._is_embedding_model_setup = True
+    return func
+
+
 def tool(func: Callable) -> Callable:
     """Decorator for marking a function declaring a tool.
 

@@ -25,13 +25,14 @@ from pydantic import BaseModel, Field, model_validator
 class ResourceType(Enum):
     """Type enum of resource.
 
-    Currently, support chat_model, chat_model_server, tool and prompt.
+    Currently, support chat_model, chat_model_server, tool, embedding_model and prompt.
     """
 
     CHAT_MODEL = "chat_model"
     CHAT_MODEL_CONNECTION = "chat_model_connection"
     TOOL = "tool"
-    # EMBEDDING_MODEL = "embedding_model"
+    EMBEDDING_MODEL = "embedding_model"
+    EMBEDDING_MODEL_CONNECTION = "embedding_model_connection"
     PROMPT = "prompt"
     # VECTOR_STORE = "vector_store"
     # MCP_SERVER = "mcp_server"
