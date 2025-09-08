@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
@@ -33,7 +34,6 @@ import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
-import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
@@ -68,7 +68,6 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
@@ -133,8 +132,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final transient List<EventListener> eventListeners;
 
     private final transient ActionStateStore actionStateStore;
-    // Action state for each action, used to store the action's internal state.
-    private final transient Map<String, ActionState> actionStates;
 
     public ActionExecutionOperator(
             AgentPlan agentPlan,
@@ -149,7 +146,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.eventLogger = EventLoggerFactory.createLogger(EventLoggerConfig.builder().build());
         this.eventListeners = new ArrayList<>();
         this.actionStateStore = new KafkaActionStateStore();
-        this.actionStates = new HashMap<>();
     }
 
     @Override
@@ -317,8 +313,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         boolean isFinished = false;
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt;
-        ActionState actionState =
-                actionStates.get(ActionStateUtil.generateKey(key, actionTask.action));
+        ActionState actionState = actionStateStore.get(key, actionTask.action);
         if (actionState != null) {
             isFinished = actionState.getGeneratedActionTask().isPresent();
             outputEvents = actionState.getOutputEvents();
@@ -332,7 +327,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         } else {
             initActionState(key, actionTask.action, actionTask.event);
             ActionTask.ActionTaskResult actionTaskResult = actionTask.invoke();
-            persistTaskResult(key, actionTask.action, actionTaskResult);
+            persistTaskResult(
+                    key,
+                    actionTask.action,
+                    actionTask.getRunnerContext().getShortTermMemory(),
+                    actionTaskResult);
             isFinished = actionTaskResult.isFinished();
             outputEvents = actionTaskResult.getOutputEvents();
             generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
@@ -523,7 +522,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void recoverActionState(Object key) {
-        actionStates.putAll(actionStateStore.getAll(key));
+        actionStateStore.rebuildState(key);
     }
 
     private void initActionState(Object key, Action action, Event event) {
@@ -532,18 +531,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void persistTaskResult(
-            Object key, Action action, ActionTask.ActionTaskResult actionTaskResult) {
+            Object key,
+            Action action,
+            MemoryObject memory,
+            ActionTask.ActionTaskResult actionTaskResult) {
         ActionState actionState = actionStateStore.get(key, action);
         actionState.setGeneratedActionTask(actionTaskResult.getGeneratedActionTask().orElse(null));
 
-        for (MemoryUpdate memoryUpdate : actionTaskResult.getMemoryUpdates()) {
-            actionStateStore.get(key, action).addMemoryUpdate(memoryUpdate);
+        for (MemoryUpdate memoryUpdate : memory.getAllUpdates()) {
+            actionState.addMemoryUpdate(memoryUpdate);
         }
 
         for (Event event : actionTaskResult.getOutputEvents()) {
-            actionStateStore.get(key, action).addEvent(event);
+            actionState.addEvent(event);
         }
-        actionStateStore.put(key, action, actionStates.get(key));
+        actionStateStore.put(key, action, actionState);
     }
 
     /** Failed to execute Action task. */

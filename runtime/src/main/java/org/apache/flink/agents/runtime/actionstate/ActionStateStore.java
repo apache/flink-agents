@@ -30,7 +30,7 @@ public interface ActionStateStore {
      * @param action the action the agent is taking
      * @param state the current state of the whole task
      */
-    public void put(Object key, Action action, ActionState state);
+    void put(Object key, Action action, ActionState state);
 
     /**
      * Retrieve the state of a specific action associated with a given key from the backend storage.
@@ -39,7 +39,7 @@ public interface ActionStateStore {
      * @param action the action the agent is taking
      * @return the state of the action, or null if not found
      */
-    public ActionState get(Object key, Action action);
+    ActionState get(Object key, Action action);
 
     /**
      * Retrieve all states associated with a given key from the backend storage.
@@ -47,5 +47,5 @@ public interface ActionStateStore {
      * @param key the key associated with the message
      * @return a map of key of action to action states associated with the key
      */
-    public Map<String, ActionState> getAll(Object key);
+    Map<String, ActionState> rebuildState(Object key);
 }
