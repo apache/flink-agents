@@ -18,28 +18,48 @@
 package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.flink.agents.plan.Action;
+import org.apache.flink.annotation.VisibleForTesting;
 
+import java.util.HashMap;
 import java.util.Map;
+
+import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.generateKey;
 
 /**
  * An implementation of ActionStateStore that uses Kafka as the backend storage for action states.
  * This class provides methods to put, get, and retrieve all action states associated with a given
  * key and action.
- *
- * <p>TODO: Implement the methods to interact with Kafka for storing and retrieving action states.
  */
 public class KafkaActionStateStore implements ActionStateStore {
 
-    @Override
-    public void put(Object key, Action action, ActionState state) {}
+    // In memory action state for quick state retrival
+    private final Map<String, ActionState> actionStates;
 
-    @Override
-    public ActionState get(Object key, Action action) {
-        return new ActionState(null);
+    @VisibleForTesting
+    KafkaActionStateStore(Map<String, ActionState> actionStates) {
+        this.actionStates = actionStates;
+    }
+
+    /** Constructs a new KafkaActionStateStore with an empty in-memory action state map. */
+    public KafkaActionStateStore() {
+        this(new HashMap<>());
     }
 
     @Override
-    public Map<String, ActionState> getAll(Object key) {
+    public void put(Object key, Action action, ActionState state) {
+        actionStates.put(generateKey(key, action), state);
+        // TODO: Implement the logic to store the action state in Kafka
+    }
+
+    @Override
+    public ActionState get(Object key, Action action) {
+        return actionStates.get(generateKey(key, action));
+    }
+
+    @Override
+    public Map<String, ActionState> rebuildState(Object key) {
+        // TODO: implement the logic to retrieve all action states associated with the key from
+        // Kafka
         return Map.of();
     }
 }
