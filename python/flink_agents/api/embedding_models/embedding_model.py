@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 from pydantic import Field
 from typing_extensions import override
@@ -45,7 +45,7 @@ class BaseEmbeddingModelConnection(Resource, ABC):
         return ResourceType.EMBEDDING_MODEL_CONNECTION
 
     @abstractmethod
-    def embed_query(self, text: str, **kwargs: Any) -> List[float]:
+    def embed_query(self, text: str, **kwargs: Any) -> list[float]:
         """Generate embedding vector for a single text query.
 
         Converts the input text into a high-dimensional vector representation
@@ -84,7 +84,7 @@ class BaseEmbeddingModelSetup(Resource, ABC):
     def model_kwargs(self) -> Dict[str, Any]:
         """Return embedding model settings."""
 
-    def embed_query(self, text: str, **kwargs: Any) -> List[float]:
+    def embed_query(self, text: str, **kwargs: Any) -> list[float]:
         """Generate embedding vector for a single text query.
 
         Converts the input text into a high-dimensional vector representation
