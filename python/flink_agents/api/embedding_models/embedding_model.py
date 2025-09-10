@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Any, Dict
 
 from pydantic import Field
 from typing_extensions import override
@@ -53,6 +53,7 @@ class BaseEmbeddingModelConnection(Resource, ABC):
 
         Args:
             text: The text string to convert into an embedding vector.
+            **kwargs: Additional parameters passed to the embedding model.
 
         Returns:
             A list of floating-point numbers representing the embedding vector.
@@ -92,6 +93,7 @@ class BaseEmbeddingModelSetup(Resource, ABC):
 
         Args:
             text: The text string to convert into an embedding vector.
+            **kwargs: Additional parameters passed to the embedding model.
 
         Returns:
             A list of floating-point numbers representing the embedding vector.

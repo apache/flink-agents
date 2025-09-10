@@ -29,13 +29,14 @@ DEFAULT_REQUEST_TIMEOUT = 30.0
 
 
 class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
-    """Ollama Embedding Model Connection which manages the connection to the Ollama server.
+    """Ollama Embedding Model Connection which manages connection to Ollama server.
 
     Visit https://ollama.com/ to download and install Ollama.
 
     Run `ollama serve` to start a server.
 
-    Run `ollama pull <model_name>` to download an embedding model(e.g. nomic-embed-text, all-minilm, etc) to run.
+    Run `ollama pull <model_name>` to download an embedding model
+    (e.g. nomic-embed-text, all-minilm, etc) to run.
 
     Attributes:
     ----------
@@ -83,7 +84,6 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
 
     def embed_query(self, text: str, **kwargs: Any) -> list[float]:
         """Generate embedding vector for a single text query."""
-
         # Extract specific parameters
         keep_alive = kwargs.pop("keep_alive", None)
         truncate = kwargs.pop("truncate", True)
@@ -100,18 +100,20 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
 
 
 class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
-    """Ollama embedding model setup which manages embedding configuration and will internally
-    call ollama embedding model connection to generate embeddings.
+    """Ollama embedding model setup which manages embedding configuration
+    and will internally call ollama embedding model connection to generate embeddings.
 
     Attributes:
     ----------
     truncate : bool
-        Controls what happens if input text exceeds model's maximum length (default: True).
+        Controls what happens if input text exceeds model's maximum length
+        (default: True).
     keep_alive : Optional[Union[float, str]]
         Controls how long the model will stay loaded into memory following the
         request (default: 5m)
     additional_kwargs : Dict[str, Any]
-        Additional model parameters for the Ollama embeddings API, e.g. num_ctx, temperature, etc.
+        Additional model parameters for the Ollama embeddings API,
+        e.g. num_ctx, temperature, etc.
     """
 
     truncate: bool = Field(
@@ -130,9 +132,10 @@ class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
 
     def __init__(
         self,
+        *,
         connection_name: str,
         model_name: str,
-        truncate: bool,
+        truncate: bool = True,
         additional_kwargs: Optional[Dict[str, Any]] = None,
         keep_alive: Optional[Union[float, str]] = None,
         **kwargs: Any,
