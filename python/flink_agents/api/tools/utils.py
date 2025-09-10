@@ -17,12 +17,13 @@
 #################################################################################
 import typing
 from inspect import signature
-from typing import Any, Callable, Optional, Type, Union
+from typing import Any, Callable, Dict, Optional, Type, Union
 
 from docstring_parser import parse
 from pydantic import BaseModel, create_model
 from pydantic.fields import Field, FieldInfo
 
+from mcp import types
 
 def create_schema_from_function(name: str, func: Callable) -> Type[BaseModel]:
     """Create a pydantic schema from a function's signature."""
@@ -38,7 +39,11 @@ def create_schema_from_function(name: str, func: Callable) -> Type[BaseModel]:
     for param_name in params:
         param_type = params[param_name].annotation
         param_default = params[param_name].default
-        description = doc_params[param_name].description
+        description = doc_params.get(param_name, None)
+        if description is not None:
+            description = description.description
+        else:
+            description = f"Parameter: {param_name}"
 
         if typing.get_origin(param_type) is typing.Annotated:
             args = typing.get_args(param_type)
@@ -172,3 +177,44 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
         main_fields[field_name] = (field_type, Field(**field_params))
 
     return create_model(name, **main_fields, __doc__=schema.get("description", ""))
+
+
+def extract_mcp_content_item(content_item: Any) -> Dict[str, Any]:
+    """Extract and normalize a single MCP content item.
+
+    Args:
+        content_item: A single MCP content item (TextContent, ImageContent, etc.)
+
+    Returns:
+        Dict representation of the content item
+
+    Raises:
+        ImportError: If MCP types are not available
+    """
+    if types is None:
+        raise ImportError("MCP types not available. Please install the mcp package.")
+
+    if isinstance(content_item, types.TextContent):
+        return {"type": "text", "text": content_item.text}
+    elif isinstance(content_item, types.ImageContent):
+        return {
+            "type": "image",
+            "data": content_item.data,
+            "mimeType": content_item.mimeType
+        }
+    elif isinstance(content_item, types.EmbeddedResource):
+        if isinstance(content_item.resource, types.TextResourceContents):
+            return {
+                "type": "resource",
+                "uri": content_item.resource.uri,
+                "text": content_item.resource.text
+            }
+        elif isinstance(content_item.resource, types.BlobResourceContents):
+            return {
+                "type": "resource",
+                "uri": content_item.resource.uri,
+                "blob": content_item.resource.blob
+            }
+    else:
+        # Handle unknown content types as generic dict
+        return content_item.model_dump() if hasattr(content_item, 'model_dump') else str(content_item)

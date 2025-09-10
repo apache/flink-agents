@@ -317,6 +317,17 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
                     name=name, resource=prompt
                 )
             )
+        elif hasattr(value, "_is_mcp_server"):
+            if isinstance(value, staticmethod):
+                value = value.__func__
+
+            if callable(value):
+                mcp_resource = value()
+                resource_providers.append(
+                    PythonSerializableResourceProvider.from_resource(
+                        name=name, resource=mcp_resource
+                    )
+                )
 
     for name, prompt in agent.resources[ResourceType.PROMPT].items():
         resource_providers.append(
@@ -326,8 +337,19 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
     for name, func in agent.resources[ResourceType.TOOL].items():
         tool = from_callable(name=name, func=func)
         resource_providers.append(
-            PythonSerializableResourceProvider.from_resource(name=name, resource=tool)
+            PythonSerializableResourceProvider.from_resource(
+                name=name, resource=tool
+            )
         )
+
+   # Add MCP servers registered via Agent.add_mcp_server
+    if hasattr(agent, "_mcp_servers"):
+        for name, mcp_server in agent._mcp_servers.items():
+            resource_providers.append(
+                PythonSerializableResourceProvider.from_resource(
+                    name=name, resource=mcp_server
+                )
+            )
 
     for name, chat_model in agent.resources[ResourceType.CHAT_MODEL].items():
         clazz, kwargs = chat_model

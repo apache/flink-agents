@@ -34,7 +34,7 @@ class ResourceType(Enum):
     # EMBEDDING_MODEL = "embedding_model"
     PROMPT = "prompt"
     # VECTOR_STORE = "vector_store"
-    # MCP_SERVER = "mcp_server"
+    MCP_SERVER = "mcp_server"
 
 
 class Resource(BaseModel, ABC):

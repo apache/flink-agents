@@ -119,3 +119,20 @@ def prompt(func: Callable) -> Callable:
     """
     func._is_prompt = True
     return func
+
+
+def mcp_server(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a MCP server.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare a MCP server.
+    """
+    func._is_mcp_server = True
+    return func
