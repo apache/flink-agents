@@ -44,6 +44,7 @@ public class SchemaUtils {
         Parameter[] parameters = method.getParameters();
         for (Parameter param : parameters) {
             String paramName = param.getName();
+            String paramDescription = null;
 
             // Check for custom parameter name from annotation
             if (param.isAnnotationPresent(ToolParam.class)) {
@@ -54,9 +55,13 @@ public class SchemaUtils {
                 if (toolParam.required()) {
                     required.add(paramName);
                 }
+                if (!toolParam.description().isEmpty()) {
+                    paramDescription = toolParam.description();
+                }
             }
 
             Map<String, Object> paramSchema = getParamSchema(param);
+            paramSchema.put("description", paramDescription);
 
             properties.put(paramName, paramSchema);
         }
