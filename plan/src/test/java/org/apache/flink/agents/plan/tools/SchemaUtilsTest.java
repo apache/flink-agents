@@ -13,24 +13,30 @@ class SchemaUtilsTest {
 
     private static class TestClass {
         public void methodWithBasicTypes(
-                @ToolParam(name = "stringParam", description = "A string parameter") String strParam,
-                @ToolParam(name = "intParam", description = "An integer parameter", required = false) int intParam,
-                @ToolParam(name = "boolParam", description = "A boolean parameter") boolean boolParam) {
-        }
+                @ToolParam(name = "stringParam", description = "A string parameter")
+                        String strParam,
+                @ToolParam(
+                                name = "intParam",
+                                description = "An integer parameter",
+                                required = false)
+                        int intParam,
+                @ToolParam(name = "boolParam", description = "A boolean parameter")
+                        boolean boolParam) {}
 
-        public void methodWithoutAnnotations(String param1, int param2) {
-        }
+        public void methodWithoutAnnotations(String param1, int param2) {}
 
         public void methodWithCustomObject(
-                @ToolParam(name = "objectParam", description = "A custom object parameter") Object customObject) {
-        }
+                @ToolParam(name = "objectParam", description = "A custom object parameter")
+                        Object customObject) {}
     }
 
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
     void testGenerateSchemaWithBasicTypes() throws Exception {
-        Method method = TestClass.class.getMethod("methodWithBasicTypes", String.class, int.class, boolean.class);
+        Method method =
+                TestClass.class.getMethod(
+                        "methodWithBasicTypes", String.class, int.class, boolean.class);
         String schema = SchemaUtils.generateSchema(method);
         final JsonNode jsonNode = mapper.readTree(schema);
 
@@ -45,17 +51,20 @@ class SchemaUtilsTest {
         // Validate String parameter
         assertTrue(properties.has("stringParam"));
         assertEquals("string", properties.get("stringParam").get("type").asText());
-        assertEquals("A string parameter", properties.get("stringParam").get("description").asText());
+        assertEquals(
+                "A string parameter", properties.get("stringParam").get("description").asText());
 
         // Validate Integer parameter
         assertTrue(properties.has("intParam"));
         assertEquals("integer", properties.get("intParam").get("type").asText());
-        assertEquals("An integer parameter", properties.get("intParam").get("description").asText());
+        assertEquals(
+                "An integer parameter", properties.get("intParam").get("description").asText());
 
         // Validate Boolean parameter
         assertTrue(properties.has("boolParam"));
         assertEquals("boolean", properties.get("boolParam").get("type").asText());
-        assertEquals("A boolean parameter", properties.get("boolParam").get("description").asText());
+        assertEquals(
+                "A boolean parameter", properties.get("boolParam").get("description").asText());
 
         // Validate required fields
         JsonNode required = jsonNode.get("required");
@@ -68,7 +77,6 @@ class SchemaUtilsTest {
         assertFalse(required.toString().contains("intParam"));
     }
 
-
     @Test
     void testGenerateSchemaWithCustomObject() throws Exception {
         Method method = TestClass.class.getMethod("methodWithCustomObject", Object.class);
@@ -79,7 +87,9 @@ class SchemaUtilsTest {
         JsonNode properties = jsonNode.get("properties");
         assertTrue(properties.has("objectParam"));
         assertEquals("object", properties.get("objectParam").get("type").asText());
-        assertEquals("A custom object parameter", properties.get("objectParam").get("description").asText());
+        assertEquals(
+                "A custom object parameter",
+                properties.get("objectParam").get("description").asText());
 
         // Validate required field (default is true)
         JsonNode required = jsonNode.get("required");
