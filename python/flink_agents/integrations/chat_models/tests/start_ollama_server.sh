@@ -26,7 +26,15 @@ if [[ $os == "Linux" ]]; then
   then
     exit $ret
   fi
-  ollama serve
+
+  if curl -f http://localhost:11434/api/tags >/dev/null 2>&1; then
+      echo "Ollama is already running"
+  else
+      echo "Starting Ollama server"
+      ollama serve &
+      sleep 10 # wait for ollama to start
+  fi
+
   ollama pull qwen3:0.6b
   ollama run qwen3:0.6b
 fi
