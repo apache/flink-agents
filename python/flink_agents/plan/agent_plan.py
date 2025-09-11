@@ -296,6 +296,34 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
                     kwargs=kwargs,
                 )
                 resource_providers.append(provider)
+        elif hasattr(value, "_is_embedding_model_setup"):
+            if isinstance(value, staticmethod):
+                value = value.__func__
+
+            if callable(value):
+                clazz, kwargs = value()
+                provider = PythonResourceProvider(
+                    name=name,
+                    type=clazz.resource_type(),
+                    module=clazz.__module__,
+                    clazz=clazz.__name__,
+                    kwargs=kwargs,
+                )
+                resource_providers.append(provider)
+        elif hasattr(value, "_is_embedding_model_connection"):
+            if isinstance(value, staticmethod):
+                value = value.__func__
+
+            if callable(value):
+                clazz, kwargs = value()
+                provider = PythonResourceProvider(
+                    name=name,
+                    type=clazz.resource_type(),
+                    module=clazz.__module__,
+                    clazz=clazz.__name__,
+                    kwargs=kwargs,
+                )
+                resource_providers.append(provider)
         elif hasattr(value, "_is_tool"):
             if isinstance(value, staticmethod):
                 value = value.__func__
@@ -341,6 +369,28 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
         resource_providers.append(provider)
 
     for name, connection in agent.resources[ResourceType.CHAT_MODEL_CONNECTION].items():
+        clazz, kwargs = connection
+        provider = PythonResourceProvider(
+            name=name,
+            type=clazz.resource_type(),
+            module=clazz.__module__,
+            clazz=clazz.__name__,
+            kwargs=kwargs,
+        )
+        resource_providers.append(provider)
+
+    for name, embedding_model in agent.resources[ResourceType.EMBEDDING_MODEL].items():
+        clazz, kwargs = embedding_model
+        provider = PythonResourceProvider(
+            name=name,
+            type=clazz.resource_type(),
+            module=clazz.__module__,
+            clazz=clazz.__name__,
+            kwargs=kwargs,
+        )
+        resource_providers.append(provider)
+
+    for name, connection in agent.resources[ResourceType.EMBEDDING_MODEL_CONNECTION].items():
         clazz, kwargs = connection
         provider = PythonResourceProvider(
             name=name,

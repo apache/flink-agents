@@ -56,30 +56,10 @@ except Exception:
 @pytest.mark.skipif(
     client is None, reason="Ollama client is not available or test embedding model is missing"
 )
-def test_ollama_embedding_connection() -> None:
-    """Test basic embedding functionality with OllamaEmbeddingModelConnection."""
-    connection = OllamaEmbeddingModelConnection(
-        name="ollama_embed",
-        model=test_model,
-        base_url="http://localhost:11434"
-    )
-
-    # Test basic embedding
-    embedding = connection.embed_query("Hello world")
-    assert embedding is not None
-    assert isinstance(embedding, list)
-    assert len(embedding) > 0
-    assert all(isinstance(x, float) for x in embedding)
-
-
-@pytest.mark.skipif(
-    client is None, reason="Ollama client is not available or test embedding model is missing"
-)
 def test_ollama_embedding_setup() -> None:
     """Test embedding functionality with OllamaEmbeddingModelSetup."""
     connection = OllamaEmbeddingModelConnection(
         name="ollama_embed",
-        model=test_model,
         base_url="http://localhost:11434"
     )
 
@@ -88,14 +68,14 @@ def test_ollama_embedding_setup() -> None:
 
     setup = OllamaEmbeddingModelSetup(
         name="embeddings",
-        connection_name="ollama_embed",
-        model_name=test_model,
+        connection="ollama_embed",
+        model=test_model,
         truncate=True,
         get_resource=get_resource
     )
 
     # Test embedding through setup
-    embedding = setup.embed_query("This is a test sentence for embedding.")
+    embedding = setup.embed("This is a test sentence for embedding.")
     assert embedding is not None
     assert isinstance(embedding, list)
     assert len(embedding) > 0

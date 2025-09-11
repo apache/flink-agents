@@ -22,6 +22,10 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
+from flink_agents.api.embedding_models.embedding_model import (
+    BaseEmbeddingModelConnection,
+    BaseEmbeddingModelSetup,
+)
 from flink_agents.api.events.event import Event
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceType
@@ -218,4 +222,60 @@ class Agent(ABC):
             raise ValueError(msg)
         kwargs["name"] = name
         self._resources[ResourceType.CHAT_MODEL][name] = (chat_model, kwargs)
+        return self
+
+    def add_embedding_model_connection(
+        self, name: str, connection: Type[BaseEmbeddingModelConnection], **kwargs: Any
+    ) -> "Agent":
+        """Add embedding model connection to agent.
+
+        Parameters
+        ----------
+        name : str
+            The name of the embedding model connection, should be unique in the same Agent.
+        connection: Type[BaseEmbeddingModelConnection]
+            The type of embedding model connection.
+        **kwargs: Any
+            Initialize keyword arguments passed to the embedding model connection.
+
+        Returns:
+        -------
+        Agent
+            The modified Agent instance.
+        """
+        if ResourceType.EMBEDDING_MODEL_CONNECTION not in self._resources:
+            self._resources[ResourceType.EMBEDDING_MODEL_CONNECTION] = {}
+        if name in self._resources[ResourceType.EMBEDDING_MODEL_CONNECTION]:
+            msg = f"Embedding model connection {name} already defined"
+            raise ValueError(msg)
+        kwargs["name"] = name
+        self._resources[ResourceType.EMBEDDING_MODEL_CONNECTION][name] = (connection, kwargs)
+        return self
+
+    def add_embedding_model_setup(
+        self, name: str, embedding_model: Type[BaseEmbeddingModelSetup], **kwargs: Any
+    ) -> "Agent":
+        """Add embedding model setup to agent.
+
+        Parameters
+        ----------
+        name : str
+            The name of the embedding model, should be unique in the same Agent.
+        embedding_model: Type[BaseEmbeddingModelSetup]
+            The type of embedding model.
+        **kwargs: Any
+            Initialize keyword arguments passed to the embedding model setup.
+
+        Returns:
+        -------
+        Agent
+            The modified Agent instance.
+        """
+        if ResourceType.EMBEDDING_MODEL not in self._resources:
+            self._resources[ResourceType.EMBEDDING_MODEL] = {}
+        if name in self._resources[ResourceType.EMBEDDING_MODEL]:
+            msg = f"Embedding model setup {name} already defined"
+            raise ValueError(msg)
+        kwargs["name"] = name
+        self._resources[ResourceType.EMBEDDING_MODEL][name] = (embedding_model, kwargs)
         return self

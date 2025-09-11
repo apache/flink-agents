@@ -42,13 +42,10 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
     ----------
     base_url : str
         Base url the Ollama server is hosted under.
-    model : str
-        Embedding model name to use.
     request_timeout : float
         The timeout for making http request to Ollama API server.
     """
 
-    model: str = Field(description="Embedding model name to use.")
     base_url: str = Field(
         default="http://localhost:11434",
         description="Base url the Ollama server is hosted under.",
@@ -61,15 +58,13 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
     __client: Client = None
 
     def __init__(
-        self,
-        model: str,
-        base_url: str = "http://localhost:11434",
-        request_timeout: Optional[float] = DEFAULT_REQUEST_TIMEOUT,
-        **kwargs: Any,
+            self,
+            base_url: str = "http://localhost:11434",
+            request_timeout: Optional[float] = DEFAULT_REQUEST_TIMEOUT,
+            **kwargs: Any,
     ) -> None:
         """Init method."""
         super().__init__(
-            model=model,
             base_url=base_url,
             request_timeout=request_timeout,
             **kwargs,
@@ -82,15 +77,16 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
             self.__client = Client(host=self.base_url, timeout=self.request_timeout)
         return self.__client
 
-    def embed_query(self, text: str, **kwargs: Any) -> list[float]:
+    def embed(self, text: str, **kwargs: Any) -> list[float]:
         """Generate embedding vector for a single text query."""
         # Extract specific parameters
+        model = kwargs.pop("model")
         keep_alive = kwargs.pop("keep_alive", None)
         truncate = kwargs.pop("truncate", True)
 
         # Remaining kwargs become options for the model
         response = self.client.embed(
-            model=self.model,
+            model=model,
             input=text,
             truncate=truncate,
             keep_alive=keep_alive,
@@ -115,7 +111,6 @@ class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
         Additional model parameters for the Ollama embeddings API,
         e.g. num_ctx, temperature, etc.
     """
-
     truncate: bool = Field(
         default=True,
         description="Controls what happens if input text exceeds model's maximum length (default: True).",
@@ -131,21 +126,21 @@ class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
     )
 
     def __init__(
-        self,
-        *,
-        connection_name: str,
-        model_name: str,
-        truncate: bool = True,
-        additional_kwargs: Optional[Dict[str, Any]] = None,
-        keep_alive: Optional[Union[float, str]] = None,
-        **kwargs: Any,
+            self,
+            *,
+            connection: str,
+            model: str,
+            truncate: bool = True,
+            additional_kwargs: Optional[Dict[str, Any]] = None,
+            keep_alive: Optional[Union[float, str]] = None,
+            **kwargs: Any,
     ) -> None:
         """Init method."""
         if additional_kwargs is None:
             additional_kwargs = {}
         super().__init__(
-            connection_name=connection_name,
-            model_name=model_name,
+            connection=connection,
+            model=model,
             truncate=truncate,
             additional_kwargs=additional_kwargs,
             keep_alive=keep_alive,
@@ -156,6 +151,7 @@ class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
     def model_kwargs(self) -> Dict[str, Any]:
         """Return ollama embedding model configuration."""
         base_kwargs = {
+            "model": self.model,
             "truncate": self.truncate,
             "keep_alive": self.keep_alive,
         }

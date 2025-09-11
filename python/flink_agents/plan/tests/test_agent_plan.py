@@ -24,7 +24,8 @@ import pytest
 from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
-from flink_agents.api.decorators import action, chat_model_setup
+from flink_agents.api.decorators import action, chat_model_setup, embedding_model_setup, embedding_model_connection
+from flink_agents.api.embedding_models.embedding_model import BaseEmbeddingModelSetup, BaseEmbeddingModelConnection
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -93,6 +94,20 @@ class MockChatModelImpl(BaseChatModelSetup):  # noqa: D101
         )
 
 
+class MockEmbeddingModelConnection(BaseEmbeddingModelConnection):
+    api_key: str
+
+    def embed(self, text: str, **kwargs: Any) -> list[float]:
+        """Testing Implementation."""
+        return [0.1234, -0.5678, 0.9012, -0.3456, 0.7890]
+
+
+class MockEmbeddingModelSetup(BaseEmbeddingModelSetup):  # noqa: D101
+    @property
+    def model_kwargs(self) -> Dict[str, Any]:  # noqa: D102
+        return {"model": self.model}
+
+
 class MyAgent(Agent):  # noqa: D101
     @chat_model_setup
     @staticmethod
@@ -102,6 +117,23 @@ class MyAgent(Agent):  # noqa: D101
             "host": "8.8.8.8",
             "desc": "mock resource just for testing.",
             "connection": "mock",
+        }
+
+    @embedding_model_connection
+    @staticmethod
+    def mock_embedding_conn() -> Tuple[Type[Resource], Dict[str, Any]]:  # noqa: D102
+        return MockEmbeddingModelConnection, {
+            "name": "mock_embedding_conn",
+            "api_key": "mock-api-key",
+        }
+
+    @embedding_model_setup
+    @staticmethod
+    def mock_embedding() -> Tuple[Type[Resource], Dict[str, Any]]:  # noqa: D102
+        return MockEmbeddingModelSetup, {
+            "name": "mock_embedding",
+            "model": "test-model",
+            "connection": "mock_embedding_conn",
         }
 
     @action(InputEvent)
@@ -162,6 +194,17 @@ def test_add_action_and_resource_to_agent() -> None:  # noqa: D103
         host="8.8.8.8",
         desc="mock resource just for testing.",
         connection="mock",
+    )
+    my_agent.add_embedding_model_connection(
+        name="mock_embedding_conn",
+        connection=MockEmbeddingModelConnection,
+        api_key="mock-api-key",
+    )
+    my_agent.add_embedding_model_setup(
+        name="mock_embedding",
+        embedding_model=MockEmbeddingModelSetup,
+        model="test-model",
+        connection="mock_embedding_conn",
     )
     agent_plan = AgentPlan.from_agent(my_agent, AgentConfiguration({"mock.key": "mock.value"}))
     json_value = agent_plan.model_dump_json(serialize_as_any=True, indent=4)

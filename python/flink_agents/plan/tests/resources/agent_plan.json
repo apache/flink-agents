@@ -84,6 +84,33 @@
                 },
                 "__resource_provider_type__": "PythonResourceProvider"
             }
+        },
+        "embedding_model": {
+            "mock_embedding": {
+                "name": "mock_embedding",
+                "type": "embedding_model",
+                "module": "flink_agents.plan.tests.test_agent_plan",
+                "clazz": "MockEmbeddingModelSetup",
+                "kwargs": {
+                    "name": "mock_embedding",
+                    "model": "test-model",
+                    "connection": "mock_embedding_conn"
+                },
+                "__resource_provider_type__": "PythonResourceProvider"
+            }
+        },
+        "embedding_model_connection": {
+            "mock_embedding_conn": {
+                "name": "mock_embedding_conn",
+                "type": "embedding_model_connection",
+                "module": "flink_agents.plan.tests.test_agent_plan",
+                "clazz": "MockEmbeddingModelConnection",
+                "kwargs": {
+                    "name": "mock_embedding_conn",
+                    "api_key": "mock-api-key"
+                },
+                "__resource_provider_type__": "PythonResourceProvider"
+            }
         }
     },
     "config": {

@@ -45,8 +45,8 @@ class BaseEmbeddingModelConnection(Resource, ABC):
         return ResourceType.EMBEDDING_MODEL_CONNECTION
 
     @abstractmethod
-    def embed_query(self, text: str, **kwargs: Any) -> list[float]:
-        """Generate embedding vector for a single text query.
+    def embed(self, text: str, **kwargs: Any) -> list[float]:
+        """Generate embedding vector for a single text input.
 
         Converts the input text into a high-dimensional vector representation
         suitable for semantic similarity search and retrieval operations.
@@ -65,14 +65,14 @@ class BaseEmbeddingModelSetup(Resource, ABC):
     """Base abstract class for text embedding model setup.
 
     Responsible for managing embedding model configurations, such as:
-    - Connection to embedding model service (connection_name)
-    - Model name (model_name)
+    - Connection to embedding model service (connection)
+    - Model name (model)
 
     Provides the basic embedding interface for generating embeddings from text inputs.
     """
 
-    connection_name: str = Field(description="Name of the referenced connection.")
-    model_name: str = Field(description="Name of the embedding model to use.")
+    connection: str = Field(description="Name of the referenced connection.")
+    model: str = Field(description="Name of the embedding model to use.")
 
     @classmethod
     @override
@@ -85,7 +85,7 @@ class BaseEmbeddingModelSetup(Resource, ABC):
     def model_kwargs(self) -> Dict[str, Any]:
         """Return embedding model settings."""
 
-    def embed_query(self, text: str, **kwargs: Any) -> list[float]:
+    def embed(self, text: str, **kwargs: Any) -> list[float]:
         """Generate embedding vector for a single text query.
 
         Converts the input text into a high-dimensional vector representation
@@ -100,8 +100,8 @@ class BaseEmbeddingModelSetup(Resource, ABC):
             The dimension of the vector depends on the specific embedding model used.
         """
         connection = self.get_resource(
-            self.connection_name, ResourceType.EMBEDDING_MODEL_CONNECTION
+            self.connection, ResourceType.EMBEDDING_MODEL_CONNECTION
         )
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
-        return connection.embed_query(text, **merged_kwargs)
+        return connection.embed(text, **merged_kwargs)
