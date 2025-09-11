@@ -232,7 +232,8 @@ class Agent(ABC):
         Parameters
         ----------
         name : str
-            The name of the embedding model connection, should be unique in the same Agent.
+            The name of the embedding model connection, should be unique in the same
+            Agent.
         connection: Type[BaseEmbeddingModelConnection]
             The type of embedding model connection.
         **kwargs: Any

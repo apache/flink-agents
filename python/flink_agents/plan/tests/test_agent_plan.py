@@ -24,8 +24,16 @@ import pytest
 from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
-from flink_agents.api.decorators import action, chat_model_setup, embedding_model_setup, embedding_model_connection
-from flink_agents.api.embedding_models.embedding_model import BaseEmbeddingModelSetup, BaseEmbeddingModelConnection
+from flink_agents.api.decorators import (
+    action,
+    chat_model_setup,
+    embedding_model_connection,
+    embedding_model_setup,
+)
+from flink_agents.api.embedding_models.embedding_model import (
+    BaseEmbeddingModelConnection,
+    BaseEmbeddingModelSetup,
+)
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -94,7 +102,7 @@ class MockChatModelImpl(BaseChatModelSetup):  # noqa: D101
         )
 
 
-class MockEmbeddingModelConnection(BaseEmbeddingModelConnection):
+class MockEmbeddingModelConnection(BaseEmbeddingModelConnection): # noqa: D101
     api_key: str
 
     def embed(self, text: str, **kwargs: Any) -> list[float]:

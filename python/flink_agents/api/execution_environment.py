@@ -28,11 +28,11 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
+from flink_agents.api.configuration import Configuration
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
 )
-from flink_agents.api.configuration import Configuration
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceType
 
@@ -308,7 +308,8 @@ class AgentsExecutionEnvironment(ABC):
         Parameters
         ----------
         name : str
-            The name of the embedding model connection, should be unique in the same Agent.
+            The name of the embedding model connection, should be unique in the same
+            Agent.
         connection: Type[BaseEmbeddingModelConnection]
             The type of embedding model connection.
         **kwargs: Any
