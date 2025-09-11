@@ -58,6 +58,7 @@ under the License.
         <module>plan</module>
         <module>runtime</module>
         <module>e2e-test</module>
+        <module>integrations</module>
     </modules>
 
     <dependencies>
