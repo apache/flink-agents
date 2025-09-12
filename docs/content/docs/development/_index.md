@@ -1,3 +1,11 @@
+---
+title: Development
+icon: <i class="fa fa-code title maindish" aria-hidden="true"></i>
+bold: true
+bookCollapseSection: true
+sectionBreak: true
+weight: 2
+---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
 or more contributor license agreements.  See the NOTICE file
@@ -16,13 +24,3 @@ KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations
 under the License.
 -->
-<!--
-    Partial that on the footer of every page.
--->
-{{ if .IsPage }}
-{{ $folder := "content" }}
-{{ if eq "/zh" .Site.LanguagePrefix }}
-	{{ $folder = "content.zh" }}
-{{ end }}
-<a href="{{ .Site.Params.Repo }}/edit/{{ .Site.Params.Branch }}/docs/{{ $folder }}/{{ .File.Path }}" style="color:black"><i class="fa fa-edit fa-fw"></i>Edit This Page</a>
-{{ end }}
