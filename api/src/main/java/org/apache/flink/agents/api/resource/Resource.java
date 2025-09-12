@@ -18,12 +18,23 @@
 
 package org.apache.flink.agents.api.resource;
 
+import java.util.function.BiFunction;
+
 /**
  * Base interface for all kinds of resources, including chat models, tools, prompts and so on.
  *
  * <p>Resources are components that can be used by agents during action execution.
  */
 public abstract class Resource {
+    protected BiFunction<String, ResourceType, Resource> getResource;
+
+    protected Resource(
+            BiFunction<String, ResourceType, Resource> getResource, ResourceDescriptor descriptor) {
+        this.getResource = getResource;
+    }
+
+    protected Resource() {}
+
     /**
      * Get the type of the resource.
      *

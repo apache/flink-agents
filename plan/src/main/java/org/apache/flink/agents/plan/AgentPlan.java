@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.annotation.ChatModel;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -321,14 +322,10 @@ public class AgentPlan implements Serializable {
                 addResourceProvider(provider);
             } else if (method.isAnnotationPresent(ChatModel.class)) {
                 String chatModelName = method.getName();
-                Map<String, Object> meta = (Map<String, Object>) method.invoke(null);
+                ResourceDescriptor descriptor = (ResourceDescriptor) method.invoke(null);
                 JavaResourceProvider provider =
                         new JavaResourceProvider(
-                                chatModelName,
-                                ResourceType.CHAT_MODEL,
-                                (String) meta.get(ChatModel.CHAT_MODEL_CLASS_NAME),
-                                (List<Object>) meta.get(ChatModel.CHAT_MODEL_ARGUMENTS),
-                                (List<String>) meta.get(ChatModel.CHAT_MODEL_ARGUMENTS_TYPES));
+                                chatModelName, ResourceType.CHAT_MODEL, descriptor);
                 addResourceProvider(provider);
             }
         }
