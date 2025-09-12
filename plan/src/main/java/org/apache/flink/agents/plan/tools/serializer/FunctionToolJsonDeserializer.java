@@ -18,11 +18,11 @@
 
 package org.apache.flink.agents.plan.tools.serializer;
 
+import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.plan.Function;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.tools.FunctionTool;
-import org.apache.flink.agents.plan.tools.ToolMetadata;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonParser;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.DeserializationContext;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;

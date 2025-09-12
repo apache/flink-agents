@@ -27,14 +27,15 @@ import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
-import org.apache.flink.agents.api.chat.model.BaseChatModel;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.plan.tools.BaseTool;
-import org.apache.flink.agents.plan.tools.ToolParameters;
-import org.apache.flink.agents.plan.tools.ToolResponse;
+import org.apache.flink.agents.api.tools.BaseTool;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -43,34 +44,47 @@ import java.util.Map;
 import java.util.function.BiFunction;
 
 public class AgentWithResource extends Agent {
-    public static class MockChatModel extends BaseChatModel {
+    public static class MockChatModel extends BaseChatModelSetup {
         private final String endpoint;
+        private final Integer topK;
+        private final Double topP;
 
         public MockChatModel(
                 BiFunction<String, ResourceType, Resource> getResource,
-                String endpoint,
-                String promptName,
-                List<String> toolNames) {
-            super(getResource, promptName, toolNames);
-            this.endpoint = endpoint;
+                ResourceDescriptor descriptor) {
+            super(getResource, descriptor);
+            this.endpoint = descriptor.getArgument("endpoint");
+            this.topP = descriptor.getArgument("topP");
+            this.topK = descriptor.getArgument("topK");
         }
 
         @Override
-        public ChatMessage chat(List<ChatMessage> messages) {
-            Prompt prompt = (Prompt) getResource.apply(promptName, ResourceType.PROMPT);
-            BaseTool tool = (BaseTool) getResource.apply(toolNames.get(0), ResourceType.TOOL);
+        public Map<String, Object> getParameters() {
+            Map<String, Object> parameters = new HashMap<>();
+            parameters.put("endpoint", this.endpoint);
+            parameters.put("topP", this.topP);
+            parameters.put("topK", this.topK);
+            return parameters;
+        }
+
+        @Override
+        public ChatMessage chat(List<ChatMessage> messages, Map<String, Object> parameters) {
+            Prompt prompt = (Prompt) getResource.apply((String) this.prompt, ResourceType.PROMPT);
+            BaseTool tool = (BaseTool) getResource.apply(this.tools.get(0), ResourceType.TOOL);
             Map<String, Object> params = new HashMap<>();
             params.put("a", 1);
             params.put("b", 2);
             params.put("operation", "add");
-            ToolParameters parameters = new ToolParameters(params);
-            ToolResponse result = tool.call(parameters);
+            ToolParameters toolParameters = new ToolParameters(params);
+            ToolResponse result = tool.call(toolParameters);
             String output =
                     String.format(
-                            "Prompt: %s, input: %s, endpoint: %s, tool call result: %s",
+                            "Prompt: %s, input: %s, endpoint: %s, topP: %s, topK: %s, tool call result: %s",
                             prompt.formatString(new HashMap<>()),
                             messages.get(0).getContent(),
                             endpoint,
+                            topP,
+                            topK,
                             result.getResult());
             return new ChatMessage(MessageRole.ASSISTANT, output);
         }
@@ -82,16 +96,14 @@ public class AgentWithResource extends Agent {
     }
 
     @ChatModel
-    public static Map<String, Object> myChatModel() {
-        Map<String, Object> meta = new HashMap<>();
-        meta.put(ChatModel.CHAT_MODEL_CLASS_NAME, MockChatModel.class.getName());
-        meta.put(
-                ChatModel.CHAT_MODEL_ARGUMENTS,
-                List.of("127.0.0.1", "myPrompt", List.of("calculate")));
-        meta.put(
-                ChatModel.CHAT_MODEL_ARGUMENTS_TYPES,
-                List.of(String.class.getName(), String.class.getName(), List.class.getName()));
-        return meta;
+    public static ResourceDescriptor myChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(MockChatModel.class.getName())
+                .addInitialArgument("endpoint", "127.0.0.1")
+                .addInitialArgument("topK", 5)
+                .addInitialArgument("topP", 0.2)
+                .addInitialArgument("prompt", "myPrompt")
+                .addInitialArgument("tools", List.of("calculate"))
+                .build();
     }
 
     @Tool(description = "Performs basic arithmetic operations")
@@ -116,12 +128,13 @@ public class AgentWithResource extends Agent {
 
     @Action(listenEvents = {InputEvent.class})
     public static void process(InputEvent event, RunnerContext ctx) throws Exception {
-        BaseChatModel chatModel =
-                (BaseChatModel) ctx.getResource("myChatModel", ResourceType.CHAT_MODEL);
+        BaseChatModelSetup chatModel =
+                (BaseChatModelSetup) ctx.getResource("myChatModel", ResourceType.CHAT_MODEL);
         ChatMessage response =
                 chatModel.chat(
                         Collections.singletonList(
-                                new ChatMessage(MessageRole.USER, (String) event.getInput())));
+                                new ChatMessage(MessageRole.USER, (String) event.getInput())),
+                        Collections.emptyMap());
         ctx.sendEvent(new OutputEvent(response.getContent()));
     }
 }

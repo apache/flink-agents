@@ -20,49 +20,40 @@ package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.BaseTool;
 
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiFunction;
 
-public abstract class BaseChatModel extends Resource {
-    protected final BiFunction<String, ResourceType, Resource> getResource;
-    protected String promptName;
-    protected List<String> toolNames;
+/**
+ * Abstraction of chat model connection.
+ *
+ * <p>Responsible for managing model service connection configurations, such as Service address, API
+ * key, Connection timeout, Model name, Authentication information, etc
+ */
+public abstract class BaseChatModelConnection extends Resource {
 
-    public BaseChatModel(BiFunction<String, ResourceType, Resource> getResource) {
-        this(getResource, null, null);
+    public BaseChatModelConnection(
+            BiFunction<String, ResourceType, Resource> getResource, ResourceDescriptor descriptor) {
+        super(getResource, descriptor);
     }
 
-    public BaseChatModel(
-            BiFunction<String, ResourceType, Resource> getResource, String promptName) {
-        this(getResource, promptName, null);
-    }
-
-    public BaseChatModel(
-            BiFunction<String, ResourceType, Resource> getResource, List<String> toolNames) {
-        this(getResource, null, toolNames);
-    }
-
-    public BaseChatModel(
-            BiFunction<String, ResourceType, Resource> getResource,
-            String promptName,
-            List<String> toolNames) {
-        this.getResource = getResource;
-        this.promptName = promptName;
-        this.toolNames = toolNames;
+    @Override
+    public ResourceType getResourceType() {
+        return ResourceType.CHAT_MODEL_CONNECTION;
     }
 
     /**
      * Process a chat request and return a chat response.
      *
      * @param messages the input chat messages
+     * @param tools the tools can be called by the model
+     * @param arguments the additional arguments passed to the model
      * @return the chat response containing model outputs
      */
-    public abstract ChatMessage chat(List<ChatMessage> messages);
-
-    @Override
-    public ResourceType getResourceType() {
-        return ResourceType.CHAT_MODEL;
-    }
+    public abstract ChatMessage chat(
+            List<ChatMessage> messages, List<BaseTool> tools, Map<String, Object> arguments);
 }

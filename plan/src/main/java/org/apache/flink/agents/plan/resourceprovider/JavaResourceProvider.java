@@ -19,55 +19,31 @@
 package org.apache.flink.agents.plan.resourceprovider;
 
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.lang.reflect.Constructor;
-import java.util.List;
 import java.util.function.BiFunction;
 
 /** Java Resource provider that carries resource instance to be used at runtime. */
 public class JavaResourceProvider extends ResourceProvider {
-    private final String className;
-    private final List<Object> parameters;
-    private final List<String> parameterTypes;
+    private final ResourceDescriptor descriptor;
 
-    public JavaResourceProvider(
-            String name,
-            ResourceType type,
-            String className,
-            List<Object> parameters,
-            List<String> parameterTypes) {
+    public JavaResourceProvider(String name, ResourceType type, ResourceDescriptor descriptor) {
         super(name, type);
-        this.className = className;
-        this.parameters = parameters;
-        this.parameterTypes = parameterTypes;
+        this.descriptor = descriptor;
     }
 
     @Override
     public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
             throws Exception {
-        Class<?> clazz = Class.forName(className);
-        Class<?>[] types = new Class[parameters.size() + 1];
-        Object[] mergeParameters = new Object[parameters.size() + 1];
-        mergeParameters[0] = getResource;
-        types[0] = BiFunction.class;
-        for (int i = 1; i < mergeParameters.length; i++) {
-            types[i] = Class.forName(parameterTypes.get(i - 1));
-            mergeParameters[i] = parameters.get(i - 1);
-        }
-        Constructor<?> constructor = clazz.getConstructor(types);
-        return (Resource) constructor.newInstance(mergeParameters);
+        Class<?> clazz = Class.forName(descriptor.getClazz());
+        Constructor<?> constructor =
+                clazz.getConstructor(BiFunction.class, ResourceDescriptor.class);
+        return (Resource) constructor.newInstance(getResource, descriptor);
     }
 
-    public List<Object> getParameters() {
-        return parameters;
-    }
-
-    public List<String> getParameterTypes() {
-        return parameterTypes;
-    }
-
-    public String getClassName() {
-        return className;
+    public ResourceDescriptor getDescriptor() {
+        return descriptor;
     }
 }

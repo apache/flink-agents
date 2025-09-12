@@ -22,12 +22,14 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,15 +48,22 @@ class BaseChatModelTest {
     private Prompt conversationPrompt;
 
     /** Test implementation of BaseChatModel for testing purposes. */
-    private static class TestChatModel extends BaseChatModel {
+    private static class TestChatModel extends BaseChatModelSetup {
         private String responsePrefix = "Test Response: ";
 
-        public TestChatModel(BiFunction<String, ResourceType, Resource> getResource) {
-            super(getResource);
+        public TestChatModel(
+                BiFunction<String, ResourceType, Resource> getResource,
+                ResourceDescriptor descriptor) {
+            super(getResource, descriptor);
         }
 
         @Override
-        public ChatMessage chat(List<ChatMessage> messages) {
+        public Map<String, Object> getParameters() {
+            return Map.of();
+        }
+
+        @Override
+        public ChatMessage chat(List<ChatMessage> messages, Map<String, Object> parameters) {
             // Simple test implementation that echoes the last user message
 
             String lastUserContent = "";
@@ -78,7 +87,11 @@ class BaseChatModelTest {
 
     @BeforeEach
     void setUp() {
-        chatModel = new TestChatModel(null);
+        chatModel =
+                new TestChatModel(
+                        null,
+                        new ResourceDescriptor(
+                                TestChatModel.class.getName(), Collections.emptyMap()));
 
         // Create simple prompt
         simplePrompt = new Prompt("You are a helpful assistant. User says: {user_input}");

@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
@@ -25,6 +26,7 @@ import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonParser;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.DeserializationContext;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
@@ -105,27 +107,13 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
     private JavaResourceProvider deserializeJavaResourceProvider(JsonNode node) {
         String name = node.get("name").asText();
         String type = node.get("type").asText();
-        String className = node.get("className").asText();
-        List<Object> parameters = new ArrayList<>();
-        List<String> parameterTypes = new ArrayList<>();
-
-        // TODO: There is a general requirement that support json serialize/deserialize arbitrary
-        // parameters when serialize/deserialize AgentPlan. The current implementation is not
-        // elegant, we should unify and refactor later.
-        JsonNode parametersNode = node.get("parameters");
-        JsonNode parameterTypesNode = node.get("parameterTypes");
         try {
-            for (int i = 0; i < parametersNode.size(); i++) {
-                String clazzName = parameterTypesNode.get(i).asText();
-                parameterTypes.add(clazzName);
-                Class<?> clazz = Class.forName(clazzName);
-                parameters.add(mapper.treeToValue(parametersNode.get(i), clazz));
-            }
-        } catch (Exception e) {
+            ResourceDescriptor descriptor =
+                    mapper.treeToValue(node.get("descriptor"), ResourceDescriptor.class);
+            return new JavaResourceProvider(name, ResourceType.fromValue(type), descriptor);
+        } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }
-        return new JavaResourceProvider(
-                name, ResourceType.fromValue(type), className, parameters, parameterTypes);
     }
 
     private JavaSerializableResourceProvider deserializeJavaSerializableResourceProvider(

@@ -28,7 +28,6 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.Serialize
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ser.std.StdSerializer;
 
 import java.io.IOException;
-import java.util.List;
 
 /**
  * Custom serializer for {@link ResourceProvider} that handles the serialization of different
@@ -132,20 +131,7 @@ public class ResourceProviderJsonSerializer extends StdSerializer<ResourceProvid
             throws IOException {
         gen.writeStringField("name", provider.getName());
         gen.writeStringField("type", provider.getType().getValue());
-        gen.writeStringField("className", provider.getClassName());
-        List<Object> parameters = provider.getParameters();
-        gen.writeFieldName("parameters");
-        gen.writeStartArray();
-        for (Object parameter : parameters) {
-            gen.writeObject(parameter);
-        }
-        gen.writeEndArray();
-        gen.writeFieldName("parameterTypes");
-        gen.writeStartArray();
-        for (String type : provider.getParameterTypes()) {
-            gen.writeString(type);
-        }
-        gen.writeEndArray();
+        gen.writeObjectField("descriptor", provider.getDescriptor());
         gen.writeStringField(
                 "__resource_provider_type__", JavaResourceProvider.class.getSimpleName());
     }
