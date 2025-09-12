@@ -27,10 +27,11 @@ import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ChatModel;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
-import org.apache.flink.agents.api.chat.model.BaseChatModel;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
@@ -49,26 +50,16 @@ class AgentPlanDeclareChatModelTest {
 
     private AgentPlan agentPlan;
 
-    public static class MockChatModel extends BaseChatModel {
-        public MockChatModel(BiFunction<String, ResourceType, Resource> getResource) {
-            super(getResource);
-        }
-
-        public MockChatModel(
-                BiFunction<String, ResourceType, Resource> getResource, String promptName) {
-            super(getResource, promptName);
-        }
-
-        public MockChatModel(
-                BiFunction<String, ResourceType, Resource> getResource, List<String> toolNames) {
-            super(getResource, toolNames);
-        }
-
+    public static class MockChatModel extends BaseChatModelSetup {
         public MockChatModel(
                 BiFunction<String, ResourceType, Resource> getResource,
-                String promptName,
-                List<String> toolNames) {
-            super(getResource, promptName, toolNames);
+                ResourceDescriptor descriptor) {
+            super(getResource, descriptor);
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return Map.of();
         }
 
         @Override
@@ -80,14 +71,14 @@ class AgentPlanDeclareChatModelTest {
 
     static class ChatAgent extends Agent {
         @ChatModel
-        public static Map<String, Object> testChatModel() {
-            Map<String, Object> meta = new HashMap<>();
-            meta.put(ChatModel.CHAT_MODEL_CLASS_NAME, MockChatModel.class.getName());
-            meta.put(ChatModel.CHAT_MODEL_ARGUMENTS, List.of("myPrompt", List.of("calculator")));
-            meta.put(
-                    ChatModel.CHAT_MODEL_ARGUMENTS_TYPES,
-                    List.of(String.class.getName(), List.class.getName()));
-            return meta;
+        public static ResourceDescriptor testChatModel() {
+            return ResourceDescriptor.Builder.newBuilder(MockChatModel.class.getName())
+                    .addInitialArgument("endpoint", "127.0.0.1")
+                    .addInitialArgument("topK", 5)
+                    .addInitialArgument("topP", 0.2)
+                    .addInitialArgument("prompt", "myPrompt")
+                    .addInitialArgument("tools", List.of("calculate"))
+                    .build();
         }
 
         @Action(listenEvents = {InputEvent.class})
@@ -114,8 +105,9 @@ class AgentPlanDeclareChatModelTest {
     @Test
     @DisplayName("Retrieve chat model and invoke chat(Prompt)")
     void retrieveAndChat() throws Exception {
-        BaseChatModel model =
-                (BaseChatModel) agentPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
+        BaseChatModelSetup model =
+                (BaseChatModelSetup)
+                        agentPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
         assertNotNull(model);
 
         Prompt prompt = new Prompt("Hello world");
@@ -132,8 +124,8 @@ class AgentPlanDeclareChatModelTest {
         String json = mapper.writeValueAsString(agentPlan);
         AgentPlan restored = mapper.readValue(json, AgentPlan.class);
 
-        BaseChatModel model =
-                (BaseChatModel) restored.getResource("testChatModel", ResourceType.CHAT_MODEL);
+        BaseChatModelSetup model =
+                (BaseChatModelSetup) restored.getResource("testChatModel", ResourceType.CHAT_MODEL);
         ChatMessage reply =
                 model.chat(new Prompt("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
         assertEquals("ok:Hi", reply.getContent());
