@@ -21,6 +21,8 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
@@ -30,6 +32,9 @@ import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
+import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
@@ -126,6 +131,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final transient EventLogger eventLogger;
     private final transient List<EventListener> eventListeners;
 
+    private final transient ActionStateStore actionStateStore;
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
@@ -138,6 +145,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.mailboxExecutor = mailboxExecutor;
         this.eventLogger = EventLoggerFactory.createLogger(EventLoggerConfig.builder().build());
         this.eventListeners = new ArrayList<>();
+        this.actionStateStore = new KafkaActionStateStore();
     }
 
     @Override
@@ -301,20 +309,47 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         // 2. Invoke the action task.
         createAndSetRunnerContext(actionTask);
-        ActionTask.ActionTaskResult actionTaskResult = actionTask.invoke();
-        for (Event actionOutputEvent : actionTaskResult.getOutputEvents()) {
+
+        boolean isFinished = false;
+        List<Event> outputEvents;
+        Optional<ActionTask> generatedActionTaskOpt;
+        ActionState actionState = actionStateStore.get(key, actionTask.action);
+        if (actionState != null) {
+            isFinished = actionState.getGeneratedActionTask().isPresent();
+            outputEvents = actionState.getOutputEvents();
+            generatedActionTaskOpt = actionState.getGeneratedActionTask();
+            for (MemoryUpdate memoryUpdate : actionState.getMemoryUpdates()) {
+                actionTask
+                        .getRunnerContext()
+                        .getShortTermMemory()
+                        .set(memoryUpdate.getPath(), memoryUpdate.getValue());
+            }
+        } else {
+            initActionState(key, actionTask.action, actionTask.event);
+            ActionTask.ActionTaskResult actionTaskResult = actionTask.invoke();
+            persistTaskResult(
+                    key,
+                    actionTask.action,
+                    actionTask.getRunnerContext().getShortTermMemory(),
+                    actionTaskResult);
+            isFinished = actionTaskResult.isFinished();
+            outputEvents = actionTaskResult.getOutputEvents();
+            generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
+        }
+
+        for (Event actionOutputEvent : outputEvents) {
             processEvent(key, actionOutputEvent);
         }
 
         boolean currentInputEventFinished = false;
-        if (actionTaskResult.isFinished()) {
+        if (isFinished) {
             builtInMetrics.markActionExecuted(actionTask.action.getName());
             currentInputEventFinished = !currentKeyHasMoreActionTask();
         } else {
-            // If the action task not finished, we should get a new action task to execute continue.
-            Optional<ActionTask> generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
+            // If the action task is not finished, we should get a new action task to continue the
+            // execution.
             checkNotNull(
-                    generatedActionTaskOpt.isPresent(),
+                    generatedActionTaskOpt.get(),
                     "ActionTask not finished, but the generated action task is null.");
             actionTasksKState.add(generatedActionTaskOpt.get());
         }
@@ -479,10 +514,38 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         Iterable<Object> keys = currentProcessingKeysOpState.get();
         if (keys != null) {
             for (Object key : keys) {
+                recoverActionState(key);
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key), "process action task");
             }
         }
+    }
+
+    private void recoverActionState(Object key) {
+        actionStateStore.rebuildState(key);
+    }
+
+    private void initActionState(Object key, Action action, Event event) {
+        ActionState actionState = new ActionState(event);
+        actionStateStore.put(key, action, actionState);
+    }
+
+    private void persistTaskResult(
+            Object key,
+            Action action,
+            MemoryObject memory,
+            ActionTask.ActionTaskResult actionTaskResult) {
+        ActionState actionState = actionStateStore.get(key, action);
+        actionState.setGeneratedActionTask(actionTaskResult.getGeneratedActionTask().orElse(null));
+
+        for (MemoryUpdate memoryUpdate : memory.getAllUpdates()) {
+            actionState.addMemoryUpdate(memoryUpdate);
+        }
+
+        for (Event event : actionTaskResult.getOutputEvents()) {
+            actionState.addEvent(event);
+        }
+        actionStateStore.put(key, action, actionState);
     }
 
     /** Failed to execute Action task. */

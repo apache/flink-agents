@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
+import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.api.common.state.MapState;
 
 import java.io.Serializable;
@@ -35,6 +36,7 @@ public class MemoryObjectImpl implements MemoryObject {
     private static final String SEPARATOR = ".";
 
     private final MapState<String, MemoryItem> store;
+    private final List<MemoryUpdate> memoryUpdates;
     private final String prefix;
     private final Runnable mailboxThreadChecker;
 
@@ -51,6 +53,7 @@ public class MemoryObjectImpl implements MemoryObject {
         if (!store.contains(ROOT_KEY)) {
             store.put(ROOT_KEY, new MemoryItem());
         }
+        this.memoryUpdates = new ArrayList<>();
     }
 
     @Override
@@ -90,6 +93,8 @@ public class MemoryObjectImpl implements MemoryObject {
 
         MemoryItem val = new MemoryItem(value);
         store.put(absPath, val);
+
+        memoryUpdates.add(new MemoryUpdate(absPath, value));
 
         return MemoryRef.create(absPath);
     }
@@ -177,6 +182,14 @@ public class MemoryObjectImpl implements MemoryObject {
             return memItem.getValue();
         }
         return null;
+    }
+
+    @Override
+    public List<MemoryUpdate> getAllUpdates() {
+        mailboxThreadChecker.run();
+        List<MemoryUpdate> updates = Collections.unmodifiableList(memoryUpdates);
+        memoryUpdates.clear();
+        return updates;
     }
 
     private String fullPath(String path) {
