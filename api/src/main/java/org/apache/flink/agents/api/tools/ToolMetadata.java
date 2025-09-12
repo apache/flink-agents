@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.plan.tools;
+package org.apache.flink.agents.api.tools;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnoreProperties;

@@ -32,9 +32,9 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.plan.tools.BaseTool;
-import org.apache.flink.agents.plan.tools.ToolParameters;
-import org.apache.flink.agents.plan.tools.ToolResponse;
+import org.apache.flink.agents.api.tools.BaseTool;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
 
 import java.util.Collections;
 import java.util.HashMap;
