@@ -44,32 +44,13 @@ import java.util.stream.Collectors;
  * A chat model integration for Ollama powered by the ollama4j client.
  *
  * <p>This implementation adapts the generic Flink Agents chat model interface to Ollama's
- * conversation API. It supports: - Converting framework ChatMessage instances into Ollama message
- * format. - Optional tool/function registration using JSON schema metadata provided by BaseTool. -
- * Synchronous chat completion returning an assistant message as the result.
+ * conversation API.
  *
- * <p>See also BaseChatModel for the common resource abstractions and lifecycle.
+ * <p>See also {@link BaseChatModel} for the common resource abstractions and lifecycle.
  *
- * <p>Example usage (pattern taken from AgentWithOllamaExample):
+ * <p>Example usage:
  *
  * <pre>{@code
- * import org.apache.flink.agents.api.Agent;
- * import org.apache.flink.agents.api.InputEvent;
- * import org.apache.flink.agents.api.OutputEvent;
- * import org.apache.flink.agents.api.annotation.Action;
- * import org.apache.flink.agents.api.annotation.ChatModel;
- * import org.apache.flink.agents.api.chat.messages.ChatMessage;
- * import org.apache.flink.agents.api.chat.messages.MessageRole;
- * import org.apache.flink.agents.api.chat.model.BaseChatModel;
- * import org.apache.flink.agents.api.context.RunnerContext;
- * import org.apache.flink.agents.api.resource.ResourceType;
- * import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModel;
- *
- * import java.util.Collections;
- * import java.util.HashMap;
- * import java.util.List;
- * import java.util.Map;
- *
  * public class MyAgent extends Agent {
  *   // Register the chat model via @ChatModel metadata.
  *   @ChatModel
@@ -86,17 +67,6 @@ import java.util.stream.Collectors;
  *         List.of(String.class.getName(), String.class.getName(),
  *                String.class.getName(), List.class.getName()));
  *     return meta;
- *   }
- *
- *   // Use the chat model inside an action.
- *   @Action(listenEvents = {InputEvent.class})
- *   public static void process(InputEvent event, RunnerContext ctx) throws Exception {
- *     // IMPORTANT: use the name of the @ChatModel-annotated method ("ollama") as the resource name
- *     BaseChatModel chatModel =
- *         (BaseChatModel) ctx.getResource("ollama", ResourceType.CHAT_MODEL);
- *     ChatMessage response = chatModel.chat(
- *         Collections.singletonList(new ChatMessage(MessageRole.USER, (String) event.getInput())));
- *     ctx.sendEvent(new OutputEvent(response.getContent()));
  *   }
  * }
  * }</pre>
