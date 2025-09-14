@@ -17,7 +17,7 @@
 ################################################################################
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 from typing_extensions import override
@@ -86,7 +86,7 @@ class Document(BaseModel):
 
     content: str = Field(description="The actual text content of the document.")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Document metadata such as source, author, timestamp, etc.")
-    id: Optional[str] = Field(default=None, description="Unique identifier of the document.")
+    id: str | None = Field(default=None, description="Unique identifier of the document.")
 
     def __str__(self) -> str:
         content_preview = self.content[:50] + "..." if len(self.content) > 50 else self.content
@@ -155,6 +155,15 @@ class BaseVectorStoreSetup(Resource, ABC):
         """Return resource type of class."""
         return ResourceType.VECTOR_STORE
 
+    @property
+    @abstractmethod
+    def store_kwargs(self) -> Dict[str, Any]:
+        """Return vector store setup settings passed to connection.
+
+        These parameters are merged with query-specific parameters
+        when performing vector search operations.
+        """
+
     def query(self, query: VectorStoreQuery) -> VectorStoreQueryResult:
         """Perform vector search using structured query object.
 
@@ -177,8 +186,12 @@ class BaseVectorStoreSetup(Resource, ABC):
             self.connection, ResourceType.VECTOR_STORE_CONNECTION
         )
 
+        # Merge setup kwargs with query-specific args
+        merged_kwargs = self.store_kwargs.copy()
+        merged_kwargs.update(query.extra_args)
+
         # Perform vector search
-        documents = connection.query(query_embedding, query.limit, **query.extra_args)
+        documents = connection.query(query_embedding, query.limit, **merged_kwargs)
 
         # Return structured result
         return VectorStoreQueryResult(
