@@ -29,7 +29,7 @@ version = "0.1.dev0"
 
 description = "Flink Agents Python API"
 license-files = ["LICENSE"]
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.9,<3.12"
 authors = [
     { name = "Apache Software Foundation", email = "dev@flink.apache.org" },
 ]
@@ -37,6 +37,7 @@ authors = [
 readme = "README.md"
 classifiers = [
     'Development Status :: 5 - Production/Stable',
+    'Programming Language :: Python :: 3.9',
     'Programming Language :: Python :: 3.10',
     'Programming Language :: Python :: 3.11',
 ]
@@ -52,7 +53,6 @@ dependencies = [
     "dashscope~=1.24.2",
     "openai>=1.66.3",
     "anthropic>=0.64.0",
-    "chromadb>=1.0.21",
 ]
 
 # Optional dependencies (dependency groups)
@@ -80,7 +80,7 @@ lint = [
 ]
 
 [tool.cibuildwheel]
-build = ["cp310-*", "cp311-*"]
+build = ["cp39-*", "cp310-*", "cp311-*"]
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "arm64"]

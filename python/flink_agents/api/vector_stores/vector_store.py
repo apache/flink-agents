@@ -17,7 +17,7 @@
 ################################################################################
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 from typing_extensions import override
@@ -86,7 +86,7 @@ class Document(BaseModel):
 
     content: str = Field(description="The actual text content of the document.")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Document metadata such as source, author, timestamp, etc.")
-    id: str | None = Field(default=None, description="Unique identifier of the document.")
+    id: Optional[str] = Field(default=None, description="Unique identifier of the document.")
 
     def __str__(self) -> str:
         content_preview = self.content[:50] + "..." if len(self.content) > 50 else self.content
