@@ -112,12 +112,4 @@ public interface MemoryObject {
      * @throws Exception state-backend failure
      */
     boolean isNestedObject() throws Exception;
-
-    /**
-     * Gets all the updates made to this MemoryObject since it was created or the last time this
-     * method was called.
-     *
-     * @return list of memory updates
-     */
-    List<MemoryUpdate> getAllUpdates();
 }

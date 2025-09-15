@@ -21,8 +21,8 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
-import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
@@ -53,6 +53,8 @@ import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.python.env.PythonDependencyInfo;
+import org.apache.flink.runtime.state.StateInitializationContext;
+import org.apache.flink.runtime.state.StateSnapshotContext;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.streaming.api.operators.*;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -310,12 +312,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // 2. Invoke the action task.
         createAndSetRunnerContext(actionTask);
 
-        boolean isFinished = false;
+        boolean isFinished;
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt;
-        ActionState actionState = actionStateStore.get(key, actionTask.action);
-        if (actionState != null) {
-            isFinished = actionState.getGeneratedActionTask().isPresent();
+        ActionState actionState = maybeGetActionState(key, actionTask.action, actionTask.event);
+        if (actionState != null && actionState.getGeneratedActionTask() == null) {
+            isFinished = !actionState.getGeneratedActionTask().isPresent();
             outputEvents = actionState.getOutputEvents();
             generatedActionTaskOpt = actionState.getGeneratedActionTask();
             for (MemoryUpdate memoryUpdate : actionState.getMemoryUpdates()) {
@@ -325,12 +327,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .set(memoryUpdate.getPath(), memoryUpdate.getValue());
             }
         } else {
-            initActionState(key, actionTask.action, actionTask.event);
+            maybeInitActionState(key, actionTask.action, actionTask.event);
             ActionTask.ActionTaskResult actionTaskResult = actionTask.invoke();
-            persistTaskResult(
+            maybePersistTaskResult(
                     key,
                     actionTask.action,
-                    actionTask.getRunnerContext().getShortTermMemory(),
+                    actionTask.event,
+                    actionTask.getRunnerContext(),
                     actionTaskResult);
             isFinished = actionTaskResult.isFinished();
             outputEvents = actionTaskResult.getOutputEvents();
@@ -427,6 +430,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         super.close();
     }
 
+    @Override
+    public void initializeState(StateInitializationContext context) throws Exception {
+        super.initializeState(context);
+    }
+
+    @Override
+    public void snapshotState(StateSnapshotContext context) throws Exception {
+        super.snapshotState(context);
+    }
+
+    @Override
+    public void notifyCheckpointComplete(long checkpointId) throws Exception {
+        super.notifyCheckpointComplete(checkpointId);
+        actionStateStore.cleanUpState();
+    }
+
     private Event wrapToInputEvent(IN input) {
         if (inputIsJava) {
             return new InputEvent(input);
@@ -514,38 +533,54 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         Iterable<Object> keys = currentProcessingKeysOpState.get();
         if (keys != null) {
             for (Object key : keys) {
-                recoverActionState(key);
+                maybeRecoverActionState(key);
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key), "process action task");
             }
         }
     }
 
-    private void recoverActionState(Object key) {
+    private void maybeRecoverActionState(Object key) {
+        if (actionStateStore == null) {
+            return;
+        }
         actionStateStore.rebuildState(key);
     }
 
-    private void initActionState(Object key, Action action, Event event) {
-        ActionState actionState = new ActionState(event);
-        actionStateStore.put(key, action, actionState);
+    private ActionState maybeGetActionState(Object key, Action action, Event event) {
+        if (actionStateStore != null) {
+            return actionStateStore.get(key, action, event);
+        }
+        return null;
     }
 
-    private void persistTaskResult(
+    private void maybeInitActionState(Object key, Action action, Event event) {
+        if (actionStateStore != null) {
+            actionStateStore.put(key, action, event, new ActionState(event));
+        }
+    }
+
+    private void maybePersistTaskResult(
             Object key,
             Action action,
-            MemoryObject memory,
+            Event event,
+            RunnerContext context,
             ActionTask.ActionTaskResult actionTaskResult) {
-        ActionState actionState = actionStateStore.get(key, action);
+        if (actionStateStore == null) {
+            return;
+        }
+
+        ActionState actionState = actionStateStore.get(key, action, event);
         actionState.setGeneratedActionTask(actionTaskResult.getGeneratedActionTask().orElse(null));
 
-        for (MemoryUpdate memoryUpdate : memory.getAllUpdates()) {
+        for (MemoryUpdate memoryUpdate : context.getAllMemoryUpdates()) {
             actionState.addMemoryUpdate(memoryUpdate);
         }
 
-        for (Event event : actionTaskResult.getOutputEvents()) {
-            actionState.addEvent(event);
+        for (Event outputEvent : actionTaskResult.getOutputEvents()) {
+            actionState.addEvent(outputEvent);
         }
-        actionStateStore.put(key, action, actionState);
+        actionStateStore.put(key, action, event, actionState);
     }
 
     /** Failed to execute Action task. */

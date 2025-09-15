@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.annotation.VisibleForTesting;
 
@@ -46,20 +47,25 @@ public class KafkaActionStateStore implements ActionStateStore {
     }
 
     @Override
-    public void put(Object key, Action action, ActionState state) {
-        actionStates.put(generateKey(key, action), state);
+    public void put(Object key, Action action, Event event, ActionState state) {
+        actionStates.put(generateKey(key, action, event), state);
         // TODO: Implement the logic to store the action state in Kafka
     }
 
     @Override
-    public ActionState get(Object key, Action action) {
-        return actionStates.get(generateKey(key, action));
+    public ActionState get(Object key, Action action, Event event) {
+        return actionStates.get(generateKey(key, action, event));
     }
 
     @Override
     public Map<String, ActionState> rebuildState(Object key) {
         // TODO: implement the logic to retrieve all action states associated with the key from
-        // Kafka
+        //       Kafka
         return Map.of();
+    }
+
+    @Override
+    public void cleanUpState() {
+        // NOOP, for kafka, we can't really delete messages from it
     }
 }

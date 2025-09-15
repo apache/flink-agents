@@ -56,6 +56,14 @@ public class MemoryUpdate implements Serializable {
     }
 
     @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof MemoryUpdate)) return false;
+        MemoryUpdate that = (MemoryUpdate) o;
+        return Objects.equals(path, that.path) && Objects.equals(value, that.value);
+    }
+
+    @Override
     public int hashCode() {
         return Objects.hash(path, value);
     }

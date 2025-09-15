@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.Action;
 
 import java.nio.charset.StandardCharsets;
@@ -25,8 +26,10 @@ import java.util.UUID;
 /** Utility class for action state related operations. */
 public class ActionStateUtil {
 
-    public static String generateKey(Object key, Action action) {
+    public static String generateKey(Object key, Action action, Event event) {
         return key
+                + "-"
+                + event.getId().toString()
                 + "-"
                 + UUID.nameUUIDFromBytes(
                         String.valueOf(action.hashCode()).getBytes(StandardCharsets.UTF_8));

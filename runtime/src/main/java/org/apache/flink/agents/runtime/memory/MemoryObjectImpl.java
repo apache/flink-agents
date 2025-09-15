@@ -40,12 +40,17 @@ public class MemoryObjectImpl implements MemoryObject {
     private final String prefix;
     private final Runnable mailboxThreadChecker;
 
-    public MemoryObjectImpl(MapState<String, MemoryItem> store, String prefix) throws Exception {
-        this(store, prefix, () -> {});
+    public MemoryObjectImpl(
+            MapState<String, MemoryItem> store, String prefix, List<MemoryUpdate> memoryUpdates)
+            throws Exception {
+        this(store, prefix, () -> {}, memoryUpdates);
     }
 
     public MemoryObjectImpl(
-            MapState<String, MemoryItem> store, String prefix, Runnable mailboxThreadChecker)
+            MapState<String, MemoryItem> store,
+            String prefix,
+            Runnable mailboxThreadChecker,
+            List<MemoryUpdate> memoryUpdates)
             throws Exception {
         this.store = store;
         this.prefix = prefix;
@@ -53,7 +58,7 @@ public class MemoryObjectImpl implements MemoryObject {
         if (!store.contains(ROOT_KEY)) {
             store.put(ROOT_KEY, new MemoryItem());
         }
-        this.memoryUpdates = new ArrayList<>();
+        this.memoryUpdates = memoryUpdates;
     }
 
     @Override
@@ -61,7 +66,7 @@ public class MemoryObjectImpl implements MemoryObject {
         mailboxThreadChecker.run();
         String absPath = fullPath(path);
         if (store.contains(absPath)) {
-            return new MemoryObjectImpl(store, absPath);
+            return new MemoryObjectImpl(store, absPath, memoryUpdates);
         }
         return null;
     }
@@ -93,7 +98,6 @@ public class MemoryObjectImpl implements MemoryObject {
 
         MemoryItem val = new MemoryItem(value);
         store.put(absPath, val);
-
         memoryUpdates.add(new MemoryUpdate(absPath, value));
 
         return MemoryRef.create(absPath);
@@ -119,6 +123,7 @@ public class MemoryObjectImpl implements MemoryObject {
         } else {
             store.put(absPath, new MemoryItem());
         }
+        memoryUpdates.add(new MemoryUpdate(absPath, null));
 
         String parent =
                 absPath.contains(SEPARATOR)
@@ -128,7 +133,7 @@ public class MemoryObjectImpl implements MemoryObject {
         parentItem.getSubKeys().add(parts[parts.length - 1]);
         store.put(parent, parentItem);
 
-        return new MemoryObjectImpl(store, absPath);
+        return new MemoryObjectImpl(store, absPath, memoryUpdates);
     }
 
     @Override
@@ -182,14 +187,6 @@ public class MemoryObjectImpl implements MemoryObject {
             return memItem.getValue();
         }
         return null;
-    }
-
-    @Override
-    public List<MemoryUpdate> getAllUpdates() {
-        mailboxThreadChecker.run();
-        List<MemoryUpdate> updates = Collections.unmodifiableList(memoryUpdates);
-        memoryUpdates.clear();
-        return updates;
     }
 
     private String fullPath(String path) {

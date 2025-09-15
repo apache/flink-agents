@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.Action;
 
 import java.util.Map;
@@ -28,18 +29,20 @@ public interface ActionStateStore {
      *
      * @param key the key associate with the message
      * @param action the action the agent is taking
+     * @param event the event that triggered the action
      * @param state the current state of the whole task
      */
-    void put(Object key, Action action, ActionState state);
+    void put(Object key, Action action, Event event, ActionState state);
 
     /**
      * Retrieve the state of a specific action associated with a given key from the backend storage.
      *
      * @param key the key associated with the message
      * @param action the action the agent is taking
+     * @param event the event that triggered the action
      * @return the state of the action, or null if not found
      */
-    ActionState get(Object key, Action action);
+    ActionState get(Object key, Action action, Event event);
 
     /**
      * Retrieve all states associated with a given key from the backend storage.
@@ -48,4 +51,7 @@ public interface ActionStateStore {
      * @return a map of key of action to action states associated with the key
      */
     Map<String, ActionState> rebuildState(Object key);
+
+    /** Clean up state store to avoid evergrowing storage usage. */
+    void cleanUpState();
 }

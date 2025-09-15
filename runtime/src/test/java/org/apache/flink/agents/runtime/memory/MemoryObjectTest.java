@@ -18,18 +18,21 @@
 package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.api.common.state.MapState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Tests for {@link MemoryObject}. */
 public class MemoryObjectTest {
 
-    private MemoryObjectImpl memory;
+    private MemoryObject memory;
+    private List<MemoryUpdate> memoryUpdates;
 
     /** Simple POJO example. */
     static class Person {
@@ -58,7 +61,8 @@ public class MemoryObjectTest {
     @BeforeEach
     void setUp() throws Exception {
         ForTestMemoryMapState<MemoryObjectImpl.MemoryItem> mapState = new ForTestMemoryMapState<>();
-        memory = new MemoryObjectImpl(mapState, MemoryObjectImpl.ROOT_KEY);
+        memoryUpdates = new LinkedList<>();
+        memory = new MemoryObjectImpl(mapState, MemoryObjectImpl.ROOT_KEY, memoryUpdates);
     }
 
     @Test
@@ -155,6 +159,25 @@ public class MemoryObjectTest {
         memory.set("exist", 1);
         assertTrue(memory.isExist("exist"));
         assertFalse(memory.isExist("not.exist"));
+    }
+
+    @Test
+    void testMemoryUpdates() throws Exception {
+        memory.set("str", "hello");
+        memory = memory.newObject("str", true);
+        memory.set("test", 100);
+        memory = memory.newObject("new_str", false);
+        memory.set("int", 42);
+        memory.set("str", "world");
+
+        assertThat(memoryUpdates)
+                .containsExactlyInAnyOrder(
+                        new MemoryUpdate("str", "hello"),
+                        new MemoryUpdate("str", null),
+                        new MemoryUpdate("str.test", 100),
+                        new MemoryUpdate("str.new_str", null),
+                        new MemoryUpdate("str.new_str.int", 42),
+                        new MemoryUpdate("str.new_str.str", "world"));
     }
 }
 
