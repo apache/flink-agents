@@ -28,7 +28,7 @@ from flink_agents.api.vector_stores.vector_store import (
     Document,
 )
 
-DEFAULT_COLLECTION = "flink_agents_collection"
+DEFAULT_COLLECTION = "flink_agents_chroma_collection"
 
 
 class ChromaVectorStoreConnection(BaseVectorStoreConnection):
