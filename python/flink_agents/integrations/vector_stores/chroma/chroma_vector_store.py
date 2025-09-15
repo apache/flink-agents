@@ -62,7 +62,7 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
         description="Directory for persistent storage. If None, uses in-memory client.",
     )
     host: Optional[str] = Field(
-        default="localhost",
+        default=None,
         description="Host for ChromaDB server connection.",
     )
     port: Optional[int] = Field(
@@ -87,7 +87,7 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
     def __init__(
         self,
         persist_directory: Optional[str] = None,
-        host: Optional[str] = "localhost",
+        host: Optional[str] = None,
         port: Optional[int] = 8000,
         client_settings: Optional[Settings] = None,
         tenant: str = "default_tenant",
@@ -111,8 +111,9 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
         if self.__client is None:
 
             # Choose client type based on configuration
+            # TODO: support cloud client: https://docs.trychroma.com/docs/run-chroma/cloud-client
             if self.host is not None:
-                # Server mode
+                # Client-Server Mode
                 self.__client = chromadb.HttpClient(
                     host=self.host,
                     port=self.port,
@@ -129,7 +130,7 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
                     database=self.database,
                 )
             else:
-                # In-memory mode (default)
+                # In-memory mode
                 self.__client = chromadb.EphemeralClient(
                     settings=self.client_settings,
                     tenant=self.tenant,
@@ -157,9 +158,11 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
 
         # Get or create collection based on configuration
         if create_collection_if_not_exists:
+            # ChromaDB doesn't accept empty metadata, pass None instead
+            metadata = collection_metadata if collection_metadata else None
             collection = self.client.get_or_create_collection(
                 name=collection_name,
-                metadata=collection_metadata,
+                metadata=metadata,
             )
         else:
             collection = self.client.get_collection(name=collection_name)
