@@ -47,6 +47,7 @@ dependencies = [
     "docstring-parser==0.16",
     "pyyaml==6.0.2",
     "mcp>=1.8.0",
+    "setuptools>=75.3",
     #TODO: Seperate integration dependencies from project
     "ollama==0.4.8",
     "dashscope~=1.24.2",
