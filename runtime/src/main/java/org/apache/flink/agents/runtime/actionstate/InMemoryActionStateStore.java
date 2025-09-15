@@ -26,30 +26,17 @@ import java.util.Map;
 
 import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.generateKey;
 
-/**
- * An implementation of ActionStateStore that uses Kafka as the backend storage for action states.
- * This class provides methods to put, get, and retrieve all action states associated with a given
- * key and action.
- */
-public class KafkaActionStateStore implements ActionStateStore {
+public class InMemoryActionStateStore implements ActionStateStore {
 
-    // In memory action state for quick state retrival
     private final Map<String, ActionState> actionStates;
 
-    @VisibleForTesting
-    KafkaActionStateStore(Map<String, ActionState> actionStates) {
-        this.actionStates = actionStates;
-    }
-
-    /** Constructs a new KafkaActionStateStore with an empty in-memory action state map. */
-    public KafkaActionStateStore() {
-        this(new HashMap<>());
+    public InMemoryActionStateStore() {
+        this.actionStates = new HashMap<>();
     }
 
     @Override
     public void put(Object key, Action action, Event event, ActionState state) {
-        actionStates.put(generateKey(key, action, event), state);
-        // TODO: Implement the logic to store the action state in Kafka
+        actionStates.putIfAbsent(generateKey(key, action, event), state);
     }
 
     @Override
@@ -59,12 +46,16 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     @Override
     public void rebuildState(Object recoveryMarker) {
-        // TODO: implement the logic to retrieve all action states associated with the key from
-        //       Kafka
+        // No-op for in-memory store as it does not persist state;
     }
 
     @Override
     public void cleanUpState() {
-        // NOOP, for kafka, we can't really delete messages from it
+        actionStates.clear();
+    }
+
+    @VisibleForTesting
+    public Map<String, ActionState> getActionStates() {
+        return actionStates;
     }
 }

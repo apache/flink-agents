@@ -20,11 +20,15 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.Action;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -33,6 +37,7 @@ import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -119,8 +124,6 @@ public class ActionExecutionOperatorTest {
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
-            ActionExecutionOperator<Long, Object> operator =
-                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
             // Process input data 1 with key 0
             testHarness.processElement(new StreamRecord<>(0L));
@@ -160,6 +163,197 @@ public class ActionExecutionOperatorTest {
                     .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
                     .rootCause()
                     .hasMessageContaining("Expected to be running on the task mailbox thread");
+        }
+    }
+
+    @Test
+    void testInMemoryActionStateStoreIntegration() throws Exception {
+        // Create agent plan with inmemory action state store configuration
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.ACTION_STATE_STORE_BACKEND, "inmemory");
+        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlanWithConfig(false, config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlanWithStateStore, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Use reflection to access the action state store for validation
+            Field actionStateStoreField =
+                    ActionExecutionOperator.class.getDeclaredField("actionStateStore");
+            actionStateStoreField.setAccessible(true);
+            InMemoryActionStateStore actionStateStore =
+                    (InMemoryActionStateStore) actionStateStoreField.get(operator);
+
+            assertThat(actionStateStore).isNotNull();
+            assertThat(actionStateStore.getActionStates()).isEmpty();
+
+            // Process an element and verify action state is created and managed
+            testHarness.processElement(new StreamRecord<>(5L));
+            operator.waitInFlightEventsFinished();
+
+            // Verify that action states were created during processing
+            Map<String, ActionState> actionStates = actionStateStore.getActionStates();
+            assertThat(actionStates).isNotEmpty();
+
+            // Verify the content of stored action states
+            assertThat(actionStates.size()).isEqualTo(2);
+
+            // Verify each action state contains expected information
+            for (Map.Entry<String, ActionState> entry : actionStates.entrySet()) {
+                ActionState state = entry.getValue();
+                assertThat(state).isNotNull();
+                assertThat(state.getTaskEvent()).isNotNull();
+
+                // Check that output events were captured
+                assertThat(state.getOutputEvents()).isNotEmpty();
+
+                // Verify the generated action task is empty (action completed)
+                assertThat(state.getGeneratedActionTask()).isEmpty();
+            }
+
+            // Verify output
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(12L);
+
+            // Test checkpoint complete triggers cleanup
+            testHarness.notifyOfCompletedCheckpoint(1L);
+            // After cleanup, the action states should be cleared
+            assertThat(actionStateStore.getActionStates()).isEmpty();
+        }
+    }
+
+    @Test
+    void testActionStateStoreContentVerification() throws Exception {
+        // Create agent plan with inmemory action state store configuration
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.ACTION_STATE_STORE_BACKEND, "inmemory");
+        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlanWithConfig(false, config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlanWithStateStore, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Use reflection to access the action state store for validation
+            Field actionStateStoreField =
+                    ActionExecutionOperator.class.getDeclaredField("actionStateStore");
+            actionStateStoreField.setAccessible(true);
+            InMemoryActionStateStore actionStateStore =
+                    (InMemoryActionStateStore) actionStateStoreField.get(operator);
+
+            Long inputValue = 3L;
+            testHarness.processElement(new StreamRecord<>(inputValue));
+            operator.waitInFlightEventsFinished();
+
+            Map<String, ActionState> actionStates = actionStateStore.getActionStates();
+            assertThat(actionStates).hasSize(2);
+
+            // Verify specific action states by examining the keys
+            for (Map.Entry<String, ActionState> entry : actionStates.entrySet()) {
+                String stateKey = entry.getKey();
+                ActionState state = entry.getValue();
+
+                // Verify the state key contains the expected key and action information
+                assertThat(stateKey).contains(inputValue.toString());
+
+                // Verify task event is properly stored
+                Event taskEvent = state.getTaskEvent();
+                assertThat(taskEvent).isNotNull();
+
+                // Verify memory updates contain expected data
+                if (!state.getMemoryUpdates().isEmpty()) {
+                    // For action1, memory should contain input + 1
+                    assertThat(state.getMemoryUpdates().get(0).getPath()).isEqualTo("tmp");
+                    assertThat(state.getMemoryUpdates().get(0).getValue())
+                            .isEqualTo(inputValue + 1);
+                }
+
+                // Verify output events are captured
+                assertThat(state.getOutputEvents()).isNotEmpty();
+
+                // Check the type of events in the output
+                Event outputEvent = state.getOutputEvents().get(0);
+                assertThat(outputEvent).isNotNull();
+                if (outputEvent instanceof TestAgent.MiddleEvent) {
+                    TestAgent.MiddleEvent middleEvent = (TestAgent.MiddleEvent) outputEvent;
+                    assertThat(middleEvent.getNum()).isEqualTo(inputValue + 1);
+                } else if (outputEvent instanceof OutputEvent) {
+                    OutputEvent finalOutput = (OutputEvent) outputEvent;
+                    assertThat(finalOutput.getOutput())
+                            .isEqualTo((inputValue + 1) * 2); // (3+1)*2 = 8
+                }
+            }
+
+            // Verify final output
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo((inputValue + 1) * 2);
+        }
+    }
+
+    @Test
+    void testActionStateStoreStateManagement() throws Exception {
+        // Create agent plan with stateful actions
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.ACTION_STATE_STORE_BACKEND, "inmemory");
+        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlanWithConfig(false, config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlanWithStateStore, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Access the action state store
+            java.lang.reflect.Field actionStateStoreField =
+                    ActionExecutionOperator.class.getDeclaredField("actionStateStore");
+            actionStateStoreField.setAccessible(true);
+            InMemoryActionStateStore actionStateStore =
+                    (InMemoryActionStateStore) actionStateStoreField.get(operator);
+
+            // Process multiple elements with same key to test state persistence
+            testHarness.processElement(new StreamRecord<>(1L));
+            operator.waitInFlightEventsFinished();
+
+            // Verify initial state creation
+            Map<String, ActionState> actionStates = actionStateStore.getActionStates();
+            assertThat(actionStates).isNotEmpty();
+            int initialStateCount = actionStates.size();
+
+            testHarness.processElement(new StreamRecord<>(1L));
+            operator.waitInFlightEventsFinished();
+
+            // Verify state persists and grows for same key processing
+            actionStates = actionStateStore.getActionStates();
+            assertThat(actionStates.size()).isGreaterThanOrEqualTo(initialStateCount);
+
+            // Process element with different key
+            testHarness.processElement(new StreamRecord<>(2L));
+            operator.waitInFlightEventsFinished();
+
+            // Verify new states created for different key
+            actionStates = actionStateStore.getActionStates();
+            assertThat(actionStates.size()).isGreaterThan(initialStateCount);
+
+            // Verify outputs
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(3);
         }
     }
 
@@ -214,6 +408,11 @@ public class ActionExecutionOperatorTest {
         }
 
         public static AgentPlan getAgentPlan(boolean testMemoryAccessOutOfMailbox) {
+            return getAgentPlanWithConfig(testMemoryAccessOutOfMailbox, new AgentConfiguration());
+        }
+
+        private static AgentPlan getAgentPlanWithConfig(
+                boolean testMemoryAccessOutOfMailbox, AgentConfiguration config) {
             try {
                 Map<String, List<Action>> actionsByEvent = new HashMap<>();
                 Action action1 =
@@ -254,7 +453,7 @@ public class ActionExecutionOperatorTest {
                     actions.put(action3.getName(), action3);
                 }
 
-                return new AgentPlan(actions, actionsByEvent);
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>(), config);
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }

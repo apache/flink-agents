@@ -22,7 +22,6 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.context.MemoryUpdate;
-import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
@@ -34,6 +33,7 @@ import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
@@ -72,6 +72,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
 
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
+import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.INMEMORY;
+import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -133,7 +136,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final transient EventLogger eventLogger;
     private final transient List<EventListener> eventListeners;
 
-    private final transient ActionStateStore actionStateStore;
+    private transient ActionStateStore actionStateStore;
 
     public ActionExecutionOperator(
             AgentPlan agentPlan,
@@ -147,7 +150,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.mailboxExecutor = mailboxExecutor;
         this.eventLogger = EventLoggerFactory.createLogger(EventLoggerConfig.builder().build());
         this.eventListeners = new ArrayList<>();
-        this.actionStateStore = new KafkaActionStateStore();
     }
 
     @Override
@@ -166,6 +168,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
+
+        if (KAFKA.getType()
+                .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
+            LOG.info("Using KafkaActionStateStore for action state store.");
+            actionStateStore = new KafkaActionStateStore();
+        } else if (INMEMORY.getType()
+                .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
+            actionStateStore = new InMemoryActionStateStore();
+        }
 
         // init agent processing related state
         actionTasksKState =
@@ -316,8 +327,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt;
         ActionState actionState = maybeGetActionState(key, actionTask.action, actionTask.event);
-        if (actionState != null && actionState.getGeneratedActionTask() == null) {
-            isFinished = !actionState.getGeneratedActionTask().isPresent();
+        if (actionState != null && actionState.getGeneratedActionTask().isEmpty()) {
+            isFinished = true;
             outputEvents = actionState.getOutputEvents();
             generatedActionTaskOpt = actionState.getGeneratedActionTask();
             for (MemoryUpdate memoryUpdate : actionState.getMemoryUpdates()) {
@@ -433,11 +444,41 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
+
+        if (actionStateStore != null) {
+            Object recoveryMarker = null;
+            ListState<Object> recoveryMarkerOpState =
+                    getOperatorStateBackend()
+                            .getListState(
+                                    new ListStateDescriptor<>(
+                                            "recoveryMarker", TypeInformation.of(Object.class)));
+            Iterable<Object> recoveryMarkers = recoveryMarkerOpState.get();
+            if (recoveryMarkers != null) {
+                for (Object marker : recoveryMarkers) {
+                    // there should be only one recovery marker
+                    recoveryMarker = marker;
+                    break;
+                }
+            }
+            actionStateStore.rebuildState(recoveryMarker);
+        }
     }
 
     @Override
     public void snapshotState(StateSnapshotContext context) throws Exception {
         super.snapshotState(context);
+        if (actionStateStore != null) {
+            Object recoveryMarker = actionStateStore.getRecoveryMarker();
+            if (recoveryMarker != null) {
+                ListState<Object> recoveryMarkerOpState =
+                        getOperatorStateBackend()
+                                .getListState(
+                                        new ListStateDescriptor<>(
+                                                "recoveryMarker",
+                                                TypeInformation.of(Object.class)));
+                recoveryMarkerOpState.update(List.of(recoveryMarker));
+            }
+        }
     }
 
     @Override
@@ -533,30 +574,24 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         Iterable<Object> keys = currentProcessingKeysOpState.get();
         if (keys != null) {
             for (Object key : keys) {
-                maybeRecoverActionState(key);
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key), "process action task");
             }
         }
     }
 
-    private void maybeRecoverActionState(Object key) {
-        if (actionStateStore == null) {
-            return;
-        }
-        actionStateStore.rebuildState(key);
-    }
-
     private ActionState maybeGetActionState(Object key, Action action, Event event) {
-        if (actionStateStore != null) {
-            return actionStateStore.get(key, action, event);
-        }
-        return null;
+        return actionStateStore == null ? null : actionStateStore.get(key, action, event);
     }
 
     private void maybeInitActionState(Object key, Action action, Event event) {
         if (actionStateStore != null) {
-            actionStateStore.put(key, action, event, new ActionState(event));
+            // Initialize the action state if it does not exist. It will exist when the action is an
+            // async action and
+            // has been persisted before the action task is finished.
+            if (actionStateStore.get(key, action, event) == null) {
+                actionStateStore.put(key, action, event, new ActionState(event));
+            }
         }
     }
 
@@ -564,7 +599,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             Object key,
             Action action,
             Event event,
-            RunnerContext context,
+            RunnerContextImpl context,
             ActionTask.ActionTaskResult actionTaskResult) {
         if (actionStateStore == null) {
             return;

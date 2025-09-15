@@ -20,10 +20,22 @@ package org.apache.flink.agents.runtime.actionstate;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.Action;
 
-import java.util.Map;
-
 /** Interface for storing and retrieving the state of actions performed by agents. */
 public interface ActionStateStore {
+    enum BackendType {
+        INMEMORY("inmemory"),
+        KAFKA("kafka");
+
+        private final String type;
+
+        BackendType(String type) {
+            this.type = type;
+        }
+
+        public String getType() {
+            return type;
+        }
+    }
     /**
      * Store the state of a specific action associated with a given key to the backend storage.
      *
@@ -45,13 +57,20 @@ public interface ActionStateStore {
     ActionState get(Object key, Action action, Event event);
 
     /**
-     * Retrieve all states associated with a given key from the backend storage.
-     *
-     * @param key the key associated with the message
-     * @return a map of key of action to action states associated with the key
+     * Retrieve all states associated with a given key from the backend storage and recover the
+     * local action states.
      */
-    Map<String, ActionState> rebuildState(Object key);
+    void rebuildState(Object recoveryMarker);
 
     /** Clean up state store to avoid evergrowing storage usage. */
     void cleanUpState();
+
+    /**
+     * Get a marker object representing the current recovery point in the state store.
+     *
+     * @return a marker object, or null if not supported
+     */
+    default Object getRecoveryMarker() {
+        return null;
+    }
 }

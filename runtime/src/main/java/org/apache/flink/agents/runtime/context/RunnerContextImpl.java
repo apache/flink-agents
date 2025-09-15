@@ -102,6 +102,18 @@ public class RunnerContextImpl implements RunnerContext {
                 this.pendingEvents.isEmpty(), "There are pending events remaining in the context.");
     }
 
+    /**
+     * Gets all the updates made to this MemoryObject since it was created or the last time this
+     * method was called. This method lives here because it is internally used by the ActionTask to
+     * persist memory updates after an action is executed.
+     *
+     * @return list of memory updates
+     */
+    public List<MemoryUpdate> getAllMemoryUpdates() {
+        mailboxThreadChecker.run();
+        return List.copyOf(memoryUpdates);
+    }
+
     @Override
     public MemoryObject getShortTermMemory() throws Exception {
         mailboxThreadChecker.run();
@@ -134,13 +146,5 @@ public class RunnerContextImpl implements RunnerContext {
 
     public String getActionName() {
         return actionName;
-    }
-
-    @Override
-    public List<MemoryUpdate> getAllMemoryUpdates() {
-        mailboxThreadChecker.run();
-        List<MemoryUpdate> memoryUpdatesCopy = List.copyOf(memoryUpdates);
-        memoryUpdates.clear();
-        return memoryUpdatesCopy;
     }
 }

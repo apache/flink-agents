@@ -29,7 +29,8 @@ public class ActionStateUtil {
     public static String generateKey(Object key, Action action, Event event) {
         return key
                 + "-"
-                + event.getId().toString()
+                + UUID.nameUUIDFromBytes(
+                        event.getAttributes().toString().getBytes(StandardCharsets.UTF_8))
                 + "-"
                 + UUID.nameUUIDFromBytes(
                         String.valueOf(action.hashCode()).getBytes(StandardCharsets.UTF_8));
