@@ -97,44 +97,11 @@ def test_tongyi_chat_with_tools() -> None:
     assert add(**tool_call["function"]["arguments"]) == 3
 
 
-def test_extract_think_tags() -> None:
-    """Test the static method that extracts content from <think></think> tags."""
-    # Test with a think tag at the beginning (most common case)
-    content = "<think>First, I need to understand the question.\nThen I need to formulate an answer.</think>The answer is 42."
-    cleaned, reasoning = (
-        TongyiChatModelConnection._extract_reasoning(content)
-    )
-    assert cleaned == "The answer is 42."
-    assert (
-        reasoning
-        == "First, I need to understand the question.\nThen I need to formulate an answer."
-    )
-
-    # Test with a think tag only
-    content = "<think>This is just my thought process.</think>"
-    cleaned, reasoning = (
-        TongyiChatModelConnection._extract_reasoning(content)
-    )
-    assert cleaned == ""
-    assert reasoning == "This is just my thought process."
-
-    # Test with no think tags
-    content = "This is a regular response without any thinking tags."
-    cleaned, reasoning = (
-        TongyiChatModelConnection._extract_reasoning(content)
-    )
-    assert cleaned == content
-    assert reasoning is None
-
-
 def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that extract_reasoning functionality works correctly (mock DashScope)."""
-    raw_content = (
-        "<think>To answer what the meaning of life is, I should consider "
-        "philosophical perspectives. The question is often associated with the number 42 "
-        "from Hitchhiker's Guide to the Galaxy.</think>"
-        "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
-    )
+    content = "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
+    reasoning_content = ("To answer what the meaning of life is, I should consider philosophical perspectives. "
+                         "The question is often associated with the number 42 from Hitchhiker's Guide to the Galaxy.")
 
     mocked_response = SimpleNamespace(
         status_code=200,
@@ -143,7 +110,8 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
                 {
                     "message": {
                         "role": "assistant",
-                        "content": raw_content,
+                        "content": content,
+                        "reasoning_content": reasoning_content,
                         "tool_calls": None,
                     }
                 }
