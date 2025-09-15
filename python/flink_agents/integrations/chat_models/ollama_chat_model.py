@@ -203,7 +203,7 @@ class OllamaChatModelSetup(BaseChatModelSetup):
         "request(default: 5m)",
     )
     extract_reasoning: bool = Field(
-        default=False,
+        default=True,
         description="If True, extracts content within <think></think> tags from the response and "
         "stores it in additional_kwargs.",
     )
@@ -216,7 +216,7 @@ class OllamaChatModelSetup(BaseChatModelSetup):
         request_timeout: Optional[float] = DEFAULT_REQUEST_TIMEOUT,
         additional_kwargs: Optional[Dict[str, Any]] = None,
         keep_alive: Optional[Union[float, str]] = None,
-        extract_reasoning: Optional[bool] = False,
+        extract_reasoning: Optional[bool] = True,
         **kwargs: Any,
     ) -> None:
         """Init method."""
