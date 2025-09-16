@@ -175,7 +175,8 @@ public class ActionExecutionOperatorTest {
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory<>(agentPlanWithStateStore, true),
+                        new ActionExecutionOperatorFactory<>(
+                                agentPlanWithStateStore, true, new InMemoryActionStateStore()),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
@@ -238,7 +239,8 @@ public class ActionExecutionOperatorTest {
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory<>(agentPlanWithStateStore, true),
+                        new ActionExecutionOperatorFactory<>(
+                                agentPlanWithStateStore, true, new InMemoryActionStateStore()),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
@@ -312,7 +314,8 @@ public class ActionExecutionOperatorTest {
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory<>(agentPlanWithStateStore, true),
+                        new ActionExecutionOperatorFactory<>(
+                                agentPlanWithStateStore, true, new InMemoryActionStateStore()),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();

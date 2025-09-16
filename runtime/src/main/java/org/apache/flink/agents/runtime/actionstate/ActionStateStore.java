@@ -20,6 +20,8 @@ package org.apache.flink.agents.runtime.actionstate;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.Action;
 
+import java.io.IOException;
+
 /** Interface for storing and retrieving the state of actions performed by agents. */
 public interface ActionStateStore {
     enum BackendType {
@@ -43,8 +45,9 @@ public interface ActionStateStore {
      * @param action the action the agent is taking
      * @param event the event that triggered the action
      * @param state the current state of the whole task
+     * @throws IOException when key generation failed
      */
-    void put(Object key, Action action, Event event, ActionState state);
+    void put(Object key, Action action, Event event, ActionState state) throws IOException;
 
     /**
      * Retrieve the state of a specific action associated with a given key from the backend storage.
@@ -53,8 +56,9 @@ public interface ActionStateStore {
      * @param action the action the agent is taking
      * @param event the event that triggered the action
      * @return the state of the action, or null if not found
+     * @throws IOException when key generation failed
      */
-    ActionState get(Object key, Action action, Event event);
+    ActionState get(Object key, Action action, Event event) throws IOException;
 
     /**
      * Retrieve all states associated with a given key from the backend storage and recover the

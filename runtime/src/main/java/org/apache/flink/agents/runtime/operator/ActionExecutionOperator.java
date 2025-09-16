@@ -33,7 +33,6 @@ import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
-import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
@@ -66,6 +65,7 @@ import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -73,7 +73,6 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
-import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.INMEMORY;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -142,7 +141,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             AgentPlan agentPlan,
             Boolean inputIsJava,
             ProcessingTimeService processingTimeService,
-            MailboxExecutor mailboxExecutor) {
+            MailboxExecutor mailboxExecutor,
+            ActionStateStore actionStateStore) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
         this.processingTimeService = processingTimeService;
@@ -150,6 +150,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.mailboxExecutor = mailboxExecutor;
         this.eventLogger = EventLoggerFactory.createLogger(EventLoggerConfig.builder().build());
         this.eventListeners = new ArrayList<>();
+        this.actionStateStore = actionStateStore;
     }
 
     @Override
@@ -169,13 +170,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
 
-        if (KAFKA.getType()
-                .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
+        if (actionStateStore == null
+                && KAFKA.getType()
+                        .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
             LOG.info("Using KafkaActionStateStore for action state store.");
             actionStateStore = new KafkaActionStateStore();
-        } else if (INMEMORY.getType()
-                .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
-            actionStateStore = new InMemoryActionStateStore();
         }
 
         // init agent processing related state
@@ -580,11 +579,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
-    private ActionState maybeGetActionState(Object key, Action action, Event event) {
+    private ActionState maybeGetActionState(Object key, Action action, Event event)
+            throws IOException {
         return actionStateStore == null ? null : actionStateStore.get(key, action, event);
     }
 
-    private void maybeInitActionState(Object key, Action action, Event event) {
+    private void maybeInitActionState(Object key, Action action, Event event) throws IOException {
         if (actionStateStore != null) {
             // Initialize the action state if it does not exist. It will exist when the action is an
             // async action and
@@ -600,7 +600,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             Action action,
             Event event,
             RunnerContextImpl context,
-            ActionTask.ActionTaskResult actionTaskResult) {
+            ActionTask.ActionTaskResult actionTaskResult)
+            throws IOException {
         if (actionStateStore == null) {
             return;
         }

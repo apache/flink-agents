@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.annotation.VisibleForTesting;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -47,13 +48,13 @@ public class KafkaActionStateStore implements ActionStateStore {
     }
 
     @Override
-    public void put(Object key, Action action, Event event, ActionState state) {
+    public void put(Object key, Action action, Event event, ActionState state) throws IOException {
         actionStates.put(generateKey(key, action, event), state);
         // TODO: Implement the logic to store the action state in Kafka
     }
 
     @Override
-    public ActionState get(Object key, Action action, Event event) {
+    public ActionState get(Object key, Action action, Event event) throws IOException {
         return actionStates.get(generateKey(key, action, event));
     }
 

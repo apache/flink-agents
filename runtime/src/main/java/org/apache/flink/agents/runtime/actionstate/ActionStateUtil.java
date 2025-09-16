@@ -18,21 +18,49 @@
 package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.Action;
+import org.apache.flink.agents.runtime.python.event.PythonEvent;
+import org.apache.flink.shaded.guava31.com.google.common.base.Preconditions;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
+import javax.annotation.Nonnull;
+
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 /** Utility class for action state related operations. */
 public class ActionStateUtil {
 
-    public static String generateKey(Object key, Action action, Event event) {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    public static String generateKey(
+            @Nonnull Object key, @Nonnull Action action, @Nonnull Event event) throws IOException {
+        Preconditions.checkNotNull(key, "key cannot be null.");
+        Preconditions.checkNotNull(action, "action cannot be null.");
+        Preconditions.checkNotNull(event, "event cannot be null.");
         return key
                 + "-"
-                + UUID.nameUUIDFromBytes(
-                        event.getAttributes().toString().getBytes(StandardCharsets.UTF_8))
+                + generateUUIDForEvent(event)
                 + "-"
                 + UUID.nameUUIDFromBytes(
                         String.valueOf(action.hashCode()).getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static String generateUUIDForEvent(Event event) throws IOException {
+        if (event instanceof InputEvent) {
+            InputEvent inputEvent = (InputEvent) event;
+            byte[] inputEventBytes = MAPPER.writeValueAsBytes(inputEvent);
+            return String.valueOf(UUID.nameUUIDFromBytes(inputEventBytes));
+        } else if (event instanceof PythonEvent) {
+            PythonEvent pythonEvent = (PythonEvent) event;
+            byte[] pythonEventBytes = MAPPER.writeValueAsBytes(pythonEvent);
+            return String.valueOf(UUID.nameUUIDFromBytes(pythonEventBytes));
+        } else {
+            return String.valueOf(
+                    UUID.nameUUIDFromBytes(
+                            event.getAttributes().toString().getBytes(StandardCharsets.UTF_8)));
+        }
     }
 }
