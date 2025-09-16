@@ -24,12 +24,10 @@ from pydantic import BaseModel
 from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
-    BaseChatModelConnection,
     BaseChatModelSetup,
 )
 from flink_agents.api.decorators import (
     action,
-    chat_model_connection,
     chat_model_setup,
     prompt,
 )
@@ -38,7 +36,6 @@ from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.integrations.chat_models.ollama_chat_model import (
-    OllamaChatModelConnection,
     OllamaChatModelSetup,
 )
 
@@ -107,20 +104,10 @@ class ReviewAnalysisAgent(Agent):
        ]
     }}
 
-    input: 
+    input:
     {input}
     """
         return Prompt.from_text("review_analysis_prompt", prompt_str)
-
-    @chat_model_connection
-    @staticmethod
-    def ollama_server() -> Tuple[Type[BaseChatModelConnection], Dict[str, Any]]:
-        """ChatModelServer responsible for model service connection."""
-        return OllamaChatModelConnection, {
-            "name": "ollama_server",
-            "model": "qwen3:8b",
-            "request_timeout": 120,
-        }
 
     @chat_model_setup
     @staticmethod
@@ -162,7 +149,7 @@ class ReviewAnalysisAgent(Agent):
                     )
                 )
             )
-        except Exception as e:
+        except Exception:
             logging.exception(
                 f"Error processing chat response {event.response.content}"
             )

@@ -16,11 +16,10 @@
 # limitations under the License.
 #################################################################################
 from pathlib import Path
-from typing import Iterable, Union
+from typing import Iterable
 
 from pyflink.common import Duration, Time, WatermarkStrategy
 from pyflink.datastream import (
-    KeySelector,
     ProcessWindowFunction,
     StreamExecutionEnvironment,
 )
@@ -37,6 +36,9 @@ from flink_agents.examples.quickstart.agents.review_analysis_agent import (
     ProductReviewAnalysisRes,
     ReviewAnalysisAgent,
 )
+from flink_agents.integrations.chat_models.ollama_chat_model import (
+    OllamaChatModelConnection,
+)
 
 current_dir = Path(__file__).parent
 
@@ -45,7 +47,7 @@ class AggregateScoreDistributionAndDislikeReasons(ProcessWindowFunction):
 
     def process(
         self,
-        key: int,
+        key: str,
         context: "ProcessWindowFunction.Context",
         elements: Iterable[ProductReviewAnalysisRes],
     ) -> Iterable[ProductReviewSummary]:
@@ -85,6 +87,15 @@ def main() -> None:
     # Set up the Flink streaming environment and the Agents execution environment.
     env = StreamExecutionEnvironment.get_execution_environment()
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
+
+    # Add Ollama chat model connection to be used by the ReviewAnalysisAgent
+    # and ProductSuggestionAgent.
+    agents_env.add_chat_model_connection(
+        "ollama_server",
+        OllamaChatModelConnection,
+        model="qwen3:8b",
+        request_timeout=120,
+    )
 
     # TODO: Remove this once https://github.com/apache/flink-agents/issues/173 is fixed.
     # Add required flink-agents jars to the environment.

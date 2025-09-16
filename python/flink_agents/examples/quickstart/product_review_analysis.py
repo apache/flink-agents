@@ -18,13 +18,16 @@
 from pathlib import Path
 
 from pyflink.common import Duration, WatermarkStrategy
-from pyflink.datastream import KeySelector, StreamExecutionEnvironment
+from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.file_system import FileSource, StreamFormat
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.examples.quickstart.agents.review_analysis_agent import (
     ProductReview,
     ReviewAnalysisAgent,
+)
+from flink_agents.integrations.chat_models.ollama_chat_model import (
+    OllamaChatModelConnection,
 )
 
 current_dir = Path(__file__).parent
@@ -43,8 +46,16 @@ def main() -> None:
     env = StreamExecutionEnvironment.get_execution_environment()
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
+    # Add Ollama chat model connection to be used by the ReviewAnalysisAgent.
+    agents_env.add_chat_model_connection(
+        "ollama_server",
+        OllamaChatModelConnection,
+        model="qwen3:8b",
+        request_timeout=120,
+    )
+
     # TODO: Remove this once https://github.com/apache/flink-agents/issues/173 is fixed.
-    # Add required flink-agents jars to the environment. 
+    # Add required flink-agents jars to the environment.
     env.add_jars(
         f"file:///{current_dir}/../../../../runtime/target/flink-agents-runtime-0.1-SNAPSHOT.jar"
     )
@@ -66,7 +77,9 @@ def main() -> None:
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
     ).map(
-        lambda x: ProductReview.model_validate_json(x)  # Deserialize JSON to ProductReview.
+        lambda x: ProductReview.model_validate_json(
+            x
+        )  # Deserialize JSON to ProductReview.
     )
 
     # Use the ReviewAnalysisAgent to analyze each product review.
