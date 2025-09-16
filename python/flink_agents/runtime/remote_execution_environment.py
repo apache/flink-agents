@@ -17,7 +17,7 @@
 #################################################################################
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 import cloudpickle
 from pyflink.common import TypeInformation
@@ -54,8 +54,11 @@ class RemoteAgentBuilder(AgentBuilder):
     __resources: Dict[ResourceType, Dict[str, Any]] = None
 
     def __init__(
-        self, input: DataStream, config: AgentConfiguration, t_env: StreamTableEnvironment | None = None,
-            resources: Dict[ResourceType, Dict[str, Any]] | None = None,
+        self,
+        input: DataStream,
+        config: AgentConfiguration,
+        t_env: StreamTableEnvironment | None = None,
+        resources: Dict[ResourceType, Dict[str, Any]] | None = None,
     ) -> None:
         """Init method of RemoteAgentBuilder."""
         self.__input = input
@@ -83,9 +86,7 @@ class RemoteAgentBuilder(AgentBuilder):
 
         return self
 
-    def to_datastream(
-        self, output_type: TypeInformation | None = None
-    ) -> DataStream:
+    def to_datastream(self, output_type: TypeInformation | None = None) -> DataStream:
         """Get output datastream of agent execution.
 
         Returns:
@@ -172,7 +173,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
 
     @staticmethod
     def __process_input_datastream(
-        input: DataStream, key_selector: KeySelector | None = None
+        input: DataStream, key_selector: KeySelector | Callable | None = None
     ) -> KeyedStream:
         if isinstance(input, KeyedStream):
             return input
@@ -184,7 +185,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
             return input
 
     def from_datastream(
-        self, input: DataStream, key_selector: KeySelector = None
+        self, input: DataStream, key_selector: KeySelector | Callable | None = None
     ) -> RemoteAgentBuilder:
         """Set input datastream of agent.
 
@@ -198,13 +199,15 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         """
         input = self.__process_input_datastream(input, key_selector)
 
-        return RemoteAgentBuilder(input=input, config=self.__config, resources=self.resources)
+        return RemoteAgentBuilder(
+            input=input, config=self.__config, resources=self.resources
+        )
 
     def from_table(
         self,
         input: Table,
         t_env: StreamTableEnvironment,
-        key_selector: KeySelector | None = None,
+        key_selector: KeySelector | Callable | None = None,
     ) -> AgentBuilder:
         """Set input Table of agent.
 
@@ -222,7 +225,9 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         input = input.map(lambda x: x, output_type=PickledBytesTypeInfo())
 
         input = self.__process_input_datastream(input, key_selector)
-        return RemoteAgentBuilder(input=input, config=self.__config, t_env=t_env, resources=self.resources)
+        return RemoteAgentBuilder(
+            input=input, config=self.__config, t_env=t_env, resources=self.resources
+        )
 
     def from_list(self, input: List[Dict[str, Any]]) -> "AgentsExecutionEnvironment":
         """Set input list of agent execution.

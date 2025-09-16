@@ -40,15 +40,6 @@ from flink_agents.examples.quickstart.agents.review_analysis_agent import (
 
 current_dir = Path(__file__).parent
 
-
-class MyKeySelector(KeySelector):
-    """KeySelector for extracting key."""
-
-    def get_key(self, value: Union[ProductReview, ProductReviewSummary]) -> int:
-        """Extract key from ItemData."""
-        return value.id
-
-
 class AggregateScoreDistributionAndDislikeReasons(ProcessWindowFunction):
     """Aggregate score distribution and dislike reasons."""
 
@@ -93,8 +84,9 @@ def main() -> None:
     """
     # Set up the Flink streaming environment and the Agents execution environment.
     env = StreamExecutionEnvironment.get_execution_environment()
-    agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
+    # TODO: Remove this once https://github.com/apache/flink-agents/issues/173 is fixed.
     # Add required flink-agents jars to the environment.
     env.add_jars(
         f"file:///{current_dir}/../../../../runtime/target/flink-agents-runtime-0.1-SNAPSHOT.jar"
@@ -127,7 +119,7 @@ def main() -> None:
     # The agent extracts the review score and unsatisfied reasons.
     review_analysis_res_stream = (
         agents_env.from_datastream(
-            input=product_review_stream, key_selector=MyKeySelector()
+            input=product_review_stream, key_selector=lambda x: x.id
         )
         .apply(ReviewAnalysisAgent())
         .to_datastream()
@@ -147,7 +139,7 @@ def main() -> None:
     product_suggestion_res_stream = (
         agents_env.from_datastream(
             input=aggregated_analysis_res_stream,
-            key_selector=MyKeySelector(),
+            key_selector=lambda x: x.id,
         )
         .apply(ProductSuggestionAgent())
         .to_datastream()

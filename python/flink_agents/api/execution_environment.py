@@ -162,7 +162,7 @@ class AgentsExecutionEnvironment(ABC):
 
     @abstractmethod
     def from_datastream(
-        self, input: DataStream, key_selector: KeySelector | None = None
+        self, input: DataStream, key_selector: KeySelector | Callable | None = None
     ) -> AgentBuilder:
         """Set input for agents. Used for remote execution.
 
@@ -184,7 +184,7 @@ class AgentsExecutionEnvironment(ABC):
         self,
         input: Table,
         t_env: StreamTableEnvironment,
-        key_selector: KeySelector | None = None,
+        key_selector: KeySelector | Callable | None = None,
     ) -> AgentBuilder:
         """Set input for agents. Used for remote execution.
 
@@ -325,7 +325,10 @@ class AgentsExecutionEnvironment(ABC):
             msg = f"Embedding model connection {name} already defined"
             raise ValueError(msg)
         kwargs["name"] = name
-        self._resources[ResourceType.EMBEDDING_MODEL_CONNECTION][name] = (connection, kwargs)
+        self._resources[ResourceType.EMBEDDING_MODEL_CONNECTION][name] = (
+            connection,
+            kwargs,
+        )
         return self
 
     def add_embedding_model_setup(
@@ -354,7 +357,9 @@ class AgentsExecutionEnvironment(ABC):
         self._resources[ResourceType.EMBEDDING_MODEL][name] = (embedding_model, kwargs)
         return self
 
-    def add_mcp_server(self, name: str, mcp_server: MCPServer) -> "AgentsExecutionEnvironment":
+    def add_mcp_server(
+        self, name: str, mcp_server: MCPServer
+    ) -> "AgentsExecutionEnvironment":
         """Add an MCP server to the agent execution environment.
 
         Parameters

@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 from pyflink.common import TypeInformation
 from pyflink.datastream import DataStream, KeySelector, StreamExecutionEnvironment
@@ -130,7 +130,7 @@ class LocalExecutionEnvironment(AgentsExecutionEnvironment):
             self.__output.append(output)
 
     def from_datastream(
-        self, input: DataStream, key_selector: KeySelector = None
+        self, input: DataStream, key_selector : KeySelector | Callable | None = None
     ) -> AgentBuilder:
         """Set input DataStream of agent execution.
 
@@ -143,7 +143,7 @@ class LocalExecutionEnvironment(AgentsExecutionEnvironment):
         self,
         input: Table,
         t_env: StreamTableEnvironment,
-        key_selector: KeySelector = None,
+        key_selector: KeySelector | Callable | None = None,
     ) -> AgentBuilder:
         """Set input Table of agent execution.
 

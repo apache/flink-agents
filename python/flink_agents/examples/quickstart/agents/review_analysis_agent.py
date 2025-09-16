@@ -48,13 +48,13 @@ class ProductReview(BaseModel):
 
     Attributes:
     ----------
-    id : int
+    id : str
         The unique identifier for the product being reviewed.
     review : str
         The review of the product.
     """
 
-    id: int
+    id: str
     review: str
 
 
@@ -63,7 +63,7 @@ class ProductReviewAnalysisRes(BaseModel):
 
     Attributes:
     ----------
-    id : int
+    id : str
         The unique identifier for the product being reviewed.
     score : int
         The satisfaction score given by the reviewer.
@@ -71,7 +71,7 @@ class ProductReviewAnalysisRes(BaseModel):
         A list of reasons provided by the reviewer for dissatisfaction, if any.
     """
 
-    id: int
+    id: str
     score: int
     reasons: list[str]
 
@@ -107,7 +107,8 @@ class ReviewAnalysisAgent(Agent):
        ]
     }}
 
-    input: {input}
+    input: 
+    {input}
     """
         return Prompt.from_text("review_analysis_prompt", prompt_str)
 
@@ -117,7 +118,7 @@ class ReviewAnalysisAgent(Agent):
         """ChatModelServer responsible for model service connection."""
         return OllamaChatModelConnection, {
             "name": "ollama_server",
-            "model": "qwen2.5:7b",
+            "model": "qwen3:8b",
             "request_timeout": 120,
         }
 
@@ -163,5 +164,7 @@ class ReviewAnalysisAgent(Agent):
             )
         except Exception as e:
             logging.exception(
-                f"Error processing chat response {event.response.content}", exc_info=e
+                f"Error processing chat response {event.response.content}"
             )
+
+            # To fail the agent, you can raise an exception here.

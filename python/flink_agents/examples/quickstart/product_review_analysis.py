@@ -30,14 +30,6 @@ from flink_agents.examples.quickstart.agents.review_analysis_agent import (
 current_dir = Path(__file__).parent
 
 
-class MyKeySelector(KeySelector):
-    """KeySelector for extracting key."""
-
-    def get_key(self, value: ProductReview) -> int:
-        """Extract key from ItemData."""
-        return value.id
-
-
 def main() -> None:
     """Main function for the product review analysis quickstart example.
 
@@ -49,9 +41,10 @@ def main() -> None:
     """
     # Set up the Flink streaming environment and the Agents execution environment.
     env = StreamExecutionEnvironment.get_execution_environment()
-    agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
-    # Add required flink-agents jars to the environment.
+    # TODO: Remove this once https://github.com/apache/flink-agents/issues/173 is fixed.
+    # Add required flink-agents jars to the environment. 
     env.add_jars(
         f"file:///{current_dir}/../../../../runtime/target/flink-agents-runtime-0.1-SNAPSHOT.jar"
     )
@@ -79,7 +72,7 @@ def main() -> None:
     # Use the ReviewAnalysisAgent to analyze each product review.
     review_analysis_res_stream = (
         agents_env.from_datastream(
-            input=product_review_stream, key_selector=MyKeySelector()
+            input=product_review_stream, key_selector=lambda x: x.id
         )
         .apply(ReviewAnalysisAgent())
         .to_datastream()
