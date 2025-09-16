@@ -20,9 +20,9 @@ import os
 import pytest
 
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.integrations.embedding_models.openai.openai_embedding_model import (
+from flink_agents.integrations.embedding_models.openai_embedding_model import (
     OpenAIEmbeddingModelConnection,
-    OpenAIEmbeddingModelSetup,
+    OpenAIEmbeddingModelSetup
 )
 
 test_model = os.environ.get("TEST_EMBEDDING_MODEL", "text-embedding-3-small")
