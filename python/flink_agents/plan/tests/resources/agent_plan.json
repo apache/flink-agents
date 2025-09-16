@@ -111,6 +111,35 @@
                 },
                 "__resource_provider_type__": "PythonResourceProvider"
             }
+        },
+        "vector_store": {
+            "mock_vector_store": {
+                "name": "mock_vector_store",
+                "type": "vector_store",
+                "module": "flink_agents.plan.tests.test_agent_plan",
+                "clazz": "MockVectorStoreSetup",
+                "kwargs": {
+                    "name": "mock_vector_store",
+                    "connection": "mock_vector_conn",
+                    "embedding_model": "mock_embedding",
+                    "collection_name": "test_collection"
+                },
+                "__resource_provider_type__": "PythonResourceProvider"
+            }
+        },
+        "vector_store_connection": {
+            "mock_vector_conn": {
+                "name": "mock_vector_conn",
+                "type": "vector_store_connection",
+                "module": "flink_agents.plan.tests.test_agent_plan",
+                "clazz": "MockVectorStoreConnection",
+                "kwargs": {
+                    "name": "mock_vector_conn",
+                    "host": "localhost",
+                    "port": 8000
+                },
+                "__resource_provider_type__": "PythonResourceProvider"
+            }
         }
     },
     "config": {

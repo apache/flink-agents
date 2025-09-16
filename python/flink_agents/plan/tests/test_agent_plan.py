@@ -29,10 +29,17 @@ from flink_agents.api.decorators import (
     chat_model_setup,
     embedding_model_connection,
     embedding_model_setup,
+    vector_store_connection,
+    vector_store_setup,
 )
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
+)
+from flink_agents.api.vector_stores.vector_store import (
+    BaseVectorStoreConnection,
+    BaseVectorStoreSetup,
+    Document,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import Resource, ResourceType
@@ -116,6 +123,34 @@ class MockEmbeddingModelSetup(BaseEmbeddingModelSetup):  # noqa: D101
         return {"model": self.model}
 
 
+class MockVectorStoreConnection(BaseVectorStoreConnection):  # noqa: D101
+    host: str
+    port: int
+
+    def query(self, embedding: list[float], limit: int = 10, **kwargs: Any) -> list[Document]:
+        """Testing Implementation."""
+        return [
+            Document(
+                content="Mock document content",
+                metadata={"source": "test", "id": "doc1"},
+                id="doc1"
+            ),
+            Document(
+                content="Another mock document",
+                metadata={"source": "test", "id": "doc2"},
+                id="doc2"
+            )
+        ][:limit]
+
+
+class MockVectorStoreSetup(BaseVectorStoreSetup):  # noqa: D101
+    collection_name: str
+
+    @property
+    def store_kwargs(self) -> Dict[str, Any]:  # noqa: D102
+        return {"collection_name": self.collection_name}
+
+
 class MyAgent(Agent):  # noqa: D101
     @chat_model_setup
     @staticmethod
@@ -142,6 +177,25 @@ class MyAgent(Agent):  # noqa: D101
             "name": "mock_embedding",
             "model": "test-model",
             "connection": "mock_embedding_conn",
+        }
+
+    @vector_store_connection
+    @staticmethod
+    def mock_vector_conn() -> Tuple[Type[Resource], Dict[str, Any]]:  # noqa: D102
+        return MockVectorStoreConnection, {
+            "name": "mock_vector_conn",
+            "host": "localhost",
+            "port": 8000,
+        }
+
+    @vector_store_setup
+    @staticmethod
+    def mock_vector_store() -> Tuple[Type[Resource], Dict[str, Any]]:  # noqa: D102
+        return MockVectorStoreSetup, {
+            "name": "mock_vector_store",
+            "connection": "mock_vector_conn",
+            "embedding_model": "mock_embedding",
+            "collection_name": "test_collection",
         }
 
     @action(InputEvent)
@@ -213,6 +267,19 @@ def test_add_action_and_resource_to_agent() -> None:  # noqa: D103
         embedding_model=MockEmbeddingModelSetup,
         model="test-model",
         connection="mock_embedding_conn",
+    )
+    my_agent.add_vector_store_connection(
+        name="mock_vector_conn",
+        connection=MockVectorStoreConnection,
+        host="localhost",
+        port=8000,
+    )
+    my_agent.add_vector_store_setup(
+        name="mock_vector_store",
+        vector_store=MockVectorStoreSetup,
+        connection="mock_vector_conn",
+        embedding_model="mock_embedding",
+        collection_name="test_collection",
     )
     agent_plan = AgentPlan.from_agent(my_agent, AgentConfiguration({"mock.key": "mock.value"}))
     json_value = agent_plan.model_dump_json(serialize_as_any=True, indent=4)

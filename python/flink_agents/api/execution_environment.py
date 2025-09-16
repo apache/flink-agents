@@ -36,6 +36,10 @@ from flink_agents.api.embedding_models.embedding_model import (
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.mcp import MCPServer
+from flink_agents.api.vector_stores.vector_store import (
+    BaseVectorStoreConnection,
+    BaseVectorStoreSetup,
+)
 
 
 class AgentBuilder(ABC):
@@ -373,4 +377,53 @@ class AgentsExecutionEnvironment(ABC):
             msg = f"MCP server {name} already defined"
             raise ValueError(msg)
         self._resources[ResourceType.MCP_SERVER][name] = mcp_server
+        return self
+
+    def add_vector_store_connection(
+            self, name: str, connection: Type[BaseVectorStoreConnection], **kwargs: Any
+    ) -> "AgentsExecutionEnvironment":
+        """Register vector store connection to agent execution environment.
+        Parameters
+        ----------
+        name : str
+            The name of the vector store connection, should be unique in the same
+            Agent.
+        connection: Type[BaseVectorStoreConnection]
+            The type of vector store connection.
+        **kwargs: Any
+            Initialize keyword arguments passed to the vector store connection.
+        Returns:
+        -------
+        AgentsExecutionEnvironment
+            The environment contains registered vector store connection.
+        """
+        if name in self._resources[ResourceType.VECTOR_STORE_CONNECTION]:
+            msg = f"Vector store connection {name} already defined"
+            raise ValueError(msg)
+        kwargs["name"] = name
+        self._resources[ResourceType.VECTOR_STORE_CONNECTION][name] = (connection, kwargs)
+        return self
+
+    def add_vector_store_setup(
+            self, name: str, vector_store: Type[BaseVectorStoreSetup], **kwargs: Any
+    ) -> "AgentsExecutionEnvironment":
+        """Register vector store setup to agent execution environment.
+        Parameters
+        ----------
+        name : str
+            The name of the vector store, should be unique in the same Agent.
+        vector_store: Type[BaseVectorStoreSetup]
+            The type of vector store.
+        **kwargs: Any
+            Initialize keyword arguments passed to the vector store.
+        Returns:
+        -------
+        AgentsExecutionEnvironment
+            The environment contains registered vector store setup.
+        """
+        if name in self._resources[ResourceType.VECTOR_STORE]:
+            msg = f"Vector store setup {name} already defined"
+            raise ValueError(msg)
+        kwargs["name"] = name
+        self._resources[ResourceType.VECTOR_STORE][name] = (vector_store, kwargs)
         return self

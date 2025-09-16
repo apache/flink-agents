@@ -21,11 +21,15 @@ package org.apache.flink.agents.api.resource;
 /**
  * Type enum of resource.
  *
- * <p>Currently, only support chat models and tools.
+ * <p>Currently, support chat models, embedding models, vector stores, tools, and prompts.
  */
 public enum ResourceType {
     CHAT_MODEL("chat_model"),
     CHAT_MODEL_CONNECTION("chat_model_connection"),
+    EMBEDDING_MODEL("embedding_model"),
+    EMBEDDING_MODEL_CONNECTION("embedding_model_connection"),
+    VECTOR_STORE("vector_store"),
+    VECTOR_STORE_CONNECTION("vector_store_connection"),
     PROMPT("prompt"),
     TOOL("tool");
 

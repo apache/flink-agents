@@ -171,3 +171,34 @@ def mcp_server(func: Callable) -> Callable:
     """
     func._is_mcp_server = True
     return func
+
+
+def vector_store_connection(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a vector store connection.
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare a vector store
+        connection.
+    """
+    func._is_vector_store_connection = True
+    return func
+
+
+def vector_store_setup(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a vector store setup.
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare a vector store.
+    """
+    func._is_vector_store_setup = True
+    return func
