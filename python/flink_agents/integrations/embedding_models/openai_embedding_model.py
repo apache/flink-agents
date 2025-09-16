@@ -43,12 +43,12 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
         Base URL for the OpenAI API (default: https://api.openai.com/v1).
     request_timeout : float
         The timeout for making HTTP requests to OpenAI API.
+    max_retries : int
+        Maximum number of retries for failed requests.
     organization : Optional[str]
         Optional organization ID for API requests.
     project : Optional[str]
         Optional project ID for API requests.
-    max_retries : int
-        Maximum number of retries for failed requests.
     """
 
     api_key: str = Field(description="OpenAI API key for authentication.")
@@ -60,6 +60,10 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
         default=DEFAULT_REQUEST_TIMEOUT,
         description="The timeout for making HTTP requests to OpenAI API.",
     )
+    max_retries: int = Field(
+        default=DEFAULT_MAX_RETRIES,
+        description="Maximum number of retries for failed requests.",
+    )
     organization: Optional[str] = Field(
         default=None,
         description="Optional organization ID for API requests.",
@@ -68,21 +72,15 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
         default=None,
         description="Optional project ID for API requests.",
     )
-    max_retries: int = Field(
-        default=DEFAULT_MAX_RETRIES,
-        description="Maximum number of retries for failed requests.",
-    )
-
-    __client: OpenAI = None
 
     def __init__(
         self,
         api_key: str,
         base_url: str = DEFAULT_BASE_URL,
         request_timeout: Optional[float] = DEFAULT_REQUEST_TIMEOUT,
+        max_retries: int = DEFAULT_MAX_RETRIES,
         organization: Optional[str] = None,
         project: Optional[str] = None,
-        max_retries: int = DEFAULT_MAX_RETRIES,
         **kwargs: Any,
     ) -> None:
         """Init method."""
@@ -90,11 +88,13 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
             api_key=api_key,
             base_url=base_url,
             request_timeout=request_timeout,
+            max_retries=max_retries,
             organization=organization,
             project=project,
-            max_retries=max_retries,
             **kwargs,
         )
+
+    __client: OpenAI = None
 
     @property
     def client(self) -> OpenAI:
@@ -112,7 +112,7 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
 
     def embed(self, text: str, **kwargs: Any) -> list[float]:
         """Generate embedding vector for a single text query."""
-        # Extract specific parameters
+        # Extract OpenAI specific parameters
         model = kwargs.pop("model")
         encoding_format = kwargs.pop("encoding_format", None)
         dimensions = kwargs.pop("dimensions", None)
@@ -131,8 +131,7 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
 
 
 class OpenAIEmbeddingModelSetup(BaseEmbeddingModelSetup):
-    """OpenAI embedding model setup which manages embedding configuration
-    and will internally call OpenAI embedding model connection to generate embeddings.
+    """The settings for OpenAI embedding model.
 
     Attributes:
     ----------

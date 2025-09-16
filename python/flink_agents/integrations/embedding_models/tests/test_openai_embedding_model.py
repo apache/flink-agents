@@ -22,7 +22,7 @@ import pytest
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.integrations.embedding_models.openai_embedding_model import (
     OpenAIEmbeddingModelConnection,
-    OpenAIEmbeddingModelSetup
+    OpenAIEmbeddingModelSetup,
 )
 
 test_model = os.environ.get("TEST_EMBEDDING_MODEL", "text-embedding-3-small")
@@ -39,7 +39,8 @@ def test_openai_embedding_model() -> None:  # noqa: D103
         if type == ResourceType.EMBEDDING_MODEL_CONNECTION:
             return connection
         else:
-            raise ValueError(f"Unknown resource type: {type}")
+            msg = f"Unknown resource type: {type}"
+            raise ValueError(msg)
 
     embedding_model = OpenAIEmbeddingModelSetup(
         name="openai", model=test_model, connection="openai", get_resource=get_resource
