@@ -50,7 +50,7 @@ class MyAgent(Agent):
     def first_action(event: Event, ctx: RunnerContext):  # noqa D102
         key = ctx.key
         input_message = event.input
-        memory = ctx.get_short_term_memory()
+        memory = ctx.short_term_memory
 
         data_path = f"user_data.{key}"
         previous_data: ProcessedData = memory.get(data_path)
@@ -71,7 +71,7 @@ class MyAgent(Agent):
     @staticmethod
     def second_action(event: Event, ctx: RunnerContext):  # noqa D102
         content_ref: MemoryRef = event.value
-        memory = ctx.get_short_term_memory()
+        memory = ctx.short_term_memory
 
         processed_data: ProcessedData = memory.get(content_ref)
 
