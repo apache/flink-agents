@@ -48,14 +48,22 @@ public class ActionStateUtil {
                         String.valueOf(action.hashCode()).getBytes(StandardCharsets.UTF_8));
     }
 
-    public static String generateUUIDForEvent(Event event) throws IOException {
+    private static String generateUUIDForEvent(Event event) throws IOException {
         if (event instanceof InputEvent) {
             InputEvent inputEvent = (InputEvent) event;
-            byte[] inputEventBytes = MAPPER.writeValueAsBytes(inputEvent);
+            byte[] inputEventBytes =
+                    MAPPER.writeValueAsBytes(
+                            new Object[] {inputEvent.getInput(), inputEvent.getAttributes()});
             return String.valueOf(UUID.nameUUIDFromBytes(inputEventBytes));
         } else if (event instanceof PythonEvent) {
             PythonEvent pythonEvent = (PythonEvent) event;
-            byte[] pythonEventBytes = MAPPER.writeValueAsBytes(pythonEvent);
+            byte[] pythonEventBytes =
+                    MAPPER.writeValueAsBytes(
+                            new Object[] {
+                                pythonEvent.getEvent(),
+                                pythonEvent.getEventType(),
+                                pythonEvent.getAttributes()
+                            });
             return String.valueOf(UUID.nameUUIDFromBytes(pythonEventBytes));
         } else {
             return String.valueOf(

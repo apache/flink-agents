@@ -26,5 +26,5 @@ public class AgentConfigOptions {
 
     /** The config parameter specifies the backend for action state store. */
     public static final ConfigOption<String> ACTION_STATE_STORE_BACKEND =
-            new ConfigOption<>("actionStateStoreBackend", String.class, "inmemory");
+            new ConfigOption<>("actionStateStoreBackend", String.class, null);
 }
