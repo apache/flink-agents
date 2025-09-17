@@ -17,9 +17,16 @@
  */
 package org.apache.flink.agents.api.context;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.io.Serializable;
 import java.util.Objects;
 
+@JsonSerialize()
+@JsonDeserialize()
 public class MemoryUpdate implements Serializable {
     private static final long serialVersionUID = 1L;
 
@@ -32,7 +39,8 @@ public class MemoryUpdate implements Serializable {
      * @param path the absolute path of the data in Short-Term Memory.
      * @param value the new value to set at the specified path.
      */
-    public MemoryUpdate(String path, Object value) {
+    @JsonCreator
+    public MemoryUpdate(@JsonProperty("path") String path, @JsonProperty("value") Object value) {
         this.path = path;
         this.value = value;
     }

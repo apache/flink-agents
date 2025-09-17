@@ -74,4 +74,9 @@ public class InMemoryActionStateStore implements ActionStateStore {
     public Map<String, Map<String, ActionState>> getKeyedActionStates() {
         return keyedActionStates;
     }
+
+    @Override
+    public void close() throws Exception {
+        // do nothing
+    }
 }

@@ -120,7 +120,12 @@ under the License.
                 </exclusion>
             </exclusions>
         </dependency>
-
+        <!-- kafka client -->
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+            <version>${kafka.version}</version>
+        </dependency>
         <!-- LOG -->
         <dependency>
             <groupId>org.slf4j</groupId>

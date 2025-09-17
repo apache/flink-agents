@@ -27,4 +27,20 @@ public class AgentConfigOptions {
     /** The config parameter specifies the backend for action state store. */
     public static final ConfigOption<String> ACTION_STATE_STORE_BACKEND =
             new ConfigOption<>("actionStateStoreBackend", String.class, null);
+
+    /** The config parameter specifies the Kafka bootstrap server. */
+    public static final ConfigOption<String> KAFKA_BOOTSTRAP_SERVERS =
+            new ConfigOption<>("kafkaBootstrapServers", String.class, "localhost:9092");
+
+    /** The config parameter specifies the Kafka topic for action state. */
+    public static final ConfigOption<String> KAFKA_ACTION_STATE_TOPIC =
+            new ConfigOption<>("kafkaActionStateTopic", String.class, "flink-agents-action-state");
+
+    /** The config parameter sepcifies the number of partitions for the Kafka action state topic. */
+    public static final ConfigOption<Integer> KAFKA_ACTION_STATE_TOPIC_NUM_PARTITIONS =
+            new ConfigOption<>("kafkaActionStateTopicNumPartitions", Integer.class, 64);
+
+    /** The config parameter specifies the replication factor for the Kafka action state topic. */
+    public static final ConfigOption<Short> KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR =
+            new ConfigOption<>("kafkaActionStateTopicReplicationFactor", Short.class, (short) 1);
 }

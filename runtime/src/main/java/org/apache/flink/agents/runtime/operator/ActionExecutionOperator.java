@@ -73,7 +73,6 @@ import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -149,6 +148,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient ActionStateStore actionStateStore;
     private transient ValueState<Long> sequenceNumberKState;
+    private transient ListState<Object> recoveryMarkerOpState;
     private transient Map<Long, Map<Object, Long>> checkpointIdToSeqNums;
 
     public ActionExecutionOperator(
@@ -190,8 +190,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 && KAFKA.getType()
                         .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
             LOG.info("Using Kafka as backend of action state store.");
-            actionStateStore = new KafkaActionStateStore();
+            actionStateStore = new KafkaActionStateStore(agentPlan.getConfig());
         }
+
+        // init recovery marker state for recovery marker persistence
+        recoveryMarkerOpState =
+                getOperatorStateBackend()
+                        .getUnionListState(
+                                new ListStateDescriptor<>(
+                                        RECOVERY_MARKER_STATE_NAME,
+                                        TypeInformation.of(Object.class)));
 
         // init sequence number state for per key message ordering
         sequenceNumberKState =
@@ -500,12 +508,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (actionStateStore != null) {
             Object recoveryMarker = actionStateStore.getRecoveryMarker();
             if (recoveryMarker != null) {
-                ListState<Object> recoveryMarkerOpState =
-                        getOperatorStateBackend()
-                                .getListState(
-                                        new ListStateDescriptor<>(
-                                                RECOVERY_MARKER_STATE_NAME,
-                                                TypeInformation.of(Object.class)));
                 recoveryMarkerOpState.update(List.of(recoveryMarker));
             }
         }
@@ -639,14 +641,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private ActionState maybeGetActionState(
-            Object key, long sequenceNum, Action action, Event event) throws IOException {
+            Object key, long sequenceNum, Action action, Event event) throws Exception {
         return actionStateStore == null
                 ? null
                 : actionStateStore.get(key.toString(), sequenceNum, action, event);
     }
 
     private void maybeInitActionState(Object key, long sequenceNum, Action action, Event event)
-            throws IOException {
+            throws Exception {
         if (actionStateStore != null) {
             // Initialize the action state if it does not exist. It will exist when the action is an
             // async action and
@@ -664,7 +666,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             Event event,
             RunnerContextImpl context,
             ActionTask.ActionTaskResult actionTaskResult)
-            throws IOException {
+            throws Exception {
         if (actionStateStore == null) {
             return;
         }
@@ -682,7 +684,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         actionStateStore.put(key, sequenceNum, action, event, actionState);
     }
 
-    private void maybePruneState(Object key, long sequenceNum) throws IOException {
+    private void maybePruneState(Object key, long sequenceNum) throws Exception {
         if (actionStateStore != null) {
             actionStateStore.pruneState(key, sequenceNum);
         }

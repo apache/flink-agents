@@ -38,6 +38,25 @@ public class ActionState {
         outputEvents = new ArrayList<>();
     }
 
+    public ActionState() {
+        this.taskEvent = null;
+        this.memoryUpdates = new ArrayList<>();
+        this.outputEvents = new ArrayList<>();
+        this.generatedActionTask = null;
+    }
+
+    /** Constructor for deserialization purposes. */
+    public ActionState(
+            Event taskEvent,
+            List<MemoryUpdate> memoryUpdates,
+            List<Event> outputEvents,
+            ActionTask generatedActionTask) {
+        this.taskEvent = taskEvent;
+        this.memoryUpdates = memoryUpdates != null ? memoryUpdates : new ArrayList<>();
+        this.outputEvents = outputEvents != null ? outputEvents : new ArrayList<>();
+        this.generatedActionTask = generatedActionTask;
+    }
+
     /** Getters for the fields */
     public Event getTaskEvent() {
         return taskEvent;

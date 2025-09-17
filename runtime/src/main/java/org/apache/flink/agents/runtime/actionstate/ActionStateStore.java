@@ -24,7 +24,7 @@ import java.io.IOException;
 import java.util.List;
 
 /** Interface for storing and retrieving the state of actions performed by agents. */
-public interface ActionStateStore {
+public interface ActionStateStore extends AutoCloseable {
     enum BackendType {
         KAFKA("kafka");
 
@@ -50,7 +50,7 @@ public interface ActionStateStore {
      * @throws IOException when key generation failed
      */
     void put(Object key, long seqNum, Action action, Event event, ActionState state)
-            throws IOException;
+            throws Exception;
 
     /**
      * Retrieve the state of a specific action associated with a given key from the backend storage.
@@ -64,14 +64,14 @@ public interface ActionStateStore {
      * @return the state of the action, or null if not found
      * @throws IOException when key generation failed
      */
-    ActionState get(Object key, long seqNum, Action action, Event event) throws IOException;
+    ActionState get(Object key, long seqNum, Action action, Event event) throws Exception;
 
     /**
      * Rebuild the in-memory state from the backend storage using the provided recovery markers.
      *
      * @param recoveryMarkers a list of markers representing the recovery points
      */
-    void rebuildState(List<Object> recoveryMarkers);
+    void rebuildState(List<Object> recoveryMarkers) throws Exception;
 
     /**
      * Prune the state for a given key.
