@@ -37,6 +37,10 @@ public class KafkaActionStateStore implements ActionStateStore {
     // In memory action state for quick state retrival
     private final Map<String, ActionState> actionStates;
 
+    // Track the max sequence number per key a key can have, anything greater that this should be
+    // ignored
+    private final Map<Object, Long> maxSeqNumPerKey = new HashMap<>();
+
     @VisibleForTesting
     KafkaActionStateStore(Map<String, ActionState> actionStates) {
         this.actionStates = actionStates;
@@ -48,14 +52,25 @@ public class KafkaActionStateStore implements ActionStateStore {
     }
 
     @Override
-    public void put(Object key, Action action, Event event, ActionState state) throws IOException {
-        actionStates.put(generateKey(key, action, event), state);
+    public void put(Object key, long seqNum, Action action, Event event, ActionState state)
+            throws IOException {
+        actionStates.put(generateKey(key.toString() + seqNum, action, event), state);
         // TODO: Implement the logic to store the action state in Kafka
     }
 
     @Override
-    public ActionState get(Object key, Action action, Event event) throws IOException {
-        return actionStates.get(generateKey(key, action, event));
+    public ActionState get(Object key, long seqNum, Action action, Event event) throws IOException {
+        if (maxSeqNumPerKey.get(key) != null && seqNum > maxSeqNumPerKey.get(key)) {
+            // If the seqNum is greater than the max seqNum that is not present in the map, we
+            // should ignore it
+            return null;
+        }
+        return actionStates.computeIfAbsent(
+                generateKey(key.toString() + seqNum, action, event),
+                k -> {
+                    maxSeqNumPerKey.put(key, seqNum);
+                    return null;
+                });
     }
 
     @Override
@@ -66,6 +81,8 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     @Override
     public void cleanUpState() {
-        // NOOP, for kafka, we can't really delete messages from it
+        // Only clean up in memory state. For kafka, we can't really delete messages from it
+        actionStates.clear();
+        maxSeqNumPerKey.clear();
     }
 }

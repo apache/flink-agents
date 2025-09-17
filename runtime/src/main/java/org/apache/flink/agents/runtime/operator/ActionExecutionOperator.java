@@ -50,12 +50,18 @@ import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.python.env.PythonDependencyInfo;
 import org.apache.flink.runtime.state.StateInitializationContext;
 import org.apache.flink.runtime.state.StateSnapshotContext;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.streaming.api.operators.*;
+import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
+import org.apache.flink.streaming.api.operators.BoundedOneInput;
+import org.apache.flink.streaming.api.operators.ChainingStrategy;
+import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
+import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxExecutorImpl;
@@ -94,6 +100,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private static final long serialVersionUID = 1L;
 
     private static final Logger LOG = LoggerFactory.getLogger(ActionExecutionOperator.class);
+
+    private static final String RECOVERY_MARKER_STATE_NAME = "recoveryMarker";
+    private static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
 
     private final AgentPlan agentPlan;
 
@@ -136,6 +145,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final transient List<EventListener> eventListeners;
 
     private transient ActionStateStore actionStateStore;
+    private transient ValueState<Long> sequenceNumberKState;
 
     public ActionExecutionOperator(
             AgentPlan agentPlan,
@@ -170,12 +180,20 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
 
+        // init the action state store with proper implementation
         if (actionStateStore == null
                 && KAFKA.getType()
                         .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
-            LOG.info("Using KafkaActionStateStore for action state store.");
+            LOG.info("Using Kafka as backend of action state store.");
             actionStateStore = new KafkaActionStateStore();
         }
+
+        // init sequence number state for per key message ordering
+        sequenceNumberKState =
+                getRuntimeContext()
+                        .getState(
+                                new ValueStateDescriptor<>(
+                                        MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class));
 
         // init agent processing related state
         actionTasksKState =
@@ -255,6 +273,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             if (isInputEvent) {
                 // If the event is an InputEvent, we mark that the key is currently being processed.
                 currentProcessingKeysOpState.add(key);
+                initOrIncSequenceNumber();
             }
             // We then obtain the triggered action and add ActionTasks to the waiting processing
             // queue.
@@ -307,6 +326,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void processActionTaskForKey(Object key) throws Exception {
         // 1. Get an action task for the key.
         setCurrentKey(key);
+
         ActionTask actionTask = pollFromListState(actionTasksKState);
         if (actionTask == null) {
             int removedCount = removeFromListState(currentProcessingKeysOpState, key);
@@ -322,10 +342,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // 2. Invoke the action task.
         createAndSetRunnerContext(actionTask);
 
+        long sequenceNumber = sequenceNumberKState.value();
         boolean isFinished;
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt;
-        ActionState actionState = maybeGetActionState(key, actionTask.action, actionTask.event);
+        ActionState actionState =
+                maybeGetActionState(key, sequenceNumber, actionTask.action, actionTask.event);
         if (actionState != null && actionState.getGeneratedActionTask().isEmpty()) {
             isFinished = true;
             outputEvents = actionState.getOutputEvents();
@@ -337,10 +359,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .set(memoryUpdate.getPath(), memoryUpdate.getValue());
             }
         } else {
-            maybeInitActionState(key, actionTask.action, actionTask.event);
+            maybeInitActionState(key, sequenceNumber, actionTask.action, actionTask.event);
             ActionTask.ActionTaskResult actionTaskResult = actionTask.invoke();
             maybePersistTaskResult(
                     key,
+                    sequenceNumber,
                     actionTask.action,
                     actionTask.event,
                     actionTask.getRunnerContext(),
@@ -450,7 +473,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     getOperatorStateBackend()
                             .getListState(
                                     new ListStateDescriptor<>(
-                                            "recoveryMarker", TypeInformation.of(Object.class)));
+                                            RECOVERY_MARKER_STATE_NAME,
+                                            TypeInformation.of(Object.class)));
             Iterable<Object> recoveryMarkers = recoveryMarkerOpState.get();
             if (recoveryMarkers != null) {
                 for (Object marker : recoveryMarkers) {
@@ -473,7 +497,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         getOperatorStateBackend()
                                 .getListState(
                                         new ListStateDescriptor<>(
-                                                "recoveryMarker",
+                                                RECOVERY_MARKER_STATE_NAME,
                                                 TypeInformation.of(Object.class)));
                 recoveryMarkerOpState.update(List.of(recoveryMarker));
             }
@@ -579,24 +603,38 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
-    private ActionState maybeGetActionState(Object key, Action action, Event event)
-            throws IOException {
-        return actionStateStore == null ? null : actionStateStore.get(key, action, event);
+    private void initOrIncSequenceNumber() throws Exception {
+        // Initialize the sequence number state if it does not exist.
+        Long sequenceNumber = sequenceNumberKState.value();
+        if (sequenceNumber == null) {
+            sequenceNumberKState.update(0L);
+        } else {
+            sequenceNumberKState.update(sequenceNumber + 1);
+        }
     }
 
-    private void maybeInitActionState(Object key, Action action, Event event) throws IOException {
+    private ActionState maybeGetActionState(
+            Object key, long sequenceNum, Action action, Event event) throws IOException {
+        return actionStateStore == null
+                ? null
+                : actionStateStore.get(key.toString(), sequenceNum, action, event);
+    }
+
+    private void maybeInitActionState(Object key, long sequenceNum, Action action, Event event)
+            throws IOException {
         if (actionStateStore != null) {
             // Initialize the action state if it does not exist. It will exist when the action is an
             // async action and
             // has been persisted before the action task is finished.
-            if (actionStateStore.get(key, action, event) == null) {
-                actionStateStore.put(key, action, event, new ActionState(event));
+            if (actionStateStore.get(key, sequenceNum, action, event) == null) {
+                actionStateStore.put(key, sequenceNum, action, event, new ActionState(event));
             }
         }
     }
 
     private void maybePersistTaskResult(
             Object key,
+            long sequenceNum,
             Action action,
             Event event,
             RunnerContextImpl context,
@@ -606,7 +644,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             return;
         }
 
-        ActionState actionState = actionStateStore.get(key, action, event);
+        ActionState actionState = actionStateStore.get(key, sequenceNum, action, event);
         actionState.setGeneratedActionTask(actionTaskResult.getGeneratedActionTask().orElse(null));
 
         for (MemoryUpdate memoryUpdate : context.getAllMemoryUpdates()) {
@@ -616,7 +654,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         for (Event outputEvent : actionTaskResult.getOutputEvents()) {
             actionState.addEvent(outputEvent);
         }
-        actionStateStore.put(key, action, event, actionState);
+        actionStateStore.put(key, sequenceNum, action, event, actionState);
     }
 
     /** Failed to execute Action task. */

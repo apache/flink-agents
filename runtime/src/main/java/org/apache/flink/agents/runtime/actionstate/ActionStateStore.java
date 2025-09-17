@@ -25,7 +25,6 @@ import java.io.IOException;
 /** Interface for storing and retrieving the state of actions performed by agents. */
 public interface ActionStateStore {
     enum BackendType {
-        INMEMORY("inmemory"),
         KAFKA("kafka");
 
         private final String type;
@@ -42,23 +41,28 @@ public interface ActionStateStore {
      * Store the state of a specific action associated with a given key to the backend storage.
      *
      * @param key the key associate with the message
+     * @param seqNum the sequence number of the key
      * @param action the action the agent is taking
      * @param event the event that triggered the action
      * @param state the current state of the whole task
      * @throws IOException when key generation failed
      */
-    void put(Object key, Action action, Event event, ActionState state) throws IOException;
+    void put(Object key, long seqNum, Action action, Event event, ActionState state)
+            throws IOException;
 
     /**
      * Retrieve the state of a specific action associated with a given key from the backend storage.
+     * It any of the sequence number for a key can't be found, all the states associated with the
+     * key after the sequence number should be ignored and null will be returned.
      *
      * @param key the key associated with the message
+     * @param seqNum the sequence number of the key
      * @param action the action the agent is taking
      * @param event the event that triggered the action
      * @return the state of the action, or null if not found
      * @throws IOException when key generation failed
      */
-    ActionState get(Object key, Action action, Event event) throws IOException;
+    ActionState get(Object key, long seqNum, Action action, Event event) throws IOException;
 
     /**
      * Retrieve all states associated with a given key from the backend storage and recover the

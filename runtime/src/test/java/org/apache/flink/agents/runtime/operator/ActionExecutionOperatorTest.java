@@ -20,11 +20,9 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
-import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.Action;
-import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
@@ -168,10 +166,7 @@ public class ActionExecutionOperatorTest {
 
     @Test
     void testInMemoryActionStateStoreIntegration() throws Exception {
-        // Create agent plan with inmemory action state store configuration
-        AgentConfiguration config = new AgentConfiguration();
-        config.set(AgentConfigOptions.ACTION_STATE_STORE_BACKEND, "inmemory");
-        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlanWithConfig(false, config);
+        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -232,10 +227,7 @@ public class ActionExecutionOperatorTest {
 
     @Test
     void testActionStateStoreContentVerification() throws Exception {
-        // Create agent plan with inmemory action state store configuration
-        AgentConfiguration config = new AgentConfiguration();
-        config.set(AgentConfigOptions.ACTION_STATE_STORE_BACKEND, "inmemory");
-        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlanWithConfig(false, config);
+        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -307,10 +299,7 @@ public class ActionExecutionOperatorTest {
 
     @Test
     void testActionStateStoreStateManagement() throws Exception {
-        // Create agent plan with stateful actions
-        AgentConfiguration config = new AgentConfiguration();
-        config.set(AgentConfigOptions.ACTION_STATE_STORE_BACKEND, "inmemory");
-        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlanWithConfig(false, config);
+        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -411,11 +400,6 @@ public class ActionExecutionOperatorTest {
         }
 
         public static AgentPlan getAgentPlan(boolean testMemoryAccessOutOfMailbox) {
-            return getAgentPlanWithConfig(testMemoryAccessOutOfMailbox, new AgentConfiguration());
-        }
-
-        private static AgentPlan getAgentPlanWithConfig(
-                boolean testMemoryAccessOutOfMailbox, AgentConfiguration config) {
             try {
                 Map<String, List<Action>> actionsByEvent = new HashMap<>();
                 Action action1 =
@@ -456,7 +440,7 @@ public class ActionExecutionOperatorTest {
                     actions.put(action3.getName(), action3);
                 }
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>(), config);
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }

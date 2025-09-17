@@ -36,13 +36,14 @@ public class InMemoryActionStateStore implements ActionStateStore {
     }
 
     @Override
-    public void put(Object key, Action action, Event event, ActionState state) throws IOException {
-        actionStates.putIfAbsent(generateKey(key, action, event), state);
+    public void put(Object key, long seqNum, Action action, Event event, ActionState state)
+            throws IOException {
+        actionStates.putIfAbsent(generateKey(key.toString() + seqNum, action, event), state);
     }
 
     @Override
-    public ActionState get(Object key, Action action, Event event) throws IOException {
-        return actionStates.get(generateKey(key, action, event));
+    public ActionState get(Object key, long seqNum, Action action, Event event) throws IOException {
+        return actionStates.get(generateKey(key.toString() + seqNum, action, event));
     }
 
     @Override
