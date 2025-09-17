@@ -111,6 +111,11 @@ class BaseTool(SerializableResource, ABC):
 
     metadata: ToolMetadata
 
+    @property
+    def name(self) -> str:
+        """Get the name of the tool."""
+        return self.metadata.name
+
     @classmethod
     @override
     def resource_type(cls) -> ResourceType:

@@ -29,14 +29,14 @@ class Prompt(SerializableResource, ABC):
     """Base prompt abstract."""
 
     @staticmethod
-    def from_messages(name: str, messages: Sequence[ChatMessage]) -> "Prompt":
+    def from_messages(messages: Sequence[ChatMessage]) -> "Prompt":
         """Create prompt from sequence of ChatMessage."""
-        return LocalPrompt(name=name, template=messages)
+        return LocalPrompt(template=messages)
 
     @staticmethod
-    def from_text(name: str, text: str) -> "Prompt":
+    def from_text(text: str) -> "Prompt":
         """Create prompt from text string."""
-        return LocalPrompt(name=name, template=text)
+        return LocalPrompt(template=text)
 
     @abstractmethod
     def format_string(self, **kwargs: str) -> str:

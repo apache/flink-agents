@@ -33,7 +33,7 @@ def test_mcp() -> None: # noqa : D103
     process.start()
     time.sleep(5)
 
-    mcp_server = MCPServer(name="mcp_server", endpoint="http://127.0.0.1:8000/mcp")
+    mcp_server = MCPServer(endpoint="http://127.0.0.1:8000/mcp")
     prompts = mcp_server.list_prompts()
     assert len(prompts) == 1
     prompt = prompts[0]

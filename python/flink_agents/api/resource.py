@@ -49,14 +49,11 @@ class Resource(BaseModel, ABC):
 
     Attributes:
     ----------
-    name : str
-        The name of the resource.
     get_resource : Callable[[str, ResourceType], "Resource"]
         Get other resource object declared in the same Agent. The first argument is
         resource name and the second argument is resource type.
     """
 
-    name: str
     get_resource: Callable[[str, ResourceType], "Resource"] = Field(
         exclude=True, default=None
     )

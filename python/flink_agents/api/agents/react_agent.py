@@ -115,7 +115,6 @@ class ReActAgent(Agent):
 
             # prepare prompt
             prompt = Prompt.from_messages(
-                name="prompt",
                 messages=[
                     ChatMessage(
                         role=MessageRole.SYSTEM,
@@ -191,7 +190,7 @@ class ReActAgent(Agent):
                 raise TypeError(err_msg)
             schema_prompt = f"The final response should be json format, and match the schema {json_schema}."
             self._resources[ResourceType.PROMPT][_DEFAULT_SCHEMA_PROMPT] = (
-                Prompt.from_text(name="output_schema", text=schema_prompt)
+                Prompt.from_text(text=schema_prompt)
             )
 
         if prompt:
