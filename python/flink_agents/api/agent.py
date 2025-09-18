@@ -312,6 +312,7 @@ class Agent(ABC):
             self, name: str, connection: Type[BaseVectorStoreConnection], **kwargs: Any
     ) -> "Agent":
         """Add vector store connection to agent.
+
         Parameters
         ----------
         name : str
@@ -321,6 +322,7 @@ class Agent(ABC):
             The type of vector store connection.
         **kwargs: Any
             Initialize keyword arguments passed to the vector store connection.
+
         Returns:
         -------
         Agent
@@ -339,6 +341,7 @@ class Agent(ABC):
             self, name: str, vector_store: Type[BaseVectorStoreSetup], **kwargs: Any
     ) -> "Agent":
         """Add vector store setup to agent.
+
         Parameters
         ----------
         name : str
@@ -347,6 +350,7 @@ class Agent(ABC):
             The type of vector store.
         **kwargs: Any
             Initialize keyword arguments passed to the vector store setup.
+
         Returns:
         -------
         Agent

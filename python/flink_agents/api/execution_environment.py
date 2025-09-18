@@ -383,6 +383,7 @@ class AgentsExecutionEnvironment(ABC):
             self, name: str, connection: Type[BaseVectorStoreConnection], **kwargs: Any
     ) -> "AgentsExecutionEnvironment":
         """Register vector store connection to agent execution environment.
+
         Parameters
         ----------
         name : str
@@ -392,6 +393,7 @@ class AgentsExecutionEnvironment(ABC):
             The type of vector store connection.
         **kwargs: Any
             Initialize keyword arguments passed to the vector store connection.
+
         Returns:
         -------
         AgentsExecutionEnvironment
@@ -408,6 +410,7 @@ class AgentsExecutionEnvironment(ABC):
             self, name: str, vector_store: Type[BaseVectorStoreSetup], **kwargs: Any
     ) -> "AgentsExecutionEnvironment":
         """Register vector store setup to agent execution environment.
+
         Parameters
         ----------
         name : str
@@ -416,6 +419,7 @@ class AgentsExecutionEnvironment(ABC):
             The type of vector store.
         **kwargs: Any
             Initialize keyword arguments passed to the vector store.
+
         Returns:
         -------
         AgentsExecutionEnvironment

@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import chromadb
 from chromadb import ClientAPI as ChromaClient
@@ -57,19 +57,19 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
         ChromaDB database name (default: "default_database").
     """
 
-    persist_directory: Optional[str] = Field(
+    persist_directory: str | None = Field(
         default=None,
         description="Directory for persistent storage. If None, uses in-memory client.",
     )
-    host: Optional[str] = Field(
+    host: str | None = Field(
         default=None,
         description="Host for ChromaDB server connection.",
     )
-    port: Optional[int] = Field(
+    port: int | None = Field(
         default=8000,
         description="Port for ChromaDB server connection.",
     )
-    client_settings: Optional[Settings] = Field(
+    client_settings: Settings | None = Field(
         default=None,
         description="ChromaDB client settings for advanced configuration.",
     )
@@ -82,14 +82,14 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
         description="ChromaDB database name.",
     )
 
-    __client: Optional[ChromaClient] = None
+    __client: ChromaClient | None = None
 
     def __init__(
         self,
-        persist_directory: Optional[str] = None,
-        host: Optional[str] = None,
-        port: Optional[int] = 8000,
-        client_settings: Optional[Settings] = None,
+        persist_directory: str | None = None,
+        host: str | None = None,
+        port: int | None = 8000,
+        client_settings: Settings | None = None,
         tenant: str = "default_tenant",
         database: str = "default_database",
         **kwargs: Any,
@@ -224,7 +224,7 @@ class ChromaVectorStoreSetup(BaseVectorStoreSetup):
         connection: str,
         embedding_model: str,
         collection: str = DEFAULT_COLLECTION,
-        collection_metadata: Optional[Dict[str, Any]] = None,
+        collection_metadata: Dict[str, Any] | None = None,
         create_collection_if_not_exists: bool = True,
         **kwargs: Any,
     ) -> None:
