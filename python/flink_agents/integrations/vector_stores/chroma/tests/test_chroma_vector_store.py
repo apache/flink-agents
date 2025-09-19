@@ -15,12 +15,14 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 ################################################################################
+import os
 from typing import Any, Dict
 
 import pytest
 
 try:
     import chromadb  # noqa: F401
+    from chromadb import CloudClient
 
     chromadb_available = True
 except ImportError:
@@ -34,6 +36,10 @@ from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import (
     ChromaVectorStoreConnection,
     ChromaVectorStoreSetup,
 )
+
+api_key = os.environ.get("TEST_API_KEY")
+tenant = os.environ.get("TEST_TENANT")
+database = os.environ.get("TEST_DATABASE")
 
 
 class MockEmbeddingModel(Resource):  # noqa: D101
@@ -77,7 +83,7 @@ def _populate_test_data(connection: ChromaVectorStoreConnection) -> None:
 @pytest.mark.skipif(
     not chromadb_available, reason="ChromaDB is not available"
 )
-def test_chroma_vector_store_setup() -> None:
+def test_local_chroma_vector_store_setup() -> None:
     """Test ChromaDB vector store setup with embedding model integration."""
     connection = ChromaVectorStoreConnection(name="chroma_conn")
     embedding_model = MockEmbeddingModel(name="mock_embeddings")
@@ -94,6 +100,42 @@ def test_chroma_vector_store_setup() -> None:
     setup = ChromaVectorStoreSetup(
         name="chroma_setup",
         connection="chroma_conn",
+        embedding_model="mock_embeddings",
+        collection="test_collection",
+        get_resource=get_resource
+    )
+
+    _populate_test_data(connection)
+
+    query = VectorStoreQuery(
+        query_text="What is Flink Agent?",
+        limit=1
+    )
+
+    result = setup.query(query)
+    assert result is not None
+    assert len(result.documents) == 1
+    assert result.documents[0].id == "doc2"
+
+
+@pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
+def test_cloud_chroma_vector_store_setup() -> None:
+    """Test cloud ChromaDB vector store setup with embedding model integration."""
+    connection = ChromaVectorStoreConnection(name="cloud_chroma_conn", api_key=api_key, tenant=tenant, database=database)
+    embedding_model = MockEmbeddingModel(name="mock_embeddings")
+
+    def get_resource(name: str, resource_type: ResourceType) -> Resource:
+        if resource_type == ResourceType.VECTOR_STORE_CONNECTION:
+            return connection
+        elif resource_type == ResourceType.EMBEDDING_MODEL:
+            return embedding_model
+        else:
+            msg = f"Unknown resource type: {resource_type}"
+            raise ValueError(msg)
+
+    setup = ChromaVectorStoreSetup(
+        name="chroma_setup",
+        connection="cloud_chroma_conn",
         embedding_model="mock_embeddings",
         collection="test_collection",
         get_resource=get_resource
