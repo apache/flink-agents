@@ -268,7 +268,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (EventUtil.isOutputEvent(event)) {
             // If the event is an OutputEvent, we send it downstream.
             OUT outputData = getOutputFromOutputEvent(event);
-            maybePruneState(key);
             output.collect(reusedStreamRecord.replace(outputData));
         } else {
             if (isInputEvent) {
@@ -396,6 +395,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.
             int removedCount = removeFromListState(currentProcessingKeysOpState, key);
+            maybePruneState(key);
             checkState(
                     removedCount == 1,
                     "Current processing key count for key "
