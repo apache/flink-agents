@@ -207,6 +207,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         // wrap to InputEvent first
         Event inputEvent = wrapToInputEvent(input);
+        if (record.hasTimestamp()) {
+            inputEvent.setTimestamp(record.getTimestamp());
+        }
 
         if (currentKeyHasMoreActionTask()) {
             // If there are already actions being processed for the current key, the newly incoming
@@ -230,7 +233,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (EventUtil.isOutputEvent(event)) {
             // If the event is an OutputEvent, we send it downstream.
             OUT outputData = getOutputFromOutputEvent(event);
-            output.collect(reusedStreamRecord.replace(outputData));
+            if (event.hasTimestamp()) {
+                output.collect(reusedStreamRecord.replace(outputData, event.getTimestamp()));
+            } else {
+                output.collect(reusedStreamRecord.replace(outputData));
+            }
         } else {
             if (isInputEvent) {
                 // If the event is an InputEvent, we mark that the key is currently being processed.

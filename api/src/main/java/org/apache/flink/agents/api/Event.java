@@ -28,6 +28,10 @@ import java.util.UUID;
 public abstract class Event {
     private final UUID id;
     private final Map<String, Object> attributes;
+    /** The timestamp of the record. */
+    private long timestamp;
+    /** Flag whether the timestamp is actually set. */
+    private boolean hasTimestamp;
 
     public Event() {
         this(UUID.randomUUID(), new HashMap<>());
@@ -53,5 +57,22 @@ public abstract class Event {
 
     public void setAttr(String name, Object value) {
         attributes.put(name, value);
+    }
+
+    public boolean hasTimestamp() {
+        return hasTimestamp;
+    }
+
+    public long getTimestamp() {
+        if (hasTimestamp) {
+            return timestamp;
+        } else {
+            return Long.MIN_VALUE;
+        }
+    }
+
+    public void setTimestamp(long timestamp) {
+        this.timestamp = timestamp;
+        this.hasTimestamp = true;
     }
 }
