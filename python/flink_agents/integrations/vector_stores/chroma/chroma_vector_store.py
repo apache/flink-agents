@@ -18,7 +18,8 @@
 from typing import Any, Dict, List
 
 import chromadb
-from chromadb import ClientAPI as ChromaClient, CloudClient
+from chromadb import ClientAPI as ChromaClient
+from chromadb import CloudClient
 from chromadb.config import Settings
 from pydantic import Field
 

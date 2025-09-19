@@ -22,7 +22,6 @@ import pytest
 
 try:
     import chromadb  # noqa: F401
-    from chromadb import CloudClient
 
     chromadb_available = True
 except ImportError:
