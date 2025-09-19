@@ -97,6 +97,16 @@ public class RunnerContextImpl implements RunnerContext {
         return list;
     }
 
+    public List<Event> drainEvents(Long timestamp) {
+        mailboxThreadChecker.run();
+        List<Event> list = new ArrayList<>(this.pendingEvents);
+        if (timestamp != null) {
+            list.forEach(event -> event.setSourceTimestamp(timestamp));
+        }
+        this.pendingEvents.clear();
+        return list;
+    }
+
     public void checkNoPendingEvents() {
         Preconditions.checkState(
                 this.pendingEvents.isEmpty(), "There are pending events remaining in the context.");

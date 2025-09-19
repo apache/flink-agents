@@ -28,6 +28,8 @@ import java.util.UUID;
 public abstract class Event {
     private final UUID id;
     private final Map<String, Object> attributes;
+    /** The timestamp of the source record. */
+    private Long sourceTimestamp;
 
     public Event() {
         this(UUID.randomUUID(), new HashMap<>());
@@ -53,5 +55,17 @@ public abstract class Event {
 
     public void setAttr(String name, Object value) {
         attributes.put(name, value);
+    }
+
+    public boolean hasSourceTimestamp() {
+        return sourceTimestamp != null;
+    }
+
+    public Long getSourceTimestamp() {
+        return sourceTimestamp;
+    }
+
+    public void setSourceTimestamp(long timestamp) {
+        this.sourceTimestamp = timestamp;
     }
 }
