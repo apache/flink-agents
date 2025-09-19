@@ -35,6 +35,7 @@ import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
@@ -50,6 +51,7 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.python.env.PythonDependencyInfo;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.streaming.api.operators.*;
+import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxExecutorImpl;
@@ -60,6 +62,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Field;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -100,6 +103,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private transient FlinkAgentsMetricGroupImpl metricGroup;
 
     private transient BuiltInMetrics builtInMetrics;
+
+    private transient SegmentedQueue keySegmentQueue;
+
+    private transient ArrayDeque<Watermark> pendingWatermarks;
 
     private final transient MailboxExecutor mailboxExecutor;
 
@@ -157,6 +164,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
 
+        keySegmentQueue = new SegmentedQueue();
+        pendingWatermarks = new ArrayDeque<>();
+
         // init agent processing related state
         actionTasksKState =
                 getRuntimeContext()
@@ -211,6 +221,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             inputEvent.setTimestamp(record.getTimestamp());
         }
 
+        keySegmentQueue.addKeyToLastSegment(getCurrentKey());
+
         if (currentKeyHasMoreActionTask()) {
             // If there are already actions being processed for the current key, the newly incoming
             // event should be queued and processed later. Therefore, we add it to
@@ -220,6 +232,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // Otherwise, the new event is processed immediately.
             processEvent(getCurrentKey(), inputEvent);
         }
+    }
+
+    @Override
+    public void processWatermark(Watermark mark) throws Exception {
+        pendingWatermarks.add(mark);
+        keySegmentQueue.appendNewSegment();
+        processEligibleWatermarks();
     }
 
     /**
@@ -303,6 +322,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             + key
                             + " should be 1, but got "
                             + removedCount);
+            checkState(
+                    keySegmentQueue.removeKey(key),
+                    "Current key" + key + " is missing from the segmentedQueue.");
+            processEligibleWatermarks();
             return;
         }
 
@@ -337,6 +360,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             + key
                             + " should be 1, but got "
                             + removedCount);
+            checkState(
+                    keySegmentQueue.removeKey(key),
+                    "Current key" + key + " is missing from the segmentedQueue.");
+            processEligibleWatermarks();
             Event pendingInputEvent = pollFromListState(pendingInputEventsKState);
             if (pendingInputEvent != null) {
                 processEvent(key, pendingInputEvent);
@@ -489,6 +516,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key), "process action task");
             }
+        }
+    }
+
+    private void processEligibleWatermarks() throws Exception {
+        while (!pendingWatermarks.isEmpty() && keySegmentQueue.isOldestSegmentEmpty()) {
+            keySegmentQueue.removeOldestSegment();
+            Watermark mark = pendingWatermarks.pop();
+            super.processWatermark(mark);
         }
     }
 
