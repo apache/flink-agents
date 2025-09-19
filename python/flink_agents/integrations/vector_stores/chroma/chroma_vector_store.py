@@ -18,7 +18,7 @@
 from typing import Any, Dict, List
 
 import chromadb
-from chromadb import ClientAPI as ChromaClient
+from chromadb import ClientAPI as ChromaClient, CloudClient
 from chromadb.config import Settings
 from pydantic import Field
 
@@ -40,6 +40,7 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
     - In-memory: No configuration needed (default)
     - Persistent: Provide persist_directory
     - Server: Provide host and port
+    - Cloud: Provide api_key for Chroma Cloud
 
     Attributes:
     ----------
@@ -49,6 +50,8 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
         Host for ChromaDB server connection.
     port : Optional[int]
         Port for ChromaDB server connection.
+    api_key : Optional[str]
+        API key for Chroma Cloud connection.
     client_settings : Optional[Settings]
         ChromaDB client settings for advanced configuration.
     tenant : str
@@ -68,6 +71,10 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
     port: int | None = Field(
         default=8000,
         description="Port for ChromaDB server connection.",
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="API key for Chroma Cloud connection.",
     )
     client_settings: Settings | None = Field(
         default=None,
@@ -89,6 +96,7 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
         persist_directory: str | None = None,
         host: str | None = None,
         port: int | None = 8000,
+        api_key: str | None = None,
         client_settings: Settings | None = None,
         tenant: str = "default_tenant",
         database: str = "default_database",
@@ -99,6 +107,7 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
             persist_directory=persist_directory,
             host=host,
             port=port,
+            api_key=api_key,
             client_settings=client_settings,
             tenant=tenant,
             database=database,
@@ -111,8 +120,14 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
         if self.__client is None:
 
             # Choose client type based on configuration
-            # TODO: support cloud client: https://docs.trychroma.com/docs/run-chroma/cloud-client
-            if self.host is not None:
+            if self.api_key is not None:
+                # Cloud mode
+                self.__client = CloudClient(
+                    tenant=self.tenant,
+                    database=self.database,
+                    api_key=self.api_key,
+                )
+            elif self.host is not None:
                 # Client-Server Mode
                 self.__client = chromadb.HttpClient(
                     host=self.host,
