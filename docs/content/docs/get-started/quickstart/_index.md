@@ -1,6 +1,5 @@
 ---
-title: How to Build an Agent
-icon: <i class="fa fa-code title maindish" aria-hidden="true"></i>
+title: Quickstart
 bold: true
 bookCollapseSection: true
 weight: 2

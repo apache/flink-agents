@@ -1,9 +1,7 @@
 ---
-title: How to Build an Agent
-icon: <i class="fa fa-code title maindish" aria-hidden="true"></i>
-bold: true
-bookCollapseSection: true
-weight: 2
+title: 'Overview'
+weight: 1
+type: docs
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -23,3 +21,21 @@ KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations
 under the License.
 -->
+
+## What is Flink Agents?
+
+{{< hint warning >}}
+**TODO**: Add a description of Flink Agents.
+{{< /hint >}}
+
+## Features
+
+{{< hint warning >}}
+**TODO**: Add the features of Flink Agents.
+{{< /hint >}}
+
+## Getting Started
+
+- [Install Flink Agents]({{< ref "docs/get-started/installation" >}})
+- [Workflow Agent Quickstart]({{< ref "docs/get-started/quickstart/workflow_agent" >}})
+- [ReAct Agent Quickstart]({{< ref "docs/get-started/quickstart/react_agent" >}})

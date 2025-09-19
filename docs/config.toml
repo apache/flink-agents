@@ -70,10 +70,11 @@ pygmentsUseClasses = true
   contentDir = 'content'
   weight = 1
 
-[languages.zh]
-  languageName = '中文版'
-  contentDir = 'content.zh'
-  weight = 2
+# TODO: Add Chinese support
+# [languages.zh]
+#   languageName = '中文版'
+#   contentDir = 'content.zh'
+#   weight = 2
 
 [module]
 [[module.imports.mounts]]

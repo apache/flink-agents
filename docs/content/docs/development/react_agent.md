@@ -1,9 +1,7 @@
 ---
-title: How to Build an Agent
-icon: <i class="fa fa-code title maindish" aria-hidden="true"></i>
-bold: true
-bookCollapseSection: true
-weight: 2
+title: ReAct Agent
+weight: 1
+type: docs
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -23,3 +21,15 @@ KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations
 under the License.
 -->
+
+## Overview
+
+{{< hint warning >}}
+**TODO**: What is ReAct agent. When to use it.
+{{< /hint >}}
+
+## ReAct Agent Example
+
+{{< hint warning >}}
+**TODO**: Add the quickstart example code here. And briefly explain the code component by component. Link to the detailed documentation for each component, such as ChatModel, Prompt, Tool, etc.
+{{< /hint >}}

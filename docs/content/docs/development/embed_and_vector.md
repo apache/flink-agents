@@ -1,9 +1,7 @@
 ---
-title: How to Build an Agent
-icon: <i class="fa fa-code title maindish" aria-hidden="true"></i>
-bold: true
-bookCollapseSection: true
-weight: 2
+title: Embed and Vector Search
+weight: 4
+type: docs
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -23,3 +21,25 @@ KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations
 under the License.
 -->
+
+
+## Embedding Model
+
+{{< hint warning >}}
+**TODO**: What is Embedding Model. How to define and use EmbedingModelConnection and EmbedingModelSetup. 
+
+{{< /hint >}}
+
+{{< hint warning >}}
+**TODO**: List of all built-in Embedding Model and configuration.
+{{< /hint >}}
+
+## Vector Store
+
+{{< hint warning >}}
+**TODO**: What is Vector Store. How to define and use VectorStoreConnection and VectorStoreSetup.
+{{< /hint >}}
+
+{{< hint warning >}}
+**TODO**: How to use a Vector Store. List of all built-in Vector Store and configuration.
+{{< /hint >}}

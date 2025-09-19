@@ -1,9 +1,7 @@
 ---
-title: Try Flink Agents
-icon: <i class="fa fa-rocket title appetizer" aria-hidden="true"></i>
-bold: true
-bookCollapseSection: true
+title: Deployment
 weight: 1
+type: docs
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -23,3 +21,21 @@ KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations
 under the License.
 -->
+
+## Local Run with Test Data
+
+{{< hint warning >}}
+**TODO**: How to run with test data with LocalExecutorEnvironment.
+{{< /hint >}}
+
+## Local Run with Flink MiniCluster
+
+{{< hint warning >}}
+**TODO**: How to run with Flink MiniCluster locally.
+{{< /hint >}}
+
+## Run in Flink Cluster
+
+{{< hint warning >}}
+**TODO**: How to run in Flink Cluster.
+{{< /hint >}}

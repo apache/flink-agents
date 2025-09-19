@@ -1,9 +1,7 @@
 ---
-title: How to Build an Agent
-icon: <i class="fa fa-code title maindish" aria-hidden="true"></i>
-bold: true
-bookCollapseSection: true
-weight: 2
+title: Monitoring
+weight: 3
+type: docs
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -23,3 +21,27 @@ KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations
 under the License.
 -->
+
+## Metric
+
+{{< hint warning >}}
+**TODO**: How to use add custom metrics.
+
+**TODO**: List of all built-in Metrics.
+
+**TODO**: How to check the metrics with Flink executor.
+{{< /hint >}}
+
+## Log
+
+{{< hint warning >}}
+**TODO**: How to add log in Flink Agents.
+
+**TODO**: How to check the logs with Flink executor.
+{{< /hint >}}
+
+## Event Log
+
+{{< hint warning >}}
+**TODO**: How to use and check the event logs.
+{{< /hint >}}

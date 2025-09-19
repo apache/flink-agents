@@ -27,7 +27,7 @@ under the License.
 {{< columns >}}
 ## Try Flink Agents
 
-If you’re interested in playing around with Flink Agents, check out our [example codes]({{< ref "docs/try-flink-agents/installation" >}}). 
+If you’re interested in playing around with Flink Agents, check out our [example codes]({{< ref "docs/get-started/installation" >}}). 
 It provides a step by step introduction to the APIs and guides you through real applications.
 
 <--->

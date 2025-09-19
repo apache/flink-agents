@@ -1,9 +1,7 @@
 ---
-title: How to Build an Agent
-icon: <i class="fa fa-code title maindish" aria-hidden="true"></i>
-bold: true
-bookCollapseSection: true
+title: Configuration
 weight: 2
+type: docs
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -23,3 +21,9 @@ KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations
 under the License.
 -->
+
+{{< hint warning >}}
+**TODO**: How to configure Flink Agents for local execution and Flink cluster execution.
+
+**TODO**: List of all built-in Configuration options.
+{{< /hint >}}

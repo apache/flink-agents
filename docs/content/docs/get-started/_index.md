@@ -1,9 +1,9 @@
 ---
-title: How to Build an Agent
-icon: <i class="fa fa-code title maindish" aria-hidden="true"></i>
+title: Get Started
+icon: <i class="fa fa-rocket title appetizer" aria-hidden="true"></i>
 bold: true
 bookCollapseSection: true
-weight: 2
+weight: 1
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
