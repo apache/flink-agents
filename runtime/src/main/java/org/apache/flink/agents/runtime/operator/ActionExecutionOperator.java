@@ -268,6 +268,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (EventUtil.isOutputEvent(event)) {
             // If the event is an OutputEvent, we send it downstream.
             OUT outputData = getOutputFromOutputEvent(event);
+            maybePruneState(key);
             output.collect(reusedStreamRecord.replace(outputData));
         } else {
             if (isInputEvent) {
@@ -468,22 +469,24 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         super.initializeState(context);
 
         if (actionStateStore != null) {
-            Object recoveryMarker = null;
+            List<Object> markers = new ArrayList<>();
+
+            // We use UnionList here to ensure that the task can access all the recovery marker
+            // after
+            // parallelism modifications.
+            // The ActionStateStore will decide how to use the recovery markers.
             ListState<Object> recoveryMarkerOpState =
                     getOperatorStateBackend()
-                            .getListState(
+                            .getUnionListState(
                                     new ListStateDescriptor<>(
                                             RECOVERY_MARKER_STATE_NAME,
                                             TypeInformation.of(Object.class)));
+
             Iterable<Object> recoveryMarkers = recoveryMarkerOpState.get();
             if (recoveryMarkers != null) {
-                for (Object marker : recoveryMarkers) {
-                    // there should be only one recovery marker
-                    recoveryMarker = marker;
-                    break;
-                }
+                recoveryMarkers.forEach(markers::add);
             }
-            actionStateStore.rebuildState(recoveryMarker);
+            actionStateStore.rebuildState(markers);
         }
     }
 
@@ -507,7 +510,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void notifyCheckpointComplete(long checkpointId) throws Exception {
         super.notifyCheckpointComplete(checkpointId);
-        actionStateStore.cleanUpState();
     }
 
     private Event wrapToInputEvent(IN input) {
@@ -655,6 +657,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             actionState.addEvent(outputEvent);
         }
         actionStateStore.put(key, sequenceNum, action, event, actionState);
+    }
+
+    private void maybePruneState(Object kye) {
+        if (actionStateStore != null) {
+            actionStateStore.pruneState(kye);
+        }
     }
 
     /** Failed to execute Action task. */

@@ -23,6 +23,7 @@ import org.apache.flink.annotation.VisibleForTesting;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.generateKey;
@@ -34,16 +35,12 @@ import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.genera
  */
 public class KafkaActionStateStore implements ActionStateStore {
 
-    // In memory action state for quick state retrival
-    private final Map<String, ActionState> actionStates;
-
-    // Track the max sequence number per key a key can have, anything greater that this should be
-    // ignored
-    private final Map<Object, Long> maxSeqNumPerKey = new HashMap<>();
+    // In memory action state for quick state retrival, this map is only used during recovery
+    private final Map<String, Map<String, ActionState>> keyedActionStates;
 
     @VisibleForTesting
-    KafkaActionStateStore(Map<String, ActionState> actionStates) {
-        this.actionStates = actionStates;
+    KafkaActionStateStore(Map<String, Map<String, ActionState>> keyedActionStates) {
+        this.keyedActionStates = keyedActionStates;
     }
 
     /** Constructs a new KafkaActionStateStore with an empty in-memory action state map. */
@@ -54,35 +51,30 @@ public class KafkaActionStateStore implements ActionStateStore {
     @Override
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
             throws IOException {
-        actionStates.put(generateKey(key.toString() + seqNum, action, event), state);
         // TODO: Implement the logic to store the action state in Kafka
     }
 
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws IOException {
-        if (maxSeqNumPerKey.get(key) != null && seqNum > maxSeqNumPerKey.get(key)) {
-            // If the seqNum is greater than the max seqNum that is not present in the map, we
-            // should ignore it
-            return null;
-        }
-        return actionStates.computeIfAbsent(
-                generateKey(key.toString() + seqNum, action, event),
-                k -> {
-                    maxSeqNumPerKey.put(key, seqNum);
-                    return null;
-                });
+        return keyedActionStates
+                .getOrDefault(key, new HashMap<>())
+                .computeIfAbsent(
+                        generateKey(key, seqNum, action, event),
+                        k -> {
+                            pruneState(key);
+                            return null; // If not found, return null
+                        });
     }
 
     @Override
-    public void rebuildState(Object recoveryMarker) {
+    public void rebuildState(List<Object> recoveryMarker) {
         // TODO: implement the logic to retrieve all action states associated with the key from
         //       Kafka
     }
 
     @Override
-    public void cleanUpState() {
+    public void pruneState(Object key) {
         // Only clean up in memory state. For kafka, we can't really delete messages from it
-        actionStates.clear();
-        maxSeqNumPerKey.clear();
+        keyedActionStates.remove(key);
     }
 }

@@ -23,41 +23,55 @@ import org.apache.flink.annotation.VisibleForTesting;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.generateKey;
 
+/**
+ * An in-memory implementation of {@link ActionStateStore} for testing and local execution purposes.
+ * This implementation does not persist state across restarts.
+ */
 public class InMemoryActionStateStore implements ActionStateStore {
 
-    private final Map<String, ActionState> actionStates;
+    private final Map<String, Map<String, ActionState>> keyedActionStates;
+    private final boolean doCleanup;
 
-    public InMemoryActionStateStore() {
-        this.actionStates = new HashMap<>();
+    public InMemoryActionStateStore(boolean doCleanup) {
+        this.keyedActionStates = new HashMap<>();
+        this.doCleanup = doCleanup;
     }
 
     @Override
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
             throws IOException {
-        actionStates.putIfAbsent(generateKey(key.toString() + seqNum, action, event), state);
+        Map<String, ActionState> actionStates =
+                keyedActionStates.getOrDefault(key.toString(), new HashMap<>());
+        actionStates.put(generateKey(key.toString(), seqNum, action, event), state);
+        keyedActionStates.put(key.toString(), actionStates);
     }
 
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws IOException {
-        return actionStates.get(generateKey(key.toString() + seqNum, action, event));
+        return keyedActionStates
+                .getOrDefault(key.toString(), new HashMap<>())
+                .get(generateKey(key.toString(), seqNum, action, event));
     }
 
     @Override
-    public void rebuildState(Object recoveryMarker) {
+    public void rebuildState(List<Object> recoveryMarker) {
         // No-op for in-memory store as it does not persist state;
     }
 
     @Override
-    public void cleanUpState() {
-        actionStates.clear();
+    public void pruneState(Object key) {
+        if (doCleanup) {
+            keyedActionStates.remove(key.toString());
+        }
     }
 
     @VisibleForTesting
-    public Map<String, ActionState> getActionStates() {
-        return actionStates;
+    public Map<String, Map<String, ActionState>> getKeyedActionStates() {
+        return keyedActionStates;
     }
 }

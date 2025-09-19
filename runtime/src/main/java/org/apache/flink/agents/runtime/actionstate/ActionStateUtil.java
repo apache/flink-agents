@@ -28,24 +28,34 @@ import javax.annotation.Nonnull;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.UUID;
 
 /** Utility class for action state related operations. */
 public class ActionStateUtil {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String KEY_SEPARATOR = "_";
 
     public static String generateKey(
-            @Nonnull Object key, @Nonnull Action action, @Nonnull Event event) throws IOException {
+            @Nonnull Object key, long seqNum, @Nonnull Action action, @Nonnull Event event)
+            throws IOException {
         Preconditions.checkNotNull(key, "key cannot be null.");
         Preconditions.checkNotNull(action, "action cannot be null.");
         Preconditions.checkNotNull(event, "event cannot be null.");
-        return key
-                + "-"
-                + generateUUIDForEvent(event)
-                + "-"
-                + UUID.nameUUIDFromBytes(
-                        String.valueOf(action.hashCode()).getBytes(StandardCharsets.UTF_8));
+        return String.join(
+                KEY_SEPARATOR,
+                key.toString(),
+                String.valueOf(seqNum),
+                generateUUIDForEvent(event),
+                generateUUIDForAction(action));
+    }
+
+    public static List<String> parseKey(String key) {
+        Preconditions.checkNotNull(key, "key cannot be null.");
+        String[] parts = key.split(KEY_SEPARATOR);
+        Preconditions.checkArgument(parts.length == 4, "Invalid key format.");
+        return List.of(parts);
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {
@@ -70,5 +80,11 @@ public class ActionStateUtil {
                     UUID.nameUUIDFromBytes(
                             event.getAttributes().toString().getBytes(StandardCharsets.UTF_8)));
         }
+    }
+
+    private static String generateUUIDForAction(Action action) throws IOException {
+        return String.valueOf(
+                UUID.nameUUIDFromBytes(
+                        String.valueOf(action.hashCode()).getBytes(StandardCharsets.UTF_8)));
     }
 }
