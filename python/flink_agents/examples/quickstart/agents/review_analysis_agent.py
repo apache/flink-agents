@@ -114,7 +114,6 @@ class ReviewAnalysisAgent(Agent):
     def review_analysis_model() -> Tuple[Type[BaseChatModelSetup], Dict[str, Any]]:
         """ChatModel which focus on review analysis."""
         return OllamaChatModelSetup, {
-            "name": "review_analysis_model",
             "connection": "ollama_server",
             "prompt": "review_analysis_prompt",
             "extract_reasoning": True,
