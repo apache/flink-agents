@@ -86,7 +86,7 @@ class DataStreamAgent(Agent):
             return True
 
         input_data = event.input
-        stm = ctx.get_short_term_memory()
+        stm = ctx.short_term_memory
 
         current_total = stm.get("status.total_reviews") or 0
         total = current_total + 1
@@ -105,7 +105,7 @@ class DataStreamAgent(Agent):
     @staticmethod
     def second_action(event: Event, ctx: RunnerContext):  # noqa D102
         input_data = event.value
-        stm = ctx.get_short_term_memory()
+        stm = ctx.short_term_memory
         resolved_data: ItemData = stm.get(input_data)
 
         content = copy.deepcopy(resolved_data)
