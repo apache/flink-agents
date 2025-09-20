@@ -45,6 +45,10 @@ public class JavaActionTask extends ActionTask {
                 key);
         runnerContext.checkNoPendingEvents();
         action.getExec().call(event, runnerContext);
+        if (event.hasTimestamp()) {
+            return new ActionTaskResult(
+                    true, runnerContext.drainEvents(event.getTimestamp()), null);
+        }
         return new ActionTaskResult(true, runnerContext.drainEvents(), null);
     }
 }

@@ -69,6 +69,10 @@ public class PythonActionTask extends ActionTask {
             tempGeneratedActionTask.setRunnerContext(runnerContext);
             return tempGeneratedActionTask.invoke();
         }
+        if (event.hasTimestamp()) {
+            return new ActionTaskResult(
+                    true, runnerContext.drainEvents(event.getTimestamp()), null);
+        }
         return new ActionTaskResult(true, runnerContext.drainEvents(), null);
     }
 }
