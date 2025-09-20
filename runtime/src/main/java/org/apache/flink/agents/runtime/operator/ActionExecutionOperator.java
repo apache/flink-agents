@@ -56,6 +56,8 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.python.env.PythonDependencyInfo;
 import org.apache.flink.runtime.state.StateInitializationContext;
 import org.apache.flink.runtime.state.StateSnapshotContext;
+import org.apache.flink.runtime.state.VoidNamespace;
+import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.BoundedOneInput;
@@ -76,6 +78,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
@@ -146,6 +149,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient ActionStateStore actionStateStore;
     private transient ValueState<Long> sequenceNumberKState;
+    private transient Map<Long, Map<Object, Long>> checkpointIdToSeqNums;
 
     public ActionExecutionOperator(
             AgentPlan agentPlan,
@@ -161,6 +165,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.eventLogger = EventLoggerFactory.createLogger(EventLoggerConfig.builder().build());
         this.eventListeners = new ArrayList<>();
         this.actionStateStore = actionStateStore;
+        this.checkpointIdToSeqNums = new HashMap<>();
     }
 
     @Override
@@ -395,7 +400,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.
             int removedCount = removeFromListState(currentProcessingKeysOpState, key);
-            maybePruneState(key);
+            maybePruneState(key, sequenceNumber);
             checkState(
                     removedCount == 1,
                     "Current processing key count for key "
@@ -492,7 +497,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     @Override
     public void snapshotState(StateSnapshotContext context) throws Exception {
-        super.snapshotState(context);
         if (actionStateStore != null) {
             Object recoveryMarker = actionStateStore.getRecoveryMarker();
             if (recoveryMarker != null) {
@@ -505,10 +509,29 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 recoveryMarkerOpState.update(List.of(recoveryMarker));
             }
         }
+
+        HashMap<Object, Long> keyToSeqNum = new HashMap<>();
+        getKeyedStateBackend()
+                .applyToAllKeys(
+                        VoidNamespace.INSTANCE,
+                        VoidNamespaceSerializer.INSTANCE,
+                        new ValueStateDescriptor<>(MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class),
+                        (key, state) -> keyToSeqNum.put(key, state.value()));
+        checkpointIdToSeqNums.put(context.getCheckpointId(), keyToSeqNum);
+
+        super.snapshotState(context);
     }
 
     @Override
     public void notifyCheckpointComplete(long checkpointId) throws Exception {
+        if (actionStateStore != null) {
+            Map<Object, Long> keyToSeqNum =
+                    checkpointIdToSeqNums.getOrDefault(checkpointId, new HashMap<>());
+            for (Map.Entry<Object, Long> entry : keyToSeqNum.entrySet()) {
+                actionStateStore.pruneState(entry.getKey(), entry.getValue());
+            }
+            checkpointIdToSeqNums.remove(checkpointId);
+        }
         super.notifyCheckpointComplete(checkpointId);
     }
 
@@ -659,9 +682,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         actionStateStore.put(key, sequenceNum, action, event, actionState);
     }
 
-    private void maybePruneState(Object kye) {
+    private void maybePruneState(Object key, long sequenceNum) throws IOException {
         if (actionStateStore != null) {
-            actionStateStore.pruneState(kye);
+            actionStateStore.pruneState(key, sequenceNum);
         }
     }
 

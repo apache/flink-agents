@@ -77,8 +77,9 @@ public interface ActionStateStore {
      * Prune the state for a given key.
      *
      * @param key the key whose state should be pruned
+     * @param seqNum the sequence number up to which the state should be pruned
      */
-    void pruneState(Object key);
+    void pruneState(Object key, long seqNum);
 
     /**
      * Get a marker object representing the current recovery point in the state store.

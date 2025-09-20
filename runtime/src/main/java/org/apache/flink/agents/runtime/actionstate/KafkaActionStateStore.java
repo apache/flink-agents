@@ -26,8 +26,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.generateKey;
-
 /**
  * An implementation of ActionStateStore that uses Kafka as the backend storage for action states.
  * This class provides methods to put, get, and retrieve all action states associated with a given
@@ -51,30 +49,22 @@ public class KafkaActionStateStore implements ActionStateStore {
     @Override
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
             throws IOException {
-        // TODO: Implement the logic to store the action state in Kafka
+        // TODO: Implement me
     }
 
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws IOException {
-        return keyedActionStates
-                .getOrDefault(key, new HashMap<>())
-                .computeIfAbsent(
-                        generateKey(key, seqNum, action, event),
-                        k -> {
-                            pruneState(key);
-                            return null; // If not found, return null
-                        });
+        // TODO: Implement me
+        return null;
     }
 
     @Override
     public void rebuildState(List<Object> recoveryMarker) {
-        // TODO: implement the logic to retrieve all action states associated with the key from
-        //       Kafka
+        // TODO: implement me
     }
 
     @Override
-    public void pruneState(Object key) {
-        // Only clean up in memory state. For kafka, we can't really delete messages from it
-        keyedActionStates.remove(key);
+    public void pruneState(Object key, long seqNum) {
+        // TODO: implement me
     }
 }

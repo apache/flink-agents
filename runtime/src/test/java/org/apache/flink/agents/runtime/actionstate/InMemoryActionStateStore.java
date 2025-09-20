@@ -64,7 +64,7 @@ public class InMemoryActionStateStore implements ActionStateStore {
     }
 
     @Override
-    public void pruneState(Object key) {
+    public void pruneState(Object key, long seqNum) {
         if (doCleanup) {
             keyedActionStates.remove(key.toString());
         }

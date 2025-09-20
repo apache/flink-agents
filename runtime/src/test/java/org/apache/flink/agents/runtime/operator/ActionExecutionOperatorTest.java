@@ -287,8 +287,7 @@ public class ActionExecutionOperatorTest {
                         assertThat(middleEvent.getNum()).isEqualTo(inputValue + 1);
                     } else if (outputEvent instanceof OutputEvent) {
                         OutputEvent finalOutput = (OutputEvent) outputEvent;
-                        assertThat(finalOutput.getOutput())
-                                .isEqualTo((inputValue + 1) * 2); // (3+1)*2 = 8
+                        assertThat(finalOutput.getOutput()).isEqualTo((inputValue + 1) * 2);
                     }
                 }
             }
@@ -385,12 +384,65 @@ public class ActionExecutionOperatorTest {
             assertThat(recordOutput.size()).isEqualTo(3);
 
             // Access the action state store
-            java.lang.reflect.Field actionStateStoreField =
+            Field actionStateStoreField =
                     ActionExecutionOperator.class.getDeclaredField("actionStateStore");
             actionStateStoreField.setAccessible(true);
             InMemoryActionStateStore actionStateStore =
                     (InMemoryActionStateStore) actionStateStoreField.get(operator);
             assertThat(actionStateStore.getKeyedActionStates()).isEmpty();
+        }
+    }
+
+    @Test
+    void testActionStateStoreReplayIncurNoFunctionCall() throws Exception {
+        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
+        InMemoryActionStateStore actionStateStore;
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(
+                                agentPlanWithStateStore, true, new InMemoryActionStateStore(false)),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Access the action state store
+            Field actionStateStoreField =
+                    ActionExecutionOperator.class.getDeclaredField("actionStateStore");
+            actionStateStoreField.setAccessible(true);
+            actionStateStore = (InMemoryActionStateStore) actionStateStoreField.get(operator);
+
+            Long inputValue = 7L;
+
+            // First processing - this will execute the actual functions and store state
+            testHarness.processElement(new StreamRecord<>(inputValue));
+            operator.waitInFlightEventsFinished();
+        }
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(
+                                agentPlanWithStateStore, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            Long inputValue = 7L;
+
+            // First processing - this will execute the actual functions and store state
+            testHarness.processElement(new StreamRecord<>(inputValue));
+            operator.waitInFlightEventsFinished();
+            // Verify first output is correct
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo((inputValue + 1) * 2);
+
+            // The action state store should only have one entry
+            assertThat(actionStateStore.getKeyedActionStates().get(String.valueOf(inputValue)))
+                    .hasSize(2);
         }
     }
 
