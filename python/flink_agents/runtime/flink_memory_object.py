@@ -43,8 +43,8 @@ class FlinkMemoryObject(MemoryObject):
         """
         try:
             path_to_get: str
-            if isinstance(path_or_ref, dict) and 'path' in path_or_ref:
-                path_to_get = path_or_ref['path']
+            if isinstance(path_or_ref, dict) and "path" in path_or_ref:
+                path_to_get = path_or_ref["path"]
             elif isinstance(path_or_ref, str):
                 path_to_get = path_or_ref
             j_result = self._j_memory_object.get(path_to_get)
@@ -53,7 +53,7 @@ class FlinkMemoryObject(MemoryObject):
             if j_result.isNestedObject():
                 return FlinkMemoryObject(j_result)
             else:
-                return j_result.getValue()
+                return _convert_pemja_object(j_result.getValue())
         except Exception as e:
             msg = f"Failed to get field '{path_or_ref}' from short-term memory"
             raise MemoryObjectError(msg) from e
@@ -102,3 +102,15 @@ class FlinkMemoryObject(MemoryObject):
 
 class MemoryObjectError(RuntimeError):
     """All errors raised by FlinkMemoryObject wrapper are gathered in."""
+
+
+def _convert_pemja_object(value: Any) -> Any:
+    if value.__class__.__name__ == "PyJDict":
+        value = value.to_dict()
+        for k, v in value.items():
+            value[k] = _convert_pemja_object(v)
+    elif value.__class__.__name__ == "PyJList":
+        value = list(value)
+        for idx, v in enumerate(value):
+            value[idx] = _convert_pemja_object(v)
+    return value
