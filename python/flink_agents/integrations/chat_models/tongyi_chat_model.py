@@ -154,10 +154,9 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         content = response_message.get("content") or ""
         extra_args: Dict[str, Any] = {}
 
-        if extract_reasoning and content:
-            content, reasoning = self._extract_reasoning(content)
-            if reasoning:
-                extra_args["reasoning"] = reasoning
+        reasoning_content = response_message.get("reasoning_content") or ""
+        if extract_reasoning and reasoning_content:
+            extra_args["reasoning"] = reasoning_content
 
         return ChatMessage(
             role=MessageRole(response_message.get("role", "assistant")),
@@ -217,8 +216,8 @@ class TongyiChatModelSetup(BaseChatModelSetup):
     additional_kwargs : Dict[str, Any]
         Additional model parameters for the Tongyi API.
     extract_reasoning : bool
-        If True, extracts content within <think></think> tags from the response and
-        stores it in additional_kwargs.
+        If True, extracts reasoning content from the response and stores it
+        in additional_kwargs.
     """
 
     temperature: float = Field(
@@ -233,7 +232,7 @@ class TongyiChatModelSetup(BaseChatModelSetup):
     )
     extract_reasoning: bool = Field(
         default=False,
-        description="If True, extracts content within <think></think> tags from the response and stores it.",
+        description="If True, extracts reasoning content from the response and stores it.",
     )
 
     def __init__(
