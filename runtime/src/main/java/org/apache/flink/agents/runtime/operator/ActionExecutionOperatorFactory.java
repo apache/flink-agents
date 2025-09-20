@@ -18,6 +18,8 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperatorFactory;
 import org.apache.flink.streaming.api.operators.StreamOperator;
@@ -31,9 +33,18 @@ public class ActionExecutionOperatorFactory<IN, OUT>
 
     private final Boolean inputIsJava;
 
+    private final ActionStateStore actionStateStore;
+
     public ActionExecutionOperatorFactory(AgentPlan agentPlan, Boolean inputIsJava) {
+        this(agentPlan, inputIsJava, null);
+    }
+
+    @VisibleForTesting
+    protected ActionExecutionOperatorFactory(
+            AgentPlan agentPlan, Boolean inputIsJava, ActionStateStore actionStateStore) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
+        this.actionStateStore = actionStateStore;
     }
 
     @Override
@@ -44,7 +55,8 @@ public class ActionExecutionOperatorFactory<IN, OUT>
                         agentPlan,
                         inputIsJava,
                         parameters.getProcessingTimeService(),
-                        parameters.getMailboxExecutor());
+                        parameters.getMailboxExecutor(),
+                        actionStateStore);
         op.setup(
                 parameters.getContainingTask(),
                 parameters.getStreamConfig(),

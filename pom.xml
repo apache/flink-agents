@@ -42,6 +42,7 @@ under the License.
         <spotless.version>2.27.1</spotless.version>
         <spotless.skip>false</spotless.skip>
         <flink.version>1.20.1</flink.version>
+        <kafka.client.version>4.0.0</kafka.client.version>
         <junit5.version>5.10.1</junit5.version>
         <flink.shaded.version>17.0</flink.shaded.version>
         <flink.shaded.jackson.version>2.14.2</flink.shaded.jackson.version>
