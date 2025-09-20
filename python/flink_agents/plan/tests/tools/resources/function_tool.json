@@ -1,5 +1,4 @@
 {
-    "name": "foo",
     "metadata": {
         "name": "foo",
         "description": "Function for testing ToolMetadata.\n",

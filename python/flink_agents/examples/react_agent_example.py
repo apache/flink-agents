@@ -56,7 +56,6 @@ if __name__ == "__main__":
 
     # prepare prompt
     prompt = Prompt.from_messages(
-        name="prompt",
         messages=[
             ChatMessage(
                 role=MessageRole.SYSTEM,

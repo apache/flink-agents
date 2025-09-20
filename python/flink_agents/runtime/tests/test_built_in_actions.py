@@ -117,7 +117,6 @@ class MyAgent(Agent):
     def prompt() -> Prompt:
         """Prompt can be used in action or chat model."""
         return Prompt.from_text(
-            name="prompt",
             text="Please call the appropriate tool to do the following task: {task}",
         )
 

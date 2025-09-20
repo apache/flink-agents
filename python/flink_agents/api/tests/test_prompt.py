@@ -29,7 +29,7 @@ def text_prompt() -> Prompt:  # noqa: D103
         "The product {product_id} is {description}, and user review is '{review}'."
     )
 
-    return Prompt.from_text(name="prompt", text=template)
+    return Prompt.from_text(text=template)
 
 
 def test_prompt_from_text_to_string(text_prompt: LocalPrompt) -> None:  # noqa: D103
@@ -75,7 +75,7 @@ def messages_prompt() -> Prompt:  # noqa: D103
         ),
     ]
 
-    return Prompt.from_messages(name="prompt", messages=template)
+    return Prompt.from_messages(messages=template)
 
 
 def test_prompt_from_messages_to_string(messages_prompt: LocalPrompt) -> None:  # noqa: D103
@@ -125,7 +125,6 @@ def test_prompt_lack_one_argument(text_prompt: LocalPrompt) -> None:  # noqa: D1
 
 def test_prompt_contain_json_schema() -> None:  # noqa: D103
     prompt = Prompt.from_text(
-        name="prompt",
         text=f"The json schema is {LocalPrompt.model_json_schema(mode='serialization')}",
     )
     prompt.format_string()

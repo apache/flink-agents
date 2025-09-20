@@ -115,7 +115,6 @@ class ProductSuggestionAgent(Agent):
     def generate_suggestion_model() -> Tuple[Type[BaseChatModelSetup], Dict[str, Any]]:
         """ChatModel which focus on generating product suggestions."""
         return OllamaChatModelSetup, {
-            "name": "generate_suggestion_model",
             "connection": "ollama_server",
             "prompt": "generate_suggestion_prompt",
             "extract_reasoning": True,

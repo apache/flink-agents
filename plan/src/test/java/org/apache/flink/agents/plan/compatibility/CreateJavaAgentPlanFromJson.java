@@ -134,7 +134,6 @@ public class CreateJavaAgentPlanFromJson {
                         kwargs);
 
         Map<String, Object> serialized = new HashMap<>();
-        serialized.put("name", "add");
 
         // construct arguments schema
         Map<String, String> a = new HashMap<>();

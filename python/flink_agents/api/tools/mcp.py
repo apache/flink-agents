@@ -74,6 +74,7 @@ class MCPPrompt(Prompt):
     This represents a prompt managed by an MCP server.
     """
 
+    name: str
     title: str | None
     description: str | None = None
     prompt_arguments: list[PromptArgument] = Field(default_factory=list)
@@ -228,7 +229,6 @@ class MCPServer(SerializableResource, ABC):
                 )
 
                 tool = MCPTool(
-                    name=tool_data.name,
                     metadata=metadata,
                     mcp_server=self,
                 )

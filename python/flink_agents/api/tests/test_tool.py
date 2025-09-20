@@ -130,7 +130,6 @@ def test_serialize_mcp_server() -> None:  # noqa:D103
         callback_handler=handle_callback,
     )
     mcp_server = MCPServer(
-        name="mcp",
         endpoint="http://localhost:8080",
         auth=oauth_auth,
         timeout=timedelta(seconds=5),
@@ -138,7 +137,6 @@ def test_serialize_mcp_server() -> None:  # noqa:D103
     data = mcp_server.model_dump_json(serialize_as_any=True)
 
     deserialized = mcp_server.model_validate_json(data)
-    assert deserialized.name == mcp_server.name
     assert deserialized.endpoint == mcp_server.endpoint
     assert deserialized.timeout == mcp_server.timeout
     assert deserialized.auth.context.server_url == mcp_server.auth.context.server_url

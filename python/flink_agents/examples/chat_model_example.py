@@ -61,7 +61,6 @@ class MyAgent(Agent):
             msg = "Please set the 'DASHSCOPE_API_KEY' environment variable."
             raise ValueError(msg)
         return TongyiChatModelConnection, {
-            "name": "tongyi_connection",
             "model": TONGYI_MODEL,
         }
 
@@ -70,7 +69,6 @@ class MyAgent(Agent):
     def ollama_connection() -> Tuple[Type[BaseChatModelConnection], Dict[str, Any]]:
         """ChatModelConnection responsible for ollama model service connection."""
         return OllamaChatModelConnection, {
-            "name": "ollama_connection",
             "model": OLLAMA_MODEL,
         }
 
@@ -80,13 +78,11 @@ class MyAgent(Agent):
         """ChatModel which focus on math, and reuse ChatModelConnection."""
         if CURRENT_BACKEND == "Tongyi":
             return TongyiChatModelSetup, {
-                "name": "math_chat_model",
                 "connection": "tongyi_connection",
                 "tools": ["add"],
             }
         else:
             return OllamaChatModelSetup, {
-                "name": "math_chat_model",
                 "connection": "ollama_connection",
                 "tools": ["add"],
                 "extract_reasoning": True,
@@ -98,12 +94,10 @@ class MyAgent(Agent):
         """ChatModel which focus on text generate, and reuse ChatModelConnection."""
         if CURRENT_BACKEND == "Tongyi":
             return TongyiChatModelSetup, {
-                "name": "creative_chat_model",
                 "connection": "tongyi_connection",
             }
         else:
             return OllamaChatModelSetup, {
-                "name": "creative_chat_model",
                 "connection": "ollama_connection",
                 "extract_reasoning": True,
             }
