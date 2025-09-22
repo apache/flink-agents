@@ -209,9 +209,6 @@ public class ActionExecutionOperatorTest {
 
                     // Check that output events were captured
                     assertThat(state.getOutputEvents()).isNotEmpty();
-
-                    // Verify the generated action task is empty (action completed)
-                    assertThat(state.getGeneratedActionTask()).isEmpty();
                 }
             }
 

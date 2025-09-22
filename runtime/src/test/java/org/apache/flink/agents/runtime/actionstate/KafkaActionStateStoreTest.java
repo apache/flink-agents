@@ -20,9 +20,9 @@ package org.apache.flink.agents.runtime.actionstate;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.context.RunnerContext;
-import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.actions.Action;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
 import org.apache.kafka.clients.producer.MockProducer;
@@ -62,7 +62,7 @@ public class KafkaActionStateStoreTest {
                         true,
                         new ActionStateKeyPartitioner(),
                         new StringSerializer(),
-                        new ActionStateKafkaSerializer());
+                        new ActionStateKafkaSeder());
         mockConsumer = new MockConsumer<>(EARLIEST.name());
         mockConsumer.assign(
                 List.of(new TopicPartition(TEST_TOPIC, 0), new TopicPartition(TEST_TOPIC, 1)));

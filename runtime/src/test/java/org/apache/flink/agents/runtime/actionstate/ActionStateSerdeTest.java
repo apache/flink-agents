@@ -47,17 +47,16 @@ public class ActionStateSerdeTest {
         originalState.addMemoryUpdate(memoryUpdate);
         originalState.addEvent(outputEvent);
 
-        // Test Kafka serializer/deserializer
-        ActionStateKafkaSerializer serializer = new ActionStateKafkaSerializer();
-        ActionStateKafkaDeserializer deserializer = new ActionStateKafkaDeserializer();
+        // Test Kafka seder/deserializer
+        ActionStateKafkaSeder seder = new ActionStateKafkaSeder();
 
         // Serialize
-        byte[] serialized = serializer.serialize("test-topic", originalState);
+        byte[] serialized = seder.serialize("test-topic", originalState);
         assertNotNull(serialized);
         assertTrue(serialized.length > 0);
 
         // Deserialize
-        ActionState deserializedState = deserializer.deserialize("test-topic", serialized);
+        ActionState deserializedState = seder.deserialize("test-topic", serialized);
         assertNotNull(deserializedState);
 
         // Verify taskEvent
@@ -80,11 +79,6 @@ public class ActionStateSerdeTest {
         OutputEvent deserializedOutputEventTyped = (OutputEvent) deserializedOutputEvent;
         assertEquals("test output", deserializedOutputEventTyped.getOutput());
         assertEquals(123, deserializedOutputEventTyped.getAttr("outputAttr"));
-
-        // Verify generatedActionTask is null (as expected since ActionTask
-        // deserialization returns
-        // null)
-        assertFalse(deserializedState.getGeneratedActionTask().isPresent());
     }
 
     @Test
@@ -95,11 +89,10 @@ public class ActionStateSerdeTest {
         originalState.addMemoryUpdate(memoryUpdate);
 
         // Test serialization/deserialization
-        ActionStateKafkaSerializer serializer = new ActionStateKafkaSerializer();
-        ActionStateKafkaDeserializer deserializer = new ActionStateKafkaDeserializer();
+        ActionStateKafkaSeder seder = new ActionStateKafkaSeder();
 
-        byte[] serialized = serializer.serialize("test-topic", originalState);
-        ActionState deserializedState = deserializer.deserialize("test-topic", serialized);
+        byte[] serialized = seder.serialize("test-topic", originalState);
+        ActionState deserializedState = seder.deserialize("test-topic", serialized);
 
         // Verify taskEvent is null
         assertNull(deserializedState.getTaskEvent());
@@ -107,7 +100,6 @@ public class ActionStateSerdeTest {
         // Verify other fields
         assertEquals(1, deserializedState.getMemoryUpdates().size());
         assertEquals(0, deserializedState.getOutputEvents().size());
-        assertFalse(deserializedState.getGeneratedActionTask().isPresent());
     }
 
     @Test
@@ -122,11 +114,10 @@ public class ActionStateSerdeTest {
         ActionState originalState = new ActionState(inputEvent);
 
         // Test serialization/deserialization
-        ActionStateKafkaSerializer serializer = new ActionStateKafkaSerializer();
-        ActionStateKafkaDeserializer deserializer = new ActionStateKafkaDeserializer();
+        ActionStateKafkaSeder seder = new ActionStateKafkaSeder();
 
-        byte[] serialized = serializer.serialize("test-topic", originalState);
-        ActionState deserializedState = deserializer.deserialize("test-topic", serialized);
+        byte[] serialized = seder.serialize("test-topic", originalState);
+        ActionState deserializedState = seder.deserialize("test-topic", serialized);
 
         // Verify complex attributes are preserved
         InputEvent deserializedInputEvent = (InputEvent) deserializedState.getTaskEvent();

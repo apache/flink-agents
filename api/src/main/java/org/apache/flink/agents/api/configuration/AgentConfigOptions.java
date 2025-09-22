@@ -34,9 +34,9 @@ public class AgentConfigOptions {
 
     /** The config parameter specifies the Kafka topic for action state. */
     public static final ConfigOption<String> KAFKA_ACTION_STATE_TOPIC =
-            new ConfigOption<>("kafkaActionStateTopic", String.class, "flink-agents-action-state");
+            new ConfigOption<>("kafkaActionStateTopic", String.class, null);
 
-    /** The config parameter sepcifies the number of partitions for the Kafka action state topic. */
+    /** The config parameter specifies the number of partitions for the Kafka action state topic. */
     public static final ConfigOption<Integer> KAFKA_ACTION_STATE_TOPIC_NUM_PARTITIONS =
             new ConfigOption<>("kafkaActionStateTopicNumPartitions", Integer.class, 64);
 

@@ -358,13 +358,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         long sequenceNumber = sequenceNumberKState.value();
         boolean isFinished;
         List<Event> outputEvents;
-        Optional<ActionTask> generatedActionTaskOpt;
+        Optional<ActionTask> generatedActionTaskOpt = Optional.empty();
         ActionState actionState =
                 maybeGetActionState(key, sequenceNumber, actionTask.action, actionTask.event);
-        if (actionState != null && actionState.getGeneratedActionTask().isEmpty()) {
+        if (actionState != null) {
             isFinished = true;
             outputEvents = actionState.getOutputEvents();
-            generatedActionTaskOpt = actionState.getGeneratedActionTask();
             for (MemoryUpdate memoryUpdate : actionState.getMemoryUpdates()) {
                 actionTask
                         .getRunnerContext()
@@ -472,6 +471,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
         if (eventLogger != null) {
             eventLogger.close();
+        }
+        if (actionStateStore != null) {
+            actionStateStore.close();
         }
 
         super.close();
@@ -672,7 +674,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
 
         ActionState actionState = actionStateStore.get(key, sequenceNum, action, event);
-        actionState.setGeneratedActionTask(actionTaskResult.getGeneratedActionTask().orElse(null));
 
         for (MemoryUpdate memoryUpdate : context.getAllMemoryUpdates()) {
             actionState.addMemoryUpdate(memoryUpdate);

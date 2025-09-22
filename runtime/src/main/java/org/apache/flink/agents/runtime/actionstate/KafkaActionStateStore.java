@@ -17,15 +17,23 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import org.apache.beam.sdk.util.Preconditions;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.clients.consumer.*;
-import org.apache.kafka.clients.producer.*;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.Producer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -41,7 +49,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC;
@@ -49,6 +56,13 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_BOOTSTRAP_SERVERS;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.generateKey;
+import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
+import static org.apache.kafka.clients.consumer.ConsumerConfig.CLIENT_ID_CONFIG;
+import static org.apache.kafka.clients.consumer.ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG;
+import static org.apache.kafka.clients.consumer.ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG;
+import static org.apache.kafka.clients.producer.ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG;
+import static org.apache.kafka.clients.producer.ProducerConfig.PARTITIONER_CLASS_CONFIG;
+import static org.apache.kafka.clients.producer.ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG;
 
 /**
  * An implementation of ActionStateStore that uses Kafka as the backend storage for action states.
@@ -97,7 +111,10 @@ public class KafkaActionStateStore implements ActionStateStore {
         this.actionStates = new HashMap<>();
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
-        this.topic = agentConfiguration.get(KAFKA_ACTION_STATE_TOPIC);
+        this.topic =
+                Preconditions.checkArgumentNotNull(
+                        agentConfiguration.get(KAFKA_ACTION_STATE_TOPIC),
+                        "Kafka action state topic must be configured");
         // create the topic if not exists
         maybeCreateTopic();
         Properties producerProp = createProducerProp();
@@ -120,9 +137,7 @@ public class KafkaActionStateStore implements ActionStateStore {
         try {
             ProducerRecord<String, ActionState> kafkaRecord =
                     new ProducerRecord<>(topic, stateKey, state);
-            Future<RecordMetadata> recordFuture = producer.send(kafkaRecord);
-            RecordMetadata recordMetadata =
-                    recordFuture.get(DEFAULT_FUTURE_GET_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            producer.send(kafkaRecord);
             LOG.debug("Sent action state to Kafka for key: {}", stateKey);
         } catch (Exception e) {
             throw new RuntimeException("Failed to send action state to Kafka", e);
@@ -205,7 +220,7 @@ public class KafkaActionStateStore implements ActionStateStore {
                     } catch (Exception e) {
                         LOG.warn(
                                 "Failed to deserialize action state record: {}",
-                                new String(record.value().toString()),
+                                record.value().toString(),
                                 e);
                     }
                 }
@@ -286,11 +301,6 @@ public class KafkaActionStateStore implements ActionStateStore {
         }
     }
 
-    @VisibleForTesting
-    protected Map<String, ActionState> getActionStates() {
-        return actionStates;
-    }
-
     private void maybeCreateTopic() {
         try (AdminClient adminClient = AdminClient.create(createCommonKafkaConfig())) {
             ListTopicsResult topics = adminClient.listTopics();
@@ -318,23 +328,18 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     private Properties createCommonKafkaConfig() {
         Properties props = new Properties();
-        props.put(
-                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                agentConfiguration.get(KAFKA_BOOTSTRAP_SERVERS));
+        props.put(BOOTSTRAP_SERVERS_CONFIG, agentConfiguration.get(KAFKA_BOOTSTRAP_SERVERS));
         return props;
     }
 
     private Properties createProducerProp() {
         Properties producerProps = new Properties();
         producerProps.putAll(createCommonKafkaConfig());
-        producerProps.put(
-                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        producerProps.put(
-                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
-                ActionStateKafkaSerializer.class.getName());
+        producerProps.put(KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        producerProps.put(VALUE_SERIALIZER_CLASS_CONFIG, ActionStateKafkaSeder.class.getName());
         producerProps.put(ProducerConfig.ACKS_CONFIG, "all");
         producerProps.put(
-                ProducerConfig.PARTITIONER_CLASS_CONFIG,
+                PARTITIONER_CLASS_CONFIG,
                 "org.apache.flink.agents.runtime.actionstate.ActionStateKeyPartitioner");
         producerProps.put(ProducerConfig.RETRIES_CONFIG, 3);
         return producerProps;
@@ -344,12 +349,9 @@ public class KafkaActionStateStore implements ActionStateStore {
         Properties consumerProps = new Properties();
 
         consumerProps.putAll(createCommonKafkaConfig());
-        consumerProps.put(ConsumerConfig.CLIENT_ID_CONFIG, "action-state-rebuild-consumer");
-        consumerProps.put(
-                ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        consumerProps.put(
-                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
-                ActionStateKafkaDeserializer.class.getName());
+        consumerProps.put(CLIENT_ID_CONFIG, "action-state-rebuild-consumer");
+        consumerProps.put(KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerProps.put(VALUE_DESERIALIZER_CLASS_CONFIG, ActionStateKafkaSeder.class.getName());
         consumerProps.put(
                 ConsumerConfig.GROUP_ID_CONFIG, "action-state-rebuild-" + UUID.randomUUID());
         consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");

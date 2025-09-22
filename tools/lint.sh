@@ -67,7 +67,7 @@ install_python_deps() {
   if command -v uv >/dev/null 2>&1; then
     echo "Using uv for dependency management"
     pushd python
-    uv sync --extra lint --index-strategy unsafe-best-match
+    uv sync --extra lint
     popd
   else
     echo "uv not found, falling back to pip"
