@@ -107,7 +107,7 @@ class ReviewAnalysisAgent(Agent):
     input:
     {input}
     """
-        return Prompt.from_text("review_analysis_prompt", prompt_str)
+        return Prompt.from_text(prompt_str)
 
     @chat_model_setup
     @staticmethod
@@ -124,7 +124,7 @@ class ReviewAnalysisAgent(Agent):
     def process_input(event: InputEvent, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
         input: ProductReview = event.input
-        ctx.get_short_term_memory().set("id", input.id)
+        ctx.short_term_memory.set("id", input.id)
 
         content = f"""
             "id": {input.id},
@@ -142,7 +142,7 @@ class ReviewAnalysisAgent(Agent):
             ctx.send_event(
                 OutputEvent(
                     output=ProductReviewAnalysisRes(
-                        id=ctx.get_short_term_memory().get("id"),
+                        id=ctx.short_term_memory.get("id"),
                         score=json_content["score"],
                         reasons=json_content["reasons"],
                     )

@@ -73,8 +73,9 @@ class FlinkRunnerContext(RunnerContext):
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         return self.__agent_plan.get_resource(name, type)
 
+    @property
     @override
-    def get_action_config(self) -> Dict[str, Any]:
+    def action_config(self) -> Dict[str, Any]:
         """Get config of the action."""
         return self.__agent_plan.get_action_config(
             self._j_runner_context.getActionName()
@@ -87,8 +88,9 @@ class FlinkRunnerContext(RunnerContext):
             action_name=self._j_runner_context.getActionName(), key=key
         )
 
+    @property
     @override
-    def get_short_term_memory(self) -> FlinkMemoryObject:
+    def short_term_memory(self) -> FlinkMemoryObject:
         """Get the short-term memory object associated with this context.
 
         Returns:
@@ -103,8 +105,9 @@ class FlinkRunnerContext(RunnerContext):
             err_msg = "Failed to get short-term memory of runner context"
             raise RuntimeError(err_msg) from e
 
+    @property
     @override
-    def get_agent_metric_group(self) -> FlinkMetricGroup:
+    def agent_metric_group(self) -> FlinkMetricGroup:
         """Get the metric group for flink agents.
 
         Returns:
@@ -114,8 +117,9 @@ class FlinkRunnerContext(RunnerContext):
         """
         return FlinkMetricGroup(self._j_runner_context.getAgentMetricGroup())
 
+    @property
     @override
-    def get_action_metric_group(self) -> FlinkMetricGroup:
+    def action_metric_group(self) -> FlinkMetricGroup:
         """Get the individual metric group dedicated for each action.
 
         Returns:
@@ -144,8 +148,9 @@ class FlinkRunnerContext(RunnerContext):
             yield
         return future.result()
 
+    @property
     @override
-    def get_config(self) -> ReadableConfiguration:
+    def config(self) -> ReadableConfiguration:
         """Get the readable configuration for flink agents.
 
         Returns:

@@ -53,7 +53,7 @@ def chat(
 
     # TODO: support async execution of chat.
     response = chat_model.chat(messages)
-    short_term_memory = ctx.get_short_term_memory()
+    short_term_memory = ctx.short_term_memory
 
     # generate tool request event according tool calls in response
     if len(response.tool_calls) > 0:
@@ -113,7 +113,7 @@ def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> N
     Internally, this action will use short term memory to save the tool call context,
     which is a dict mapping request id to chat messages.
     """
-    short_term_memory = ctx.get_short_term_memory()
+    short_term_memory = ctx.short_term_memory
     if isinstance(event, ChatRequestEvent):
         cast(
             "BaseChatModelSetup", ctx.get_resource(event.model, ResourceType.CHAT_MODEL)

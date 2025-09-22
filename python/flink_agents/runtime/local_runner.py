@@ -109,8 +109,9 @@ class LocalRunnerContext(RunnerContext):
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         return self.__agent_plan.get_resource(name, type)
 
+    @property
     @override
-    def get_action_config(self) -> Dict[str, Any]:
+    def action_config(self) -> Dict[str, Any]:
         """Get config of the action."""
         return self.__agent_plan.get_action_config(action_name=self.action_name)
 
@@ -121,8 +122,9 @@ class LocalRunnerContext(RunnerContext):
             action_name=self.action_name, key=key
         )
 
+    @property
     @override
-    def get_short_term_memory(self) -> MemoryObject:
+    def short_term_memory(self) -> MemoryObject:
         """Get the short-term memory object associated with this context.
 
         Returns:
@@ -132,14 +134,16 @@ class LocalRunnerContext(RunnerContext):
         """
         return self._short_term_memory
 
+    @property
     @override
-    def get_agent_metric_group(self) -> MetricGroup:
+    def agent_metric_group(self) -> MetricGroup:
         # TODO: Support metric mechanism for local agent execution.
         err_msg = "Metric mechanism is not supported for local agent execution yet."
         raise NotImplementedError(err_msg)
 
+    @property
     @override
-    def get_action_metric_group(self) -> MetricGroup:
+    def action_metric_group(self) -> MetricGroup:
         # TODO: Support metric mechanism for local agent execution.
         err_msg = "Metric mechanism is not supported for local agent execution yet."
         raise NotImplementedError(err_msg)
@@ -160,8 +164,9 @@ class LocalRunnerContext(RunnerContext):
         yield
         return func_result
 
+    @property
     @override
-    def get_config(self) -> AgentConfiguration:
+    def config(self) -> AgentConfiguration:
         return self._config
 
 

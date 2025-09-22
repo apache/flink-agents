@@ -55,8 +55,9 @@ class RunnerContext(ABC):
             The type of the resource.
         """
 
+    @property
     @abstractmethod
-    def get_action_config(self) -> Dict[str, Any]:
+    def action_config(self) -> Dict[str, Any]:
         """Get config of the action.
 
         Returns:
@@ -64,11 +65,6 @@ class RunnerContext(ABC):
         Dict[str, Any]
           The configuration of the action executed.
         """
-
-    @property
-    def action_config(self) -> Dict[str, Any]:
-        """Get the config of the action."""
-        return self.get_action_config()
 
     @abstractmethod
     def get_action_config_value(self, key: str) -> Any:
@@ -85,8 +81,9 @@ class RunnerContext(ABC):
             The config option value.
         """
 
+    @property
     @abstractmethod
-    def get_short_term_memory(self) -> "MemoryObject":
+    def short_term_memory(self) -> "MemoryObject":
         """Get the short-term memory.
 
         Returns:
@@ -96,12 +93,8 @@ class RunnerContext(ABC):
         """
 
     @property
-    def short_term_memory(self) -> "MemoryObject":
-        """Get the short-term memory."""
-        return self.get_short_term_memory()
-
     @abstractmethod
-    def get_agent_metric_group(self) -> MetricGroup:
+    def agent_metric_group(self) -> MetricGroup:
         """Get the metric group for flink agents.
 
         Returns:
@@ -111,12 +104,8 @@ class RunnerContext(ABC):
         """
 
     @property
-    def agent_metric_group(self) -> MetricGroup:
-        """Get the metric group for flink agents."""
-        return self.get_agent_metric_group()
-
     @abstractmethod
-    def get_action_metric_group(self) -> MetricGroup:
+    def action_metric_group(self) -> MetricGroup:
         """Get the individual metric group dedicated for each action.
 
         Returns:
@@ -124,11 +113,6 @@ class RunnerContext(ABC):
         MetricGroup
             The individual metric group specific to the current action.
         """
-
-    @property
-    def action_metric_group(self) -> MetricGroup:
-        """Get the individual metric group dedicated for each action."""
-        return self.get_action_metric_group()
 
     @abstractmethod
     def execute_async(
@@ -155,8 +139,9 @@ class RunnerContext(ABC):
             The result of the function.
         """
 
+    @property
     @abstractmethod
-    def get_config(self) -> ReadableConfiguration:
+    def config(self) -> ReadableConfiguration:
         """Get the readable configuration for flink agents.
 
         Returns:
@@ -164,8 +149,3 @@ class RunnerContext(ABC):
         ReadableConfiguration
             The configuration for flink agents.
         """
-
-    @property
-    def config(self) -> ReadableConfiguration:
-        """Get the readable configuration for flink agents."""
-        return self.get_config()

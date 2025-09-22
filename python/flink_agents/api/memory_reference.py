@@ -61,4 +61,4 @@ class MemoryRef(BaseModel):
         Any
             The deserialized, original data object.
         """
-        return ctx.get_short_term_memory().get(self)
+        return ctx.short_term_memory.get(self)

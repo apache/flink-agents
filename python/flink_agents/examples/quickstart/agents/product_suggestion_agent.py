@@ -108,7 +108,7 @@ class ProductSuggestionAgent(Agent):
         input:
         {input}
         """
-        return Prompt.from_text("generate_suggestion_prompt", prompt_str)
+        return Prompt.from_text(prompt_str)
 
     @chat_model_setup
     @staticmethod
@@ -125,8 +125,8 @@ class ProductSuggestionAgent(Agent):
     def process_input(event: InputEvent, ctx: RunnerContext) -> None:
         """Process input event."""
         input: ProductReviewSummary = event.input
-        ctx.get_short_term_memory().set("id", input.id)
-        ctx.get_short_term_memory().set("score_hist", input.score_hist)
+        ctx.short_term_memory.set("id", input.id)
+        ctx.short_term_memory.set("score_hist", input.score_hist)
 
         content = f"""
             "id": {input.id},
@@ -151,8 +151,8 @@ class ProductSuggestionAgent(Agent):
             ctx.send_event(
                 OutputEvent(
                     output=ProductSuggestion(
-                        id=ctx.get_short_term_memory().get("id"),
-                        score_hist=ctx.get_short_term_memory().get("score_hist"),
+                        id=ctx.short_term_memory.get("id"),
+                        score_hist=ctx.short_term_memory.get("score_hist"),
                         suggestions=json_content["suggestions"],
                     )
                 )

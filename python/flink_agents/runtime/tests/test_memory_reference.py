@@ -24,7 +24,8 @@ class MockRunnerContext:  # noqa D101
         """Mock RunnerContext for testing resolve() method."""
         self._memory = memory
 
-    def get_short_term_memory(self) -> LocalMemoryObject:  # noqa D102
+    @property
+    def short_term_memory(self) -> LocalMemoryObject:  # noqa D102
         return self._memory
 
 
