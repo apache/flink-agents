@@ -167,6 +167,12 @@ class OllamaChatModelSetup(BaseChatModelSetup):
 
     Attributes:
     ----------
+    connection : str
+        Name of the referenced connection. (Inherited from BaseChatModelSetup)
+    prompt : Optional[Union[Prompt, str]
+        Prompt template or string for the model. (Inherited from BaseChatModelSetup)
+    tools : Optional[List[str]]
+        List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
     temperature : float
         The temperature to use for sampling.
     num_ctx : int

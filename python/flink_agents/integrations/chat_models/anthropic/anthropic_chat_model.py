@@ -210,6 +210,12 @@ class AnthropicChatModelSetup(BaseChatModelSetup):
 
     Attributes:
     ----------
+    connection : str
+        Name of the referenced connection. (Inherited from BaseChatModelSetup)
+    prompt : Optional[Union[Prompt, str]
+        Prompt template or string for the model. (Inherited from BaseChatModelSetup)
+    tools : Optional[List[str]]
+        List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
     model : str
         Specifies the Anthropic model to use. Defaults to claude-sonnet-4-20250514.
     max_tokens: int

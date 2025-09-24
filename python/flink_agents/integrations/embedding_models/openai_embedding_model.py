@@ -135,6 +135,10 @@ class OpenAIEmbeddingModelSetup(BaseEmbeddingModelSetup):
 
     Attributes:
     ----------
+    connection : str
+        Name of the referenced connection. (Inherited from BaseEmbeddingModelSetup)
+    model : str
+        Name of the embedding model to use. (Inherited from BaseEmbeddingModelSetup)
     encoding_format : str
         The format to return the embeddings in (default: "float").
         Can be either "float" or "base64".

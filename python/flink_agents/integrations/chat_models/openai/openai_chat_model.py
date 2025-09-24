@@ -184,6 +184,12 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
 
     Attributes:
     ----------
+    connection : str
+        Name of the referenced connection. (Inherited from BaseChatModelSetup)
+    prompt : Optional[Union[Prompt, str]
+        Prompt template or string for the model. (Inherited from BaseChatModelSetup)
+    tools : Optional[List[str]]
+        List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
     model : str
         The OpenAI model to use.
     temperature : float

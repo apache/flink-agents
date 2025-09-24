@@ -101,6 +101,10 @@ class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
 
     Attributes:
     ----------
+    connection : str
+        Name of the referenced connection. (Inherited from BaseEmbeddingModelSetup)
+    model : str
+        Name of the embedding model to use. (Inherited from BaseEmbeddingModelSetup)
     truncate : bool
         Controls what happens if input text exceeds model's maximum length
         (default: True).
