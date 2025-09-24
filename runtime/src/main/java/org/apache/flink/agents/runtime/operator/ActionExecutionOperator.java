@@ -193,14 +193,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             actionStateStore = new KafkaActionStateStore(agentPlan.getConfig());
         }
 
-        // init recovery marker state for recovery marker persistence
-        recoveryMarkerOpState =
-                getOperatorStateBackend()
-                        .getUnionListState(
-                                new ListStateDescriptor<>(
-                                        RECOVERY_MARKER_STATE_NAME,
-                                        TypeInformation.of(Object.class)));
-
+        if (actionStateStore != null) {
+            // init recovery marker state for recovery marker persistence
+            recoveryMarkerOpState =
+                    getOperatorStateBackend()
+                            .getUnionListState(
+                                    new ListStateDescriptor<>(
+                                            RECOVERY_MARKER_STATE_NAME,
+                                            TypeInformation.of(Object.class)));
+        }
         // init sequence number state for per key message ordering
         sequenceNumberKState =
                 getRuntimeContext()
@@ -670,6 +671,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             ActionTask.ActionTaskResult actionTaskResult)
             throws Exception {
         if (actionStateStore == null) {
+            return;
+        }
+
+        // if the task is not finished, we skip the persistence for now and wait until it is
+        // finished.
+        if (!actionTaskResult.isFinished()) {
             return;
         }
 
