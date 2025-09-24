@@ -1,5 +1,5 @@
 ---
-title: How to Build an Agent
+title: Development
 icon: <i class="fa fa-code title maindish" aria-hidden="true"></i>
 bold: true
 bookCollapseSection: true
