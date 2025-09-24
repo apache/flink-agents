@@ -36,4 +36,17 @@ To ensure stability and compatibility when running Flink Agents jobs, please be 
     - **For macOS users**: Use Homebrew to install Python (e.g., `brew install python`).
     - **For Windows users**: Download and install the official version from the [Python website](https://www.python.org/downloads/).
 
-- **Avoid using Python installed via uv**: Currently, it is not recommended to run Flink Agents jobs with a Python interpreter installed via the `uv` tool, as this may lead to potential compatibility issues or instability.
+- **Avoid using Python installed via uv**: Currently, it is not recommended to run Flink Agents jobs with a Python interpreter installed via the `uv` tool, as this may lead to potential compatibility issues or instability. For example, you may encounter the following gRPC-related error:
+
+    ```
+    Logging client failed: <_MultiThreadedRendezvous of RPC that terminated with:
+        status = StatusCode.UNAVAILABLE
+        details = "Socket closed"
+        debug_error_string = "UNKNOWN:Error received from peer ipv6:%5B::1%5D:58663 {grpc_message:"Socket closed", grpc_status:14}"
+    >... resetting
+    Exception in thread read_grpc_client_inputs:
+    ...
+    py4j.protocol.Py4JError: An error occurred while calling o12.execute
+    ```
+
+  If you see an error like this, switch immediately to one of the officially recommended installation methods and confirm that you're using a supported Python version.
