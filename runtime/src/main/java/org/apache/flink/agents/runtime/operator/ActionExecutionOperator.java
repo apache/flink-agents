@@ -84,7 +84,6 @@ import java.util.Optional;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
-import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -380,6 +379,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         } else {
             maybeInitActionState(key, sequenceNumber, actionTask.action, actionTask.event);
             ActionTask.ActionTaskResult actionTaskResult = actionTask.invoke();
+
+            // We remove the RunnerContext of the action task from the map after it is finished. The
+            // RunnerContext will be added later if the action task has a generated action task,
+            // meaning it is not finished.
             actionTaskRunnerContexts.remove(actionTask);
             maybePersistTaskResult(
                     key,
@@ -405,17 +408,18 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // Persist memory to the Flink state when the action task is finished.
             actionTask.getRunnerContext().persistMemory();
         } else {
+            checkState(
+                    generatedActionTaskOpt.isPresent(),
+                    "ActionTask not finished, but the generated action task is null.");
+
             // If the action task is not finished, we should get a new action task to continue the
             // execution.
             ActionTask generatedActionTask = generatedActionTaskOpt.get();
 
             // If the action task is not finished, we keep the runner context in the memory for the
-            // next ActionTask to be invoked.
+            // next generated ActionTask to be invoked.
             actionTaskRunnerContexts.put(generatedActionTask, actionTask.getRunnerContext());
 
-            checkNotNull(
-                    generatedActionTask,
-                    "ActionTask not finished, but the generated action task is null.");
             actionTasksKState.add(generatedActionTask);
         }
 

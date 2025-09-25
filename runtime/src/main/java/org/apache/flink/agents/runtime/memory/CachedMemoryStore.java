@@ -55,5 +55,6 @@ public class CachedMemoryStore implements MemoryStore {
         for (Map.Entry<String, MemoryObjectImpl.MemoryItem> entry : cache.entrySet()) {
             store.put(entry.getKey(), entry.getValue());
         }
+        cache.clear();
     }
 }

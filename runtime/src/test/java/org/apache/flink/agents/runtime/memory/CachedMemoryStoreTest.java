@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class CachedMapStateTest {
+class CachedMemoryStoreTest {
 
     @Test
     void testPutAndGet() throws Exception {
