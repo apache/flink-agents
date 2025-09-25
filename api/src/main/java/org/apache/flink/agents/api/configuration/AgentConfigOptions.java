@@ -41,6 +41,6 @@ public class AgentConfigOptions {
             new ConfigOption<>("kafkaActionStateTopicNumPartitions", Integer.class, 64);
 
     /** The config parameter specifies the replication factor for the Kafka action state topic. */
-    public static final ConfigOption<Short> KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR =
-            new ConfigOption<>("kafkaActionStateTopicReplicationFactor", Short.class, (short) 1);
+    public static final ConfigOption<Integer> KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR =
+            new ConfigOption<>("kafkaActionStateTopicReplicationFactor", Integer.class, 1);
 }

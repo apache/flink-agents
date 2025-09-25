@@ -311,8 +311,9 @@ public class KafkaActionStateStore implements ActionStateStore {
                         new NewTopic(
                                 topic,
                                 agentConfiguration.get(KAFKA_ACTION_STATE_TOPIC_NUM_PARTITIONS),
-                                agentConfiguration.get(
-                                        KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR));
+                                agentConfiguration
+                                        .get(KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR)
+                                        .shortValue());
                 // enable topic compaction
                 newTopic.configs(Map.of("cleanup.policy", "compact"));
                 adminClient.createTopics(List.of(newTopic)).all().get();
