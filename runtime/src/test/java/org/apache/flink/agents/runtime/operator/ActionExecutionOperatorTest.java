@@ -29,6 +29,7 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.mailbox.TaskMailbox;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
@@ -440,6 +441,50 @@ public class ActionExecutionOperatorTest {
             // The action state store should only have one entry
             assertThat(actionStateStore.getKeyedActionStates().get(String.valueOf(inputValue)))
                     .hasSize(2);
+        }
+    }
+
+    @Test
+    void testWatermark() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+
+            final long initialTime = 0L;
+
+            testHarness.open();
+
+            // Process input data 1 with key 0
+            testHarness.processWatermark(new Watermark(initialTime + 1));
+            testHarness.processElement(new StreamRecord<>(0L, initialTime + 2));
+            testHarness.processElement(new StreamRecord<>(0L, initialTime + 3));
+            testHarness.processElement(new StreamRecord<>(1L, initialTime + 4));
+            testHarness.processWatermark(new Watermark(initialTime + 5));
+            testHarness.processElement(new StreamRecord<>(1L, initialTime + 6));
+            testHarness.processElement(new StreamRecord<>(0L, initialTime + 7));
+            testHarness.processElement(new StreamRecord<>(1L, initialTime + 8));
+            testHarness.processWatermark(new Watermark(initialTime + 9));
+
+            testHarness.endInput();
+            testHarness.close();
+
+            Object[] jobOutputQueue = testHarness.getOutput().toArray();
+            assertThat(jobOutputQueue.length).isEqualTo(9);
+
+            long lastWatermark = Long.MIN_VALUE;
+
+            for (Object obj : jobOutputQueue) {
+                if (obj instanceof StreamRecord) {
+                    StreamRecord<?> streamRecord = (StreamRecord<?>) obj;
+                    assertThat(streamRecord.getTimestamp()).isGreaterThan(lastWatermark);
+                } else if (obj instanceof Watermark) {
+                    Watermark watermark = (Watermark) obj;
+                    assertThat(watermark.getTimestamp()).isGreaterThan(lastWatermark);
+                    lastWatermark = watermark.getTimestamp();
+                }
+            }
         }
     }
 

@@ -40,6 +40,7 @@ import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
@@ -65,6 +66,7 @@ import org.apache.flink.streaming.api.operators.BoundedOneInput;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
+import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxExecutorImpl;
@@ -105,6 +107,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private static final String RECOVERY_MARKER_STATE_NAME = "recoveryMarker";
     private static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
+    private static final String PENDING_INPUT_EVENT_STATE_NAME = "pendingInputEvents";
 
     private final AgentPlan agentPlan;
 
@@ -120,6 +123,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private transient FlinkAgentsMetricGroupImpl metricGroup;
 
     private transient BuiltInMetrics builtInMetrics;
+
+    private transient SegmentedQueue keySegmentQueue;
 
     private final transient MailboxExecutor mailboxExecutor;
 
@@ -190,6 +195,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
 
+        keySegmentQueue = new SegmentedQueue();
+
         // init the action state store with proper implementation
         if (actionStateStore == null
                 && KAFKA.getType()
@@ -224,7 +231,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 getRuntimeContext()
                         .getListState(
                                 new ListStateDescriptor<>(
-                                        "pendingInputEvents", TypeInformation.of(Event.class)));
+                                        PENDING_INPUT_EVENT_STATE_NAME,
+                                        TypeInformation.of(Event.class)));
         // We use UnionList here to ensure that the task can access all keys after parallelism
         // modifications.
         // Subsequent steps {@link #tryResumeProcessActionTasks} will then filter out keys that do
@@ -258,6 +266,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     @Override
+    public void processWatermark(Watermark mark) throws Exception {
+        keySegmentQueue.addWatermark(mark);
+        processEligibleWatermarks();
+    }
+
+    @Override
     public void processElement(StreamRecord<IN> record) throws Exception {
         IN input = record.getValue();
         LOG.debug("Receive an element {}", input);
@@ -267,6 +281,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (record.hasTimestamp()) {
             inputEvent.setSourceTimestamp(record.getTimestamp());
         }
+
+        keySegmentQueue.addKeyToLastSegment(getCurrentKey());
 
         if (currentKeyHasMoreActionTask()) {
             // If there are already actions being processed for the current key, the newly incoming
@@ -362,6 +378,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             + key
                             + " should be 1, but got "
                             + removedCount);
+            checkState(
+                    keySegmentQueue.removeKey(key),
+                    "Current key" + key + " is missing from the segmentedQueue.");
+            processEligibleWatermarks();
             return;
         }
 
@@ -442,6 +462,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             + key
                             + " should be 1, but got "
                             + removedCount);
+            checkState(
+                    keySegmentQueue.removeKey(key),
+                    "Current key" + key + " is missing from the segmentedQueue.");
+            processEligibleWatermarks();
             Event pendingInputEvent = pollFromListState(pendingInputEventsKState);
             if (pendingInputEvent != null) {
                 processEvent(key, pendingInputEvent);
@@ -662,10 +686,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         Iterable<Object> keys = currentProcessingKeysOpState.get();
         if (keys != null) {
             for (Object key : keys) {
+                keySegmentQueue.addKeyToLastSegment(key);
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key), "process action task");
             }
         }
+
+        getKeyedStateBackend()
+                .applyToAllKeys(
+                        VoidNamespace.INSTANCE,
+                        VoidNamespaceSerializer.INSTANCE,
+                        new ListStateDescriptor<>(
+                                PENDING_INPUT_EVENT_STATE_NAME, TypeInformation.of(Event.class)),
+                        (key, state) ->
+                                state.get()
+                                        .forEach(
+                                                event -> keySegmentQueue.addKeyToLastSegment(key)));
     }
 
     private void initOrIncSequenceNumber() throws Exception {
@@ -730,6 +766,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void maybePruneState(Object key, long sequenceNum) throws Exception {
         if (actionStateStore != null) {
             actionStateStore.pruneState(key, sequenceNum);
+        }
+    }
+
+    private void processEligibleWatermarks() throws Exception {
+        Watermark mark = keySegmentQueue.popOldestWatermark();
+        while (mark != null) {
+            super.processWatermark(mark);
+            mark = keySegmentQueue.popOldestWatermark();
         }
     }
 
