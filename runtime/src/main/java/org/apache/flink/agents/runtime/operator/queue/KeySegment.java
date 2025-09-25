@@ -22,7 +22,7 @@ import java.util.Map;
 
 /** A group of keys with the number of unfinished input records for each specific key. */
 public class KeySegment {
-    /** Maps keys to their reference counts (number of active occurrences). */
+    /** Maps keys to their reference counts (number of unfinished input records). */
     private final Map<Object, Integer> keyReferenceCounts;
 
     public KeySegment() {
