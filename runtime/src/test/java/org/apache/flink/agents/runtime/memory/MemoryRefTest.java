@@ -110,7 +110,11 @@ public class MemoryRefTest {
     @BeforeEach
     void setUp() throws Exception {
         ForTestMemoryMapState<MemoryObjectImpl.MemoryItem> mapState = new ForTestMemoryMapState<>();
-        memory = new MemoryObjectImpl(mapState, MemoryObjectImpl.ROOT_KEY, new LinkedList<>());
+        memory =
+                new MemoryObjectImpl(
+                        new CachedMemoryStore(mapState),
+                        MemoryObjectImpl.ROOT_KEY,
+                        new LinkedList<>());
     }
 
     @Test

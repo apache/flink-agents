@@ -26,9 +26,9 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.utils.JsonUtils;
+import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
-import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.util.Preconditions;
 
@@ -44,7 +44,7 @@ import java.util.Map;
 public class RunnerContextImpl implements RunnerContext {
 
     protected final List<Event> pendingEvents = new ArrayList<>();
-    protected final MapState<String, MemoryObjectImpl.MemoryItem> store;
+    protected final CachedMemoryStore store;
     protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
     protected final Runnable mailboxThreadChecker;
     protected final AgentPlan agentPlan;
@@ -52,7 +52,7 @@ public class RunnerContextImpl implements RunnerContext {
     protected String actionName;
 
     public RunnerContextImpl(
-            MapState<String, MemoryObjectImpl.MemoryItem> store,
+            CachedMemoryStore store,
             FlinkAgentsMetricGroupImpl agentMetricGroup,
             Runnable mailboxThreadChecker,
             AgentPlan agentPlan) {
@@ -146,5 +146,9 @@ public class RunnerContextImpl implements RunnerContext {
 
     public String getActionName() {
         return actionName;
+    }
+
+    public void persistMemory() throws Exception {
+        store.persistCache();
     }
 }

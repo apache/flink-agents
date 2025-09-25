@@ -20,7 +20,6 @@ package org.apache.flink.agents.runtime.memory;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.MemoryUpdate;
-import org.apache.flink.api.common.state.MapState;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -41,19 +40,18 @@ public class MemoryObjectImpl implements MemoryObject {
     public static final String ROOT_KEY = "";
     private static final String SEPARATOR = ".";
 
-    private final MapState<String, MemoryItem> store;
+    private final MemoryStore store;
     private final List<MemoryUpdate> memoryUpdates;
     private final String prefix;
     private final Runnable mailboxThreadChecker;
 
-    public MemoryObjectImpl(
-            MapState<String, MemoryItem> store, String prefix, List<MemoryUpdate> memoryUpdates)
+    public MemoryObjectImpl(MemoryStore store, String prefix, List<MemoryUpdate> memoryUpdates)
             throws Exception {
         this(store, prefix, () -> {}, memoryUpdates);
     }
 
     public MemoryObjectImpl(
-            MapState<String, MemoryItem> store,
+            MemoryStore store,
             String prefix,
             Runnable mailboxThreadChecker,
             List<MemoryUpdate> memoryUpdates)

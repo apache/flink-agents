@@ -19,7 +19,6 @@ package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
-import org.apache.flink.api.common.state.MapState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -62,7 +61,9 @@ public class MemoryObjectTest {
     void setUp() throws Exception {
         ForTestMemoryMapState<MemoryObjectImpl.MemoryItem> mapState = new ForTestMemoryMapState<>();
         memoryUpdates = new LinkedList<>();
-        memory = new MemoryObjectImpl(mapState, MemoryObjectImpl.ROOT_KEY, memoryUpdates);
+        memory =
+                new MemoryObjectImpl(
+                        new CachedMemoryStore(mapState), MemoryObjectImpl.ROOT_KEY, memoryUpdates);
     }
 
     @Test
@@ -178,66 +179,5 @@ public class MemoryObjectTest {
                         new MemoryUpdate("str.new_str", null),
                         new MemoryUpdate("str.new_str.int", 42),
                         new MemoryUpdate("str.new_str.str", "world"));
-    }
-}
-
-/** Simple, non-serialized HashMap implementation. */
-class ForTestMemoryMapState<V> implements MapState<String, V> {
-
-    private final Map<String, V> fortest = new HashMap<>();
-
-    @Override
-    public V get(String key) {
-        return fortest.get(key);
-    }
-
-    @Override
-    public void put(String key, V value) {
-        fortest.put(key, value);
-    }
-
-    @Override
-    public void putAll(Map<String, V> map) {
-        fortest.putAll(map);
-    }
-
-    @Override
-    public void remove(String key) {
-        fortest.remove(key);
-    }
-
-    @Override
-    public boolean contains(String key) {
-        return fortest.containsKey(key);
-    }
-
-    @Override
-    public Iterable<Map.Entry<String, V>> entries() {
-        return fortest.entrySet();
-    }
-
-    @Override
-    public Iterable<String> keys() {
-        return fortest.keySet();
-    }
-
-    @Override
-    public Iterable<V> values() {
-        return fortest.values();
-    }
-
-    @Override
-    public Iterator<Map.Entry<String, V>> iterator() {
-        return fortest.entrySet().iterator();
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return fortest.isEmpty();
-    }
-
-    @Override
-    public void clear() {
-        fortest.clear();
     }
 }
