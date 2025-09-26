@@ -61,6 +61,37 @@ public class CustomTypesAndResources {
                             new ChatMessage(MessageRole.SYSTEM, REVIEW_ANALYSIS_SYSTEM_PROMPT_STR),
                             new ChatMessage(MessageRole.USER, "\"input\":\n" + "{input}")));
 
+    // Prompt for review analysis react agent
+    public static final Prompt REVIEW_ANALYSIS_REACT_PROMPT =
+            new Prompt(
+                    Arrays.asList(
+                            new ChatMessage(MessageRole.SYSTEM, REVIEW_ANALYSIS_SYSTEM_PROMPT_STR),
+                            new ChatMessage(
+                                    MessageRole.USER, "\"id\": {id},\n" + "\"review\": {review}")));
+
+    // Prompt for product suggestion agent
+    public static final String PRODUCT_SUGGESTION_PROMPT_STR =
+            "Based on the rating distribution and user dissatisfaction reasons, generate three actionable suggestions for product improvement.\n\n"
+                    + "Input format:\n"
+                    + "{\n"
+                    + "    \"id\": \"1\",\n"
+                    + "    \"score_histogram\": [\"10%\", \"20%\", \"10%\", \"15%\", \"45%\"],\n"
+                    + "    \"unsatisfied_reasons\": [\"reason1\", \"reason2\", \"reason3\"]\n"
+                    + "}\n\n"
+                    + "Ensure that your response can be parsed by Java JSON, use the following format as an example:\n"
+                    + "{\n"
+                    + "    \"suggestion_list\": [\n"
+                    + "        \"suggestion1\",\n"
+                    + "        \"suggestion2\",\n"
+                    + "        \"suggestion3\"\n"
+                    + "    ]\n"
+                    + "}\n\n"
+                    + "input:\n"
+                    + "{input}";
+
+    public static final Prompt PRODUCT_SUGGESTION_PROMPT =
+            new Prompt(PRODUCT_SUGGESTION_PROMPT_STR);
+
     /**
      * Tool for notifying the shipping manager when product received a negative review due to
      * shipping damage.
@@ -144,6 +175,82 @@ public class CustomTypesAndResources {
         public String toString() {
             return String.format(
                     "ProductReviewAnalysisRes{id='%s', score=%d, reasons=%s}", id, score, reasons);
+        }
+    }
+
+    /** Aggregates multiple reviews and insights using LLM for a product. */
+    @JsonSerialize
+    @JsonDeserialize
+    public static class ProductReviewSummary {
+        private final String id;
+        private final List<String> scoreHist;
+        private final List<String> unsatisfiedReasons;
+
+        @JsonCreator
+        public ProductReviewSummary(
+                @JsonProperty("id") String id,
+                @JsonProperty("scoreHist") List<String> scoreHist,
+                @JsonProperty("unsatisfiedReasons") List<String> unsatisfiedReasons) {
+            this.id = id;
+            this.scoreHist = scoreHist;
+            this.unsatisfiedReasons = unsatisfiedReasons;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        public List<String> getScoreHist() {
+            return scoreHist;
+        }
+
+        public List<String> getUnsatisfiedReasons() {
+            return unsatisfiedReasons;
+        }
+
+        @Override
+        public String toString() {
+            return String.format(
+                    "ProductReviewSummary{id='%s', scoreHist=%s, unsatisfiedReasons=%s}",
+                    id, scoreHist, unsatisfiedReasons);
+        }
+    }
+
+    /** Provides a summary of review data including suggestions for improvement. */
+    @JsonSerialize
+    @JsonDeserialize
+    public static class ProductSuggestion {
+        private final String id;
+        private final List<String> scoreHist;
+        private final List<String> suggestions;
+
+        @JsonCreator
+        public ProductSuggestion(
+                @JsonProperty("id") String id,
+                @JsonProperty("scoreHist") List<String> scoreHist,
+                @JsonProperty("suggestions") List<String> suggestions) {
+            this.id = id;
+            this.scoreHist = scoreHist;
+            this.suggestions = suggestions;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        public List<String> getScoreHist() {
+            return scoreHist;
+        }
+
+        public List<String> getSuggestions() {
+            return suggestions;
+        }
+
+        @Override
+        public String toString() {
+            return String.format(
+                    "ProductSuggestion{id='%s', scoreHist=%s, suggestions=%s}",
+                    id, scoreHist, suggestions);
         }
     }
 }
