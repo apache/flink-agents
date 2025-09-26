@@ -134,7 +134,7 @@ public class PythonActionExecutor {
                 return pythonGeneratorRef;
             }
         } catch (Exception e) {
-            runnerContext.drainEvents();
+            runnerContext.drainEvents(null);
             throw new PythonActionExecutionException("Failed to execute Python action", e);
         }
     }

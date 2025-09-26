@@ -309,6 +309,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             if (event.hasSourceTimestamp()) {
                 output.collect(reusedStreamRecord.replace(outputData, event.getSourceTimestamp()));
             } else {
+                reusedStreamRecord.eraseTimestamp();
                 output.collect(reusedStreamRecord.replace(outputData));
             }
         } else {

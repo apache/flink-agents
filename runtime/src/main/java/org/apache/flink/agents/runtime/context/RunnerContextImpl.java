@@ -90,13 +90,6 @@ public class RunnerContextImpl implements RunnerContext {
         pendingEvents.add(event);
     }
 
-    public List<Event> drainEvents() {
-        mailboxThreadChecker.run();
-        List<Event> list = new ArrayList<>(this.pendingEvents);
-        this.pendingEvents.clear();
-        return list;
-    }
-
     public List<Event> drainEvents(Long timestamp) {
         mailboxThreadChecker.run();
         List<Event> list = new ArrayList<>(this.pendingEvents);
