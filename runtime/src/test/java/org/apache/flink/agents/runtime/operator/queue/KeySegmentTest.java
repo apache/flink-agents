@@ -19,8 +19,6 @@ package org.apache.flink.agents.runtime.operator.queue;
 
 import org.junit.jupiter.api.Test;
 
-import java.util.Map;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 class KeySegmentTest {
@@ -45,7 +43,7 @@ class KeySegmentTest {
         keySegment.incrementKeyReference("key1");
 
         assertTrue(keySegment.hasActiveKey("key1"));
-        assertEquals(3, getKeyReferenceCount(keySegment, "key1"));
+        assertEquals(3, keySegment.getKeyReferenceCounts().get("key1"));
     }
 
     @Test
@@ -74,7 +72,7 @@ class KeySegmentTest {
         keySegment.decrementKeyReference("key1");
         keySegment.decrementKeyReference("key1");
         assertTrue(keySegment.hasActiveKey("key1"));
-        assertEquals(1, getKeyReferenceCount(keySegment, "key1"));
+        assertEquals(1, keySegment.getKeyReferenceCounts().get("key1"));
 
         // Decrement once more - should be removed
         keySegment.decrementKeyReference("key1");
@@ -135,20 +133,5 @@ class KeySegmentTest {
         keySegment.decrementKeyReference("key1");
         keySegment.decrementKeyReference("key3");
         assertTrue(keySegment.isEmpty());
-    }
-
-    // Helper method to access the private map for testing purposes
-    private int getKeyReferenceCount(KeySegment keySegment, Object key) {
-        // Using reflection to access the private field for testing
-        try {
-            java.lang.reflect.Field field = KeySegment.class.getDeclaredField("keyReferenceCounts");
-            field.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            Map<Object, Integer> map = (Map<Object, Integer>) field.get(keySegment);
-            return map.getOrDefault(key, 0);
-        } catch (Exception e) {
-            fail("Failed to access keyReferenceCounts field");
-            return -1;
-        }
     }
 }

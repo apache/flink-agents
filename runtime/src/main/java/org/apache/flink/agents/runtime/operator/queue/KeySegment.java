@@ -56,4 +56,9 @@ public class KeySegment {
     public boolean isEmpty() {
         return keyReferenceCounts.isEmpty();
     }
+
+    // Package-private getter for test access
+    Map<Object, Integer> getKeyReferenceCounts() {
+        return keyReferenceCounts;
+    }
 }

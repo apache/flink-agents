@@ -92,15 +92,15 @@ class SegmentedQueueTest {
 
         // Add a key first
         queue.addKeyToLastSegment("key1");
-        int initialSegments = getSegmentCount(queue);
+        int initialSegments = queue.getSegments().size();
 
         // Add a watermark
         Watermark watermark = new Watermark(1000L);
         queue.addWatermark(watermark);
 
         // Verify a new segment was created
-        assertEquals(initialSegments + 1, getSegmentCount(queue));
-        assertEquals(1, getWatermarkCount(queue));
+        assertEquals(initialSegments + 1, queue.getSegments().size());
+        assertEquals(1, queue.getWatermarks().size());
     }
 
     @Test
@@ -120,7 +120,7 @@ class SegmentedQueueTest {
 
         // Verify the correct watermark was popped
         assertEquals(watermark1.getTimestamp(), popped.getTimestamp());
-        assertEquals(1, getWatermarkCount(queue));
+        assertEquals(1, queue.getWatermarks().size());
     }
 
     @Test
@@ -210,45 +210,7 @@ class SegmentedQueueTest {
 
     // Helper methods to access private fields for testing
     private boolean hasKeyInLastSegment(SegmentedQueue queue, Object key) {
-        try {
-            java.lang.reflect.Field segmentsField =
-                    SegmentedQueue.class.getDeclaredField("segments");
-            segmentsField.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            Deque<KeySegment> segments = (Deque<KeySegment>) segmentsField.get(queue);
-
-            return segments.getLast().hasActiveKey(key);
-        } catch (Exception e) {
-            fail("Failed to access segments field");
-            return false;
-        }
-    }
-
-    private int getSegmentCount(SegmentedQueue queue) {
-        try {
-            java.lang.reflect.Field segmentsField =
-                    SegmentedQueue.class.getDeclaredField("segments");
-            segmentsField.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            Deque<KeySegment> segments = (Deque<KeySegment>) segmentsField.get(queue);
-            return segments.size();
-        } catch (Exception e) {
-            fail("Failed to access segments field");
-            return -1;
-        }
-    }
-
-    private int getWatermarkCount(SegmentedQueue queue) {
-        try {
-            java.lang.reflect.Field watermarksField =
-                    SegmentedQueue.class.getDeclaredField("watermarks");
-            watermarksField.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            Deque<Watermark> watermarks = (Deque<Watermark>) watermarksField.get(queue);
-            return watermarks.size();
-        } catch (Exception e) {
-            fail("Failed to access watermarks field");
-            return -1;
-        }
+        Deque<KeySegment> segments = queue.getSegments();
+        return segments.getLast().hasActiveKey(key);
     }
 }

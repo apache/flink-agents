@@ -95,4 +95,14 @@ public class SegmentedQueue {
     private boolean isFirstSegmentEmpty() {
         return !this.segments.isEmpty() && segments.getFirst().isEmpty();
     }
+
+    // Package-private getter for test access
+    Deque<KeySegment> getSegments() {
+        return segments;
+    }
+
+    // Package-private getter for test access
+    Deque<Watermark> getWatermarks() {
+        return watermarks;
+    }
 }
