@@ -24,6 +24,7 @@ from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.tools.mcp import MCPServer
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
+from flink_agents.plan.actions.context_retrieval_action import CONTEXT_RETRIEVAL_ACTION
 from flink_agents.plan.actions.tool_call_action import TOOL_CALL_ACTION
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
@@ -36,7 +37,7 @@ from flink_agents.plan.resource_provider import (
 )
 from flink_agents.plan.tools.function_tool import from_callable
 
-BUILT_IN_ACTIONS = [CHAT_MODEL_ACTION, TOOL_CALL_ACTION]
+BUILT_IN_ACTIONS = [CHAT_MODEL_ACTION, TOOL_CALL_ACTION, CONTEXT_RETRIEVAL_ACTION]
 
 
 class AgentPlan(BaseModel):
