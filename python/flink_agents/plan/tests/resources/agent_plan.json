@@ -49,6 +49,18 @@
                 "flink_agents.api.events.tool_event.ToolRequestEvent"
             ],
             "config": null
+        },
+        "context_retrieval_action": {
+            "name": "context_retrieval_action",
+            "exec": {
+                "func_type": "PythonFunction",
+                "module": "flink_agents.plan.actions.context_retrieval_action",
+                "qualname": "process_context_retrieval_request"
+            },
+            "listen_event_types": [
+                "flink_agents.api.events.context_retrieval_event.ContextRetrievalRequestEvent"
+            ],
+            "config": null
         }
     },
     "actions_by_event": {
@@ -67,6 +79,9 @@
         ],
         "flink_agents.api.events.tool_event.ToolRequestEvent": [
             "tool_call_action"
+        ],
+        "flink_agents.api.events.context_retrieval_event.ContextRetrievalRequestEvent": [
+            "context_retrieval_action"
         ]
     },
     "resource_providers": {
