@@ -175,7 +175,7 @@ public class ToolResponse {
     @Override
     public String toString() {
         if (success) {
-            return result.toString();
+            return getResultAsString();
         } else {
             return error;
         }
