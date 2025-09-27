@@ -30,7 +30,7 @@ from flink_agents.plan.function import PythonFunction
 def process_context_retrieval_request(event: Event, ctx: RunnerContext) -> None:
     """Built-in action for processing context retrieval requests."""
     if isinstance(event, ContextRetrievalRequestEvent):
-        vector_store_setup = ctx.get_resource(
+        vector_store = ctx.get_resource(
             event.vector_store,
             ResourceType.VECTOR_STORE
         )
@@ -40,10 +40,11 @@ def process_context_retrieval_request(event: Event, ctx: RunnerContext) -> None:
             limit=event.max_results
         )
 
-        result = vector_store_setup.query(query)
+        result = vector_store.query(query)
 
         ctx.send_event(ContextRetrievalResponseEvent(
             request_id=event.id,
+            query=event.query,
             documents=result.documents
         ))
 

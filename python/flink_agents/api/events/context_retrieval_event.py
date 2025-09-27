@@ -46,8 +46,11 @@ class ContextRetrievalResponseEvent(Event):
     ----------
     request_id : UUID
         ID of the original request event
+    query : str
+        The original search query from the request
     documents : List[Document]
         List of retrieved documents from the vector store
     """
     request_id: UUID
+    query: str
     documents: List[Document]
