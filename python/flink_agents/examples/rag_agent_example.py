@@ -29,7 +29,6 @@ from flink_agents.api.decorators import (
     vector_store_connection,
     vector_store_setup,
 )
-from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
@@ -37,6 +36,7 @@ from flink_agents.api.events.context_retrieval_event import (
 )
 from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.integrations.chat_models.ollama_chat_model import (
@@ -57,7 +57,7 @@ OLLAMA_EMBEDDING_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-t
 
 
 class MyRAGAgent(Agent):
-    """Example RAG (Retrieval-Augmented Generation) agent demonstrating context retrieval.
+    """Example RAG agent demonstrating context retrieval.
 
     This RAG agent shows how to:
     1. Receive a user query
@@ -74,13 +74,13 @@ class MyRAGAgent(Agent):
         """Prompt template for enhancing user queries with retrieved context."""
         template = """Based on the following context, please answer the user's question.
 
-                    Context:
-                    {context}
-                    
-                    User Question: 
-                    {user_query}
-                    
-                    """
+Context:
+{context}
+
+User Question:
+{user_query}
+
+Please provide a helpful answer based on the context provided."""
         return Prompt.from_text(template)
 
     @embedding_model_connection
@@ -182,7 +182,7 @@ class MyRAGAgent(Agent):
 
 
 def populate_knowledge_base() -> None:
-    """Populate ChromaDB with sample knowledge documents using real Ollama embeddings."""
+    """Populate ChromaDB with sample knowledge documents using Ollama embeddings."""
     print("Populating ChromaDB with sample knowledge documents...")
 
     # Create connections directly
@@ -215,7 +215,7 @@ def populate_knowledge_base() -> None:
 
     # Generate real embeddings using Ollama
     embeddings = []
-    for i, doc in enumerate(documents):
+    for _i, doc in enumerate(documents):
         embedding = embedding_connection.embed(doc, model=OLLAMA_EMBEDDING_MODEL)
         embeddings.append(embedding)
 
@@ -252,8 +252,7 @@ if __name__ == "__main__":
         {"key": "003", "value": "What is Python?"},
     ]
 
-    for query in test_queries:
-        input_list.append(query)
+    input_list.extend(test_queries)
 
     env.execute()
 
