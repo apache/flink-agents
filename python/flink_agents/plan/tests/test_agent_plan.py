@@ -29,8 +29,7 @@ from flink_agents.api.decorators import (
     chat_model_setup,
     embedding_model_connection,
     embedding_model_setup,
-    vector_store_connection,
-    vector_store_setup,
+    vector_store,
 )
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
@@ -40,8 +39,7 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.vector_stores.vector_store import (
-    BaseVectorStoreConnection,
-    BaseVectorStoreSetup,
+    BaseVectorStore,
     Document,
 )
 from flink_agents.plan.agent_plan import AgentPlan
@@ -123,11 +121,16 @@ class MockEmbeddingModelSetup(BaseEmbeddingModelSetup):  # noqa: D101
         return {"model": self.model}
 
 
-class MockVectorStoreConnection(BaseVectorStoreConnection):  # noqa: D101
+class MockVectorStore(BaseVectorStore):  # noqa: D101
     host: str
     port: int
+    collection_name: str
 
-    def query(
+    @property
+    def store_kwargs(self) -> Dict[str, Any]:  # noqa: D102
+        return {"collection_name": self.collection_name}
+
+    def query_embedding(
         self, embedding: list[float], limit: int = 10, **kwargs: Any
     ) -> list[Document]:
         """Testing Implementation."""
@@ -143,14 +146,6 @@ class MockVectorStoreConnection(BaseVectorStoreConnection):  # noqa: D101
                 id="doc2",
             ),
         ][:limit]
-
-
-class MockVectorStoreSetup(BaseVectorStoreSetup):  # noqa: D101
-    collection_name: str
-
-    @property
-    def store_kwargs(self) -> Dict[str, Any]:  # noqa: D102
-        return {"collection_name": self.collection_name}
 
 
 class MyAgent(Agent):  # noqa: D101
@@ -180,20 +175,14 @@ class MyAgent(Agent):  # noqa: D101
             connection="mock_embedding_conn",
         )
 
-    @vector_store_connection
-    @staticmethod
-    def mock_vector_conn() -> ResourceDescriptor:  # noqa: D102
-        return ResourceDescriptor(
-            clazz=MockVectorStoreConnection, host="localhost", port=8000
-        )
-
-    @vector_store_setup
+    @vector_store
     @staticmethod
     def mock_vector_store() -> ResourceDescriptor:  # noqa: D102
         return ResourceDescriptor(
-            clazz=MockVectorStoreSetup,
-            connection="mock_vector_conn",
+            clazz=MockVectorStore,
             embedding_model="mock_embedding",
+            host="localhost",
+            port=8000,
             collection_name="test_collection",
         )
 
@@ -276,17 +265,12 @@ def test_add_action_and_resource_to_agent() -> None:  # noqa: D103
         ),
     )
     my_agent.add_resource(
-        name="mock_vector_conn",
-        instance=ResourceDescriptor(
-            clazz=MockVectorStoreConnection, host="localhost", port=8000
-        ),
-    )
-    my_agent.add_resource(
         name="mock_vector_store",
         instance=ResourceDescriptor(
-            clazz=MockVectorStoreSetup,
-            connection="mock_vector_conn",
+            clazz=MockVectorStore,
             embedding_model="mock_embedding",
+            host="localhost",
+            port=8000,
             collection_name="test_collection",
         ),
     )

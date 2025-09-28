@@ -110,43 +110,14 @@ class VectorStoreQueryResult(BaseModel):
         return f"QueryResult: {len(self.documents)} documents"
 
 
-class BaseVectorStoreConnection(Resource, ABC):
-    """Base abstract class for vector store connection.
+class BaseVectorStore(Resource, ABC):
+    """Base abstract class for vector store.
 
-    Manages connection configuration and provides raw vector search operations
-    using pre-computed embeddings. One connection can be shared across multiple
-    vector store setups.
+    Provides vector store functionality that integrates embedding models
+    for text-based semantic search. Handles both connection management and
+    embedding generation internally.
     """
 
-    @classmethod
-    @override
-    def resource_type(cls) -> ResourceType:
-        """Return resource type of class."""
-        return ResourceType.VECTOR_STORE_CONNECTION
-
-    @abstractmethod
-    def query(self, embedding: List[float], limit: int = 10, **kwargs: Any) -> List[Document]:
-        """Perform vector search using pre-computed embedding.
-
-        Args:
-            embedding: Pre-computed embedding vector for semantic search
-            limit: Maximum number of results to return (default: 10)
-            **kwargs: Vector store-specific parameters (filters, distance metrics, etc.)
-
-        Returns:
-            List of documents matching the search criteria
-        """
-
-
-class BaseVectorStoreSetup(Resource, ABC):
-    """Base abstract class for vector store setup.
-
-    Coordinates between vector store connections and embedding models to provide
-    text-based semantic search. Automatically converts text queries to embeddings
-    before delegating to the connection layer.
-    """
-
-    connection: str = Field(description="Name of the referenced connection.")
     embedding_model: str = Field(description="Name of the embedding model resource to use.")
 
     @classmethod
@@ -181,19 +152,27 @@ class BaseVectorStoreSetup(Resource, ABC):
         )
         query_embedding = embedding_model.embed(query.query_text)
 
-        # Get vector store connection resource
-        connection = self.get_resource(
-            self.connection, ResourceType.VECTOR_STORE_CONNECTION
-        )
-
         # Merge setup kwargs with query-specific args
         merged_kwargs = self.store_kwargs.copy()
         merged_kwargs.update(query.extra_args)
 
-        # Perform vector search
-        documents = connection.query(query_embedding, query.limit, **merged_kwargs)
+        # Perform vector search using the abstract method
+        documents = self.query_embedding(query_embedding, query.limit, **merged_kwargs)
 
         # Return structured result
         return VectorStoreQueryResult(
             documents=documents
         )
+
+    @abstractmethod
+    def query_embedding(self, embedding: List[float], limit: int = 10, **kwargs: Any) -> List[Document]:
+        """Perform vector search using pre-computed embedding.
+
+        Args:
+            embedding: Pre-computed embedding vector for semantic search
+            limit: Maximum number of results to return (default: 10)
+            **kwargs: Vector store-specific parameters (filters, distance metrics, etc.)
+
+        Returns:
+            List of documents matching the search criteria
+        """

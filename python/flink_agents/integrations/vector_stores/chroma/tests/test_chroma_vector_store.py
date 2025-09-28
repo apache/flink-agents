@@ -32,8 +32,7 @@ from flink_agents.api.vector_stores.vector_store import (
     VectorStoreQuery,
 )
 from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import (
-    ChromaVectorStoreConnection,
-    ChromaVectorStoreSetup,
+    ChromaVectorStore,
 )
 
 api_key = os.environ.get("TEST_API_KEY")
@@ -54,9 +53,9 @@ class MockEmbeddingModel(Resource):  # noqa: D101
         return [0.1, 0.2, 0.3, 0.4, 0.5]
 
 
-def _populate_test_data(connection: ChromaVectorStoreConnection) -> None:
+def _populate_test_data(vector_store: ChromaVectorStore) -> None:
     """Private helper method to populate ChromaDB with test data."""
-    collection = connection.client.get_or_create_collection(
+    collection = vector_store.client.get_or_create_collection(
         name="test_collection",
         metadata=None,
     )
@@ -82,72 +81,67 @@ def _populate_test_data(connection: ChromaVectorStoreConnection) -> None:
 @pytest.mark.skipif(
     not chromadb_available, reason="ChromaDB is not available"
 )
-def test_local_chroma_vector_store_setup() -> None:
-    """Test ChromaDB vector store setup with embedding model integration."""
-    connection = ChromaVectorStoreConnection(name="chroma_conn")
+def test_local_chroma_vector_store() -> None:
+    """Test ChromaDB vector store with embedding model integration."""
     embedding_model = MockEmbeddingModel(name="mock_embeddings")
 
     def get_resource(name: str, resource_type: ResourceType) -> Resource:
-        if resource_type == ResourceType.VECTOR_STORE_CONNECTION:
-            return connection
-        elif resource_type == ResourceType.EMBEDDING_MODEL:
+        if resource_type == ResourceType.EMBEDDING_MODEL:
             return embedding_model
         else:
             msg = f"Unknown resource type: {resource_type}"
             raise ValueError(msg)
 
-    setup = ChromaVectorStoreSetup(
-        name="chroma_setup",
-        connection="chroma_conn",
+    vector_store = ChromaVectorStore(
+        name="chroma_vector_store",
         embedding_model="mock_embeddings",
         collection="test_collection",
         get_resource=get_resource
     )
 
-    _populate_test_data(connection)
+    _populate_test_data(vector_store)
 
     query = VectorStoreQuery(
         query_text="What is Flink Agent?",
         limit=1
     )
 
-    result = setup.query(query)
+    result = vector_store.query(query)
     assert result is not None
     assert len(result.documents) == 1
     assert result.documents[0].id == "doc2"
 
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
-def test_cloud_chroma_vector_store_setup() -> None:
-    """Test cloud ChromaDB vector store setup with embedding model integration."""
-    connection = ChromaVectorStoreConnection(name="cloud_chroma_conn", api_key=api_key, tenant=tenant, database=database)
+def test_cloud_chroma_vector_store() -> None:
+    """Test cloud ChromaDB vector store with embedding model integration."""
     embedding_model = MockEmbeddingModel(name="mock_embeddings")
 
     def get_resource(name: str, resource_type: ResourceType) -> Resource:
-        if resource_type == ResourceType.VECTOR_STORE_CONNECTION:
-            return connection
-        elif resource_type == ResourceType.EMBEDDING_MODEL:
+        if resource_type == ResourceType.EMBEDDING_MODEL:
             return embedding_model
         else:
             msg = f"Unknown resource type: {resource_type}"
             raise ValueError(msg)
 
-    setup = ChromaVectorStoreSetup(
-        name="chroma_setup",
-        connection="cloud_chroma_conn",
+    vector_store = ChromaVectorStore(
+        name="chroma_vector_store",
         embedding_model="mock_embeddings",
         collection="test_collection",
+        api_key=api_key,
+        tenant=tenant,
+        database=database,
         get_resource=get_resource
     )
 
-    _populate_test_data(connection)
+    _populate_test_data(vector_store)
 
     query = VectorStoreQuery(
         query_text="What is Flink Agent?",
         limit=1
     )
 
-    result = setup.query(query)
+    result = vector_store.query(query)
     assert result is not None
     assert len(result.documents) == 1
     assert result.documents[0].id == "doc2"

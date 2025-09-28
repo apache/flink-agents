@@ -24,16 +24,15 @@ from chromadb.config import Settings
 from pydantic import Field
 
 from flink_agents.api.vector_stores.vector_store import (
-    BaseVectorStoreConnection,
-    BaseVectorStoreSetup,
+    BaseVectorStore,
     Document,
 )
 
 DEFAULT_COLLECTION = "flink_agents_chroma_collection"
 
 
-class ChromaVectorStoreConnection(BaseVectorStoreConnection):
-    """ChromaDB Vector Store Connection which manages connection to ChromaDB.
+class ChromaVectorStore(BaseVectorStore):
+    """ChromaDB vector store that handles connection and semantic search.
 
     Visit https://docs.trychroma.com/ for ChromaDB documentation.
 
@@ -59,8 +58,15 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
         ChromaDB tenant for multi-tenancy support (default: "default_tenant").
     database : str
         ChromaDB database name (default: "default_database").
+    collection : str
+        Name of the ChromaDB collection to use (default: flink_agents_collection).
+    collection_metadata : Dict[str, Any]
+        Metadata for the collection (optional).
+    create_collection_if_not_exists : bool
+        Whether to create the collection if it doesn't exist (default: True).
     """
 
+    # Connection configuration
     persist_directory: str | None = Field(
         default=None,
         description="Directory for persistent storage. If None, uses in-memory client.",
@@ -90,10 +96,26 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
         description="ChromaDB database name.",
     )
 
+    # Collection configuration
+    collection: str = Field(
+        default=DEFAULT_COLLECTION,
+        description="Name of the ChromaDB collection to use.",
+    )
+    collection_metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metadata for the collection.",
+    )
+    create_collection_if_not_exists: bool = Field(
+        default=True,
+        description="Whether to create the collection if it doesn't exist.",
+    )
+
     __client: ChromaClient | None = None
 
     def __init__(
         self,
+        *,
+        embedding_model: str,
         persist_directory: str | None = None,
         host: str | None = None,
         port: int | None = 8000,
@@ -101,10 +123,16 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
         client_settings: Settings | None = None,
         tenant: str = "default_tenant",
         database: str = "default_database",
+        collection: str = DEFAULT_COLLECTION,
+        collection_metadata: Dict[str, Any] | None = None,
+        create_collection_if_not_exists: bool = True,
         **kwargs: Any,
     ) -> None:
         """Init method."""
+        if collection_metadata is None:
+            collection_metadata = {}
         super().__init__(
+            embedding_model=embedding_model,
             persist_directory=persist_directory,
             host=host,
             port=port,
@@ -112,6 +140,9 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
             client_settings=client_settings,
             tenant=tenant,
             database=database,
+            collection=collection,
+            collection_metadata=collection_metadata,
+            create_collection_if_not_exists=create_collection_if_not_exists,
             **kwargs,
         )
 
@@ -119,7 +150,6 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
     def client(self) -> ChromaClient:
         """Return ChromaDB client, creating it if necessary."""
         if self.__client is None:
-
             # Choose client type based on configuration
             if self.api_key is not None:
                 # Cloud mode
@@ -155,7 +185,16 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
 
         return self.__client
 
-    def query(self, embedding: List[float], limit: int = 10, **kwargs: Any) -> List[Document]:
+    @property
+    def store_kwargs(self) -> Dict[str, Any]:
+        """Return ChromaDB-specific setup settings."""
+        return {
+            "collection": self.collection,
+            "collection_metadata": self.collection_metadata,
+            "create_collection_if_not_exists": self.create_collection_if_not_exists,
+        }
+
+    def query_embedding(self, embedding: List[float], limit: int = 10, **kwargs: Any) -> List[Document]:
         """Perform vector search using pre-computed embedding.
 
         Args:
@@ -167,9 +206,9 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
             List of documents matching the search criteria
         """
         # Extract ChromaDB-specific parameters
-        collection_name = kwargs.get("collection", DEFAULT_COLLECTION)
-        collection_metadata = kwargs.get("collection_metadata", {})
-        create_collection_if_not_exists = kwargs.get("create_collection_if_not_exists", True)
+        collection_name = kwargs.get("collection", self.collection)
+        collection_metadata = kwargs.get("collection_metadata", self.collection_metadata)
+        create_collection_if_not_exists = kwargs.get("create_collection_if_not_exists", self.create_collection_if_not_exists)
         where = kwargs.get("where")  # Metadata filters
 
         # Get or create collection based on configuration
@@ -205,63 +244,4 @@ class ChromaVectorStoreConnection(BaseVectorStoreConnection):
                 ))
 
         return documents
-
-
-class ChromaVectorStoreSetup(BaseVectorStoreSetup):
-    """ChromaDB vector store setup which manages collection configuration
-    and coordinates with embedding models for semantic search.
-
-    Attributes:
-    ----------
-    collection : str
-        Name of the ChromaDB collection to use (default: flink_agents_collection).
-    collection_metadata : Dict[str, Any]
-        Metadata for the collection (optional).
-    create_collection_if_not_exists : bool
-        Whether to create the collection if it doesn't exist (default: True).
-    """
-
-    collection: str = Field(
-        default=DEFAULT_COLLECTION,
-        description="Name of the ChromaDB collection to use.",
-    )
-    collection_metadata: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Metadata for the collection.",
-    )
-    create_collection_if_not_exists: bool = Field(
-        default=True,
-        description="Whether to create the collection if it doesn't exist.",
-    )
-
-    def __init__(
-        self,
-        *,
-        connection: str,
-        embedding_model: str,
-        collection: str = DEFAULT_COLLECTION,
-        collection_metadata: Dict[str, Any] | None = None,
-        create_collection_if_not_exists: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        """Init method."""
-        if collection_metadata is None:
-            collection_metadata = {}
-        super().__init__(
-            connection=connection,
-            embedding_model=embedding_model,
-            collection=collection,
-            collection_metadata=collection_metadata,
-            create_collection_if_not_exists=create_collection_if_not_exists,
-            **kwargs,
-        )
-
-    @property
-    def store_kwargs(self) -> Dict[str, Any]:
-        """Return ChromaDB-specific setup settings passed to connection."""
-        return {
-            "collection": self.collection,
-            "collection_metadata": self.collection_metadata,
-            "create_collection_if_not_exists": self.create_collection_if_not_exists,
-        }
 

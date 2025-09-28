@@ -35,7 +35,6 @@ class ResourceType(Enum):
     EMBEDDING_MODEL = "embedding_model"
     EMBEDDING_MODEL_CONNECTION = "embedding_model_connection"
     VECTOR_STORE = "vector_store"
-    VECTOR_STORE_CONNECTION = "vector_store_connection"
     PROMPT = "prompt"
     MCP_SERVER = "mcp_server"
 

@@ -277,8 +277,7 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
             or hasattr(value, "_is_chat_model_connection")
             or hasattr(value, "_is_embedding_model_setup")
             or hasattr(value, "_is_embedding_model_connection")
-            or hasattr(value, "_is_vector_store_setup")
-            or hasattr(value, "_is_vector_store_connection")
+            or hasattr(value, "_is_vector_store")
         ):
             if isinstance(value, staticmethod):
                 value = value.__func__
@@ -339,7 +338,6 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
         ResourceType.EMBEDDING_MODEL,
         ResourceType.EMBEDDING_MODEL_CONNECTION,
         ResourceType.VECTOR_STORE,
-        ResourceType.VECTOR_STORE_CONNECTION,
     ]:
         for name, descriptor in agent.resources[resource_type].items():
             resource_providers.append(
