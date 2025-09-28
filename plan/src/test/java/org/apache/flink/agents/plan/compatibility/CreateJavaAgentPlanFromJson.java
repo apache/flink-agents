@@ -51,7 +51,7 @@ public class CreateJavaAgentPlanFromJson {
         String agentJsonFile = args[0];
         String json = Files.readString(Paths.get(agentJsonFile));
         AgentPlan agentPlan = new ObjectMapper().readValue(json, AgentPlan.class);
-        assertEquals(4, agentPlan.getActions().size());
+        assertEquals(5, agentPlan.getActions().size());
 
         String myEvent =
                 "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent.MyEvent";
@@ -105,20 +105,40 @@ public class CreateJavaAgentPlanFromJson {
         String toolRequestEvent = "flink_agents.api.events.tool_event.ToolRequestEvent";
         assertEquals(List.of(toolRequestEvent), toolCallAction.getListenEventTypes());
 
+        assertTrue(agentPlan.getActions().containsKey("context_retrieval_action"));
+        Action contextRetrievalAction = agentPlan.getActions().get("context_retrieval_action");
+        assertInstanceOf(PythonFunction.class, contextRetrievalAction.getExec());
+        PythonFunction processContextRetrievalRequestFunc =
+                (PythonFunction) contextRetrievalAction.getExec();
+        assertEquals(
+                "flink_agents.plan.actions.context_retrieval_action",
+                processContextRetrievalRequestFunc.getModule());
+        assertEquals(
+                "process_context_retrieval_request",
+                processContextRetrievalRequestFunc.getQualName());
+        String contextRetrievalRequestEvent =
+                "flink_agents.api.events.context_retrieval_event.ContextRetrievalRequestEvent";
+        assertEquals(
+                List.of(contextRetrievalRequestEvent),
+                contextRetrievalAction.getListenEventTypes());
+
         // Check event trigger actions
         Map<String, List<Action>> actionsByEvent = agentPlan.getActionsByEvent();
-        assertEquals(5, actionsByEvent.size());
+        assertEquals(6, actionsByEvent.size());
         assertTrue(actionsByEvent.containsKey(inputEvent));
         assertTrue(actionsByEvent.containsKey(myEvent));
         assertTrue(actionsByEvent.containsKey(chatRequestEvent));
         assertTrue(actionsByEvent.containsKey(toolRequestEvent));
         assertTrue(actionsByEvent.containsKey(toolResponseEvent));
+        assertTrue(actionsByEvent.containsKey(contextRetrievalRequestEvent));
         assertEquals(
                 List.of(firstAction, secondAction), agentPlan.getActionsByEvent().get(inputEvent));
         assertEquals(List.of(secondAction), agentPlan.getActionsByEvent().get(myEvent));
         assertEquals(List.of(chatModelAction), actionsByEvent.get(chatRequestEvent));
         assertEquals(List.of(toolCallAction), actionsByEvent.get(toolRequestEvent));
         assertEquals(List.of(chatModelAction), actionsByEvent.get(toolResponseEvent));
+        assertEquals(
+                List.of(contextRetrievalAction), actionsByEvent.get(contextRetrievalRequestEvent));
 
         // Check resource providers
         Map<String, Object> kwargs = new HashMap<>();
