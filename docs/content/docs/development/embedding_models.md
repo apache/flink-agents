@@ -42,13 +42,6 @@ In Flink Agents, embedding models are essential for:
 - **Knowledge Retrieval**: Enabling agents to find and retrieve relevant context from large knowledge bases
 - **Vector Databases**: Storing and querying embeddings for efficient similarity search
 
-Flink Agents uses a two-component architecture for embedding models:
-
-1. **Connection**: Manages the connection to the embedding service (API keys, URLs, timeouts, etc)
-2. **Setup**: Configures the specific embedding model and its parameters
-
-This separation allows multiple embedding setups to share the same connection, improving resource efficiency and configuration management.
-
 ## Getting Started
 
 To use embedding models in your agents, you need to define both a connection and setup using decorators, then access the embedding model through the runtime context.
@@ -70,11 +63,11 @@ The `@embedding_model_setup` decorator marks a method that creates an embedding 
 Here's how to define and use embedding models in your agent:
 
 ```python
-from typing import Any, Dict, Tuple, Type
 from flink_agents.api.agent import Agent
 from flink_agents.api.decorators import action, embedding_model_connection, embedding_model_setup
-from flink_agents.api.events import Event, InputEvent, OutputEvent
+from flink_agents.api.events import InputEvent
 from flink_agents.api.context import RunnerContext
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.integrations.embedding_models.openai_embedding_model import (
     OpenAIEmbeddingModelConnection,
     OpenAIEmbeddingModelSetup
@@ -84,26 +77,28 @@ class MyAgent(Agent):
 
     @embedding_model_connection
     @staticmethod
-    def openai_connection() -> Tuple[Type[OpenAIEmbeddingModelConnection], Dict[str, Any]]:
-        return OpenAIEmbeddingModelConnection, {
-            "api_key": "your-api-key-here",
-            "base_url": "https://api.openai.com/v1",
-            "request_timeout": 30.0
-        }
+    def openai_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OpenAIEmbeddingModelConnection,
+            api_key="your-api-key-here",
+            base_url="https://api.openai.com/v1",
+            request_timeout=30.0
+        )
 
     @embedding_model_setup
     @staticmethod
-    def openai_embedding() -> Tuple[Type[OpenAIEmbeddingModelSetup], Dict[str, Any]]:
-        return OpenAIEmbeddingModelSetup, {
-            "connection": "openai_connection",
-            "model": "text-embedding-3-small"
-        }
+    def openai_embedding() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OpenAIEmbeddingModelSetup,
+            connection="openai_connection",
+            model="text-embedding-3-small"
+        )
 
     @action(InputEvent)
     @staticmethod
-    def process_text(event: Event, ctx: RunnerContext):
+    def process_text(event: InputEvent, ctx: RunnerContext) -> None:
         # Get the embedding model from the runtime context
-        embedding_model = ctx.get_resource("openai_embedding")
+        embedding_model = ctx.get_resource("openai_embedding", ResourceType.EMBEDDING_MODEL)
 
         # Use the embedding model to generate embeddings
         user_query = str(event.input)
@@ -145,9 +140,9 @@ Ollama provides local embedding models that run on your machine, offering privac
 #### Usage Example
 
 ```python
-from typing import Any, Dict, Tuple, Type
 from flink_agents.api.agent import Agent
 from flink_agents.api.decorators import embedding_model_connection, embedding_model_setup
+from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.integrations.embedding_models.local.ollama_embedding_model import (
     OllamaEmbeddingModelConnection,
     OllamaEmbeddingModelSetup
@@ -157,21 +152,23 @@ class MyAgent(Agent):
 
     @embedding_model_connection
     @staticmethod
-    def ollama_connection() -> Tuple[Type[OllamaEmbeddingModelConnection], Dict[str, Any]]:
-        return OllamaEmbeddingModelConnection, {
-            "base_url": "http://localhost:11434",
-            "request_timeout": 30.0
-        }
+    def ollama_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OllamaEmbeddingModelConnection,
+            base_url="http://localhost:11434",
+            request_timeout=30.0
+        )
 
     @embedding_model_setup
     @staticmethod
-    def ollama_embedding() -> Tuple[Type[OllamaEmbeddingModelSetup], Dict[str, Any]]:
-        return OllamaEmbeddingModelSetup, {
-            "connection": "ollama_connection",
-            "model": "nomic-embed-text",
-            "truncate": True,
-            "keep_alive": "5m"
-        }
+    def ollama_embedding() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OllamaEmbeddingModelSetup,
+            connection="ollama_connection",
+            model="nomic-embed-text",
+            truncate=True,
+            keep_alive="5m"
+        )
 
     ...
 ```
@@ -200,9 +197,9 @@ OpenAI provides cloud-based embedding models with state-of-the-art performance.
 #### Usage Example
 
 ```python
-from typing import Any, Dict, Tuple, Type
 from flink_agents.api.agent import Agent
 from flink_agents.api.decorators import embedding_model_connection, embedding_model_setup
+from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.integrations.embedding_models.openai_embedding_model import (
     OpenAIEmbeddingModelConnection,
     OpenAIEmbeddingModelSetup
@@ -212,22 +209,24 @@ class MyAgent(Agent):
 
     @embedding_model_connection
     @staticmethod
-    def openai_connection() -> Tuple[Type[OpenAIEmbeddingModelConnection], Dict[str, Any]]:
-        return OpenAIEmbeddingModelConnection, {
-            "api_key": "your-api-key-here",
-            "base_url": "https://api.openai.com/v1",
-            "request_timeout": 30.0,
-            "max_retries": 3
-        }
+    def openai_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OpenAIEmbeddingModelConnection,
+            api_key="your-api-key-here",
+            base_url="https://api.openai.com/v1",
+            request_timeout=30.0,
+            max_retries=3
+        )
 
     @embedding_model_setup
     @staticmethod
-    def openai_embedding() -> Tuple[Type[OpenAIEmbeddingModelSetup], Dict[str, Any]]:
-        return OpenAIEmbeddingModelSetup, {
-            "connection": "openai_connection",
-            "model": "text-embedding-3-small",
-            "encoding_format": "float"
-        }
+    def openai_embedding() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OpenAIEmbeddingModelSetup,
+            connection="openai_connection",
+            model="text-embedding-3-small",
+            encoding_format="float"
+        )
 ```
 
 #### OpenAIEmbeddingModelConnection Parameters
