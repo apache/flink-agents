@@ -42,8 +42,6 @@ In Flink Agents, embedding models are essential for:
 - **Knowledge Retrieval**: Enabling agents to find and retrieve relevant context from large knowledge bases
 - **Vector Databases**: Storing and querying embeddings for efficient similarity search
 
-### Architecture
-
 Flink Agents uses a two-component architecture for embedding models:
 
 1. **Connection**: Manages the connection to the embedding service (API keys, URLs, timeouts, etc)

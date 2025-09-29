@@ -42,44 +42,17 @@ In Flink Agents, vector stores are essential for:
 - **Retrieval-Augmented Generation (RAG)**: Providing context to language models from vector-indexed knowledge
 - **Semantic Similarity**: Comparing and ranking documents by meaning rather than keywords
 
-## Vector Store Interface
+## Getting Started
 
-Flink Agents uses a two-component architecture for vector stores:
+To use vector stores in your agents, you need to configure both a vector store and an embedding model, then perform semantic search using structured queries.
 
-1. **Connection**: Manages the connection to the vector database (client configuration, authentication)
-2. **Setup**: Configures the specific collection/index and coordinates with embedding models
+### Resource Decorators
 
-If you want to use vector stores not offered by the built-in providers, you can extend the base vector store classes and implement your own! The vector store system is built around two main abstract classes:
+Flink Agents provides decorators to simplify vector store setup within agents:
 
-### BaseVectorStoreConnection
+#### @vector_store
 
-Handles the connection to vector databases and provides raw vector search operations:
-
-```python
-from flink_agents.api.vector_stores.vector_store import BaseVectorStoreConnection, Document
-
-class MyVectorStoreConnection(BaseVectorStoreConnection):
-    def query(self, embedding: List[float], limit: int = 10, **kwargs) -> List[Document]:
-        # Implementation for vector search using pre-computed embeddings
-        pass
-```
-
-### BaseVectorStoreSetup
-
-Manages vector store configuration and coordinates with embedding models for text-based search:
-
-```python
-from flink_agents.api.vector_stores.vector_store import BaseVectorStoreSetup
-
-class MyVectorStoreSetup(BaseVectorStoreSetup):
-    connection: str      # Name of the connection to use
-    embedding_model: str # Name of the embedding model to use
-
-    @property
-    def store_kwargs(self) -> Dict[str, Any]:
-        # Return vector store-specific configuration
-        return {"collection": "my_collection", ...}
-```
+The `@vector_store` decorator marks a method that creates a vector store. Vector stores automatically integrate with embedding models for text-based search.
 
 ### Query Objects
 
@@ -91,74 +64,39 @@ from flink_agents.api.vector_stores.vector_store import VectorStoreQuery, Vector
 # Create a semantic search query
 query = VectorStoreQuery(
     mode=VectorStoreQueryMode.SEMANTIC,
-    query_text="What is machine learning?",
-    limit=5,
-    extra_args={"filters": {"category": "ai"}}
+    query_text="What is Apache Flink Agents?",
+    limit=5
 )
-
-# Execute the query
-result = vector_store_setup.query(query)
-for doc in result.documents:
-    print(f"Content: {doc.content}")
-    print(f"Metadata: {doc.metadata}")
 ```
 
-### Resource Decorators
+### Query Results
 
-Flink Agents provides decorators to simplify vector store setup within agents:
+When you execute a query, you receive a `VectorStoreQueryResult` object that contains the search results:
 
-#### @vector_store_connection
+```python
+# Execute the query
+result = vector_store.query(query)
+```
 
-The `@vector_store_connection` decorator marks a method that creates a vector store connection.
+The `VectorStoreQueryResult` contains:
+- **documents**: A list of `Document` objects representing the retrieved results
+- Each `Document` has:
+  - **content**: The actual text content of the document
+  - **metadata**: Associated metadata (source, author, timestamp, etc.)
+  - **id**: Unique identifier of the document (if available)
 
-#### @vector_store_setup
+### Usage Example
 
-The `@vector_store_setup` decorator marks a method that creates a vector store setup.
-
-## Built-in Providers
-
-### Chroma
-
-[Chroma](https://www.trychroma.com/home) is an open-source vector database that provides efficient storage and querying of embeddings with support for multiple deployment modes.
-
-#### Prerequisites
-
-1. Install ChromaDB: `pip install chromadb`
-2. For server mode, start ChromaDB server: `chroma run --path /db_path`
-3. For cloud mode, get API key from [ChromaDB Cloud](https://www.trychroma.com/)
-
-#### ChromaVectorStoreConnection Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `persist_directory` | str | None | Directory for persistent storage. If None, uses in-memory client |
-| `host` | str | None | Host for ChromaDB server connection |
-| `port` | int | `8000` | Port for ChromaDB server connection |
-| `api_key` | str | None | API key for Chroma Cloud connection |
-| `client_settings` | Settings | None | ChromaDB client settings for advanced configuration |
-| `tenant` | str | `"default_tenant"` | ChromaDB tenant for multi-tenancy support |
-| `database` | str | `"default_database"` | ChromaDB database name |
-
-#### ChromaVectorStoreSetup Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `connection` | str | Required | Reference to connection method name |
-| `embedding_model` | str | Required | Reference to embedding model method name |
-| `collection` | str | `"flink_agents_chroma_collection"` | Name of the ChromaDB collection to use |
-| `collection_metadata` | dict | `{}` | Metadata for the collection |
-| `create_collection_if_not_exists` | bool | `True` | Whether to create the collection if it doesn't exist |
-
-#### Usage Example
+Here's how to define and use vector stores in your agent:
 
 ```python
 from typing import Any, Dict, Tuple, Type
 from flink_agents.api.agent import Agent
-from flink_agents.api.decorators import vector_store_connection, vector_store_setup, embedding_model_connection, embedding_model_setup
-from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import (
-    ChromaVectorStoreConnection,
-    ChromaVectorStoreSetup
-)
+from flink_agents.api.decorators import action, vector_store, embedding_model_connection, embedding_model_setup
+from flink_agents.api.events import Event, InputEvent
+from flink_agents.api.context import RunnerContext
+from flink_agents.api.vector_stores.vector_store import VectorStoreQuery, VectorStoreQueryMode
+from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import ChromaVectorStore
 from flink_agents.integrations.embedding_models.openai_embedding_model import (
     OpenAIEmbeddingModelConnection,
     OpenAIEmbeddingModelSetup
@@ -183,24 +121,106 @@ class MyAgent(Agent):
         }
 
     # Vector store setup
-    @vector_store_connection
+    @vector_store
     @staticmethod
-    def chroma_connection() -> Tuple[Type[ChromaVectorStoreConnection], Dict[str, Any]]:
-        return ChromaVectorStoreConnection, {
+    def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
+        return ChromaVectorStore, {
+            "embedding_model": "openai_embedding",
+            "persist_directory": "/path/to/chroma/data",
+            "collection": "my_documents"
+        }
+
+    @action(InputEvent)
+    @staticmethod
+    def search_documents(event: Event, ctx: RunnerContext):
+        # Get the vector store from the runtime context
+        vector_store = ctx.get_resource("chroma_store")
+
+        # Create a semantic search query
+        user_query = str(event.input)
+        query = VectorStoreQuery(
+            mode=VectorStoreQueryMode.SEMANTIC,
+            query_text=user_query,
+            limit=3
+        )
+
+        # Perform the search
+        result = vector_store.query(query)
+
+        # Handle the VectorStoreQueryResult
+        # Process the retrieved context as needed for your use case
+```
+
+## Built-in Providers
+
+### Chroma
+
+[Chroma](https://www.trychroma.com/home) is an open-source vector database that provides efficient storage and querying of embeddings with support for multiple deployment modes.
+
+#### Prerequisites
+
+1. Install ChromaDB: `pip install chromadb`
+2. For server mode, start ChromaDB server: `chroma run --path /db_path`
+3. For cloud mode, get API key from [ChromaDB Cloud](https://www.trychroma.com/)
+
+#### ChromaVectorStore Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `embedding_model` | str | Required | Reference to embedding model method name |
+| `persist_directory` | str | None | Directory for persistent storage. If None, uses in-memory client |
+| `host` | str | None | Host for ChromaDB server connection |
+| `port` | int | `8000` | Port for ChromaDB server connection |
+| `api_key` | str | None | API key for Chroma Cloud connection |
+| `client_settings` | Settings | None | ChromaDB client settings for advanced configuration |
+| `tenant` | str | `"default_tenant"` | ChromaDB tenant for multi-tenancy support |
+| `database` | str | `"default_database"` | ChromaDB database name |
+| `collection` | str | `"flink_agents_chroma_collection"` | Name of the ChromaDB collection to use |
+| `collection_metadata` | dict | `{}` | Metadata for the collection |
+| `create_collection_if_not_exists` | bool | `True` | Whether to create the collection if it doesn't exist |
+
+#### Usage Example
+
+```python
+from typing import Any, Dict, Tuple, Type
+from flink_agents.api.agent import Agent
+from flink_agents.api.decorators import vector_store, embedding_model_connection, embedding_model_setup
+from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import ChromaVectorStore
+from flink_agents.integrations.embedding_models.openai_embedding_model import (
+    OpenAIEmbeddingModelConnection,
+    OpenAIEmbeddingModelSetup
+)
+
+class MyAgent(Agent):
+
+    # Embedding model setup (required for vector store)
+    @embedding_model_connection
+    @staticmethod
+    def openai_connection() -> Tuple[Type[OpenAIEmbeddingModelConnection], Dict[str, Any]]:
+        return OpenAIEmbeddingModelConnection, {
+            "api_key": "your-api-key-here"
+        }
+
+    @embedding_model_setup
+    @staticmethod
+    def openai_embedding() -> Tuple[Type[OpenAIEmbeddingModelSetup], Dict[str, Any]]:
+        return OpenAIEmbeddingModelSetup, {
+            "connection": "openai_connection",
+            "model": "text-embedding-3-small"
+        }
+
+    # Vector store setup
+    @vector_store
+    @staticmethod
+    def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
+        return ChromaVectorStore, {
+            "embedding_model": "openai_embedding",
             "persist_directory": "/path/to/chroma/data",  # For persistent storage
+            "collection": "my_documents",
+            "create_collection_if_not_exists": True
             # Or use other modes:
             # "host": "localhost", "port": 8000  # For server mode
             # "api_key": "your-chroma-cloud-key"  # For cloud mode
-        }
-
-    @vector_store_setup
-    @staticmethod
-    def chroma_store() -> Tuple[Type[ChromaVectorStoreSetup], Dict[str, Any]]:
-        return ChromaVectorStoreSetup, {
-            "connection": "chroma_connection",
-            "embedding_model": "openai_embedding",
-            "collection": "my_documents",
-            "create_collection_if_not_exists": True
         }
 
     ...
@@ -212,39 +232,82 @@ ChromaDB supports multiple deployment modes:
 
 **In-Memory Mode** (Development/Testing):
 ```python
-@vector_store_connection
+@vector_store
 @staticmethod
-def chroma_connection() -> Tuple[Type[ChromaVectorStoreConnection], Dict[str, Any]]:
-    return ChromaVectorStoreConnection, {}  # No configuration needed
+def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
+    return ChromaVectorStore, {
+        "embedding_model": "openai_embedding",
+        "collection": "my_documents"
+        # No connection configuration needed for in-memory mode
+    }
 ```
 
 **Persistent Mode** (Local Production):
 ```python
-@vector_store_connection
+@vector_store
 @staticmethod
-def chroma_connection() -> Tuple[Type[ChromaVectorStoreConnection], Dict[str, Any]]:
-    return ChromaVectorStoreConnection, {
-        "persist_directory": "/path/to/chroma/data"
+def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
+    return ChromaVectorStore, {
+        "embedding_model": "openai_embedding",
+        "persist_directory": "/path/to/chroma/data",
+        "collection": "my_documents"
     }
 ```
 
 **Server Mode** (Distributed):
 ```python
-@vector_store_connection
+@vector_store
 @staticmethod
-def chroma_connection() -> Tuple[Type[ChromaVectorStoreConnection], Dict[str, Any]]:
-    return ChromaVectorStoreConnection, {
+def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
+    return ChromaVectorStore, {
+        "embedding_model": "openai_embedding",
         "host": "your-chroma-server.com",
-        "port": 8000
+        "port": 8000,
+        "collection": "my_documents"
     }
 ```
 
 **Cloud Mode** (Managed):
 ```python
-@vector_store_connection
+@vector_store
 @staticmethod
-def chroma_connection() -> Tuple[Type[ChromaVectorStoreConnection], Dict[str, Any]]:
-    return ChromaVectorStoreConnection, {
-        "api_key": "your-chroma-cloud-api-key"
+def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
+    return ChromaVectorStore, {
+        "embedding_model": "openai_embedding",
+        "api_key": "your-chroma-cloud-api-key",
+        "collection": "my_documents"
     }
+```
+
+## Custom Providers
+
+{{< hint warning >}}
+The custom provider APIs are experimental and unstable, subject to incompatible changes in future releases.
+{{< /hint >}}
+
+If you want to use vector stores not offered by the built-in providers, you can extend the base vector store class and implement your own! The vector store system is built around the `BaseVectorStore` abstract class.
+
+### BaseVectorStore
+
+The base class handles text-to-vector conversion and provides the high-level query interface. You only need to implement the core vector search functionality.
+
+```python
+from flink_agents.api.vector_stores.vector_store import BaseVectorStore, Document
+
+class MyVectorStore(BaseVectorStore):
+    # Add your custom configuration fields here
+
+    @property
+    def store_kwargs(self) -> Dict[str, Any]:
+        # Return vector store-specific configuration
+        # These parameters are merged with query-specific parameters
+        return {"index": "my_index", ...}
+
+    def query_embedding(self, embedding: List[float], limit: int = 10, **kwargs: Any) -> List[Document]:
+        # Core method: perform vector search using pre-computed embedding
+        # - embedding: Pre-computed embedding vector for semantic search
+        # - limit: Maximum number of results to return
+        # - kwargs: Vector store-specific parameters
+        # - Returns: List of Document objects matching the search criteria
+        pass
 ```
