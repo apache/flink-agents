@@ -81,7 +81,7 @@ class MyAgent(Agent):
         return ResourceDescriptor(
             clazz=OpenAIEmbeddingModelSetup,
             connection="openai_connection",
-            model="text-embedding-3-small"
+            model="your-embedding-model-here"
         )
 
     @action(InputEvent)
@@ -198,7 +198,7 @@ class MyAgent(Agent):
         return ResourceDescriptor(
             clazz=OpenAIEmbeddingModelSetup,
             connection="openai_connection",
-            model="text-embedding-3-small",
+            model="your-embedding-model-here",
             encoding_format="float"
         )
 ```

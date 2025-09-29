@@ -59,8 +59,6 @@ The `@vector_store` decorator marks a method that creates a vector store. Vector
 Vector stores use structured query objects for consistent interfaces:
 
 ```python
-from flink_agents.api.vector_stores.vector_store import VectorStoreQuery, VectorStoreQueryMode
-
 # Create a semantic search query
 query = VectorStoreQuery(
     mode=VectorStoreQueryMode.SEMANTIC,
