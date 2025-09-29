@@ -15,7 +15,7 @@
 
 github:
   description: "Flink Agents is an Agentic AI framework based on Apache Flink"
-  # TODO homepage:
+  homepage: https://nightlies.apache.org/flink/flink-agents-docs-main/
   labels:
     - ai
     - agent
