@@ -101,7 +101,7 @@ class DataStreamAgent(Agent):
         content.memory_info = {"total_reviews": total}
 
         data_ref = stm.set(f"processed_items.item_{content.id}", content)
-        ctx.send_event(MyEvent(value=data_ref.model_dump()))
+        ctx.send_event(MyEvent(value=data_ref))
 
     @action(MyEvent)
     @staticmethod

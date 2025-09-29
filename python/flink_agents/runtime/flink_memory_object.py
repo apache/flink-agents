@@ -43,8 +43,8 @@ class FlinkMemoryObject(MemoryObject):
         """
         try:
             path_to_get: str
-            if isinstance(path_or_ref, dict) and 'path' in path_or_ref:
-                path_to_get = path_or_ref['path']
+            if isinstance(path_or_ref, MemoryRef):
+                path_to_get = path_or_ref.path
             elif isinstance(path_or_ref, str):
                 path_to_get = path_or_ref
             j_result = self._j_memory_object.get(path_to_get)
