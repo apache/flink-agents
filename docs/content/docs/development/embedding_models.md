@@ -63,18 +63,8 @@ The `@embedding_model_setup` decorator marks a method that creates an embedding 
 Here's how to define and use embedding models in your agent:
 
 ```python
-from flink_agents.api.agent import Agent
-from flink_agents.api.decorators import action, embedding_model_connection, embedding_model_setup
-from flink_agents.api.events import InputEvent
-from flink_agents.api.context import RunnerContext
-from flink_agents.api.resource import ResourceDescriptor, ResourceType
-from flink_agents.integrations.embedding_models.openai_embedding_model import (
-    OpenAIEmbeddingModelConnection,
-    OpenAIEmbeddingModelSetup
-)
-
 class MyAgent(Agent):
-
+    
     @embedding_model_connection
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
@@ -140,14 +130,6 @@ Ollama provides local embedding models that run on your machine, offering privac
 #### Usage Example
 
 ```python
-from flink_agents.api.agent import Agent
-from flink_agents.api.decorators import embedding_model_connection, embedding_model_setup
-from flink_agents.api.resource import ResourceDescriptor
-from flink_agents.integrations.embedding_models.local.ollama_embedding_model import (
-    OllamaEmbeddingModelConnection,
-    OllamaEmbeddingModelSetup
-)
-
 class MyAgent(Agent):
 
     @embedding_model_connection
@@ -197,14 +179,6 @@ OpenAI provides cloud-based embedding models with state-of-the-art performance.
 #### Usage Example
 
 ```python
-from flink_agents.api.agent import Agent
-from flink_agents.api.decorators import embedding_model_connection, embedding_model_setup
-from flink_agents.api.resource import ResourceDescriptor
-from flink_agents.integrations.embedding_models.openai_embedding_model import (
-    OpenAIEmbeddingModelConnection,
-    OpenAIEmbeddingModelSetup
-)
-
 class MyAgent(Agent):
 
     @embedding_model_connection
@@ -277,8 +251,6 @@ If you want to use embedding models not offered by the built-in providers, you c
 Handles the connection to embedding services and provides the core embedding functionality.
 
 ```python
-from flink_agents.api.embedding_models.embedding_model import BaseEmbeddingModelConnection
-
 class MyEmbeddingConnection(BaseEmbeddingModelConnection):
     
     def embed(self, text: str, **kwargs) -> list[float]:
@@ -295,8 +267,6 @@ The setup class acts as a high-level configuration interface that defines which 
 
 
 ```python
-from flink_agents.api.embedding_models.embedding_model import BaseEmbeddingModelSetup
-
 class MyEmbeddingSetup(BaseEmbeddingModelSetup):
     # Add your custom configuration fields here
     

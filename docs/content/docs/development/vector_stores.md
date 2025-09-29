@@ -90,18 +90,6 @@ The `VectorStoreQueryResult` contains:
 Here's how to define and use vector stores in your agent:
 
 ```python
-from flink_agents.api.agent import Agent
-from flink_agents.api.decorators import action, vector_store, embedding_model_connection, embedding_model_setup
-from flink_agents.api.events import InputEvent
-from flink_agents.api.context import RunnerContext
-from flink_agents.api.resource import ResourceDescriptor, ResourceType
-from flink_agents.api.vector_stores.vector_store import VectorStoreQuery, VectorStoreQueryMode
-from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import ChromaVectorStore
-from flink_agents.integrations.embedding_models.openai_embedding_model import (
-    OpenAIEmbeddingModelConnection,
-    OpenAIEmbeddingModelSetup
-)
-
 class MyAgent(Agent):
 
     # Embedding model setup (required for vector store)
@@ -184,15 +172,6 @@ class MyAgent(Agent):
 #### Usage Example
 
 ```python
-from flink_agents.api.agent import Agent
-from flink_agents.api.decorators import vector_store, embedding_model_connection, embedding_model_setup
-from flink_agents.api.resource import ResourceDescriptor
-from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import ChromaVectorStore
-from flink_agents.integrations.embedding_models.openai_embedding_model import (
-    OpenAIEmbeddingModelConnection,
-    OpenAIEmbeddingModelSetup
-)
-
 class MyAgent(Agent):
 
     # Embedding model setup (required for vector store)
@@ -301,8 +280,6 @@ If you want to use vector stores not offered by the built-in providers, you can 
 The base class handles text-to-vector conversion and provides the high-level query interface. You only need to implement the core vector search functionality.
 
 ```python
-from flink_agents.api.vector_stores.vector_store import BaseVectorStore, Document
-
 class MyVectorStore(BaseVectorStore):
     # Add your custom configuration fields here
 
