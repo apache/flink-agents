@@ -65,7 +65,7 @@ from flink_agents.api.vector_stores.vector_store import VectorStoreQuery, Vector
 query = VectorStoreQuery(
     mode=VectorStoreQueryMode.SEMANTIC,
     query_text="What is Apache Flink Agents?",
-    limit=5
+    limit=3
 )
 ```
 
@@ -82,7 +82,7 @@ The `VectorStoreQueryResult` contains:
 - **documents**: A list of `Document` objects representing the retrieved results
 - Each `Document` has:
   - **content**: The actual text content of the document
-  - **metadata**: Associated metadata (source, author, timestamp, etc.)
+  - **metadata**: Associated metadata (source, category, timestamp, etc.)
   - **id**: Unique identifier of the document (if available)
 
 ### Usage Example
@@ -90,11 +90,11 @@ The `VectorStoreQueryResult` contains:
 Here's how to define and use vector stores in your agent:
 
 ```python
-from typing import Any, Dict, Tuple, Type
 from flink_agents.api.agent import Agent
 from flink_agents.api.decorators import action, vector_store, embedding_model_connection, embedding_model_setup
-from flink_agents.api.events import Event, InputEvent
+from flink_agents.api.events import InputEvent
 from flink_agents.api.context import RunnerContext
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.vector_stores.vector_store import VectorStoreQuery, VectorStoreQueryMode
 from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import ChromaVectorStore
 from flink_agents.integrations.embedding_models.openai_embedding_model import (
@@ -107,34 +107,36 @@ class MyAgent(Agent):
     # Embedding model setup (required for vector store)
     @embedding_model_connection
     @staticmethod
-    def openai_connection() -> Tuple[Type[OpenAIEmbeddingModelConnection], Dict[str, Any]]:
-        return OpenAIEmbeddingModelConnection, {
-            "api_key": "your-api-key-here"
-        }
+    def openai_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OpenAIEmbeddingModelConnection,
+            api_key="your-api-key-here"
+        )
 
     @embedding_model_setup
     @staticmethod
-    def openai_embedding() -> Tuple[Type[OpenAIEmbeddingModelSetup], Dict[str, Any]]:
-        return OpenAIEmbeddingModelSetup, {
-            "connection": "openai_connection",
-            "model": "text-embedding-3-small"
-        }
+    def openai_embedding() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OpenAIEmbeddingModelSetup,
+            connection="openai_connection",
+            model="your-embedding-model-here"
+        )
 
-    # Vector store setup
+    # In-memory Chroma setup
     @vector_store
     @staticmethod
-    def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
-        return ChromaVectorStore, {
-            "embedding_model": "openai_embedding",
-            "persist_directory": "/path/to/chroma/data",
-            "collection": "my_documents"
-        }
+    def chroma_store() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ChromaVectorStore,
+            embedding_model="openai_embedding",
+            collection="my_chroma_store"
+        )
 
     @action(InputEvent)
     @staticmethod
-    def search_documents(event: Event, ctx: RunnerContext):
+    def search_documents(event: InputEvent, ctx: RunnerContext) -> None:
         # Get the vector store from the runtime context
-        vector_store = ctx.get_resource("chroma_store")
+        vector_store = ctx.get_resource("chroma_store", ResourceType.VECTOR_STORE)
 
         # Create a semantic search query
         user_query = str(event.input)
@@ -182,9 +184,9 @@ class MyAgent(Agent):
 #### Usage Example
 
 ```python
-from typing import Any, Dict, Tuple, Type
 from flink_agents.api.agent import Agent
 from flink_agents.api.decorators import vector_store, embedding_model_connection, embedding_model_setup
+from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import ChromaVectorStore
 from flink_agents.integrations.embedding_models.openai_embedding_model import (
     OpenAIEmbeddingModelConnection,
@@ -196,32 +198,35 @@ class MyAgent(Agent):
     # Embedding model setup (required for vector store)
     @embedding_model_connection
     @staticmethod
-    def openai_connection() -> Tuple[Type[OpenAIEmbeddingModelConnection], Dict[str, Any]]:
-        return OpenAIEmbeddingModelConnection, {
-            "api_key": "your-api-key-here"
-        }
+    def openai_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OpenAIEmbeddingModelConnection,
+            api_key="your-api-key-here"
+        )
 
     @embedding_model_setup
     @staticmethod
-    def openai_embedding() -> Tuple[Type[OpenAIEmbeddingModelSetup], Dict[str, Any]]:
-        return OpenAIEmbeddingModelSetup, {
-            "connection": "openai_connection",
-            "model": "text-embedding-3-small"
-        }
+    def openai_embedding() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OpenAIEmbeddingModelSetup,
+            connection="openai_connection",
+          model="your-embedding-model-here"
+        )
 
     # Vector store setup
     @vector_store
     @staticmethod
-    def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
-        return ChromaVectorStore, {
-            "embedding_model": "openai_embedding",
-            "persist_directory": "/path/to/chroma/data",  # For persistent storage
-            "collection": "my_documents",
-            "create_collection_if_not_exists": True
+    def chroma_store() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ChromaVectorStore,
+            embedding_model="openai_embedding",
+            persist_directory="/path/to/chroma/data",  # For persistent storage
+            collection="my_documents",
+            create_collection_if_not_exists=True
             # Or use other modes:
             # "host": "localhost", "port": 8000  # For server mode
             # "api_key": "your-chroma-cloud-key"  # For cloud mode
-        }
+        )
 
     ...
 ```
@@ -230,53 +235,57 @@ class MyAgent(Agent):
 
 ChromaDB supports multiple deployment modes:
 
-**In-Memory Mode** (Development/Testing):
+**In-Memory Mode**
 ```python
 @vector_store
 @staticmethod
-def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
-    return ChromaVectorStore, {
-        "embedding_model": "openai_embedding",
-        "collection": "my_documents"
+def chroma_store() -> ResourceDescriptor:
+    return ResourceDescriptor(
+        clazz=ChromaVectorStore,
+        embedding_model="your_embedding_model",
+        collection="my_documents"
         # No connection configuration needed for in-memory mode
-    }
+    )
 ```
 
-**Persistent Mode** (Local Production):
+**Persistent Mode**
 ```python
 @vector_store
 @staticmethod
-def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
-    return ChromaVectorStore, {
-        "embedding_model": "openai_embedding",
-        "persist_directory": "/path/to/chroma/data",
-        "collection": "my_documents"
-    }
+def chroma_store() -> ResourceDescriptor:
+    return ResourceDescriptor(
+        clazz=ChromaVectorStore,
+        embedding_model="your_embedding_model",
+        persist_directory="/path/to/chroma/data",
+        collection="my_documents"
+    )
 ```
 
-**Server Mode** (Distributed):
+**Server Mode**
 ```python
 @vector_store
 @staticmethod
-def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
-    return ChromaVectorStore, {
-        "embedding_model": "openai_embedding",
-        "host": "your-chroma-server.com",
-        "port": 8000,
-        "collection": "my_documents"
-    }
+def chroma_store() -> ResourceDescriptor:
+    return ResourceDescriptor(
+        clazz=ChromaVectorStore,
+        embedding_model="your_embedding_model",
+        host="your-chroma-server.com",
+        port=8000,
+        collection="my_documents"
+    )
 ```
 
-**Cloud Mode** (Managed):
+**Cloud Mode**
 ```python
 @vector_store
 @staticmethod
-def chroma_store() -> Tuple[Type[ChromaVectorStore], Dict[str, Any]]:
-    return ChromaVectorStore, {
-        "embedding_model": "openai_embedding",
-        "api_key": "your-chroma-cloud-api-key",
-        "collection": "my_documents"
-    }
+def chroma_store() -> ResourceDescriptor:
+    return ResourceDescriptor(
+        clazz=ChromaVectorStore,
+        embedding_model="your_embedding_model",
+        api_key="your-chroma-cloud-api-key",
+        collection="my_documents"
+    )
 ```
 
 ## Custom Providers
