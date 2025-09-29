@@ -42,46 +42,18 @@ In Flink Agents, embedding models are essential for:
 - **Knowledge Retrieval**: Enabling agents to find and retrieve relevant context from large knowledge bases
 - **Vector Databases**: Storing and querying embeddings for efficient similarity search
 
-## Embedding Interface
+### Architecture
 
 Flink Agents uses a two-component architecture for embedding models:
 
-1. **Connection**: Manages the connection to the embedding service (API keys, URLs, timeouts)
+1. **Connection**: Manages the connection to the embedding service (API keys, URLs, timeouts, etc)
 2. **Setup**: Configures the specific embedding model and its parameters
 
 This separation allows multiple embedding setups to share the same connection, improving resource efficiency and configuration management.
 
-If you want to use embedding models not offered by the built-in providers, you can extend the base embedding classes and implement your own! The embedding system is built around two main abstract classes:
+## Getting Started
 
-### BaseEmbeddingModelConnection
-
-Handles the connection to embedding services and provides the core embedding functionality:
-
-```python
-from flink_agents.api.embedding_models.embedding_model import BaseEmbeddingModelConnection
-
-class MyEmbeddingConnection(BaseEmbeddingModelConnection):
-    def embed(self, text: str, **kwargs) -> list[float]:
-        # Implementation for generating embeddings
-        pass
-```
-
-### BaseEmbeddingModelSetup
-
-Manages embedding model configuration and acts as a high-level interface:
-
-```python
-from flink_agents.api.embedding_models.embedding_model import BaseEmbeddingModelSetup
-
-class MyEmbeddingSetup(BaseEmbeddingModelSetup):
-    connection: str  # Name of the connection to use
-    model: str       # Model name to use
-
-    @property
-    def model_kwargs(self) -> Dict[str, Any]:
-        # Return model-specific configuration
-        return {"model": self.model, ...}
-```
+To use embedding models in your agents, you need to define both a connection and setup using decorators, then access the embedding model through the runtime context.
 
 ### Resource Decorators
 
@@ -94,6 +66,54 @@ The `@embedding_model_connection` decorator marks a method that creates an embed
 #### @embedding_model_setup
 
 The `@embedding_model_setup` decorator marks a method that creates an embedding model setup.
+
+### Usage Example
+
+Here's how to define and use embedding models in your agent:
+
+```python
+from typing import Any, Dict, Tuple, Type
+from flink_agents.api.agent import Agent
+from flink_agents.api.decorators import action, embedding_model_connection, embedding_model_setup
+from flink_agents.api.events import Event, InputEvent, OutputEvent
+from flink_agents.api.context import RunnerContext
+from flink_agents.integrations.embedding_models.openai_embedding_model import (
+    OpenAIEmbeddingModelConnection,
+    OpenAIEmbeddingModelSetup
+)
+
+class MyAgent(Agent):
+
+    @embedding_model_connection
+    @staticmethod
+    def openai_connection() -> Tuple[Type[OpenAIEmbeddingModelConnection], Dict[str, Any]]:
+        return OpenAIEmbeddingModelConnection, {
+            "api_key": "your-api-key-here",
+            "base_url": "https://api.openai.com/v1",
+            "request_timeout": 30.0
+        }
+
+    @embedding_model_setup
+    @staticmethod
+    def openai_embedding() -> Tuple[Type[OpenAIEmbeddingModelSetup], Dict[str, Any]]:
+        return OpenAIEmbeddingModelSetup, {
+            "connection": "openai_connection",
+            "model": "text-embedding-3-small"
+        }
+
+    @action(InputEvent)
+    @staticmethod
+    def process_text(event: Event, ctx: RunnerContext):
+        # Get the embedding model from the runtime context
+        embedding_model = ctx.get_resource("openai_embedding")
+
+        # Use the embedding model to generate embeddings
+        user_query = str(event.input)
+        embedding = embedding_model.embed(user_query)
+
+        # Handle the embedding
+        # Process the embedding vector as needed for your use case
+```
 
 ## Built-in Providers
 
@@ -178,7 +198,6 @@ OpenAI provides cloud-based embedding models with state-of-the-art performance.
 #### Prerequisites
 
 1. Get an API key from [OpenAI Platform](https://platform.openai.com/)
-2. Install the OpenAI Python package: `pip install openai`
 
 #### Usage Example
 
@@ -209,8 +228,7 @@ class MyAgent(Agent):
         return OpenAIEmbeddingModelSetup, {
             "connection": "openai_connection",
             "model": "text-embedding-3-small",
-            "encoding_format": "float",
-            "dimensions": 1536
+            "encoding_format": "float"
         }
 ```
 
@@ -248,3 +266,46 @@ Current popular models include:
 {{< hint warning >}}
 Model availability and specifications may change. Always check the official OpenAI documentation for the latest information before implementing in production.
 {{< /hint >}}
+
+## Custom Providers
+
+{{< hint warning >}}
+The custom provider APIs are experimental and unstable, subject to incompatible changes in future releases.
+{{< /hint >}}
+
+If you want to use embedding models not offered by the built-in providers, you can extend the base embedding classes and implement your own! The embedding system is built around two main abstract classes:
+
+### BaseEmbeddingModelConnection
+
+Handles the connection to embedding services and provides the core embedding functionality.
+
+```python
+from flink_agents.api.embedding_models.embedding_model import BaseEmbeddingModelConnection
+
+class MyEmbeddingConnection(BaseEmbeddingModelConnection):
+    
+    def embed(self, text: str, **kwargs) -> list[float]:
+        # Core method: convert text to embedding vector
+        # - text: Input text to embed
+        # - kwargs: Additional parameters from model_kwargs
+        # - Returns: List of float values representing the embedding
+        pass
+```
+
+### BaseEmbeddingModelSetup
+
+The setup class acts as a high-level configuration interface that defines which connection to use and how to configure the embedding model.
+
+
+```python
+from flink_agents.api.embedding_models.embedding_model import BaseEmbeddingModelSetup
+
+class MyEmbeddingSetup(BaseEmbeddingModelSetup):
+    # Add your custom configuration fields here
+    
+    @property
+    def model_kwargs(self) -> Dict[str, Any]:
+        # Return model-specific configuration passed to embed()
+        # This dictionary is passed as **kwargs to the embed() method
+        return {"model": self.model, ...}
+```
