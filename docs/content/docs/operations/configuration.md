@@ -26,7 +26,7 @@ under the License.
 
 There are three ways to configure Flink Agents:
 
-1. **Explicit Settings**
+1. **Explicit Settings in Code**
 2. **YAML Configuration File**
 3. **Configuration During Build Agent Time**
 
@@ -34,7 +34,7 @@ There are three ways to configure Flink Agents:
 The priority of configuration sources, from highest to lowest, is: **Explicit Settings**, followed by **YAML Configuration File**, and finally **Configuration During Build Agent Time**. In case of duplicate keys, the value from the highest-priority source will override those from lower-priority ones.
 {{< /hint >}}
 
-### Explicit Settings
+### Explicit Settings in Code
 
 Users can explicitly modify the configuration when defining the `AgentsExecutionEnvironment`:
 
@@ -80,9 +80,9 @@ config.set(AgentConfigOptions.KAFKA_BOOTSTRAP_SERVERS, "kafka-broker.example.com
 
 ### YAML Configuration File
 
-Flink Agents reads configuration from a YAML file structured under the **`agent:`** root key. This file is typically used when submitting jobs to a Flink cluster or running locally with a custom configuration.
+Flink Agents allows reading configurations from a YAML file.
 
-#### Configuration Structure
+#### Format
 
 The YAML file must follow this format, with all agent-specific settings nested under the `agent:` key:
 
@@ -111,7 +111,7 @@ config = agents_env.get_configuration("path/to/your/config.yaml")
 
 **MiniCluster Mode / Cluster Submission**
 
-Flink Agents automatically loads configurations from `$FLINK_CONF_DIR/conf.yaml`, ensuring the file includes the `agent:` section.
+By default, Flink Agents configurations are included in the standard Flink configuration file (config.yaml) used for cluster submissions.
 
 - **For MiniCluster**:
   Manual setup is **required** — always export the environment variable before running the job:
@@ -127,7 +127,36 @@ Flink Agents automatically loads configurations from `$FLINK_CONF_DIR/conf.yaml`
 
 ### Configuration During Build Agent Time
 
-How to configure during the build agent time: please refer to the documentation under "How to Build an Agents," specifically the document titled ["Workflow Agent"]({{< ref "docs/development/workflow_agent" >}}).
+For resources like `ChatModel`, `EmbeddingModel`, and `VectorStore`, Flink Agents allows configuration **during agent definition** via `ResourceDescriptor`. This enables declarative setup of model parameters directly in the agent class.
+
+#### Example: Defining a Math-Focused Chat Model
+
+``````python
+class MyAgent(Agent):
+    """Example agent demonstrating the new ChatModel architecture."""
+
+    @chat_model_connection
+    @staticmethod
+    def ollama_connection() -> ResourceDescriptor:
+        """Defines the connection to the Ollama model service."""
+        return ResourceDescriptor(
+            clazz=OllamaChatModelConnection  # Connection class
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def math_chat_model() -> ResourceDescriptor:
+        """Configures a math-focused chat model using the Ollama connection."""
+        return ResourceDescriptor(
+            clazz=OllamaChatModelSetup,       # Model setup class
+            connection="ollama_connection",   # Reference to the connection method
+            model=OLLAMA_MODEL,        				# Specific model name
+            tools=["add"],                    # Add tools
+            extract_reasoning=True            # Enable reasoning extraction
+        )
+``````
+
+
 
 ## Built-in configuration options
 
