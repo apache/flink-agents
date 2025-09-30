@@ -17,8 +17,6 @@
 ################################################################################
 import os
 
-import chromadb
-
 from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.decorators import (
@@ -38,6 +36,7 @@ from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.examples.rag.knowledge_base_setup import populate_knowledge_base
 from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
@@ -161,62 +160,10 @@ Please provide a helpful answer based on the context provided."""
             ctx.send_event(OutputEvent(output=event.response.content))
 
 
-def populate_knowledge_base() -> None:
-    """Populate ChromaDB with sample knowledge documents using Ollama embeddings."""
-    print("Populating ChromaDB with sample knowledge documents...")
-
-    # Create connections directly
-    embedding_connection = OllamaEmbeddingModelConnection()
-    chroma_client = chromadb.EphemeralClient()
-
-    # Get collection (create if doesn't exist)
-    collection_name = "example_knowledge_base"
-    collection = chroma_client.get_or_create_collection(
-        name=collection_name,
-        metadata=None,
-    )
-
-    # Sample documents to embed and store
-    documents = [
-        "Apache Flink is a stream processing framework for distributed, high-performing, always-available, and accurate data streaming applications.",
-        "Flink provides exactly-once state consistency guarantees and low-latency processing with high throughput.",
-        "Apache Flink Agents is an innovative Agentic AI framework built on Apache Flink that enables distributed, stateful execution of AI agents.",
-        "Vector stores are databases optimized for storing and searching high-dimensional vectors, commonly used in context retrieval applications.",
-        "Context retrieval combines information retrieval with language generation to provide more accurate and contextual responses by finding relevant information.",
-    ]
-
-    metadatas = [
-        {"topic": "flink", "source": "documentation"},
-        {"topic": "flink", "source": "documentation"},
-        {"topic": "flink_agents", "source": "documentation"},
-        {"topic": "vector_stores", "source": "ai_concepts"},
-        {"topic": "context_retrieval", "source": "ai_concepts"},
-    ]
-
-    # Generate real embeddings using Ollama
-    embeddings = []
-    for _i, doc in enumerate(documents):
-        embedding = embedding_connection.embed(doc, model=OLLAMA_EMBEDDING_MODEL)
-        embeddings.append(embedding)
-
-    # Prepare data for ChromaDB
-    test_data = {
-        "documents": documents,
-        "embeddings": embeddings,
-        "metadatas": metadatas,
-        "ids": [f"doc{i + 1}" for i in range(len(documents))]
-    }
-
-    # Add documents to ChromaDB
-    collection.add(**test_data)
-
-    print(f"Knowledge base setup complete! Added {len(documents)} documents to ChromaDB.")
-
-
 if __name__ == "__main__":
     print("Starting RAG Example Agent...")
 
-    # Initialize knowledge base with mock data
+    # Populate vector store with sample documents
     populate_knowledge_base()
 
     agent = MyRAGAgent()
