@@ -1,6 +1,6 @@
 ---
 title: Embedding Models
-weight: 4
+weight: 5
 type: docs
 ---
 <!--
