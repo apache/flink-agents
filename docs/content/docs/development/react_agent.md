@@ -39,7 +39,7 @@ my_react_agent = ReActAgent(
 ### Chat Model
 User should specify the chat model used in the ReAct Agent.
 
-We use `ResourceDescriptor` to describe the chat model, includes chat model type and chat model arguments. See [Chat Model]({{< ref "docs/development/chat_with_llm#chatmodel" >}}) for more details.
+We use `ResourceDescriptor` to describe the chat model, includes chat model type and chat model arguments. See [Chat Model]({{< ref "docs/development/chat_models" >}}) for more details.
 ```python
 chat_model_descriptor = ResourceDescriptor(
     clazz=OllamaChatModelSetup,
@@ -94,7 +94,7 @@ ChatMessage(
 )
 ```
 
-See [Prompt]({{< ref "docs/development/chat_with_llm#prompt" >}}) for more details.
+See [Prompt]({{< ref "docs/development/prompts" >}}) for more details.
 
 ### Output Schema
 User can set output schema to configure the ReAct Agent output type. If output schema is set, the ReAct Agent will deserialize the llm response to expected type. 

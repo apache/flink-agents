@@ -1,6 +1,6 @@
 ---
-title: Chat with LLM
-weight: 3
+title: Prompts
+weight: 6
 type: docs
 ---
 <!--
@@ -22,23 +22,7 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-## ChatModel
-
-{{< hint warning >}}
-**TODO**: What is ChatModel. How to define and ChatModelConnection, and ChatModelSetup. How to reuse ChatModelConnection in ChatModelSetup.
-
-**TODO**: How to send ChatRequestEvent and handle ChatResponseEvent.
-{{< /hint >}}
-
-{{< hint warning >}}
-**TODO**: List of all built-in Model and configuration, Ollama, Tongyi, etc.
-{{< /hint >}}
-
-### Ollama
-
-### Tongyi
-
-## Prompt
+## Prompts
 
 {{< hint warning >}}
 **TODO**: What is Prompt. What are the differences between Local Prompt and MCP Prompt.
