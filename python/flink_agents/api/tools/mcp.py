@@ -307,3 +307,7 @@ class MCPServer(SerializableResource, ABC):
                     raise TypeError(err_msg)
 
         return chat_messages
+
+    def close(self) -> None:
+        """Close the MCP server connection and clean up resources."""
+        asyncio.run(self._cleanup_connection())
