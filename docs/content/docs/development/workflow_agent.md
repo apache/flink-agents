@@ -160,8 +160,8 @@ Then, user can define actions listen to or send `MyEvent`.
 ## Built-in Events and Actions
 
 There are several built-in `Event` and `Action` in Flink-Agents:
-* See [chat with llm]({{< ref "docs/development/chat_models" >}}) for how to chat with a LLM leveraging built-in action and events.
-* See [tool use]({{< ref "docs/development/tool_use" >}}) for how to programmatically use a tool leveraging built-in action and events.
+* See [Chat Models]({{< ref "docs/development/chat_models" >}}) for how to chat with a LLM leveraging built-in action and events.
+* See [Tool Use]({{< ref "docs/development/tool_use" >}}) for how to programmatically use a tool leveraging built-in action and events.
 
 ## Memory
 
