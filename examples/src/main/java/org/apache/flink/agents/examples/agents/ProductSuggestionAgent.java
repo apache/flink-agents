@@ -24,7 +24,6 @@ import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Action;
-import org.apache.flink.agents.api.annotation.ChatModelConnection;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -34,7 +33,6 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.examples.agents.CustomTypesAndResources.ProductReviewSummary;
-import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup;
 
 import java.util.ArrayList;
@@ -56,13 +54,6 @@ public class ProductSuggestionAgent extends Agent {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String ID = "id";
     private static final String SCORE_HIST = "score_hist";
-
-    @ChatModelConnection
-    public static ResourceDescriptor ollamaChatModelConnection() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
-                .addInitialArgument("endpoint", "http://localhost:11434")
-                .build();
-    }
 
     @ChatModelSetup
     public static ResourceDescriptor generateSuggestionModel() {

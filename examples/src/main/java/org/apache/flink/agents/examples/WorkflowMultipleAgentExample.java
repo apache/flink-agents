@@ -131,8 +131,8 @@ public class WorkflowMultipleAgentExample {
         // Add Ollama chat model connection to be used by the ReviewAnalysisAgent
         // and ProductSuggestionAgent.
         agentsEnv.addResource(
-                "ollama_server",
-                ResourceType.CHAT_MODEL,
+                "ollamaChatModelConnection",
+                ResourceType.CHAT_MODEL_CONNECTION,
                 CustomTypesAndResources.OLLAMA_SERVER_DESCRIPTOR);
 
         // Read product reviews from input_data.txt file as a streaming source.

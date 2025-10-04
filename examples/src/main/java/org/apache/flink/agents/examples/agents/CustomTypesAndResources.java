@@ -67,7 +67,8 @@ public class CustomTypesAndResources {
                     Arrays.asList(
                             new ChatMessage(MessageRole.SYSTEM, REVIEW_ANALYSIS_SYSTEM_PROMPT_STR),
                             new ChatMessage(
-                                    MessageRole.USER, "\"id\": {id},\n" + "\"review\": {review}")));
+                                    MessageRole.USER,
+                                    "{\"id\": \"{id}\",\n" + "\"review\": \"{review}\"}")));
 
     // Prompt for product suggestion agent
     public static final String PRODUCT_SUGGESTION_PROMPT_STR =
@@ -111,7 +112,8 @@ public class CustomTypesAndResources {
     // Ollama chat model connection descriptor
     public static final ResourceDescriptor OLLAMA_SERVER_DESCRIPTOR =
             ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
-                    .addInitialArgument("request_timeout", "120")
+                    .addInitialArgument("requestTimeout", 120)
+                    .addInitialArgument("endpoint", "http://localhost:11434")
                     .build();
 
     /** Data model representing a product review. */
@@ -157,6 +159,12 @@ public class CustomTypesAndResources {
             this.id = id;
             this.score = score;
             this.reasons = reasons;
+        }
+
+        public ProductReviewAnalysisRes() {
+            id = null;
+            score = 0;
+            reasons = List.of();
         }
 
         public String getId() {

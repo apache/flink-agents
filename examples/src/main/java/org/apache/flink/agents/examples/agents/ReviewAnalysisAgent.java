@@ -24,7 +24,6 @@ import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Action;
-import org.apache.flink.agents.api.annotation.ChatModelConnection;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
@@ -35,7 +34,6 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup;
 
 import java.util.ArrayList;
@@ -55,13 +53,6 @@ import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.RE
 public class ReviewAnalysisAgent extends Agent {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    @ChatModelConnection
-    public static ResourceDescriptor ollamaChatModelConnection() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
-                .addInitialArgument("endpoint", "http://localhost:11434")
-                .build();
-    }
 
     @Prompt
     public static org.apache.flink.agents.api.prompt.Prompt reviewAnalysisPrompt() {
