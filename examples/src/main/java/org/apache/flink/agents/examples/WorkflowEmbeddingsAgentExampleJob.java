@@ -109,10 +109,7 @@ public class WorkflowEmbeddingsAgentExampleJob {
 
         // Process with embedding agent using the correct pattern
         DataStream<Object> embeddingResults =
-                agentsEnv
-                        .fromDataStream(textStream)
-                        .apply(new EmbeddingsAgent())
-                        .toDataStream();
+                agentsEnv.fromDataStream(textStream).apply(new EmbeddingsAgent()).toDataStream();
 
         // Print results with detailed information
         embeddingResults

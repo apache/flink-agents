@@ -218,8 +218,7 @@ public class EmbeddingsAgent extends Agent {
             // Generate the embedding using the real Ollama model
             float[] embedding = connection.embed(text);
 
-            System.out.printf(
-                    "Generated Ollama embedding with dimension: %d%n", embedding.length);
+            System.out.printf("Generated Ollama embedding with dimension: %d%n", embedding.length);
             return embedding;
 
         } catch (Exception e) {
