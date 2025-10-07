@@ -29,10 +29,12 @@ We provide two options to run the job:
 - **Run without Flink**
     - **Language Support**: Only Python
     - **Input and Output**: Python List
+    - **Suitable Use Case**: Local Testing and Debugging
 
 - **Run in Flink**
     - **Language Support**: Python & Java
     - **Input and Output**: DataStream or Table
+    - **Suitable Use Case**: Production
 
 These deployment modes differ in supported languages and data formats, allowing you to choose the one that best fits your use case.
 
