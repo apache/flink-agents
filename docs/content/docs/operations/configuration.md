@@ -24,17 +24,51 @@ under the License.
 
 ## How to configure Flink Agents
 
-There are three ways to configure Flink Agents:
+There are three ways to configure Flink Agents, listed in order of **priority from high to low**:
 
-1. **Explicit Settings in Code**
-2. **YAML Configuration File**
-3. **Configuration During Build Agent**
+1. **Setting via the ResourceDescriptor**
+2. **Setting via the AgentsExecutionEnvironment**
+3. **Setting via a Flink YAML configuration file**
+
+The ResourceDescriptor applies to specific Resource instances, the AgentsExecutionEnvironment applies to Agents from the AgentsExecutionEnvironment, and the Flink YAML configuration file applies to all Flink Agents Jobs using the same configuration file.
 
 {{< hint info >}}
-The priority of configuration sources, from highest to lowest, is: **Explicit Settings**, followed by **YAML Configuration File**, and finally **Configuration During Build Agent Time**. In case of duplicate keys, the value from the highest-priority source will override those from lower-priority ones.
+In case of duplicate keys, the value from the highest priority will override those from lower priorities.
 {{< /hint >}}
 
-### Explicit Settings in Code
+### Setting via the ResourceDescriptor
+
+For resources like `ChatModel`, `EmbeddingModel`, and `VectorStore`, Flink Agents allows configuration during agent definition **via `ResourceDescriptor`**. This enables declarative setup of model parameters directly in the agent class.
+
+#### Example: Defining a Math-Focused Chat Model
+
+```python
+class MyAgent(Agent):
+    """Example agent demonstrating the new ChatModel architecture."""
+
+    @chat_model_connection
+    @staticmethod
+    def ollama_connection() -> ResourceDescriptor:
+        """Defines the connection to the Ollama model service."""
+        return ResourceDescriptor(
+            clazz=OllamaChatModelConnection,  # Connection class
+            request_timeout=10.0,
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def math_chat_model() -> ResourceDescriptor:
+        """Configures a math-focused chat model using the Ollama connection."""
+        return ResourceDescriptor(
+            clazz=OllamaChatModelSetup,       # Model setup class
+            connection="ollama_connection",   # Reference to the connection method
+            model=OLLAMA_MODEL,        				# Specific model name
+            tools=["add"],                    # Add tools
+            extract_reasoning=True            # Enable reasoning extraction
+        )
+```
+
+### Setting via the AgentsExecutionEnvironment
 
 Users can explicitly modify the configuration when defining the `AgentsExecutionEnvironment`:
 
@@ -78,13 +112,13 @@ config.set(AgentConfigOptions.KAFKA_BOOTSTRAP_SERVERS, "kafka-broker.example.com
 {{< /tab >}}
 {{< /tabs >}}
 
-### YAML Configuration File
+### Setting via the Flink YAML configuration file
 
-Flink Agents allows reading configurations from a YAML file.
+Flink Agents allows reading configurations from the Flink YAML configuration file.
 
 #### Format
 
-The YAML file must follow this format, with all agent-specific settings nested under the `agent` key:
+As part of the Flink configuration file, the flink agents configuration must follow this format, with all agent-specific settings nested under the `agent` key:
 
 ```yaml
 agent:
@@ -118,38 +152,6 @@ By default, Flink Agents configurations are included in the standard Flink confi
 
 - **For Cluster Submission**:
   The configuration is automatically loaded from `$FLINK_HOME/conf/flink-conf.yaml` (if the `agent:` section exists).
-
-### Configuration During Build Agent Time
-
-For resources like `ChatModel`, `EmbeddingModel`, and `VectorStore`, Flink Agents allows configuration **during agent definition** via `ResourceDescriptor`. This enables declarative setup of model parameters directly in the agent class.
-
-#### Example: Defining a Math-Focused Chat Model
-
-```python
-class MyAgent(Agent):
-    """Example agent demonstrating the new ChatModel architecture."""
-
-    @chat_model_connection
-    @staticmethod
-    def ollama_connection() -> ResourceDescriptor:
-        """Defines the connection to the Ollama model service."""
-        return ResourceDescriptor(
-            clazz=OllamaChatModelConnection,  # Connection class
-            request_timeout=10.0,
-        )
-
-    @chat_model_setup
-    @staticmethod
-    def math_chat_model() -> ResourceDescriptor:
-        """Configures a math-focused chat model using the Ollama connection."""
-        return ResourceDescriptor(
-            clazz=OllamaChatModelSetup,       # Model setup class
-            connection="ollama_connection",   # Reference to the connection method
-            model=OLLAMA_MODEL,        				# Specific model name
-            tools=["add"],                    # Add tools
-            extract_reasoning=True            # Enable reasoning extraction
-        )
-```
 
 ## Built-in configuration options
 
