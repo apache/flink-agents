@@ -28,15 +28,15 @@ Flink Agents provides a flexible and extensible tool use mechanism. Developers c
 
 ## Local Function as Tool
 
-Developer can define the tool as a local Python function, and use it in either workflow agent or react agent. 
-- For workflow agent, developer defines the tool as a static method in the agent class, and use the `@tool` annotation to mark the method as a tool. 
-- For react agent, you have to register the tool to the execution environment, and then pass the tool name to the chat model descriptor when creating the ReAct agent.
+Developer can define the tool as a local Python function, and there are two way to define and register an local function as a tool:
 
 {{< hint info >}}
 Flink Agents uses the docstring of the tool function to generate the tool metadata. The docstring of the python function should accurately describe the tool's purpose, parameters, and return value, so that the LLM can understand the tool and use it effectively.
 {{< /hint >}}
 
-Below is an example of how to define the tool as a local Python function in workflow agent:
+### Define Tool as Static Method in Agent Class
+
+Developer can define the tool as a static method in the agent class while defining the workflow agent, and use the `@tool` annotation to mark the method as a tool. The tool can be referenced by its name in the `tools` list of the `ResourceDescriptor` when creating the chat model in the agent.
 
 ```python
 class ReviewAnalysisAgent(Agent):
@@ -55,11 +55,28 @@ class ReviewAnalysisAgent(Agent):
             The negative review content
         """
         notify_shipping_manager(id=id, review=review)
+
+    @chat_model_setup
+    @staticmethod
+    def review_analysis_model() -> ResourceDescriptor:
+        """ChatModel which focus on review analysis."""
+        return ResourceDescriptor(
+            clazz=OllamaChatModelSetup,
+            ...,
+            tools=["notify_shipping_manager"], # reference the tool by its name
+        )
     
     ...
 ```
 
-Below is an example of how to define the tool as a local Python function in react agent:
+**Key points:**
+- Use `@tool` decorator to define the tool
+- Reference the tool by its name in the `tools` list of the `ResourceDescriptor`
+
+
+### Register Tool to Execution Environment
+
+Developer can register the tool to the execution environment, and then reference the tool by its name. This allows the tool to be reused by multiple agents.
 
 ```python
 def notify_shipping_manager(id: str, review: str) -> None:
@@ -88,91 +105,79 @@ agents_env.add_resource(
 review_analysis_react_agent = ReActAgent(
     chat_model=ResourceDescriptor(
         clazz=OllamaChatModelSetup,
-        tools=["notify_shipping_manager"],
+        tools=["notify_shipping_manager"], # reference the tool by its name
     ),
     ...
 )
 ```
 
-## Integrate with MCP Server
+**Key points:**
+- Use `AgentsExecutionEnvironment.add_resource` to register the tool to the execution environment
+- Reference the tool by its name in the `tools` list of the `ResourceDescriptor`
 
-Flink Agents supports integrating with a remote MCP server to use the resources provided by the MCP server, including tools and prompts.
+## MCP Tool
 
-To use MCP server in workflow agent, developer can use `@mcp_server` annotation to declare the server.
+{{< hint info >}}
+MCP (Model Context Protocol) is a standardized protocol for integrating AI applications with external data sources and tools. MCP tools allow dynamic tool retrieval from MCP servers.
+{{< /hint >}}
+
+MCP tools are managed by external MCP servers and automatically discovered when you define an MCP server connection in your agent.
+
+### Define MCP Server with Tools
+
+Create an MCP server that exposes tools using the `FastMCP` library:
 
 ```python
-@mcp_server
-@staticmethod
-def my_mcp_server() -> MCPServer:
-    """Define MCP server connection."""
-    return MCPServer(endpoint=MCP_SERVER_ENDPOINT)
+# mcp_server.py
+mcp = FastMCP("ReviewServer")
+
+@mcp.tool()
+async def notify_shipping_manager(id: str, review: str) -> None:
+    """Notify the shipping manager when product received a negative review due to
+    shipping damage.
+
+    Parameters
+    ----------
+    id : str
+        The id of the product that received a negative review due to shipping damage
+    review: str
+        The negative review content
+    """
+    ...
+
+mcp.run("streamable-http")
 ```
 
-To use MCP server in react agent, developer can register the MCP server to the execution environment.
+**Key points:**
+- Use `@mcp.tool()` decorator to define tools
+- The function name becomes the tool identifier
+
+### Use MCP Tools in Agent
+
+Connect to the MCP server and use its tools in your agent:
 
 ```python
-# Register MCP server to the execution environment.
-agents_env.add_resource("my_mcp_server", MCPServer(endpoint=MCP_SERVER_ENDPOINT))
-```
+class ReviewAnalysisAgent(Agent):
+    ...
 
-### Use MCP Tool and MCP Prompt
+    @mcp_server
+    @staticmethod
+    def review_mcp_server() -> MCPServer:
+        """Connect to MCP server."""
+        return MCPServer(endpoint="http://127.0.0.1:8000/mcp")
 
-The MCP tool and prompt can be used the in same way with local function tool and local prompt.
-
-If developer define a MCP server providing tool `add` and prompt `ask_sum`, they can use them when talking  with chat model.
-
-```python
-@chat_model_setup
-@staticmethod
-def math_chat_model() -> ResourceDescriptor:
-    """ChatModel using MCP prompt and tool."""
-    return ResourceDescriptor(
-        clazz=OllamaChatModelSetup,
-        connection="ollama_connection",
-        model=OLLAMA_MODEL,
-        prompt="ask_sum",  # MCP prompt registered from my_mcp_server
-        tools=["add"],  # MCP tool registered from my_mcp_server
-        extract_reasoning=True,
+    @chat_model_setup
+    @staticmethod
+    def review_model() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=OllamaChatModelSetup,
+            connection="ollama_server",
+            model="qwen3:8b",
+            tools=["notify_shipping_manager"],  # Reference MCP tool by name
         )
 ```
 
-## Built-in Events for Tool
-
-Flink Agents provides built-in events for tool call request and tool call response, specifically `ToolRequestEvent` and `ToolResponseEvent`. By default, Flink Agents built-in action will listen to these events and handle the tool call request and tool call response automatically. If you have special needs, you can also define your own action to listen to these events and handle the `ToolRequestEvent` and `ToolResponseEvent` accordingly.
-
-Here is the definition of the `ToolRequestEvent` and `ToolResponseEvent`:
-
-```python
-class ToolRequestEvent(Event):
-    """Event representing a tool call request.
-
-    Attributes:
-    ----------
-    model: str
-        name of the model that generated the tool request.
-    tool_calls : List[Dict[str, Any]]
-        tool calls that should be executed in batch.
-    """
-
-    model: str
-    tool_calls: List[Dict[str, Any]]
-
-  
-class ToolResponseEvent(Event):
-    """Event representing a result from tool call.
-
-    Attributes:
-    ----------
-    request_id : UUID
-        The id of the request event.
-    responses : Dict[UUID, Any]
-        The dict maps tool call id to result.
-    external_ids : Dict[UUID, str]
-        Optional identifier for storing original tool call IDs from external systems
-        (e.g., Anthropic tool_use_id).
-    """
-
-    request_id: UUID
-    responses: Dict[UUID, Any]
-    external_ids: Dict[UUID, str | None]
-```
+**Key points:**
+- Use `@mcp_server` decorator to define MCP server connection
+- Reference MCP tools by their function name (e.g., `"notify_shipping_manager"`)
+- All tools from the MCP server are automatically registered
