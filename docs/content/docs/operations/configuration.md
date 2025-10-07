@@ -124,22 +124,18 @@ As part of the Flink configuration file, the flink agents configuration must fol
 agent:
   # Agent-specific configurations
   OpenAIChatModelSetup.model: "gpt-5"
-  OpenAIChatModelConnection.max_retries: 10
+  OpenAIChatModelConnection:
+    max_retries: 10
+    timeout: 120.0
 ```
 
 #### Loading Behavior
 
-**Local Mode**
+By default, the configuration is automatically loaded from `$FLINK_HOME/conf/config.yaml`.
 
-Use the `AgentsExecutionEnvironment.get_configuration()` API to load a custom YAML file directly:
+**Special Condition**
 
-```python
-config = agents_env.get_configuration("path/to/your/config.yaml")
-```
-
-**MiniCluster Mode / Cluster Submission**
-
-By default, Flink Agents configurations are included in the standard Flink configuration file (config.yaml) used for cluster submissions.
+In the following two cases, Flink Agents may not locate the corresponding configuration file, necessitating manual configuration. If the files are not set, no configuration files will be loaded, potentially resulting in unexpected behavior or failures.
 
 - **For MiniCluster**:
   Manual setup is **required** — always export the environment variable before running the job:
@@ -148,10 +144,14 @@ By default, Flink Agents configurations are included in the standard Flink confi
   export FLINK_CONF_DIR="path/to/your/config.yaml"
   ```
 
-  This ensures that Flink can locate and load the configuration file correctly. If this environment variable is not set, no configuration files will be loaded, which may lead to unexpected behavior or failures.
+  This ensures that Flink can locate and load the configuration file correctly.
 
-- **For Cluster Submission**:
-  The configuration is automatically loaded from `$FLINK_HOME/conf/flink-conf.yaml` (if the `agent:` section exists).
+- **Local mode**: When [run without flink]({{< ref "docs/operations/deployment">}}), use the `AgentsExecutionEnvironment.get_configuration()` API to load the YAML file directly:
+
+  ```python
+  config = agents_env.get_configuration("path/to/your/config.yaml")
+  ```
+  
 
 ## Built-in configuration options
 
