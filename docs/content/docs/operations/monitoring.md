@@ -28,14 +28,14 @@ under the License.
 
 We offer data monitoring for built-in metrics, which includes events and actions. 
 
-| Scope        | Metrics                                          | Description                                                                      | Type  |
-|--------------|--------------------------------------------------|----------------------------------------------------------------------------------|-------|
-| **Operator** | numOfEventProcessed                              | The total number of Events this operator has processed.                          | Count |
-| **Operator** | numOfEventProcessedPerSec                        | The number of Events this operator has processed per second.                     | Meter |
-| **Operator** | numOfActionsExecuted                             | The total number of actions this operator has executed.                          | Count |
-| **Operator** | numOfActionsExecutedPerSec                       | The number of actions this operator has executed per second.                     | Meter |
-| **Action**   | <action_name>.numOfActionsExecuted | The total number of actions this operator has executed for a specific action name. | Count |
-| **Action**   | <action_name>.numOfActionsExecutedPerSec | The number of actions this operator has executed per second for a specific action name. | Meter |
+| Scope       | Metrics                                          | Description                                                                      | Type  |
+|-------------|--------------------------------------------------|----------------------------------------------------------------------------------|-------|
+| **Agent**   | numOfEventProcessed                              | The total number of Events this operator has processed.                          | Count |
+| **Agent** | numOfEventProcessedPerSec                        | The number of Events this operator has processed per second.                     | Meter |
+| **Agent** | numOfActionsExecuted                             | The total number of actions this operator has executed.                          | Count |
+| **Agent** | numOfActionsExecutedPerSec                       | The number of actions this operator has executed per second.                     | Meter |
+| **Action**  | <action_name>.numOfActionsExecuted | The total number of actions this operator has executed for a specific action name. | Count |
+| **Action**  | <action_name>.numOfActionsExecutedPerSec | The number of actions this operator has executed per second for a specific action name. | Meter |
 
 #### 
 
@@ -70,9 +70,9 @@ class MyAgent(Agent):
 
 ### How to check the metrics with Flink executor
 
-Flink agents allow reporting metrics to external systems. Please refer to [Flink Metric Reporters](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/) for more details.
+Flink agents enable the reporting of metrics to external systems by creating a metric identifier prefix in the format `<host>.taskmanager.<tm_id>.<job_name>.<operator_name>.<subtask_index>`. Please refer to [Flink Metric Reporters](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/) for more details.
 
-Additionally, we can check the metric results in the Flink Job WebUI:
+Additionally, we can check the metric results in the Flink Job WebUI using the metric identifier prefix `<subtask_index>.<operator_name>`.
 
 {{< img src="/fig/operations/metricwebui.png" alt="Metric Web UI" >}}
 
