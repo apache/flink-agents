@@ -28,7 +28,7 @@ Flink Agents provides a flexible and extensible tool use mechanism. Developers c
 
 ## Local Function as Tool
 
-Developer can define the tool as a local Python function, and there are two way to define and register an local function as a tool:
+Developer can define the tool as a local Python function, and there are two ways to define and register an local function as a tool:
 
 {{< hint info >}}
 Flink Agents uses the docstring of the tool function to generate the tool metadata. The docstring of the python function should accurately describe the tool's purpose, parameters, and return value, so that the LLM can understand the tool and use it effectively.
