@@ -24,23 +24,21 @@ under the License.
 
 ## Overview
 
-We provide a total of three ways to run the job: Local Run with Test Data, Local Run with Flink MiniCluster, and Run in Flink Cluster. The detailed differences are shown in the table below:
+We provide two options to run the job:
 
-| Deployment Mode                     | Language Support       | Typical Use Case                                           |
-|-------------------------------------|------------------------|------------------------------------------------------------|
-| Local Run with Test Data            | Only Python            | Validate the internal logic of the Agent.                  |
-| Local Run with Flink MiniCluster    | Python & Java          | Verify upstream/downstream connectivity and schema correctness. |
-| Run in Flink Cluster                | Python & Java          | Large-scale data and AI processing in production environments. |
+- **Run without Flink**
+    - **Language Support**: Only Python
+    - **Input and Output**: Python List
 
-## Local Run with Test Data
+- **Run in Flink**
+    - **Language Support**: Python & Java
+    - **Input and Output**: DataStream or Table
+
+These deployment modes differ in supported languages and data formats, allowing you to choose the one that best fits your use case.
+
+## Run without Flink
 
 After completing the [installation of flink-agents]({{< ref "docs/get-started/installation" >}}) and building your [ReAct Agent]({{< ref "docs/development/react_agent" >}}) or [workflow agent]({{< ref "docs/development/workflow_agent" >}}), you can test and execute your agent locally using a simple Python script. This allows you to validate logic without requiring a Flink cluster.
-
-### Key Features
-
-- **No Flink Required**: Local execution is ideal for development and testing.
-- **Test Data Simulation**: Easily inject mock inputs for validation.
-- **IDE Compatibility**: Run directly in your preferred development environment.
 
 ### Example for Local Run with Test Data
 
@@ -83,7 +81,8 @@ The input data should be a list of dictionaries `List[Dict[str, Any]]` with the 
 ```python
 [
     {
-      	# Optional field: Input key
+        # Optional field: Input key. 
+        # The key is randomly generated if not provided.
         "key": "key_1",
         
         # Required field: Input content
@@ -100,25 +99,13 @@ The output data is a list of dictionaries `List[Dict[str, Any]]` where each dict
 
 ```python
 [
-    {key_1: output_1},  # From first OutputEvent; key is randomly generated if it is not provided in input
-    {key_2: output_2},  # From second OutputEvent; key is randomly generated if it is not provided in input
+    {key_1: output_1},  # From first OutputEvent
+    {key_2: output_2},  # From second OutputEvent
     ...
 ]
 ```
 
-## Local Run with Flink MiniCluster
-
-After completing the [installation of flink-agents]({{< ref "docs/get-started/installation" >}}) and [building your agent]({{< ref "docs/development/workflow_agent" >}}), you can test and execute your agent locally using a **Flink MiniCluster**. This allows you to have a lightweight Flink streaming environment without deploying to a full cluster.
-
-To run your job locally with the MiniCluster, use the following command:
-
-```bash
-python /path/to/flink_agents_job.py
-```
-
-For more details about how to integrate agents with Flink's `DataStream` or `Table`, please refer to the [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) documentation.
-
-## Run in Flink Cluster
+## Run in Flink
 
 ### Prerequisites
 
@@ -137,27 +124,9 @@ Follow the [instructions]({{< ref "docs/get-started/installation" >}}) to instal
 Submitting Flink Agent jobs to the Flink Cluster is the same as submitting PyFlink jobs. For more details on all available options, please refer to the [Flink CLI documentation](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/cli/#submitting-pyflink-jobs).
 
 ```bash
-# Run Flink Python Job
-# ------------------------------------------------------------------------
-# 1. Path Note:
-#    Replace "./flink-1.20.3" with the actual Flink installation directory.
-#
-# 2. Python Entry File:
-#    The "--python" parameter specifies the Python script to be executed.
-#    Replace "/path/to/flink_agents_job.py" with the full path to your job file.
-#
-# 3. JobManager Address:
-#    Replace "<jobmanagerHost>" with the hostname or IP address of the Flink JobManager.
-#    The default REST port is 8081.
-#
-# 4. Example:
-#    ./flink-1.20.3/bin/flink run \
-#        --jobmanager localhost:8081 \
-#        --python /home/user/flink_jobs/flink_agents_job.py
-# ------------------------------------------------------------------------
-./flink-1.20.3/bin/flink run \
-      --jobmanager <jobmanagerHost>:8081 \
-      --python /path/to/flink_agents_job.py
+<FLINK_HOME>/bin/flink run \
+      --jobmanager <FLINK_CLUSTER_ADDR> \
+      --python <PATH_TO_YOUR_FLINK_AGENTS_JOB>
 ```
 
 Now you should see a Flink job submitted to the Flink Cluster in Flink web UI (typically accessible at http://&lt;jobmanagerHost&gt;:8081).
