@@ -12,3 +12,4 @@ python/uv.lock
 python/.DS_Store
 __pycache__
 **/dependency-reduced-pom.xml
+/tools/releasing/release/

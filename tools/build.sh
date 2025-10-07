@@ -37,7 +37,8 @@ PROJECT_ROOT="${BASE_DIR}/../"
 
 # build java
 if $build_java; then
-    mvn clean package -DskipTests
+    mvn --version
+    mvn clean package -DskipTests -B
 fi
 
 # copy flink-agents-dist jar to python lib
