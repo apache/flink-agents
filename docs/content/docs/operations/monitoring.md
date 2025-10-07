@@ -26,14 +26,16 @@ under the License.
 
 ### Built-in Metrics
 
-We offer data monitoring for built-in metrics, which includes events and actions. Events provide general-level metrics, while actions deliver both general-level and type-specific data metrics.
+We offer data monitoring for built-in metrics, which includes events and actions. 
 
-| Component Type                  | Count                        | Meter                          |
-|-------------------------------|------------------------------|--------------------------------|
-| Agent (Operator Builtin)      | NumOfInput<br>NumOfOutput    | NumOfInputPerSec<br>NumOfOutputPerSec |
-| Event                         | numOfEventProcessed          | numOfEventProcessedPerSec      |
-| Action                        | numOfActionsExecuted         | numOfActionsExecutedPerSec     |
-| Pre-Action                    | numOfActionsExecuted         | numOfActionsExecutedPerSec     |
+| Scope        | Metrics                                          | Description                                                                      | Type  |
+|--------------|--------------------------------------------------|----------------------------------------------------------------------------------|-------|
+| **Operator** | numOfEventProcessed                              | The total number of Events this operator has processed.                          | Count |
+| **Operator** | numOfEventProcessedPerSec                        | The number of Events this operator has processed per second.                     | Meter |
+| **Operator** | numOfActionsExecuted                             | The total number of actions this operator has executed.                          | Count |
+| **Operator** | numOfActionsExecutedPerSec                       | The number of actions this operator has executed per second.                     | Meter |
+| **Action**   | <action_name>.numOfActionsExecuted | The total number of actions this operator has executed for a specific action name. | Count |
+| **Action**   | <action_name>.numOfActionsExecutedPerSec | The number of actions this operator has executed per second for a specific action name. | Meter |
 
 #### 
 
@@ -43,15 +45,15 @@ In Flink Agents, users implement their logic by defining custom Actions that res
 
 Here is the user case example:
 
-``````python
+```python
 class MyAgent(Agent):
     @action(InputEvent)
     @staticmethod
     def first_action(event: Event, ctx: RunnerContext):  # noqa D102
         start_time = time.time_ns()
-        input = event.input
-        content = input.get_review() + " first action."
-        ctx.send_event(MyEvent(value=content))
+
+        # the action logic
+        ...
 
         # Access the main agent metric group
         metrics = ctx.agent_metric_group
@@ -64,33 +66,13 @@ class MyAgent(Agent):
         action_metrics = ctx.action_metric_group
         action_metrics.get_histogram("actionLatencyMs") \
             .update(int(time.time_ns() - start_time) // 1000000)
-
-    @action(MyEvent)
-    @staticmethod
-    def second_action(event: Event, ctx: RunnerContext):  # noqa D102
-        input = event.value
-        content = input + " second action."
-        ctx.send_event(OutputEvent(output=content))
-
-        # Access the main agent metric group
-        metrics = ctx.agent_metric_group
-
-        # Update global metrics
-        metrics.get_counter("numMyEvent").inc()
-        metrics.get_meter("numMyEventPerSecond").mark()
-
-        # Creating and tracking metrics for MyEvent using submetric group
-        if isinstance(event, MyEvent):
-            sub_metrics = metrics.action_metric_group
-            sub_metrics.get_counter("numEvent").inc()
-            sub_metrics.get_meter("numEventPerSecond").mark()
-``````
-
-
+```
 
 ### How to check the metrics with Flink executor
 
-We can check the metric result in the WebUI of Flink Job:
+Flink agents allow reporting metrics to external systems. Please refer to [Flink Metric Reporters](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/) for more details.
+
+Additionally, we can check the metric results in the Flink Job WebUI:
 
 {{< img src="/fig/operations/metricwebui.png" alt="Metric Web UI" >}}
 
