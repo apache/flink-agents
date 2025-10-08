@@ -31,7 +31,7 @@ under the License.
     <name>Flink Agents : </name>
     <!-- TODO: build website and update url -->
     <url>https://flink.apache.org</url>
-    <version>0.1-SNAPSHOT</version>
+    <version>0.2-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <properties>

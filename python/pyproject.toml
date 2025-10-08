@@ -25,7 +25,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flink-agents"
-version = "0.1.dev0"
+version = "0.2.dev0"
 
 description = "Flink Agents Python API"
 license-files = ["LICENSE"]
