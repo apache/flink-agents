@@ -30,84 +30,185 @@ The sections below show how to install the required dependencies.
 {{< hint warning >}}
 __NOTE:__ To run on flink cluster, Flink-Agents requires flink version be a stable release of Flink 1.20.3.
 {{< /hint >}}
-## Install the Official Release
 
-#### Install Python Packages
+## Install Apache Flink
+
+Before installing Flink Agents, you need to have Apache Flink 1.20.3 installed.
+
+Download and extract Flink 1.20.3:
+
+```shell
+# Download Flink 1.20.3: https://www.apache.org/dyn/closer.lua/flink/flink-1.20.3/flink-1.20.3-bin-scala_2.12.tgz
+curl -LO https://archive.apache.org/dist/flink/flink-1.20.3/flink-1.20.3-bin-scala_2.12.tgz
+
+# Extract the archive
+tar -xzf flink-1.20.3-bin-scala_2.12.tgz
+
+# Set FLINK_HOME environment variable
+export FLINK_HOME=$(pwd)/flink-1.20.3
+
+# Copy the flink-python JAR from opt to lib (required for PyFlink)
+cp $FLINK_HOME/opt/flink-python-1.20.3.jar $FLINK_HOME/lib/
+```
+
+{{< hint info >}}
+**Note:** For more detailed Flink installation instructions, refer to the [Flink local installation guide](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/try-flink/local_installation/).
+{{< /hint >}}
+
+## Install Flink Agents
+
+### Prerequisites
+
+* Python 3.10 or 3.11
+* For building from source, you also need:
+  - Unix-like environment (Linux, Mac OS X, Cygwin, or WSL)
+  - Git
+  - Maven 3
+  - Java 11
+
+### Set Up Python Environment (Recommended)
+
+We recommend using a Python virtual environment to isolate Flink Agents dependencies from your system Python packages.
+
+**Create a virtual environment:**
+
+Using `venv` (built-in with Python 3):
+```shell
+# Create a virtual environment in a directory named 'venv'
+python3 -m venv venv
+
+# Activate the virtual environment
+# On Linux/macOS:
+source venv/bin/activate
+# On Windows:
+# venv\Scripts\activate
+```
+
+{{< hint info >}}
+**Note:** If `python3` command is not found, try `python` instead. Some systems alias `python` to Python 3.
+{{< /hint >}}
+
+**To deactivate when you're done:**
+```shell
+deactivate
+```
+
+### Install Flink Agents Package
+
+Choose one of the following installation methods:
+
+#### From Official Release
 
 {{< hint warning >}}
 __Note:__ This will be available after Flink Agents is released.
 {{< /hint >}}
 
-We recommand creating a Python virtual environment to install the Flink Agents Python library.
-
-To install the latest Flink Agents release, run:
+Install Flink Agents using pip:
 
 ```shell
-python -m pip install flink-agents
+pip install flink-agents
 ```
 
-#### Install Java Package
-To run java job on a Flink cluster, ensure the Flink Agents Java JARs are placed in the Flink lib directory:
+#### From Source
 
-<!-- TODO: fill in the command after Flink Agents is released -->
-```shell
-# Download the Flink Agents released flink-agents-dist jar.
-
-# After downloading the bundle jar, copy it to Flink's lib directory.
-cp flink-agents-dist-$VERSION.jar $FLINK_HOME/lib/
-```
-
-
-## Build and Install from Source
-
-Prerequisites for building Flink Agents:
-
-* Unix-like environment (we use Linux, Mac OS X, Cygwin, WSL)
-* Git
-* Maven
-* Java 11
-* Python 3.10 or 3.11
-
-To clone from Git, run:
+**Clone the repository:**
 
 ```shell
 git clone https://github.com/apache/flink-agents.git
+cd flink-agents
 ```
 
-### Build
-To run on a Flink cluster, we need build the whole project.
+**Build and install:**
 
-We provide a script to run:
+Run the build script to build both Java and Python components:
 
 ```shell
-cd flink-agents
 ./tools/build.sh
 ```
 
-### Install Flink Agents to Flink
+This script will:
+- Build all Java modules using Maven
+- Build the Python package
+- Install the Python package into your current Python environment
+- Package the distribution JAR with all dependencies
+
+{{< hint info >}}
+**Note:** If you activated a virtual environment earlier, the Python package will be installed into that virtual environment. Otherwise, it will be installed into your system Python environment.
+{{< /hint >}}
+
+After building:
+- The Python package is installed and ready to use
+- The distribution JAR is located at: `dist/target/flink-agents-dist-*.jar`
 
 
-To install the Java dependencies to Flink, run:
+## Deploy to Flink Cluster
 
+After installing Flink Agents package, you need to deploy it to your Flink cluster so that Flink can run your agent jobs.
+
+### Configure PYTHONPATH
+
+Flink runs in its own JVM process and needs the `PYTHONPATH` environment variable to locate the flink-agents Python package. You need to set `PYTHONPATH` to the directory where flink-agents is installed.
+
+**Determine your Python package installation path:**
+
+The path depends on your Python environment setup:
+- If using a virtual environment, it's the site-packages directory within your venv
+- If using system Python, it's the system site-packages directory
+
+**Tip:** You can use this command to help find the path:
 ```shell
-cd flink-agents
-# copy the Flink Agents JARs to Flink's lib directory
-cp dist/target/flink-agents-dist-0.1-SNAPSHOT.jar $FLINK_HOME/lib/
+python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])'
 ```
 
-To install the Python package, just set the `PYTHONPATH` environment variable.
+**Set PYTHONPATH before starting Flink:**
 
-User can set the system environment variable once.
 ```shell
-vi ~/.bash_profile # or ~/.bashrc, ~/.zprofile, depends on your os
-# Append the below line to the file
+# Set PYTHONPATH to your Python site-packages directory
+
 export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-source ~/.bash_profile
 ```
-Here, the command `python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])` is to get the python path in current environment. It should be the python path which installed flink-agents.
 
-Or, if the user have multiple `PYTHONPATH` and don't want to set a system environment variable, they can export the `PYTHONPATH` before start flink cluster and submit flink job. See [deployment]({{< ref "docs/operations/deployment" >}}) for more details.
+{{< hint info >}}
+**Note:** You can add the `export PYTHONPATH=...` line to your shell profile (`~/.bash_profile`, `~/.bashrc`, `~/.zprofile`, or `~/.zshrc`) to set it permanently. This way, it will be automatically configured in all future terminal sessions.
+{{< /hint >}}
+
+### Install Flink Agents Java Library
+
+Copy the Flink Agents distribution JAR to your Flink installation's `lib` directory:
+
+{{< tabs "Install Flink Agents Java Library" >}}
+
+{{< tab "From Official Release" >}}
+The Flink Agents JAR is bundled inside the Python package. Use the PYTHONPATH you configured above to locate and copy it:
+
 ```shell
-export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-# start cluster or submit job
+# Copy the JAR from the Python package to Flink's lib directory
+cp $PYTHONPATH/flink_agents/lib/flink-agents-dist-*.jar $FLINK_HOME/lib/
 ```
+
+{{< /tab >}}
+
+{{< tab "From Source" >}}
+After building from source, the distribution JAR is located in the `dist/target/` directory:
+
+```shell
+# Copy the JAR to Flink's lib directory
+cp dist/target/flink-agents-dist-*.jar $FLINK_HOME/lib/
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+### Start Flink Cluster or Submit Job
+
+Once the Java library is installed and PYTHONPATH is configured, you can start your Flink cluster or submit jobs:
+
+```shell
+# Start your Flink cluster
+$FLINK_HOME/bin/start-cluster.sh
+
+# Or submit your job directly
+$FLINK_HOME/bin/flink run -py /path/to/your/job.py
+```
+
+See [deployment]({{< ref "docs/operations/deployment" >}}) for more details on running Flink Agents jobs.
