@@ -56,9 +56,7 @@ pygmentsUseClasses = true
     ["Project Homepage", "//flink.apache.org"],
   ]
 
-  PreviousDocs = [
-    ["0.1", "http://nightlies.apache.org/flink/flink-agents-docs-release-0.1"],
-  ]
+  PreviousDocs = []
 
 [markup]
 [markup.goldmark.renderer]
