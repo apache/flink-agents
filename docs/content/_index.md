@@ -27,8 +27,8 @@ under the License.
 {{< columns >}}
 ## Try Flink Agents
 
-If you’re interested in playing around with Flink Agents, check out our [example codes]({{< ref "docs/get-started/installation" >}}). 
-It provides a step by step introduction to the APIs and guides you through real applications.
+If you’re interested in playing around with Flink Agents, check out our [get started documentation]({{< ref "docs/get-started/overview" >}}). 
+It provides a step by step introduction on how to install Flink Agents and build agents with it.
 
 <--->
 
@@ -38,7 +38,9 @@ If you have questions or need support, don't hesitate to ask! We welcome you to 
 
 ### Slack
 
-See the [Apache Flink website](https://flink.apache.org/what-is-flink/community/#slack) for how to join the slack workspace. We use [#flink-agents-dev](https://apache-flink.slack.com/archives/C097QF5HG8J) for developement related discussions.
+See the [Apache Flink website](https://flink.apache.org/what-is-flink/community/#slack) for how to join the slack workspace.
+- [#flink-agents-user](https://apache-flink.slack.com/archives/C09KP5YUWE8) is for user-facing discussions and trouble-shootings.
+- [#flink-agents-dev](https://apache-flink.slack.com/archives/C097QF5HG8J) is for developement related discussions.
 
 ### Community Sync
 
