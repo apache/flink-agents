@@ -84,7 +84,7 @@ bash -x tools/build.sh -p
 
 ### Slack
 
-See the [Apache Flink website](https://flink.apache.org/what-is-flink/community/#slack) for how to join the slack workspace. We use [#flink-agents-dev](https://apache-flink.slack.com/archives/C097QF5HG8J) for developement related discussions.
+See the [Apache Flink website](https://flink.apache.org/what-is-flink/community/#slack) for how to join the slack workspace. We use [#flink-agents-user](https://apache-flink.slack.com/archives/C09KP5YUWE8) for user-facing discussions and trouble-shootings, and [#flink-agents-dev](https://apache-flink.slack.com/archives/C097QF5HG8J) for developement related discussions.
 
 ### Community Sync
 
