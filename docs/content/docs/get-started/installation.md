@@ -137,7 +137,7 @@ curl -LO https://archive.apache.org/dist/flink/flink-agents-0.1.0/flink-agents-0
 
 # Extract the archive
 tar -xzf flink-agents-0.1.0-src.tgz
-cd flink-agents-0.1.0
+cd flink-agents-0.1.0-src
 ```
 {{< /tab >}}
 
