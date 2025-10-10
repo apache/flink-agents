@@ -218,31 +218,15 @@ reviewAnalysisResStream.print();
 
 ### Preparation
 
-#### Prepare Flink
+#### Prepare Flink and Flink Agents
 
-Download a stable release of Flink 1.20.3, then extract the archive:
+Follow the [installation]({{< ref "docs/get-started/installation" >}}) instructions to setup Flink and the Flink Agents.
 
-```bash
-curl -LO https://archive.apache.org/dist/flink/flink-1.20.3/flink-1.20.3-bin-scala_2.12.tgz
-tar -xzf flink-1.20.3-bin-scala_2.12.tgz
+#### Clone the Flink Agents Repository (if not done already)
 
-# Copy the flink-python jar from opt to lib
-cp ./flink-1.20.3/opt/flink-python-1.20.3.jar ./flink-1.20.3/lib
-```
-You can refer to the [local installation](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/try-flink/local_installation/) instructions for more detailed step.
-
-
-#### Prepare Flink Agents
-
-We recommend creating a Python virtual environment to install the Flink Agents Python library.
-
-Follow the [installation]({{< ref "docs/get-started/installation" >}}) instructions to install the Flink Agents Python and Java libraries.
-
-#### Clone the Flink Agents repo
-
-Clone the Flink Agents repo to get quickstart example code.
 ```bash
 git clone https://github.com/apache/flink-agents.git
+cd flink-agents
 ```
 
 #### Deploy a Standalone Flink Cluster
