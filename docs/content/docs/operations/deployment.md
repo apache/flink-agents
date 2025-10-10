@@ -153,3 +153,29 @@ Currently, to resolve the classloader issue, user should place the Flink Agents 
 
 
 Now you should see a Flink job submitted to the Flink Cluster in Flink web UI (typically accessible at http://&lt;jobmanagerHost&gt;:8081).
+
+
+## Consistency Guarantees
+
+Flink Agents leverage Flink’s checkpointing to provide **exactly-once consistency**. Exactly-once consistency does not mean each event is processed only once; it means that every event will affect the state being managed by Flink exactly once. This is sufficient for typical data-processing use cases where there are no external side effects.
+
+However, actions in Flink Agents can also trigger external side effects (for example, sending an email or invoking an external API). These side effects should not be executed more than once. To address this, Flink Agents support **exactly-once action consistency** using an external action state store.
+
+### Exactly-Once Consistency
+
+When a job runs on a Flink cluster, Flink periodically takes checkpoints. See [Flink Checkpointing](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/checkpoints/) for details.  
+After recovery from a checkpoint, Flink Agents reprocess events that arrived after that checkpoint. As a result, any actions triggered by those events may be executed again.
+
+### Exactly-Once Action Consistency
+
+To ensure exactly-once action consistency, you must configure an external action state store. Flink Agents record action state in this store on a per-action basis. After recovering from a checkpoint, Flink Agents consult the external store and will not re-execute actions that were already completed. This guarantees each action is executed exactly once after recovering from a checkpoint.
+
+{{< hint info >}}
+**Note**: Currently, Kafka is supported as the external action state store.
+{{< /hint >}}
+
+See [Action State Store Configuration]({{< ref "docs/operations/configuration#action-state-store" >}}) for configuration options.
+
+{{< hint info >}}
+**Note**: Exactly-once action consistency is guaranteed only if, after recovering from the same checkpoint, inputs for each key arrive in the same order as before recovery. If this ordering requirement is not met, the system falls back to exactly-once state consistency.
+{{< /hint >}}

@@ -299,11 +299,11 @@ VectorStore built-in configuration options work only with the VectorStore define
 | ChromaVectorStore.collection             | "flink_agents_chroma_collection"       | String   | Name of the ChromaDB collection to use.                                     |
 | ChromaVectorStore.create_collection_if_not_exists | true                             | Boolean  | Whether to create the collection if it doesn't exist.                       |
 
-### State Store
+### Action State Store
 
-#### Kafka-based State Store
+#### Kafka-based Action State Store
 
-Here is the configuration options for Kafka-based State Store.
+Here are the configuration options for Kafka-based Action State Store.
 
 | Key                                 | Default                  | Type    | Description                                                                 |
 |-------------------------------------|--------------------------|---------|-----------------------------------------------------------------------------|
