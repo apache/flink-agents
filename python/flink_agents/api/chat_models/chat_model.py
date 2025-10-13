@@ -22,7 +22,7 @@ from typing import Any, ClassVar, Dict, List, Sequence, Tuple
 from pydantic import Field
 from typing_extensions import override
 
-from flink_agents.api.chat_message import ChatMessage
+from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.tools.tool import Tool
@@ -190,7 +190,7 @@ class BaseChatModelSetup(Resource):
 
             # append meaningful messages
             for msg in messages:
-                if msg.content is not None and msg.content != "":
+                if (msg.content is not None and msg.content != "") or msg.role == MessageRole.ASSISTANT:
                     prompt_messages.append(msg)
             messages = prompt_messages
         # Bind tools
