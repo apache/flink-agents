@@ -31,6 +31,7 @@ jobs:
       matrix:
         branch:
           - main
+          - release-0.1
 
     steps:
       - uses: actions/checkout@v3
@@ -44,7 +45,9 @@ jobs:
           echo "flink_branch=${currentBranch}" >> ${GITHUB_ENV}
           
           if [ "${currentBranch}" = "main" ]; then
-          echo "flink_alias=release-0.1" >> ${GITHUB_ENV}
+            echo "flink_alias=release-0.2" >> ${GITHUB_ENV}
+          elif [ "${currentBranch}" = "release-0.1" ]; then
+            echo "flink_alias=latest" >> ${GITHUB_ENV}
           fi
 
       - name: Build documentation

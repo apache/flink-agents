@@ -30,19 +30,19 @@ Chat models enable agents to communicate with Large Language Models (LLMs) for n
 
 ## Getting Started
 
-To use chat models in your agents, you need to define both a connection and setup using decorators, then interact with the model through events.
+To use chat models in your agents, you need to define both a connection and setup using decorators/annotations, then interact with the model through events.
 
-### Resource Decorators
+### Resource Declaration
 
-Flink Agents provides decorators to simplify chat model setup within agents:
+Flink Agents provides decorators in python and annotations in java to simplify chat model setup within agents:
 
-#### @chat_model_connection
+#### @chat_model_connection/@ChatModelConnection
 
-The `@chat_model_connection` decorator marks a method that creates a chat model connection. This is typically defined once and shared across multiple chat model setups.
+The `@chat_model_connection` decorator or `@ChatModelConnection` annotation marks a method that creates a chat model connection. This is typically defined once and shared across multiple chat model setups.
 
-#### @chat_model_setup
+#### @chat_model_setup/@ChatModelSetup
 
-The `@chat_model_setup` decorator marks a method that creates a chat model setup. This references a connection and adds chat-specific configuration like prompts and tools.
+The `@chat_model_setup` decorator or `@ChatModelSetup` annotation marks a method that creates a chat model setup. This references a connection and adds chat-specific configuration like prompts and tools.
 
 ### Chat Events
 
@@ -55,6 +55,9 @@ Chat models communicate through built-in events:
 
 Here's how to define and use chat models in a workflow agent:
 
+{{< tabs "Usage Example" >}}
+
+{{< tab "Python" >}}
 ```python
 class MyAgent(Agent):
 
@@ -96,12 +99,56 @@ class MyAgent(Agent):
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor ollamaConnection() {
+        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
+                .addInitialArgument("endpoint", "http://localhost:11434")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor ollamaChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+                .addInitialArgument("connection", "ollamaConnection")
+                .addInitialArgument("model", "qwen3:8b")
+                .build();
+    }
+
+    @Action(listenEvents = {InputEvent.class})
+    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+        ChatMessage userMessage =
+                new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
+        ctx.sendEvent(new ChatRequestEvent("ollamaChatModel", List.of(userMessage)));
+    }
+
+    @Action(listenEvents = {ChatResponseEvent.class})
+    public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
+            throws Exception {
+        String response = event.getResponse().getContent();
+        // Handle the LLM's response
+        // Process the response as needed for your use case
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
 
 ## Built-in Providers
 
 ### Anthropic
 
 Anthropic provides cloud-based chat models featuring the Claude family, known for their strong reasoning, coding, and safety capabilities.
+
+{{< hint warning >}}
+Anthropic is only supported in python currently.
+{{< /hint >}}
 
 #### Prerequisites
 
@@ -182,12 +229,33 @@ Ollama provides local chat models that run on your machine, offering privacy, co
 
 #### OllamaChatModelConnection Parameters
 
+{{< tabs "OllamaChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `base_url` | str | `"http://localhost:11434"` | Ollama server URL |
 | `request_timeout` | float | `30.0` | HTTP request timeout in seconds |
 
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter        | Type   | Default                    | Description |
+|------------------|--------|----------------------------|-------------|
+| `endpoint`       | String | `"http://localhost:11434"` | Ollama server URL |
+| `requestTimeout` | long   | `10`                       | HTTP request timeout in seconds |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 #### OllamaChatModelSetup Parameters
+
+{{< tabs "OllamaChatModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -200,9 +268,25 @@ Ollama provides local chat models that run on your machine, offering privacy, co
 | `keep_alive` | str \| float | `"5m"` | How long to keep model loaded in memory |
 | `extract_reasoning` | bool | `True` | Extract reasoning content from response |
 | `additional_kwargs` | dict | `{}` | Additional Ollama API parameters |
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type             | Default | Description |
+|-----------|------------------|---------|-------------|
+| `connection` | String           | Required | Reference to connection method name |
+| `model` | String           | Required | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List[String]     | None | List of tool names available to the model |
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### Usage Example
 
+{{< tabs "Ollama Usage Example" >}}
+
+{{< tab "Python" >}}
 ```python
 class MyAgent(Agent):
 
@@ -230,6 +314,34 @@ class MyAgent(Agent):
 
     ...
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor ollamaConnection() {
+        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
+                .addInitialArgument("endpoint", "http://localhost:11434")
+                .addInitialArgument("requestTimeout", 120)
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor ollamaChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+                .addInitialArgument("connection", "ollamaConnection")
+                .addInitialArgument("model", "qwen3:8b")
+                .build();
+    }
+    
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
 
 #### Available Models
 
@@ -248,6 +360,10 @@ Model availability and specifications may change. Always check the official Olla
 ### OpenAI
 
 OpenAI provides cloud-based chat models with state-of-the-art performance for a wide range of natural language tasks.
+
+{{< hint warning >}}
+OpenAI is only supported in python currently.
+{{< /hint >}}
 
 #### Prerequisites
 
@@ -328,6 +444,10 @@ Model availability and specifications may change. Always check the official Open
 
 Tongyi provides cloud-based chat models from Alibaba Cloud, offering powerful Chinese and English language capabilities.
 
+{{< hint warning >}}
+Tongyi is only supported in python currently.
+{{< /hint >}}
+
 #### Prerequisites
 
 1. Get an API key from [Alibaba Cloud DashScope](https://dashscope.aliyun.com/)
@@ -405,6 +525,9 @@ If you want to use chat models not offered by the built-in providers, you can ex
 
 Handles the connection to chat model services and provides the core chat functionality.
 
+{{< tabs "Custom BaseChatModelConnection" >}}
+
+{{< tab "Python" >}}
 ```python
 class MyChatModelConnection(BaseChatModelConnection):
 
@@ -421,11 +544,50 @@ class MyChatModelConnection(BaseChatModelConnection):
         # - Returns: ChatMessage with the model's response
         pass
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyChatModelConnection extends BaseChatModelConnection {
+
+    /**
+     * Creates a new chat model connection.
+     *
+     * @param descriptor a resource descriptor contains the initial parameters
+     * @param getResource a function to resolve resources (e.g., tools) by name and type
+     */
+    public MyChatModelConnection(
+            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
+        super(descriptor, getResource);
+        // get custom arguments from descriptor
+        String endpoint = descriptor.getArgument("endpoint");
+        ...
+    }
+    
+
+    @Override
+    public ChatMessage chat(
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
+        // Core method: send messages to LLM and return response
+        // - messages: Input message sequence
+        // - tools: Optional list of tools available to the model
+        // - arguments: Additional parameters from ChatModelSetup
+        // - Returns: ChatMessage with the model's response
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
 
 ### BaseChatModelSetup
 
 The setup class acts as a high-level configuration interface that defines which connection to use and how to configure the chat model.
 
+{{< tabs "Prepare Agents Execution Environment" >}}
+
+{{< tab "Python" >}}
 ```python
 class MyChatModelSetup(BaseChatModelSetup):
     # Add your custom configuration fields here
@@ -436,3 +598,25 @@ class MyChatModelSetup(BaseChatModelSetup):
         # This dictionary is passed as **kwargs to the chat() method
         return {"model": self.model, "temperature": 0.7, ...}
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyChatModelSetup extends BaseChatModelSetup {
+    // Add your custom configuration fields here
+    
+    @Override
+    public Map<String, Object> getParameters() {
+        Map<String, Object> params = new HashMap<>();
+        params.put("model", model);
+        ...
+        // Return model-specific configuration passed to chat()
+        // This dictionary is passed as arguments to the chat() method
+        return params;
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+

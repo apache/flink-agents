@@ -36,10 +36,11 @@ import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTime
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
+import static org.apache.flink.agents.examples.WorkflowSingleAgentExample.copyResource;
 import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.ProductReviewAnalysisRes;
 import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.ProductReviewSummary;
 import static org.apache.flink.streaming.api.windowing.time.Time.minutes;
@@ -131,23 +132,18 @@ public class WorkflowMultipleAgentExample {
         // Add Ollama chat model connection to be used by the ReviewAnalysisAgent
         // and ProductSuggestionAgent.
         agentsEnv.addResource(
-                "ollama_server",
-                ResourceType.CHAT_MODEL,
+                "ollamaChatModelConnection",
+                ResourceType.CHAT_MODEL_CONNECTION,
                 CustomTypesAndResources.OLLAMA_SERVER_DESCRIPTOR);
 
         // Read product reviews from input_data.txt file as a streaming source.
         // Each element represents a ProductReview.
+        File inputDataFile = copyResource("input_data.txt");
         DataStream<String> productReviewStream =
                 env.fromSource(
                         FileSource.forRecordStreamFormat(
                                         new TextLineInputFormat(),
-                                        new Path(
-                                                Objects.requireNonNull(
-                                                                WorkflowSingleAgentExample.class
-                                                                        .getClassLoader()
-                                                                        .getResource(
-                                                                                "input_data.txt"))
-                                                        .getPath()))
+                                        new Path(inputDataFile.getAbsolutePath()))
                                 .build(),
                         WatermarkStrategy.noWatermarks(),
                         "streaming-agent-example");

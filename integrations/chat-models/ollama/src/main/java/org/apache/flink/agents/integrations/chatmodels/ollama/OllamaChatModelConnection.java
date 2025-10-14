@@ -68,6 +68,7 @@ import java.util.stream.Collectors;
 public class OllamaChatModelConnection extends BaseChatModelConnection {
     private final OllamaAPI client;
     private final Pattern pattern;
+
     /**
      * Creates a new ollama chat model connection.
      *
@@ -86,6 +87,8 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         Integer maxChatToolCallRetries = descriptor.getArgument("maxChatToolCallRetries");
         this.client.setMaxChatToolCallRetries(
                 maxChatToolCallRetries != null ? maxChatToolCallRetries : 10);
+        Integer requestTimeout = descriptor.getArgument("requestTimeout");
+        this.client.setRequestTimeoutSeconds(requestTimeout != null ? requestTimeout : 10);
         this.pattern = Pattern.compile("<think>(.*?)</think>", Pattern.DOTALL);
     }
 

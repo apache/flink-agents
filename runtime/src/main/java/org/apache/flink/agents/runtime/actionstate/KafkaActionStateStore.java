@@ -336,8 +336,8 @@ public class KafkaActionStateStore implements ActionStateStore {
     private Properties createProducerProp() {
         Properties producerProps = new Properties();
         producerProps.putAll(createCommonKafkaConfig());
-        producerProps.put(KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        producerProps.put(VALUE_SERIALIZER_CLASS_CONFIG, ActionStateKafkaSeder.class.getName());
+        producerProps.put(KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        producerProps.put(VALUE_SERIALIZER_CLASS_CONFIG, ActionStateKafkaSeder.class);
         producerProps.put(ProducerConfig.ACKS_CONFIG, "all");
         producerProps.put(
                 PARTITIONER_CLASS_CONFIG,

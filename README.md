@@ -2,6 +2,8 @@
 
 Apache Flink Agents is an Agentic AI framework based on Apache Flink.
 
+[User Documentation](https://nightlies.apache.org/flink/flink-agents-docs-main/)
+
 ## Building
 
 Prerequisites for building Flink Agents:
@@ -18,63 +20,14 @@ To clone from git, enter:
 git clone https://github.com/apache/flink-agents.git
 ```
 
-### Java Build
-
-To build Flink Agents Java part, run:
-
-```shell
-cd flink-agents
-mvn clean install -DskipTests
-```
-
-### Python Build
-
-#### Using uv (Recommended) — Build and Install
-
-```shell
-cd python
-
-# Install uv (fast Python package manager)
-pip install uv
-
-# Create env and install build dependencies
-uv sync --extra build
-
-# Build sdist and wheel into python/dist/
-uv run python -m build
-
-# Install the built wheel into the environment
-uv pip install dist/*.whl
-```
-
-
-#### Using pip (Alternative) — Build and Install
-
-```shell
-cd python
-
-# Install project (editable) with 'build' extra/tools
-pip install -e .[build]
-
-# Build sdist and wheel into python/dist/
-python -m build
-
-# Install the built wheel into the environment
-python -m pip install dist/*.whl
-```
-
-### Build Python with Flink-Agents jars
-
-This will also package flink-agents jars in wheel, which
-is necessary when run agent as pyflink job.
+We provide a script to build Flink-Agents from source
 
 ```shell
 # Build java and python
-bash -x tools/build.sh
-
-# Skip building java (must be built already)
-bash -x tools/build.sh -p
+./tools/build.sh
 ```
+
+This scrips will build both java and python part, and install the Flink-Agents dist jar to python wheel package.
 
 ## How to Contribute
 
@@ -84,7 +37,7 @@ bash -x tools/build.sh -p
 
 ### Slack
 
-See the [Apache Flink website](https://flink.apache.org/what-is-flink/community/#slack) for how to join the slack workspace. We use [#flink-agents-dev](https://apache-flink.slack.com/archives/C097QF5HG8J) for developement related discussions.
+See the [Apache Flink website](https://flink.apache.org/what-is-flink/community/#slack) for how to join the slack workspace. We use [#flink-agents-user](https://apache-flink.slack.com/archives/C09KP5YUWE8) for user-facing discussions and trouble-shootings, and [#flink-agents-dev](https://apache-flink.slack.com/archives/C097QF5HG8J) for developement related discussions.
 
 ### Community Sync
 

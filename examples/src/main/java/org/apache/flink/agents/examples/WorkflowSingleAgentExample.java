@@ -27,8 +27,14 @@ import org.apache.flink.connector.file.src.reader.TextLineInputFormat;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.util.FileUtils;
 
-import java.util.Objects;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 
 /**
  * Java example demonstrating a single workflow agent for product review analysis.
@@ -51,23 +57,18 @@ public class WorkflowSingleAgentExample {
 
         // Add Ollama chat model connection to be used by the ReviewAnalysisAgent.
         agentsEnv.addResource(
-                "ollama_server",
-                ResourceType.CHAT_MODEL,
+                "ollamaChatModelConnection",
+                ResourceType.CHAT_MODEL_CONNECTION,
                 CustomTypesAndResources.OLLAMA_SERVER_DESCRIPTOR);
 
         // Read product reviews from input_data.txt file as a streaming source.
         // Each element represents a ProductReview.
+        File inputDataFile = copyResource("input_data.txt");
         DataStream<String> productReviewStream =
                 env.fromSource(
                         FileSource.forRecordStreamFormat(
                                         new TextLineInputFormat(),
-                                        new Path(
-                                                Objects.requireNonNull(
-                                                                WorkflowSingleAgentExample.class
-                                                                        .getClassLoader()
-                                                                        .getResource(
-                                                                                "input_data.txt"))
-                                                        .getPath()))
+                                        new Path(inputDataFile.getAbsolutePath()))
                                 .build(),
                         WatermarkStrategy.noWatermarks(),
                         "streaming-agent-example");
@@ -84,5 +85,34 @@ public class WorkflowSingleAgentExample {
 
         // Execute the Flink pipeline.
         agentsEnv.execute();
+    }
+
+    public static File copyResource(String resourcePath) throws Exception {
+        try (InputStream inputStream =
+                ReActAgentExample.class.getClassLoader().getResourceAsStream(resourcePath)) {
+            if (inputStream == null) {
+                throw new FileNotFoundException(resourcePath + " not found");
+            }
+
+            String[] parts = resourcePath.split("/");
+            String filename = parts.length < 1 ? null : parts[parts.length - 1];
+            if (filename == null || filename.isEmpty()) {
+                throw new IllegalArgumentException("Invalid resource path: " + resourcePath);
+            }
+
+            File tmpDir =
+                    new File(
+                            System.getProperty("java.io.tmpdir"),
+                            "flink-agents-" + System.nanoTime());
+            if (!tmpDir.mkdirs()) {
+                throw new IOException("Cannot mkdirs: " + tmpDir.getAbsolutePath());
+            }
+            Runtime.getRuntime()
+                    .addShutdownHook(new Thread(() -> FileUtils.deleteDirectoryQuietly(tmpDir)));
+
+            File targetFile = new File(tmpDir, filename);
+            Files.copy(inputStream, targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            return targetFile;
+        }
     }
 }

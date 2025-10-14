@@ -27,14 +27,33 @@ Flink Agents is an Agentic AI framework based on Apache Flink. By integrate agen
 
 First of all, get the flink `StreamExecutionEnvironment` and flink-agents `AgentsExecutionEnvironment`.
 
+{{< tabs "Prepare Agents Execution Environment for DataStream" >}}
+
+{{< tab "Python" >}}
 ```python
 # Set up the Flink streaming environment and the Agents execution environment.
 env = StreamExecutionEnvironment.get_execution_environment()
 agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+// Set up the Flink streaming environment and the Agents execution environment.
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+AgentsExecutionEnvironment agentsEnv =
+        AgentsExecutionEnvironment.getExecutionEnvironment(env);
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
 
 Integrate the agent with input `DataStream`, and return the output `DataStream` can be consumed by downstream.
 
+{{< tabs "From/To DataStream" >}}
+
+{{< tab "Python" >}}
 ```python
 # create input datastream
 input_stream = env.from_source(...)
@@ -48,27 +67,72 @@ output_stream = (
     .to_datastream()
 )
 
-# comsume agent output datastream
+# consume agent output datastream
 output_stream.print()
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+// create input datastream
+DataStream<String> inputStream = env.fromSource(...);
+
+// integrate agent with input datastream, and return output datastream
+DataStream<Object> outputStream =
+        agentsEnv
+                .fromDataStream(inputStream, (KeySelector<YourPojo, String>) x::getId)
+                .apply(yourAgent)
+                .toDataStream();
+
+// consume agent output datastream
+outputStream.print();
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 The input `DataStream` must be `KeyedStream`, or user should provide `KeySelector` to tell how to convert the input `DataStream` to `KeyedStream`.
 
 ## From/To Flink Table API
 
 First of all, get the flink `StreamExecutionEnvironment`, `StreamTableEnvironment`, and flink-agents `AgentsExecutionEnvironment`.
+
+{{< tabs "Prepare Agents Execution Environment for Table" >}}
+
+{{< tab "Python" >}}
 ```python
 # Set up the Flink streaming environment and table environment
 env = StreamExecutionEnvironment.get_execution_environment()
 t_env = StreamTableEnvironment.create(stream_execution_environment=env)
 
-# Setup flink agnets execution environment
+# Setup flink agents execution environment
 agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env, t_env=t_env)
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+// Set up the Flink streaming environment and table environment
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+
+// Setup flink agents execution environment
+AgentsExecutionEnvironment agentsEnv =
+        AgentsExecutionEnvironment.getExecutionEnvironment(env, tableEnv);
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
 
 Integrate the agent with input `Table`, and return the output `Table` can be consumed by downstream.
 
+{{< tabs "From/To Table" >}}
+
+{{< tab "Python" >}}
 ```python
+input_table = t_env.from_elements(...)
+    
 output_type = ExternalTypeInfo(RowTypeInfo(
     [BasicTypeInfo.INT_TYPE_INFO()],
     ["result"],
@@ -82,8 +146,33 @@ output_table = (
     .to_table(schema=schema, output_type=output_type)
 )
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+Table inputTable = tableEnv.fromValues(...);
+
+// Here the output schema should always be a nested row, of which
+// the f0 column is the expected row.
+Schema outputSchema =
+        Schema.newBuilder()
+                .column("f0", DataTypes.ROW(DataTypes.FIELD("result", DataTypes.DOUBLE())))
+                .build();
+
+Table outputTable =
+        agentsEnv
+                .fromTable(
+                        inputTable,
+                        myKeySelector)
+                .apply(agent)
+                .toTable(outputSchema);
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
 
 User should provide `KeySelector` in `from_table()` to tell how to convert the input `Table` to `KeyedStream` internally. And provide `Schema` and `TypeInfomation` in `to_table()` to tell the output `Table` schema.
-{{< hint warning >}}
-__Note:__ Currently, user should provide both `Schema` and `TypeInformation` when call `to_table()`, we will support only provide one of them in the future.
+{{< hint info >}}
+Currently, user should provide both `Schema` and `TypeInformation` when call `to_table()`, we will support only provide one of them in the future.
 {{< /hint >}}

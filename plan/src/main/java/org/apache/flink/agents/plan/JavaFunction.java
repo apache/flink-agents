@@ -49,6 +49,7 @@ public class JavaFunction implements Function {
         this.qualName = qualName;
         this.methodName = methodName;
         this.parameterTypes = parameterTypes;
+        // TODO: support get method loaded by user code classloader.
         this.method = Class.forName(qualName).getMethod(methodName, parameterTypes);
     }
 

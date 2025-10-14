@@ -40,12 +40,18 @@ Local prompts are templates defined directly in your code. They support variable
 
 MCP (Model Context Protocol) prompts are managed by external MCP servers. They enable dynamic prompt retrieval, centralized prompt management, and integration with external prompt repositories.
 
+{{< hint warning >}}
+MCP Prompt is only supported in python currently.
+{{< /hint >}}
 ## Local Prompt
 
 ### Creating from Text
 
 The simplest way to create a prompt is from a text string using `Prompt.from_text()`:
 
+{{< tabs "Creating from Text" >}}
+
+{{< tab "Python" >}}
 ```python
 product_suggestion_prompt_str = """
 Based on the rating distribution and user dissatisfaction reasons, generate three actionable suggestions for product improvement.
@@ -72,6 +78,36 @@ input:
 
 product_suggestion_prompt = Prompt.from_text(product_suggestion_prompt_str)
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+// Prompt for product suggestion agent
+String PRODUCT_SUGGESTION_PROMPT_STR =
+        "Based on the rating distribution and user dissatisfaction reasons, generate three actionable suggestions for product improvement.\n\n"
+                + "Input format:\n"
+                + "{\n"
+                + "    \"id\": \"1\",\n"
+                + "    \"score_histogram\": [\"10%\", \"20%\", \"10%\", \"15%\", \"45%\"],\n"
+                + "    \"unsatisfied_reasons\": [\"reason1\", \"reason2\", \"reason3\"]\n"
+                + "}\n\n"
+                + "Ensure that your response can be parsed by Java JSON, use the following format as an example:\n"
+                + "{\n"
+                + "    \"suggestion_list\": [\n"
+                + "        \"suggestion1\",\n"
+                + "        \"suggestion2\",\n"
+                + "        \"suggestion3\"\n"
+                + "    ]\n"
+                + "}\n\n"
+                + "input:\n"
+                + "{input}";
+
+
+Prompt productSuggestionPrompt = new Prompt(PRODUCT_SUGGESTION_PROMPT_STR);
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 **Key points:**
 - Use `{variable_name}` for template variables that will be substituted at runtime
@@ -81,6 +117,9 @@ product_suggestion_prompt = Prompt.from_text(product_suggestion_prompt_str)
 
 For more control, create prompts from a sequence of `ChatMessage` objects using `Prompt.from_messages()`:
 
+{{< tabs "Creating from Messages" >}}
+
+{{< tab "Python" >}}
 ```python
 review_analysis_prompt = Prompt.from_messages(
     messages=[
@@ -114,6 +153,35 @@ review_analysis_prompt = Prompt.from_messages(
     ],
 )
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+Prompt reviewAnalysisPrompt =
+        new Prompt(
+                Arrays.asList(
+                        new ChatMessage(
+                                MessageRole.SYSTEM,
+                                "Analyze the user review and product information to determine a "
+                                        + "satisfaction score (1-5) and potential reasons for dissatisfaction.\n\n"
+                                        + "Example input format:\n"
+                                        + "{\n"
+                                        + "    \"id\": \"12345\",\n"
+                                        + "    \"review\": \"The headphones broke after one week of use. Very poor quality.\"\n"
+                                        + "}\n\n"
+                                        + "Ensure your response can be parsed by Java JSON, using this format as an example:\n"
+                                        + "{\n"
+                                        + " \"id\": \"12345\",\n"
+                                        + " \"score\": 1,\n"
+                                        + " \"reasons\": [\n"
+                                        + "   \"poor quality\"\n"
+                                        + "   ]\n"
+                                        + "}"),
+                        new ChatMessage(MessageRole.USER, "\"input\":\n" + "{input}")));
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 **Key points:**
 - Define multiple messages with different roles (SYSTEM, USER)
@@ -121,8 +189,11 @@ review_analysis_prompt = Prompt.from_messages(
 
 ### Using Prompts in Agents
 
-Register a prompt as an agent resource using the `@prompt` decorator:
+Register a prompt as an agent resource using the `@prompt` decorator in python (or `@Prompt` annotation in java):
 
+{{< tabs "Using Prompts in Agents" >}}
+
+{{< tab "Python" >}}
 ```python
 class ReviewAnalysisAgent(Agent):
 
@@ -188,6 +259,73 @@ class ReviewAnalysisAgent(Agent):
         msg = ChatMessage(role=MessageRole.USER, extra_args={"input": content})
         ctx.send_event(ChatRequestEvent(model="review_analysis_model", messages=[msg]))
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class ReviewAnalysisAgent extends Agent {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    @Prompt
+    public static org.apache.flink.agents.api.prompt.Prompt reviewAnalysisPrompt() {
+        return new org.apache.flink.agents.api.prompt.Prompt(
+                Arrays.asList(
+                        new ChatMessage(
+                                MessageRole.SYSTEM,
+                                "Analyze the user review and product information to determine a "
+                                        + "satisfaction score (1-5) and potential reasons for dissatisfaction.\n\n"
+                                        + "Example input format:\n"
+                                        + "{\n"
+                                        + "    \"id\": \"12345\",\n"
+                                        + "    \"review\": \"The headphones broke after one week of use. Very poor quality.\"\n"
+                                        + "}\n\n"
+                                        + "Ensure your response can be parsed by Java JSON, using this format as an example:\n"
+                                        + "{\n"
+                                        + " \"id\": \"12345\",\n"
+                                        + " \"score\": 1,\n"
+                                        + " \"reasons\": [\n"
+                                        + "   \"poor quality\"\n"
+                                        + "   ]\n"
+                                        + "}"),
+                        new ChatMessage(MessageRole.USER, "\"input\":\n" + "{input}")));
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor reviewAnalysisModel() {
+        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+                .addInitialArgument("connection", "ollamaChatModelConnection")
+                .addInitialArgument("model", "qwen3:8b")
+                .addInitialArgument("prompt", "reviewAnalysisPrompt")
+                .addInitialArgument("tools", Collections.singletonList("notifyShippingManager"))
+                .addInitialArgument("extract_reasoning", "true")
+                .build();
+    }
+
+    /** Process input event and send chat request for review analysis. */
+    @Action(listenEvents = {InputEvent.class})
+    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+        String input = (String) event.getInput();
+        MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        CustomTypesAndResources.ProductReview inputObj =
+                MAPPER.readValue(input, CustomTypesAndResources.ProductReview.class);
+
+        ctx.getShortTermMemory().set("id", inputObj.getId());
+
+        String content =
+                String.format(
+                        "{\n" + "\"id\": %s,\n" + "\"review\": \"%s\"\n" + "}",
+                        inputObj.getId(), inputObj.getReview());
+        ChatMessage msg = new ChatMessage(MessageRole.USER, "", Map.of("input", content));
+
+        ctx.sendEvent(new ChatRequestEvent("reviewAnalysisModel", List.of(msg)));
+    }
+}
+
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 Prompts use `{variable_name}` syntax for template variables. Variables are filled from `ChatMessage.extra_args`. The prompt is automatically applied when the chat model is invoked.
 
@@ -195,6 +333,10 @@ Prompts use `{variable_name}` syntax for template variables. Variables are fille
 
 {{< hint info >}}
 MCP (Model Context Protocol) is a standardized protocol for integrating AI applications with external data sources and tools. MCP prompts allow dynamic prompt retrieval from MCP servers.
+{{< /hint >}}
+
+{{< hint warning >}}
+MCP Prompt is only supported in python currently.
 {{< /hint >}}
 
 MCP prompts are managed by external MCP servers and automatically discovered when you define an MCP server connection in your agent.

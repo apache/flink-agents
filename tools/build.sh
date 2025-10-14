@@ -37,7 +37,8 @@ PROJECT_ROOT="${BASE_DIR}/../"
 
 # build java
 if $build_java; then
-    mvn clean package -DskipTests
+    mvn --version
+    mvn clean package -DskipTests -B
 fi
 
 # copy flink-agents-dist jar to python lib
@@ -50,6 +51,8 @@ cp "${PROJECT_ROOT}/dist/target/flink-agents-dist-${PROJECT_VERSION}.jar" ${PYTH
 
 # build python
 cd python
+rm -rf dist/  # Clean old build artifacts before building
+pip install uv
 uv sync --extra dev
 uv run python -m build
 uv pip install dist/*.whl

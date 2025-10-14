@@ -31,11 +31,10 @@ from flink_agents.api.core_options import AgentConfigOptions
 # the build structure changes.
 if __name__ == "__main__":
     current_dir = Path(__file__).parent
-    add_jars_to_context_class_loader(
-        [
-            f"file:///{current_dir}/../../../../../api/target/flink-agents-api-0.1-SNAPSHOT.jar"
-        ]
-    )
+
+    jars = Path(current_dir).glob("../../../../../api/target/flink-agents-api-*.jar")
+    jars = [f"file:///{jar}" for jar in jars]
+    add_jars_to_context_class_loader(jars)
 
     assert AgentConfigOptions.BASE_LOG_DIR.get_key() == "baseLogDir"
     assert AgentConfigOptions.BASE_LOG_DIR.get_type() is str
