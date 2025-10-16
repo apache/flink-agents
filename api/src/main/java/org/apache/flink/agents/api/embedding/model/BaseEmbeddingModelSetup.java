@@ -84,7 +84,8 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
      * Generate embeddings for multiple texts.
      *
      * @param texts The list of input texts to generate embeddings for
-     * @return A list of arrays, each containing floating-point values representing the text embeddings
+     * @return A list of arrays, each containing floating-point values representing the text
+     *     embeddings
      */
     public List<float[]> embed(List<String> texts) {
         return getConnection().embed(texts);

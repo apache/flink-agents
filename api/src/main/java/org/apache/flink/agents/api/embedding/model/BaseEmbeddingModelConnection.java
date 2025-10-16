@@ -74,7 +74,8 @@ public abstract class BaseEmbeddingModelConnection extends Resource {
      *
      * @param texts The list of input texts to generate embeddings for
      * @param model The model to use for generating embeddings
-     * @return A list of arrays, each containing floating-point values representing the text embeddings
+     * @return A list of arrays, each containing floating-point values representing the text
+     *     embeddings
      */
     public abstract java.util.List<float[]> embed(java.util.List<String> texts, String model);
 
