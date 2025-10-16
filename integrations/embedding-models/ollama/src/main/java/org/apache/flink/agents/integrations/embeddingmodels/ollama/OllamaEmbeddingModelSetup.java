@@ -23,16 +23,15 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
-import java.util.List;
 import java.util.function.BiFunction;
 
 /**
  * An embedding model setup for Ollama powered by the ollama4j client.
  *
  * <p>This implementation adapts the generic Flink Agents embedding model interface to Ollama's
- * embedding API. It supports various embedding models available in Ollama such as: -
+ * embedding API. It supports various embedding models available in Olloma such as: -
  * nomic-embed-text (768 dimensions) - mxbai-embed-large (1024 dimensions) - all-minilm (384
- * dimensions) - And other embedding models supported by Ollama
+ * dimensions) - And other embedding models supported by Olloma
  *
  * <p>See also {@link BaseEmbeddingModelSetup} for the common resource abstractions and lifecycle.
  *
@@ -61,51 +60,6 @@ public class OllamaEmbeddingModelSetup extends BaseEmbeddingModelSetup {
     @Override
     public OllamaEmbeddingModelConnection getConnection() {
         return (OllamaEmbeddingModelConnection) super.getConnection();
-    }
-
-    /**
-     * Generate embeddings for the given text using the configured Ollama model.
-     *
-     * @param text The input text to generate embeddings for
-     * @return An array of floating-point values representing the text embeddings
-     */
-    @Override
-    public float[] embed(String text) {
-        return getConnection().embed(text);
-    }
-
-    /**
-     * Generate embeddings for the given text using a specific model.
-     *
-     * @param text The input text to generate embeddings for
-     * @param model The specific embedding model to use
-     * @return An array of floating-point values representing the text embeddings
-     */
-    public float[] embed(String text, String model) {
-        return getConnection().embed(text, model);
-    }
-
-    /**
-     * Generate embeddings for multiple texts using the configured model.
-     *
-     * @param texts The list of input texts to generate embeddings for
-     * @return A list of arrays, each containing floating-point values representing the text
-     *     embeddings
-     */
-    public List<float[]> embed(List<String> texts) {
-        return getConnection().embed(texts);
-    }
-
-    /**
-     * Generate embeddings for multiple texts using a specific model.
-     *
-     * @param texts The list of input texts to generate embeddings for
-     * @param model The specific embedding model to use
-     * @return A list of arrays, each containing floating-point values representing the text
-     *     embeddings
-     */
-    public List<float[]> embed(List<String> texts, String model) {
-        return getConnection().embed(texts, model);
     }
 
     /**

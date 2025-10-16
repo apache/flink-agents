@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
+import java.util.List;
 import java.util.function.BiFunction;
 
 /**
@@ -73,6 +74,24 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
      */
     public float[] embed(String text) {
         return getConnection().embed(text);
+    }
+
+    public float[] embed(String text, String model) {
+        return getConnection().embed(text, model);
+    }
+
+    /**
+     * Generate embeddings for multiple texts.
+     *
+     * @param texts The list of input texts to generate embeddings for
+     * @return A list of arrays, each containing floating-point values representing the text embeddings
+     */
+    public List<float[]> embed(List<String> texts) {
+        return getConnection().embed(texts);
+    }
+
+    public List<float[]> embed(List<String> texts, String model) {
+        return getConnection().embed(texts, model);
     }
 
     /**

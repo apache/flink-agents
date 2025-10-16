@@ -61,6 +61,24 @@ public abstract class BaseEmbeddingModelConnection extends Resource {
     public abstract List<float[]> embed(List<String> texts);
 
     /**
+     * Generate embeddings for a single text input using a specific model.
+     *
+     * @param text The input text to generate embeddings for
+     * @param model The model to use for generating embeddings
+     * @return An array of floating-point values representing the text embeddings
+     */
+    public abstract float[] embed(String text, String model);
+
+    /**
+     * Generate embeddings for multiple text inputs using a specific model.
+     *
+     * @param texts The list of input texts to generate embeddings for
+     * @param model The model to use for generating embeddings
+     * @return A list of arrays, each containing floating-point values representing the text embeddings
+     */
+    public abstract java.util.List<float[]> embed(java.util.List<String> texts, String model);
+
+    /**
      * Get the dimension of the embeddings produced by this model.
      *
      * @return The embedding dimension
