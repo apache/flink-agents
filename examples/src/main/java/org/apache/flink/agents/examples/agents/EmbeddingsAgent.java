@@ -163,7 +163,7 @@ public class EmbeddingsAgent extends Agent {
 
         try {
             // Use the actual Ollama embedding model directly
-            float[] embedding = generateRealEmbedding(text);
+            float[] embedding = generateRealEmbedding(text, ctx);
             int dimension = embedding.length;
 
             // Store the embedding using the tool
@@ -205,19 +205,25 @@ public class EmbeddingsAgent extends Agent {
     }
 
     /**
-     * Generate real embeddings using Ollama embedding model directly. This bypasses the framework
-     * resource system and creates a direct connection.
+     * Generate real embeddings using Ollama embedding model via the framework resource system. This
+     * uses the context to retrieve the managed embedding model setup resource.
      */
-    private static float[] generateRealEmbedding(String text) {
+    private static float[] generateRealEmbedding(String text, RunnerContext ctx) {
         try {
-            // Create Ollama connection directly using the same configuration as the resource
-            // descriptor
-            OllamaEmbeddingModelConnection connection =
-                    new OllamaEmbeddingModelConnection(ollamaEmbeddingConnection(), null);
+            System.out.println("Attempting to retrieve embeddingModel resource...");
 
-            // Generate the embedding using the real Ollama model
-            float[] embedding = connection.embed(text);
+            // Use the embedding model setup resource as intended by the framework
+            OllamaEmbeddingModelSetup embeddingModel =
+                    (OllamaEmbeddingModelSetup)
+                            ctx.getResource(
+                                    "embeddingModel",
+                                    org.apache.flink.agents.api.resource.ResourceType
+                                            .EMBEDDING_MODEL);
 
+            System.out.println("Successfully retrieved embeddingModel resource");
+
+            // Generate the embedding using the managed Ollama model setup
+            float[] embedding = embeddingModel.embed(text);
             System.out.printf("Generated Ollama embedding with dimension: %d%n", embedding.length);
             return embedding;
 
