@@ -49,8 +49,6 @@ public class JavaFunction implements Function {
         this.qualName = qualName;
         this.methodName = methodName;
         this.parameterTypes = parameterTypes;
-        // TODO: support get method loaded by user code classloader.
-        this.method = Class.forName(qualName).getMethod(methodName, parameterTypes);
     }
 
     public JavaFunction(Class<?> clazz, String methodName, Class<?>[] parameterTypes)
@@ -75,7 +73,9 @@ public class JavaFunction implements Function {
 
     public Method getMethod() throws ClassNotFoundException, NoSuchMethodException {
         if (method == null) {
-            this.method = Class.forName(qualName).getMethod(methodName, parameterTypes);
+            this.method =
+                    Class.forName(qualName, true, Thread.currentThread().getContextClassLoader())
+                            .getMethod(methodName, parameterTypes);
         }
         return method;
     }

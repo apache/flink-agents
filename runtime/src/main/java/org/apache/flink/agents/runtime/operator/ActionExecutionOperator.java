@@ -181,7 +181,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void open() throws Exception {
         super.open();
-
         reusedStreamRecord = new StreamRecord<>(null);
 
         // init shortTermMemState
@@ -639,7 +638,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private ActionTask createActionTask(Object key, Action action, Event event) {
         if (action.getExec() instanceof JavaFunction) {
-            return new JavaActionTask(key, event, action);
+            return new JavaActionTask(
+                    key, event, action, getRuntimeContext().getUserCodeClassLoader());
         } else if (action.getExec() instanceof PythonFunction) {
             return new PythonActionTask(key, event, action, pythonActionExecutor);
         } else {

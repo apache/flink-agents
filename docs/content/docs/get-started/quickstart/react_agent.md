@@ -243,12 +243,8 @@ export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["pu
 {{< /tab >}}
 
 {{< tab "Java" >}}
-1. Build Flink Agents from source to generate example jar. See [installation]({{< ref "docs/get-started/installation" >}}) for more details. 
-2. Copy the Flink Agents example jar to Flink lib directory
-    ```bash
-    cp flink-agents/examples/target/flink-agents-examples-$VERSION.jar ./flink-1.20.3/lib/
-    ```
-3. Start the Flink cluster
+1. Build Flink Agents from source to generate example jar. See [installation]({{< ref "docs/get-started/installation" >}}) for more details.
+2. Start the Flink cluster
     ```bash
     ./flink-1.20.3/bin/start-cluster.sh
     ```

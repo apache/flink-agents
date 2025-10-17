@@ -31,9 +31,12 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 public class JavaActionTask extends ActionTask {
 
-    public JavaActionTask(Object key, Event event, Action action) {
+    private final ClassLoader userCodeClassLoader;
+
+    public JavaActionTask(Object key, Event event, Action action, ClassLoader userCodeClassLoader) {
         super(key, event, action);
         checkState(action.getExec() instanceof JavaFunction);
+        this.userCodeClassLoader = userCodeClassLoader;
     }
 
     @Override
@@ -44,7 +47,13 @@ public class JavaActionTask extends ActionTask {
                 event,
                 key);
         runnerContext.checkNoPendingEvents();
-        action.getExec().call(event, runnerContext);
+        ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        try {
+            Thread.currentThread().setContextClassLoader(userCodeClassLoader);
+            action.getExec().call(event, runnerContext);
+        } finally {
+            Thread.currentThread().setContextClassLoader(cl);
+        }
         return new ActionTaskResult(
                 true, runnerContext.drainEvents(event.getSourceTimestamp()), null);
     }
