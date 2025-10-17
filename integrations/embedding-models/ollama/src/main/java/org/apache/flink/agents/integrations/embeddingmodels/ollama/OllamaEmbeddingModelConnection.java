@@ -9,7 +9,7 @@
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed in writing, software
+ * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
@@ -27,7 +27,9 @@ import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiFunction;
 
 /**
@@ -55,7 +57,6 @@ import java.util.function.BiFunction;
  *   public static ResourceDescriptor ollama() {
  *     return ResourceDescriptor.Builder.newBuilder(OllamaEmbeddingModelConnection.class.getName())
  *                 .addInitialArgument("host", "http://localhost:11434") // the Ollama server URL
- *                 .addInitialArgument("timeout", 60) // optional timeout in seconds
  *                 .addInitialArgument("model", "nomic-embed-text") // the embedding model name
  *                 .build();
  *   }
@@ -76,39 +77,32 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
                 descriptor.getArgument("host") != null
                         ? descriptor.getArgument("host")
                         : "http://localhost:11434";
-        long timeout =
-                descriptor.getArgument("timeout") != null
-                        ? Long.parseLong(descriptor.getArgument("timeout").toString())
-                        : 60L;
         this.defaultModel =
                 descriptor.getArgument("model") != null
                         ? descriptor.getArgument("model")
                         : "nomic-embed-text";
 
         this.ollamaAPI = new OllamaAPI(host);
-        // Note: OllamaAPI timeout configuration may vary by version
-        // For ollama4j 1.1.0, timeout is typically configured at request level
     }
 
     @Override
-    public float[] embed(String text) {
-        return embed(text, defaultModel);
+    public float[] embed(String text, Map<String, Object> parameters) {
+        String model = (String) parameters.getOrDefault("model", defaultModel);
+        return embedSingle(text, model);
     }
 
-    /**
-     * Generate embeddings for a single text with a specific model.
-     *
-     * @param text The input text to generate embeddings for
-     * @param model The embedding model to use
-     * @return An array of floating-point values representing the text embeddings
-     */
-    public float[] embed(String text, String model) {
+    @Override
+    public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
+        String model = (String) parameters.getOrDefault("model", defaultModel);
+        return embedBatch(texts, model);
+    }
+
+    private float[] embedSingle(String text, String model) {
         if (text == null || text.trim().isEmpty()) {
             throw new IllegalArgumentException("Text cannot be null or empty");
         }
 
         try {
-            // Use the modern API for generating embeddings
             List<Double> embeddings = ollamaAPI.generateEmbeddings(model, text);
 
             if (embeddings == null || embeddings.isEmpty()) {
@@ -116,13 +110,11 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
                         "Received empty embeddings from Ollama for model: " + model);
             }
 
-            // Convert List<Double> to float[]
             float[] result = new float[embeddings.size()];
             for (int i = 0; i < embeddings.size(); i++) {
                 result[i] = embeddings.get(i).floatValue();
             }
 
-            // Cache the dimension for future reference
             if (cachedDimension == null) {
                 cachedDimension = result.length;
             }
@@ -152,21 +144,7 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
         }
     }
 
-    @Override
-    public List<float[]> embed(List<String> texts) {
-        return embed(texts, defaultModel);
-    }
-
-    /**
-     * Generate embeddings for multiple texts with a specific model. This method processes texts
-     * sequentially to avoid overwhelming the Ollama server.
-     *
-     * @param texts The list of input texts to generate embeddings for
-     * @param model The embedding model to use
-     * @return A list of arrays, each containing floating-point values representing the text
-     *     embeddings
-     */
-    public List<float[]> embed(List<String> texts, String model) {
+    private List<float[]> embedBatch(List<String> texts, String model) {
         if (texts == null || texts.isEmpty()) {
             throw new IllegalArgumentException("Texts list cannot be null or empty");
         }
@@ -174,7 +152,7 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
         List<float[]> results = new ArrayList<>();
         for (String text : texts) {
             if (text != null && !text.trim().isEmpty()) {
-                results.add(embed(text, model));
+                results.add(embedSingle(text, model));
             } else {
                 throw new IllegalArgumentException("Text in list cannot be null or empty");
             }
@@ -188,13 +166,13 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
             return cachedDimension;
         }
 
-        // If not cached, generate a test embedding to determine dimension
         try {
-            float[] testEmbedding = embed("test", defaultModel);
+            Map<String, Object> testParams = new HashMap<>();
+            testParams.put("model", defaultModel);
+            float[] testEmbedding = embed("test", testParams);
             cachedDimension = testEmbedding.length;
             return cachedDimension;
         } catch (Exception e) {
-            // Return default dimension for common models if test fails
             switch (defaultModel.toLowerCase()) {
                 case "nomic-embed-text":
                     return 768;
@@ -213,21 +191,16 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
         }
     }
 
-    /**
-     * Check if the specified model is available on the Ollama server.
-     *
-     * @param model The model name to check
-     * @return true if the model is available, false otherwise
-     */
+    /** Check if the specified model is available on the Ollama server. */
     public boolean isModelAvailable(String model) {
         try {
-            // Try to list models and check if our model is available
             return ollamaAPI.listModels().stream()
                     .anyMatch(modelInfo -> modelInfo.getName().equals(model));
         } catch (Exception e) {
-            // If we can't list models, try a test embedding
             try {
-                embed("test", model);
+                Map<String, Object> testParams = new HashMap<>();
+                testParams.put("model", model);
+                embed("test", testParams);
                 return true;
             } catch (Exception testException) {
                 return false;
@@ -235,21 +208,8 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
         }
     }
 
-    /**
-     * Get the default embedding model name.
-     *
-     * @return The default model name
-     */
+    /** Get the default embedding model name. */
     public String getDefaultModel() {
         return defaultModel;
-    }
-
-    /**
-     * Get the Ollama server host URL.
-     *
-     * @return The host URL
-     */
-    public String getHost() {
-        return host;
     }
 }

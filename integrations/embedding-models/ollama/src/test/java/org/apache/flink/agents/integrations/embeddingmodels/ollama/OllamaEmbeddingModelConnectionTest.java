@@ -27,6 +27,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -66,6 +68,14 @@ class OllamaEmbeddingModelConnectionTest {
                     ResourceDescriptor descriptor,
                     BiFunction<String, ResourceType, Resource> getResource) {
                 super(descriptor, getResource);
+            }
+
+            public Map<String, Object> getParameters() {
+                Map<String, Object> parameters = new HashMap<>();
+                if (model != null) {
+                    parameters.put("model", model);
+                }
+                return parameters;
             }
 
             @Override

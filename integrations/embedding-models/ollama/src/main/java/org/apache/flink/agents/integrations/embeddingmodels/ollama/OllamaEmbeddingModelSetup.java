@@ -23,6 +23,8 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.function.BiFunction;
 
 /**
@@ -32,6 +34,10 @@ import java.util.function.BiFunction;
  * embedding API. It supports various embedding models available in Olloma such as: -
  * nomic-embed-text (768 dimensions) - mxbai-embed-large (1024 dimensions) - all-minilm (384
  * dimensions) - And other embedding models supported by Olloma
+ *
+ * <p>This class implements the parameter pattern where configuration options are passed through a
+ * Map&lt;String, Object&gt; parameters argument. The getParameters() method provides default
+ * parameters that can be overridden when calling embed methods.
  *
  * <p>See also {@link BaseEmbeddingModelSetup} for the common resource abstractions and lifecycle.
  *
@@ -55,6 +61,18 @@ public class OllamaEmbeddingModelSetup extends BaseEmbeddingModelSetup {
     public OllamaEmbeddingModelSetup(
             ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
+    }
+
+    @Override
+    public Map<String, Object> getParameters() {
+        Map<String, Object> parameters = new HashMap<>();
+
+        // Add the model name if specified
+        if (model != null) {
+            parameters.put("model", model);
+        }
+
+        return parameters;
     }
 
     @Override

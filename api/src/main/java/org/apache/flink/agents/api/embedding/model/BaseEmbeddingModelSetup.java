@@ -22,7 +22,9 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiFunction;
 
 /**
@@ -41,6 +43,8 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
         this.connection = descriptor.getArgument("connection");
         this.model = descriptor.getArgument("model");
     }
+
+    public abstract Map<String, Object> getParameters();
 
     @Override
     public ResourceType getResourceType() {
@@ -73,11 +77,16 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
      * @return An array of floating-point values representing the text embeddings
      */
     public float[] embed(String text) {
-        return getConnection().embed(text);
+        return this.embed(text, Collections.emptyMap());
     }
 
-    public float[] embed(String text, String model) {
-        return getConnection().embed(text, model);
+    public float[] embed(String text, Map<String, Object> parameters) {
+        BaseEmbeddingModelConnection connection = getConnection();
+
+        Map<String, Object> params = this.getParameters();
+        params.putAll(parameters);
+
+        return connection.embed(text, params);
     }
 
     /**
@@ -88,11 +97,16 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
      *     embeddings
      */
     public List<float[]> embed(List<String> texts) {
-        return getConnection().embed(texts);
+        return this.embed(texts, Collections.emptyMap());
     }
 
-    public List<float[]> embed(List<String> texts, String model) {
-        return getConnection().embed(texts, model);
+    public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
+        BaseEmbeddingModelConnection connection = getConnection();
+
+        Map<String, Object> params = this.getParameters();
+        params.putAll(parameters);
+
+        return connection.embed(texts, params);
     }
 
     /**
