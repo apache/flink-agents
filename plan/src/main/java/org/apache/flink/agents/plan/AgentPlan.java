@@ -22,6 +22,8 @@ import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.annotation.ChatModelConnection;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
+import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
+import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.resource.Resource;
@@ -372,6 +374,10 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.CHAT_MODEL, method);
             } else if (method.isAnnotationPresent(ChatModelConnection.class)) {
                 extractResource(ResourceType.CHAT_MODEL_CONNECTION, method);
+            } else if (method.isAnnotationPresent(EmbeddingModelSetup.class)) {
+                extractResource(ResourceType.EMBEDDING_MODEL, method);
+            } else if (method.isAnnotationPresent(EmbeddingModelConnection.class)) {
+                extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
             }
         }
 
