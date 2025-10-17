@@ -158,7 +158,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         """
         tool_specs = None
         if tools is not None:
-            tool_specs = [to_openai_tool(tool.metadata) for tool in tools]
+            tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]
             strict = kwargs.get("strict", False)
             for tool_spec in tool_specs:
                 if tool_spec["type"] == "function":
