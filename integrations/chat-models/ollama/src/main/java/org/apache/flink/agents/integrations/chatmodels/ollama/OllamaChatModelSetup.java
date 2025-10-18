@@ -56,11 +56,13 @@ import java.util.function.BiFunction;
 public class OllamaChatModelSetup extends BaseChatModelSetup {
 
     private final String model;
+    private final boolean extractReasoning;
 
     public OllamaChatModelSetup(
             ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
         this.model = descriptor.getArgument("model");
+        this.extractReasoning = Boolean.parseBoolean(descriptor.getArgument("extract_reasoning"));
     }
 
     /**
@@ -88,6 +90,7 @@ public class OllamaChatModelSetup extends BaseChatModelSetup {
     public Map<String, Object> getParameters() {
         Map<String, Object> params = new HashMap<>();
         params.put("model", model);
+        params.put("extract_reasoning", extractReasoning);
         return params;
     }
 }
