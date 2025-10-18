@@ -31,10 +31,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.JavaFunction;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 /** Built-in action for processing chat request and tool call result. */
 public class ChatModelAction {
@@ -84,6 +81,11 @@ public class ChatModelAction {
             }
             List<ChatMessage> messageContext =
                     (List<ChatMessage>) toolCallContext.get(initialRequestId);
+
+            if (isImmutable(messageContext)) {
+                messageContext = new ArrayList<>(messageContext);
+            }
+
             messageContext.add(response);
             stm.set(TOOL_CALL_CONTEXT, toolCallContext);
 
@@ -116,6 +118,34 @@ public class ChatModelAction {
 
             ctx.sendEvent(new ChatResponseEvent(initialRequestId, response));
         }
+    }
+
+    /**
+     * Checks if the provided list of chat messages is an immutable collection.
+     *
+     * <p>This method determines whether the list is an instance of Java's immutable collections by
+     * checking specific class name patterns used by the JDK implementation.
+     *
+     * <p>Note: This implementation is JDK-specific and may need updates if the JDK's internal
+     * implementation changes in future versions.
+     *
+     * @param maybeImmutableList The list of chat messages to check
+     * @return {@code true} if the list is an immutable collection, {@code false} otherwise
+     */
+    private static boolean isImmutable(List<ChatMessage> maybeImmutableList) {
+        String className = maybeImmutableList.getClass().getName();
+        // Check for Collections.unmodifiableList() and similar
+        if (className.startsWith("java.util.ImmutableCollections")
+                || className.startsWith("java.util.Collections$Unmodifiable")) {
+            return true;
+        }
+
+        // Check for List.of() (Java 9+)
+        if (className.startsWith("java.util.ImmutableCollections$List")) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -160,6 +190,10 @@ public class ChatModelAction {
                     (Map<UUID, Object>) stm.get(TOOL_CALL_CONTEXT).getValue();
             // update tool call context
             List<ChatMessage> messages = (List<ChatMessage>) toolCallContext.get(initialRequestId);
+            if (isImmutable(messages)) {
+                messages = new ArrayList<>(messages);
+            }
+
             for (Map.Entry<String, ToolResponse> entry : responses.entrySet()) {
                 Map<String, Object> extraArgs = new HashMap<>();
                 String toolCallId = entry.getKey();
