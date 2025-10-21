@@ -124,7 +124,7 @@ Clone the repository and checkout the release tag:
 git clone https://github.com/apache/flink-agents.git
 cd flink-agents
 # Checkout the release tag
-git checkout release-0.1.0
+git checkout release-0.1
 ```
 {{< /tab >}}
 
