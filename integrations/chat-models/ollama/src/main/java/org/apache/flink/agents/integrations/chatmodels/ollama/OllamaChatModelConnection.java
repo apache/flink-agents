@@ -188,15 +188,13 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
                             .map(this::convertToOllamaChatMessages)
                             .collect(Collectors.toList());
 
-            final OllamaChatRequestBuilder chatRequestBuilder =
-                    OllamaChatRequestBuilder.builder()
+            final OllamaChatRequest chatRequest =
+                    OllamaChatRequest.builder()
                             .withMessages(ollamaChatMessages)
                             .withModel((String) arguments.get("model"))
-                            .withThinking(extractReasoning);
-
-            chatRequestBuilder.setUseTools(false);
-
-            final OllamaChatRequest chatRequest = chatRequestBuilder.build();
+                            .withThinking(extractReasoning)
+                            .withUseTools(false)
+                            .build();
 
             chatRequest.setTools(ollamaTools);
             final OllamaChatResult ollamaChatResult = this.caller.callSync(chatRequest);
