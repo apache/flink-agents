@@ -15,32 +15,57 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
+import logging
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from pyflink.common import Duration, Time, WatermarkStrategy
+from pyflink.common.watermark_strategy import TimestampAssigner
 from pyflink.datastream import (
     ProcessWindowFunction,
     StreamExecutionEnvironment,
 )
 from pyflink.datastream.connectors.file_system import FileSource, StreamFormat
-from pyflink.datastream.window import TumblingProcessingTimeWindows
+from pyflink.datastream.window import (
+    TumblingProcessingTimeWindows,
+)
+from tenacity import sleep
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
+    ProductReview,
+    ProductReviewSummary,
     ollama_server_descriptor,
 )
 from flink_agents.examples.quickstart.agents.product_suggestion_agent import (
-    ProductReviewSummary,
     ProductSuggestionAgent,
 )
 from flink_agents.examples.quickstart.agents.review_analysis_agent import (
-    ProductReview,
     ProductReviewAnalysisRes,
     ReviewAnalysisAgent,
 )
 
 current_dir = Path(__file__).parent
+
+
+class MyTimestampAssigner(TimestampAssigner):
+    """Assign timestamp to each element."""
+
+    def extract_timestamp(self, element: str, record_timestamp: int) -> int:
+        """Extract timestamp from JSON string."""
+        try:
+            json_element = json.loads(element)
+            return json_element["ts"] * 1000
+        except json.JSONDecodeError:
+            logging.exception(f"Error decoding JSON: {element}")
+            return record_timestamp
+
+
+def _rate_limit(x: Any) -> Any:
+    sleep(1)
+    return x
+
 
 class AggregateScoreDistributionAndDislikeReasons(ProcessWindowFunction):
     """Aggregate score distribution and dislike reasons."""
@@ -97,19 +122,34 @@ def main() -> None:
 
     # Read product reviews from a text file as a streaming source.
     # Each line in the file should be a JSON string representing a ProductReview.
-    product_review_stream = env.from_source(
-        source=FileSource.for_record_stream_format(
-            StreamFormat.text_line_format(),
-            f"file:///{current_dir}/resources/product_review.txt",
+    product_review_stream = (
+        env.from_source(
+            source=FileSource.for_record_stream_format(
+                StreamFormat.text_line_format(),
+                f"file:///{current_dir}/resources/product_review.txt",
+            )
+            .monitor_continuously(Duration.of_minutes(1))
+            .build(),
+            watermark_strategy=WatermarkStrategy.no_watermarks(),
+            source_name="streaming_agent_example",
         )
-        .monitor_continuously(Duration.of_minutes(1))
-        .build(),
-        watermark_strategy=WatermarkStrategy.no_watermarks(),
-        source_name="streaming_agent_example",
-    ).map(
-        lambda x: ProductReview.model_validate_json(
-            x
-        )  # Deserialize JSON to ProductReview.
+        .set_parallelism(1)
+        .map(_rate_limit)  # Rate limit to 1 request per second to allow watermark to generate periodically.
+        .set_parallelism(1)
+        # For some reason, watermark is not generated when the rate_limit and
+        # timestamp_and_watermarks are chained together.
+        # TODO: Remove this once the issue is fixed.
+        .disable_chaining()
+        .assign_timestamps_and_watermarks(
+            WatermarkStrategy.for_monotonous_timestamps().with_timestamp_assigner(
+                MyTimestampAssigner()
+            )
+        )
+        .map(
+            lambda x: ProductReview.model_validate_json(
+                x
+            )  # Deserialize JSON to ProductReview.
+        )
     )
 
     # Use the ReviewAnalysisAgent (LLM) to analyze each review.
