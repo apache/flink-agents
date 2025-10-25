@@ -19,6 +19,11 @@
 
 root_dir=$(pwd)
 
+# If we're running from the python subdirectory, adjust the root_dir
+if [[ "$(basename "$root_dir")" == "python" ]]; then
+    root_dir=$(dirname "$root_dir")
+fi
+
 echo $root_dir
 
 python_script_path=$root_dir/python/flink_agents/plan/tests/compatibility
