@@ -22,21 +22,27 @@ under the License.
 
     <parent>
         <groupId>org.apache.flink</groupId>
-        <artifactId>flink-agents</artifactId>
+        <artifactId>flink-agents-integrations-embedding-models</artifactId>
         <version>0.2-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>flink-agents-integrations</artifactId>
-    <name>Flink Agents : Integrations:</name>
-    <packaging>pom</packaging>
+    <artifactId>flink-agents-integrations-embedding-models-ollama</artifactId>
+    <name>Flink Agents : Integrations: Embedding Models: Ollama</name>
+    <packaging>jar</packaging>
 
-    <properties>
-        <ollama4j.version>1.1.2</ollama4j.version>
-    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
-    <modules>
-        <module>chat-models</module>
-        <module>embedding-models</module>
-    </modules>
+        <dependency>
+            <groupId>io.github.ollama4j</groupId>
+            <artifactId>ollama4j</artifactId>
+            <version>${ollama4j.version}</version>
+        </dependency>
+    </dependencies>
 
 </project>
