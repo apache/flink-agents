@@ -30,8 +30,10 @@ public class AgentWithAzureAI extends Agent {
     }
 
     private static boolean callingRealMode() {
-        if (AZURE_ENDPOINT != null && !AZURE_ENDPOINT.isEmpty()
-                && AZURE_API_KEY != null && !AZURE_API_KEY.isEmpty()) {
+        if (AZURE_ENDPOINT != null
+                && !AZURE_ENDPOINT.isEmpty()
+                && AZURE_API_KEY != null
+                && !AZURE_API_KEY.isEmpty()) {
             return true;
         } else {
             return false;
@@ -42,33 +44,38 @@ public class AgentWithAzureAI extends Agent {
     public static ResourceDescriptor azureAIChatModel() {
         ResourceDescriptor.Builder builder;
         if (callingRealMode()) {
-            System.out.println("Calling real Azure AI service. Make sure the endpoint and apiKey are correct.");
-            builder = ResourceDescriptor.Builder.newBuilder(AzureAIChatModelSetup.class.getName())
-                    .addInitialArgument("connection", "azureAIChatModelConnection")
-                    .addInitialArgument("model", "gpt-4o-mini");
+            System.out.println(
+                    "Calling real Azure AI service. Make sure the endpoint and apiKey are correct.");
+            builder =
+                    ResourceDescriptor.Builder.newBuilder(AzureAIChatModelSetup.class.getName())
+                            .addInitialArgument("connection", "azureAIChatModelConnection")
+                            .addInitialArgument("model", "gpt-4o-mini");
         } else {
             System.out.println("Using mock Azure AI chat model for testing.");
             // leverage the mock chat model for testing
-            builder = ResourceDescriptor.Builder.newBuilder(AgentWithResource.MockChatModel.class.getName());
+            builder =
+                    ResourceDescriptor.Builder.newBuilder(
+                            AgentWithResource.MockChatModel.class.getName());
         }
         return builder
                 // register the available tools
-                .addInitialArgument("tools", List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+                .addInitialArgument(
+                        "tools",
+                        List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
                 .build();
-
     }
 
     @Tool(description = "Converts temperature between Celsius and Fahrenheit")
     public static double convertTemperature(
             @ToolParam(name = "value", description = "Temperature value to convert") Double value,
             @ToolParam(
-                    name = "fromUnit",
-                    description = "Source unit ('C' for Celsius or 'F' for Fahrenheit)")
-            String fromUnit,
+                            name = "fromUnit",
+                            description = "Source unit ('C' for Celsius or 'F' for Fahrenheit)")
+                    String fromUnit,
             @ToolParam(
-                    name = "toUnit",
-                    description = "Target unit ('C' for Celsius or 'F' for Fahrenheit)")
-            String toUnit) {
+                            name = "toUnit",
+                            description = "Target unit ('C' for Celsius or 'F' for Fahrenheit)")
+                    String toUnit) {
 
         fromUnit = fromUnit.toUpperCase();
         toUnit = toUnit.toUpperCase();

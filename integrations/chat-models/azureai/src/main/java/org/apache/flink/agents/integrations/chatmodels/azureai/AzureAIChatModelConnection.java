@@ -1,4 +1,5 @@
-package org.apache.flink.agents.integrations.chatmodels.azureai;/*
+package org.apache.flink.agents.integrations.chatmodels.azureai;
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -31,7 +32,6 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 
-import javax.management.relation.RoleNotFoundException;
 import java.util.*;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
@@ -39,7 +39,8 @@ import java.util.stream.Collectors;
 /**
  * A chat model integration for Azure AI Chat Completions service.
  *
- * <p>This implementation adapts the generic Flink Agents chat model interface to the Azure AI Chat Completions API.
+ * <p>This implementation adapts the generic Flink Agents chat model interface to the Azure AI Chat
+ * Completions API.
  *
  * <p>See also {@link BaseChatModelConnection} for the common resource abstractions and lifecycle.
  *
@@ -69,7 +70,8 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
      * @param getResource a function to resolve resources (e.g., tools) by name and type
      * @throws IllegalArgumentException if endpoint is null or empty
      */
-    public AzureAIChatModelConnection(ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
+    public AzureAIChatModelConnection(
+            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
 
         String endpoint = descriptor.getArgument("endpoint");
@@ -77,7 +79,8 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
         if (endpoint == null || endpoint.isEmpty()) {
             throw new IllegalArgumentException("endpoint should not be null or empty.");
         }
-        this.client = new ChatCompletionsClientBuilder()
+        this.client =
+                new ChatCompletionsClientBuilder()
                         .credential(new AzureKeyCredential(apiKey))
                         .endpoint(endpoint)
                         .buildClient();
@@ -89,12 +92,14 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
         final List<ChatCompletionsToolDefinition> azureAITools = new ArrayList<>();
         try {
             for (Tool tool : tools) {
-                final Map<String, Object> schema = mapper.readValue(
-                        tool.getMetadata().getInputSchema(), new TypeReference<>() {});
+                final Map<String, Object> schema =
+                        mapper.readValue(
+                                tool.getMetadata().getInputSchema(), new TypeReference<>() {});
 
-                final FunctionDefinition functionDef = new FunctionDefinition(tool.getName())
-                        .setDescription(tool.getDescription())
-                        .setParameters(BinaryData.fromObject(schema));
+                final FunctionDefinition functionDef =
+                        new FunctionDefinition(tool.getName())
+                                .setDescription(tool.getDescription())
+                                .setParameters(BinaryData.fromObject(schema));
 
                 azureAITools.add(new ChatCompletionsFunctionToolDefinition(functionDef));
             }
@@ -126,13 +131,15 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
         try {
             final List<ChatCompletionsToolDefinition> azureTools = convertToAzureAITools(tools);
-            final List<ChatRequestMessage> chatMessages = messages.stream()
-                    .map(this::convertToChatRequestMessage)
-                    .collect(Collectors.toList());
+            final List<ChatRequestMessage> chatMessages =
+                    messages.stream()
+                            .map(this::convertToChatRequestMessage)
+                            .collect(Collectors.toList());
 
-            ChatCompletionsOptions options = new ChatCompletionsOptions(chatMessages)
-                    .setModel((String) arguments.get("model"))
-                    .setTools(azureTools);
+            ChatCompletionsOptions options =
+                    new ChatCompletionsOptions(chatMessages)
+                            .setModel((String) arguments.get("model"))
+                            .setTools(azureTools);
 
             ChatCompletions completions = client.complete(options);
             ChatChoice choice = completions.getChoices().get(0);
@@ -152,19 +159,22 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
         }
     }
 
-    private List<Map<String, Object>> convertToAgentsTools(List<ChatCompletionsToolCall> azureToolCalls) {
+    private List<Map<String, Object>> convertToAgentsTools(
+            List<ChatCompletionsToolCall> azureToolCalls) {
         final List<Map<String, Object>> toolCalls = new ArrayList<>(azureToolCalls.size());
         for (ChatCompletionsToolCall toolCall : azureToolCalls) {
             if (toolCall instanceof ChatCompletionsFunctionToolCall) {
-                ChatCompletionsFunctionToolCall functionCall = (ChatCompletionsFunctionToolCall) toolCall;
-                final Map<String, Object> call = Map.of(
-                        "id", functionCall.getId(),
-                        "type", "function",
-                        "function", Map.of(
-                                "name", functionCall.getFunction().getName(),
-                                "arguments", functionCall.getFunction().getArguments()
-                        )
-                );
+                ChatCompletionsFunctionToolCall functionCall =
+                        (ChatCompletionsFunctionToolCall) toolCall;
+                final Map<String, Object> call =
+                        Map.of(
+                                "id", functionCall.getId(),
+                                "type", "function",
+                                "function",
+                                        Map.of(
+                                                "name", functionCall.getFunction().getName(),
+                                                "arguments",
+                                                        functionCall.getFunction().getArguments()));
                 toolCalls.add(call);
             }
         }

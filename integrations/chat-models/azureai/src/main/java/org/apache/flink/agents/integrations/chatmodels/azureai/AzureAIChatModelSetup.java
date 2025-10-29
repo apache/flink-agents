@@ -1,4 +1,5 @@
-package org.apache.flink.agents.integrations.chatmodels.azureai;/*
+package org.apache.flink.agents.integrations.chatmodels.azureai;
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -24,7 +25,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 /**
  * A chat model integration for Azure AI Chat Completions service.
  *
- * <p>This implementation adapts the generic Flink Agents chat model interface to the Azure AI Chat Completions API.
+ * <p>This implementation adapts the generic Flink Agents chat model interface to the Azure AI Chat
+ * Completions API.
  *
  * <p>See also {@link BaseChatModelSetup} for the common resource abstractions and lifecycle.
  *
@@ -80,11 +82,8 @@ public class AzureAIChatModelSetup extends BaseChatModelSetup {
                                 "prompt", prompt,
                                 "tools", tools,
                                 "key", key,
-                                "endpoint", endpoint
-                        )
-                ),
-                getResource
-        );
+                                "endpoint", endpoint)),
+                getResource);
     }
 
     @Override
