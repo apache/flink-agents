@@ -1,4 +1,3 @@
-package org.apache.flink.agents.integrations.chatmodels.azureai;
 /*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -16,6 +15,7 @@ package org.apache.flink.agents.integrations.chatmodels.azureai;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.flink.agents.integrations.chatmodels.azureai;
 
 import com.azure.ai.inference.ChatCompletionsClient;
 import com.azure.ai.inference.ChatCompletionsClientBuilder;
