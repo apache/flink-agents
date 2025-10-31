@@ -177,5 +177,10 @@ ban-relative-imports = "all"
 [tool.ruff.lint.flake8-type-checking]
 strict = true
 
+[tool.pytest.ini_options]
+markers = [
+    "ollama: marks tests that require Ollama server (deselect with '-m \"not ollama\"')",
+]
+
 [tool.ruff.format]
 docstring-code-format = true

@@ -122,6 +122,9 @@ python_tests() {
     set +e
     pushd "${ROOT}"/python
     
+    # Get PYTEST_ARGS environment variable, default to empty
+    local pytest_args="${PYTEST_ARGS:-}"
+    
     # Install dependencies and run tests
     echo "Installing Python test dependencies..."
     if command -v uv >/dev/null 2>&1; then
@@ -132,7 +135,7 @@ python_tests() {
         if $verbose; then
             echo "Running tests with uv..."
         fi
-        uv run pytest flink_agents
+        uv run pytest flink_agents $pytest_args
         testcode=$?
     else
         if $verbose; then
@@ -153,7 +156,7 @@ python_tests() {
         if $verbose; then
             echo "Running tests with pytest..."
         fi
-        pytest flink_agents
+        pytest flink_agents $pytest_args
         testcode=$?
     fi
     

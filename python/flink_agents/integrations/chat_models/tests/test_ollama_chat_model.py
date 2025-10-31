@@ -32,12 +32,15 @@ from flink_agents.integrations.chat_models.ollama_chat_model import (
 )
 from flink_agents.plan.tools.function_tool import FunctionTool, from_callable
 
+# Mark all tests in this module as ollama tests
+pytestmark = pytest.mark.ollama
+
 test_model = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:0.6b")
 current_dir = Path(__file__).parent
 
 try:
-    # only auto setup ollama in ci with python 3.10 to reduce ci cost.
-    if "3.10" in sys.version:
+    # Auto setup ollama in CI environment (when CI env var is set)
+    if os.environ.get("CI") and sys.platform == "linux":
         subprocess.run(
             ["bash", f"{current_dir}/start_ollama_server.sh"], timeout=300, check=True
         )
