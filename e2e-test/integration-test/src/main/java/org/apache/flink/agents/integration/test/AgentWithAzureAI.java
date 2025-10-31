@@ -37,6 +37,17 @@ public class AgentWithAzureAI extends Agent {
     private static final String AZURE_ENDPOINT = "";
     private static final String AZURE_API_KEY = "";
 
+    public static boolean callingRealMode() {
+        if (AZURE_ENDPOINT != null
+                && !AZURE_ENDPOINT.isEmpty()
+                && AZURE_API_KEY != null
+                && !AZURE_API_KEY.isEmpty()) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
     @ChatModelConnection
     public static ResourceDescriptor azureAIChatModelConnection() {
         return ResourceDescriptor.Builder.newBuilder(AzureAIChatModelConnection.class.getName())
