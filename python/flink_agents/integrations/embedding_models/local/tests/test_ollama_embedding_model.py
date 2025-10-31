@@ -29,12 +29,15 @@ from flink_agents.integrations.embedding_models.local.ollama_embedding_model imp
     OllamaEmbeddingModelSetup,
 )
 
+# Mark all tests in this module as ollama tests
+pytestmark = pytest.mark.ollama
+
 test_model = os.environ.get("OLLAMA_EMBEDDING_MODEL", "all-minilm:22m")
 current_dir = Path(__file__).parent
 
 try:
-    # only auto setup ollama in ci with python 3.10 to reduce ci cost.
-    if "3.10" in sys.version:
+    # Auto setup ollama in CI environment (when CI env var is set)
+    if os.environ.get("CI") and sys.platform == "linux":
         subprocess.run(
             ["bash", f"{current_dir}/start_ollama_server.sh"], timeout=300, check=True
         )
@@ -58,9 +61,12 @@ except Exception:
 )
 def test_ollama_embedding_setup() -> None:
     """Test embedding functionality with OllamaEmbeddingModelSetup."""
+    # Use longer timeout for embedding in CI environment (slower resources)
+    request_timeout = 120.0 if os.environ.get("CI") else 30.0
     connection = OllamaEmbeddingModelConnection(
         name="ollama_embed",
-        base_url="http://localhost:11434"
+        base_url="http://localhost:11434",
+        request_timeout=request_timeout
     )
 
     def get_resource(name: str, type: ResourceType) -> Resource:
