@@ -27,7 +27,8 @@ public class AgentWithAzureAIExample {
     public static void main(String[] args) throws Exception {
         if (!AgentWithAzureAI.callingRealMode()) {
             // print warning information
-            System.err.println("Please set the AZURE_ENDPOINT and AZURE_API_KEY in the AgentWithAzureAI class to run this example in real mode.");
+            System.err.println(
+                    "Please set the AZURE_ENDPOINT and AZURE_API_KEY in the AgentWithAzureAI class to run this example in real mode.");
             System.err.println("Falling back to mock mode.");
             AgentWithResourceExample.main(args);
             return;
