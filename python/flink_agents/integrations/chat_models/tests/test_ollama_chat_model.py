@@ -63,7 +63,9 @@ except Exception:
     client is None, reason="Ollama client is not available or test model is missing"
 )
 def test_ollama_chat() -> None:  # noqa :D103
-    server = OllamaChatModelConnection(name="ollama")
+    # Use longer timeout in CI environment (slower resources)
+    request_timeout = 120.0 if os.environ.get("CI") else 30.0
+    server = OllamaChatModelConnection(name="ollama", request_timeout=request_timeout)
     response = server.chat(
         [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
     )
