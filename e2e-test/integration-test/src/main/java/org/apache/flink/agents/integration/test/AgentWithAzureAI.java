@@ -23,15 +23,14 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.*;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
-import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
+import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelConnection;
 import org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup;
 
 import java.util.Collections;
-import java.util.List;
 
 public class AgentWithAzureAI extends Agent {
 
@@ -46,39 +45,13 @@ public class AgentWithAzureAI extends Agent {
                 .build();
     }
 
-    private static boolean callingRealMode() {
-        if (AZURE_ENDPOINT != null
-                && !AZURE_ENDPOINT.isEmpty()
-                && AZURE_API_KEY != null
-                && !AZURE_API_KEY.isEmpty()) {
-            return true;
-        } else {
-            return false;
-        }
-    }
-
     @ChatModelSetup
     public static ResourceDescriptor azureAIChatModel() {
-        ResourceDescriptor.Builder builder;
-        if (callingRealMode()) {
-            System.out.println(
-                    "Calling real Azure AI service. Make sure the endpoint and apiKey are correct.");
-            builder =
-                    ResourceDescriptor.Builder.newBuilder(AzureAIChatModelSetup.class.getName())
-                            .addInitialArgument("connection", "azureAIChatModelConnection")
-                            .addInitialArgument("model", "gpt-4o-mini");
-        } else {
-            System.out.println("Using mock Azure AI chat model for testing.");
-            // leverage the mock chat model for testing
-            builder =
-                    ResourceDescriptor.Builder.newBuilder(
-                            AgentWithResource.MockChatModel.class.getName());
-        }
-        return builder
-                // register the available tools
-                .addInitialArgument(
-                        "tools",
-                        List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+        System.out.println(
+                "Calling real Azure AI service. Make sure the endpoint and apiKey are correct.");
+        return ResourceDescriptor.Builder.newBuilder(AzureAIChatModelSetup.class.getName())
+                .addInitialArgument("connection", "azureAIChatModelConnection")
+                .addInitialArgument("model", "gpt-4o")
                 .build();
     }
 
@@ -128,12 +101,15 @@ public class AgentWithAzureAI extends Agent {
 
     @Action(listenEvents = {InputEvent.class})
     public static void process(InputEvent event, RunnerContext ctx) throws Exception {
-        BaseChatModelSetup chatModel =
-                (BaseChatModelSetup) ctx.getResource("azureAIChatModel", ResourceType.CHAT_MODEL);
-        ChatMessage response =
-                chatModel.chat(
+        ctx.sendEvent(
+                new ChatRequestEvent(
+                        "azureAIChatModel",
                         Collections.singletonList(
-                                new ChatMessage(MessageRole.USER, (String) event.getInput())));
-        ctx.sendEvent(new OutputEvent(response.getContent()));
+                                new ChatMessage(MessageRole.USER, (String) event.getInput()))));
+    }
+
+    @Action(listenEvents = {ChatResponseEvent.class})
+    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
+        ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
     }
 }

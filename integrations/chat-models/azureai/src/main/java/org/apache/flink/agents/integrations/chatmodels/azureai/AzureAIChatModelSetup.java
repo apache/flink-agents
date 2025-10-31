@@ -50,50 +50,16 @@ import org.apache.flink.agents.api.resource.ResourceType;
  */
 public class AzureAIChatModelSetup extends BaseChatModelSetup {
 
-    private final String model;
-    private final String prompt;
-    private final java.util.List<String> tools;
-    private final String key;
-    private final String endpoint;
-
     public AzureAIChatModelSetup(
             ResourceDescriptor descriptor,
             java.util.function.BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
-        this.model = descriptor.getArgument("model");
-        this.prompt = descriptor.getArgument("prompt");
-        this.tools = (java.util.List<String>) descriptor.getArgument("tools");
-        this.key = descriptor.getArgument("key");
-        this.endpoint = descriptor.getArgument("endpoint");
     }
 
-    public AzureAIChatModelSetup(
-            String model,
-            String prompt,
-            java.util.List<String> tools,
-            String key,
-            String endpoint,
-            java.util.function.BiFunction<String, ResourceType, Resource> getResource) {
-        this(
-                new ResourceDescriptor(
-                        AzureAIChatModelSetup.class.getName(),
-                        java.util.Map.of(
-                                "model", model,
-                                "prompt", prompt,
-                                "tools", tools,
-                                "key", key,
-                                "endpoint", endpoint)),
-                getResource);
-    }
-
-    @Override
+    // For any other specific parameters, please refer to ChatCompletionsOptions    @Override
     public java.util.Map<String, Object> getParameters() {
         java.util.Map<String, Object> params = new java.util.HashMap<>();
         params.put("model", model);
-        params.put("prompt", prompt);
-        params.put("tools", tools);
-        params.put("key", key);
-        params.put("endpoint", endpoint);
         return params;
     }
 }

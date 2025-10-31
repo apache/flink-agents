@@ -24,6 +24,7 @@ import com.azure.core.credential.AzureKeyCredential;
 import com.azure.core.util.BinaryData;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nimbusds.jose.shaded.gson.Gson;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
@@ -61,6 +62,8 @@ import java.util.stream.Collectors;
  */
 public class AzureAIChatModelConnection extends BaseChatModelConnection {
 
+    private final Gson gson = new Gson();
+
     private final ChatCompletionsClient client;
 
     /**
@@ -86,7 +89,6 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
                         .buildClient();
     }
 
-    @SuppressWarnings("unchecked")
     private List<ChatCompletionsToolDefinition> convertToAzureAITools(List<Tool> tools) {
         final ObjectMapper mapper = new ObjectMapper();
         final List<ChatCompletionsToolDefinition> azureAITools = new ArrayList<>();
@@ -112,18 +114,51 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
     private ChatRequestMessage convertToChatRequestMessage(ChatMessage message) {
         final String content = message.getContent();
         final MessageRole role = message.getRole();
+        final List<Map<String, Object>> toolCalls = message.getToolCalls();
+        final Map<String, Object> extraArgs = message.getExtraArgs();
         switch (role) {
             case SYSTEM:
                 return new ChatRequestSystemMessage(content);
             case USER:
                 return new ChatRequestUserMessage(content);
             case ASSISTANT:
-                return new ChatRequestAssistantMessage(content);
+                final List<ChatCompletionsToolCall> azureToolCalls =
+                        toolCalls != null
+                                ? transformToAzureToolCalls(toolCalls)
+                                : Collections.emptyList();
+                return new ChatRequestAssistantMessage(content).setToolCalls(azureToolCalls);
             case TOOL:
-                return new ChatRequestToolMessage(content);
+                String toolCallId =
+                        extraArgs != null && extraArgs.containsKey("externalId")
+                                ? extraArgs.get("externalId").toString()
+                                : null;
+                return new ChatRequestToolMessage(toolCallId).setContent(content);
             default:
                 throw new IllegalArgumentException("Unsupported role: " + role);
         }
+    }
+
+    // the structure of toolCalls should be like the returned value of Method:convertToAgentsTools
+    private List<ChatCompletionsToolCall> transformToAzureToolCalls(
+            List<Map<String, Object>> toolCalls) {
+        final List<ChatCompletionsToolCall> azureToolCalls = new ArrayList<>();
+        for (Map<String, Object> call : toolCalls) {
+            final String id = (String) call.get("id");
+            final String type = (String) call.get("type");
+
+            if ("function".equals(type)) {
+                final Map<String, Object> functionCall = (Map<String, Object>) call.get("function");
+                final String functionName = (String) functionCall.get("name");
+                final Map<String, Object> functionArguments =
+                        (Map<String, Object>) functionCall.get("arguments");
+                final String functionArgumentsJson = gson.toJson(functionArguments);
+                ChatCompletionsFunctionToolCall function =
+                        new ChatCompletionsFunctionToolCall(
+                                id, new FunctionCall(functionName, functionArgumentsJson));
+                azureToolCalls.add(function);
+            }
+        }
+        return azureToolCalls;
     }
 
     @Override
@@ -163,18 +198,23 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
             List<ChatCompletionsToolCall> azureToolCalls) {
         final List<Map<String, Object>> toolCalls = new ArrayList<>(azureToolCalls.size());
         for (ChatCompletionsToolCall toolCall : azureToolCalls) {
-            if (toolCall instanceof ChatCompletionsFunctionToolCall) {
-                ChatCompletionsFunctionToolCall functionCall =
-                        (ChatCompletionsFunctionToolCall) toolCall;
+            if (toolCall != null) {
                 final Map<String, Object> call =
                         Map.of(
-                                "id", functionCall.getId(),
-                                "type", "function",
+                                // todo: I don't think the magic name is a good idea here, need to
+                                // unify later (maybe we can consider standardizing tool call
+                                // structure across different LLM integrations)
+                                "id", toolCall.getId(),
+                                "original_id", toolCall.getId(),
+                                "type", toolCall.getType(),
                                 "function",
                                         Map.of(
-                                                "name", functionCall.getFunction().getName(),
+                                                "name", toolCall.getFunction().getName(),
                                                 "arguments",
-                                                        functionCall.getFunction().getArguments()));
+                                                        gson.fromJson(
+                                                                toolCall.getFunction()
+                                                                        .getArguments(),
+                                                                Map.class)));
                 toolCalls.add(call);
             }
         }
