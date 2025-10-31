@@ -91,7 +91,7 @@ jobs:
       - name: Run Python Tests (excluding Ollama)
         run: tools/ut.sh -p
         env:
-          PYTEST_ARGS: "-m 'not ollama'"
+          PYTEST_ARGS: "-m not ollama"
 
   ollama_integration_tests:
     name: ollama integration tests (linux python 3.10)
@@ -114,7 +114,7 @@ jobs:
       - name: Run Ollama Integration Tests
         run: tools/ut.sh -p
         env:
-          PYTEST_ARGS: "-m ollama -v"
+          PYTEST_ARGS: "-m ollama -v -s"
           CI: true
       - name: Upload Ollama logs on failure
         if: failure()
