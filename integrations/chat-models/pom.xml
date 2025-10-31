@@ -31,6 +31,7 @@ under the License.
     <packaging>pom</packaging>
 
     <modules>
+        <module>azureai</module>
         <module>ollama</module>
     </modules>
 
