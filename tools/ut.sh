@@ -122,19 +122,19 @@ python_tests() {
     set +e
     pushd "${ROOT}"/python
     
-    # Build pytest arguments based on environment variables
-    local pytest_cmd="pytest flink_agents"
+    # Build pytest arguments array based on environment variables
+    local pytest_args=("pytest" "flink_agents")
     
     # Support marker-based filtering for cleaner argument handling
     if [ -n "${PYTEST_SKIP_MARKERS:-}" ]; then
-        pytest_cmd="$pytest_cmd -m not ${PYTEST_SKIP_MARKERS}"
+        pytest_args+=("-m" "not ${PYTEST_SKIP_MARKERS}")
     elif [ -n "${PYTEST_ONLY_MARKERS:-}" ]; then
-        pytest_cmd="$pytest_cmd -m ${PYTEST_ONLY_MARKERS}"
+        pytest_args+=("-m" "${PYTEST_ONLY_MARKERS}")
     fi
     
     # Add verbose flag if requested
     if [ "${PYTEST_VERBOSE:-false}" = "true" ]; then
-        pytest_cmd="$pytest_cmd -v"
+        pytest_args+=("-v")
     fi
     
     # Install dependencies and run tests
@@ -146,9 +146,9 @@ python_tests() {
         uv sync --extra test
         if $verbose; then
             echo "Running tests with uv..."
-            echo "Command: uv run $pytest_cmd"
+            echo "Command: uv run ${pytest_args[*]}"
         fi
-        uv run $pytest_cmd
+        uv run "${pytest_args[@]}"
         testcode=$?
     else
         if $verbose; then
@@ -168,9 +168,9 @@ python_tests() {
         fi
         if $verbose; then
             echo "Running tests with pytest..."
-            echo "Command: $pytest_cmd"
+            echo "Command: ${pytest_args[*]}"
         fi
-        $pytest_cmd
+        "${pytest_args[@]}"
         testcode=$?
     fi
     
