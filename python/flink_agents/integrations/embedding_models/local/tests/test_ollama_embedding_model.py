@@ -61,9 +61,12 @@ except Exception:
 )
 def test_ollama_embedding_setup() -> None:
     """Test embedding functionality with OllamaEmbeddingModelSetup."""
+    # Use longer timeout for embedding in CI environment (slower resources)
+    request_timeout = 120.0 if os.environ.get("CI") else 30.0
     connection = OllamaEmbeddingModelConnection(
         name="ollama_embed",
-        base_url="http://localhost:11434"
+        base_url="http://localhost:11434",
+        request_timeout=request_timeout
     )
 
     def get_resource(name: str, type: ResourceType) -> Resource:

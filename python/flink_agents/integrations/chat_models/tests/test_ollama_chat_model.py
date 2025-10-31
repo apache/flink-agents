@@ -97,7 +97,9 @@ def get_tool(name: str, type: ResourceType) -> FunctionTool:  # noqa :D103
     client is None, reason="Ollama client is not available or test model is missing"
 )
 def test_ollama_chat_with_tools() -> None:  # noqa :D103
-    connection = OllamaChatModelConnection(name="ollama")
+    # Use longer timeout for tool calling in CI environment (slower resources)
+    request_timeout = 120.0 if os.environ.get("CI") else 30.0
+    connection = OllamaChatModelConnection(name="ollama", request_timeout=request_timeout)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.TOOL:
