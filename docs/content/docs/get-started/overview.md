@@ -26,7 +26,7 @@ under the License.
 
 **Apache Flink Agents** is a brand-new sub-project from the Apache Flink community, providing an **open-source framework for building event-driven streaming agents**.
 
-Building on Flink's battle-tested streaming engine, Apache Flink Agents inherits **distributed, at-scale, fault-tolerant structured data processing and mature state management**, and adds first-class abstractions for Agentic AI building blocks and functionalities - **large language models (LLMs)**, **prompts**, **tools memory**, **dynamic orchestration**, **observability**, and more.
+Building on Flink's battle-tested streaming engine, Apache Flink Agents inherits **distributed, at-scale, fault-tolerant structured data processing and mature state management**, and adds first-class abstractions for Agentic AI building blocks and functionalities - **large language models (LLMs)**, **prompts**, **tools**, **memory**, **dynamic orchestration**, **observability**, and more.
 
 ## Features
 

@@ -327,7 +327,7 @@ Short-Term Memory is shared across all actions within an agent run, and multiple
 
 Here an *agent run* refers to a complete execution of an agent. Each record from upstream will trigger a new run of agent.
 
-This corresponds to Flink's Keyed State, which is visible to processing of multiple records with in the same keyed partition, and is transparent to processing of data in other keyed partitions.
+This corresponds to Flink's Keyed State, which is visible to processing of multiple records within the same keyed partition, and is not visible to processing of data in other keyed partitions.
 
 #### Basic Usage
 
