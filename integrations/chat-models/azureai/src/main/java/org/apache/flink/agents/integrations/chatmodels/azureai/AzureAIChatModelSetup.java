@@ -56,7 +56,8 @@ public class AzureAIChatModelSetup extends BaseChatModelSetup {
         super(descriptor, getResource);
     }
 
-    // For any other specific parameters, please refer to ChatCompletionsOptions    @Override
+    // For any other specific parameters, please refer to ChatCompletionsOptions
+    @Override
     public java.util.Map<String, Object> getParameters() {
         java.util.Map<String, Object> params = new java.util.HashMap<>();
         params.put("model", model);
