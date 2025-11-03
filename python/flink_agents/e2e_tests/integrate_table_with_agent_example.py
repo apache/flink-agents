@@ -62,8 +62,8 @@ if __name__ == "__main__":
         .schema(
             Schema.new_builder()
             .column("id", DataTypes.BIGINT())
-            .column("review", DataTypes.STRING())
-            .column("review_score", DataTypes.FLOAT())
+            .column("info", DataTypes.STRING())
+            .column("info_score", DataTypes.FLOAT())
             .build()
         )
         .option("format", "json")
@@ -83,15 +83,15 @@ if __name__ == "__main__":
                 BasicTypeInfo.STRING_TYPE_INFO(),
                 BasicTypeInfo.FLOAT_TYPE_INFO(),
             ],
-            ["id", "review", "review_score"],
+            ["id", "info", "info_score"],
         )
     )
 
     schema = (
         Schema.new_builder()
         .column("id", DataTypes.BIGINT())
-        .column("review", DataTypes.STRING())
-        .column("review_score", DataTypes.FLOAT())
+        .column("info", DataTypes.STRING())
+        .column("info_score", DataTypes.FLOAT())
     ).build()
 
     output_table = (

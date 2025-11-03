@@ -37,15 +37,15 @@ class ItemData(BaseModel):
     ----------
     id : int
         Unique identifier of the item
-    review : str
-        The user review of the item
-    review_score: float
-        The review_score of the item
+    info : str
+        The user info of the item
+    info_score: float
+        The info_score of the item
     """
 
     id: int
-    review: str
-    review_score: float
+    info: str
+    info_score: float
     memory_info: dict | None = None
 
 
@@ -84,21 +84,21 @@ class DataStreamAgent(Agent):
         def log_to_stdout(input: Any, total: int) -> bool:
             # Simulating asynchronous time consumption
             time.sleep(random.random())
-            print(f"[log_to_stdout] Logging input={input}, total reviews now={total}")
+            print(f"[log_to_stdout] Logging input={input}, total infos now={total}")
             return True
 
         input_data = event.input
         stm = ctx.short_term_memory
 
-        current_total = stm.get("status.total_reviews") or 0
+        current_total = stm.get("status.total_infos") or 0
         total = current_total + 1
-        stm.set("status.total_reviews", total)
+        stm.set("status.total_infos", total)
 
         log_success = yield from ctx.execute_async(log_to_stdout, input_data, total)
 
         content = copy.deepcopy(input_data)
-        content.review += " first action, log success=" + str(log_success) + ","
-        content.memory_info = {"total_reviews": total}
+        content.info += " first action, log success=" + str(log_success) + ","
+        content.memory_info = {"total_infos": total}
 
         data_ref = stm.set(f"processed_items.item_{content.id}", content)
         ctx.send_event(MyEvent(value=data_ref))
@@ -111,9 +111,9 @@ class DataStreamAgent(Agent):
         resolved_data: ItemData = stm.get(input_data)
 
         content = copy.deepcopy(resolved_data)
-        content.review += " second action"
+        content.info += " second action"
         tool = ctx.get_resource("my_tool", ResourceType.TOOL)
-        content.review = tool.call(content.review)
+        content.info = tool.call(content.info)
         ctx.send_event(OutputEvent(output=content))
 
 
@@ -130,7 +130,7 @@ class TableAgent(Agent):
     def first_action(event: Event, ctx: RunnerContext):  # noqa D102
         input = event.input
         content = input
-        content["review"] += " first action"
+        content["info"] += " first action"
         ctx.send_event(MyEvent(value=content))
 
     @action(MyEvent)
@@ -138,7 +138,7 @@ class TableAgent(Agent):
     def second_action(event: Event, ctx: RunnerContext):  # noqa D102
         input = event.value
         content = input
-        content["review"] += " second action"
+        content["info"] += " second action"
         ctx.send_event(OutputEvent(output=content))
 
 
@@ -155,7 +155,7 @@ class DataStreamToTableAgent(Agent):
     def first_action(event: Event, ctx: RunnerContext):  # noqa D102
         input = event.input
         content = copy.deepcopy(input)
-        content.review += " first action"
+        content.info += " first action"
         ctx.send_event(MyEvent(value=content))
 
     @action(MyEvent)
@@ -163,7 +163,7 @@ class DataStreamToTableAgent(Agent):
     def second_action(event: Event, ctx: RunnerContext):  # noqa D102
         input = event.value
         content = input
-        content.review += " second action"
+        content.info += " second action"
         ctx.send_event(
             OutputEvent(output=Row(**content.model_dump(exclude="memory_info")))
         )

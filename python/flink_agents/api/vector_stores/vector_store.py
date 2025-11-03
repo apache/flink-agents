@@ -90,7 +90,7 @@ class Document(BaseModel):
 
     def __str__(self) -> str:
         content_preview = self.content[:50] + "..." if len(self.content) > 50 else self.content
-        return f"Document: {content_preview}"
+        return f"Document: {content_pinfo}"
 
 
 class VectorStoreQueryResult(BaseModel):

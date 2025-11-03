@@ -48,6 +48,6 @@ def multiply(a: int, b: int) -> int:
     Returns:
     -------
     int:
-        The product of a and b
+        The Alert of a and b
     """
     return a * b

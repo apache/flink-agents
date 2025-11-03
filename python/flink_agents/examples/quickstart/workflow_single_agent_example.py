@@ -22,23 +22,23 @@ from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.file_system import FileSource, StreamFormat
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
-    ProductReview,
+from flink_agents.examples.quickstart.agents.alert_types_and_resources import (
+    AlertInfo,
     ollama_server_descriptor,
 )
-from flink_agents.examples.quickstart.agents.review_analysis_agent import (
-    ReviewAnalysisAgent,
+from flink_agents.examples.quickstart.agents.info_analysis_agent import (
+    InfoAnalysisAgent,
 )
 
 current_dir = Path(__file__).parent
 
 
 def main() -> None:
-    """Main function for the product review analysis quickstart example.
+    """Main function for the Alert info analysis quickstart example.
 
-    This example demonstrates how to use Flink Agents to analyze product reviews in a
-    streaming pipeline. The pipeline reads product reviews from a file, deserializes
-    each review, and uses an LLM agent to extract review scores and unsatisfied reasons.
+    This example demonstrates how to use Flink Agents to analyze Alert infos in a
+    streaming pipeline. The pipeline reads Alert infos from a file, deserializes
+    each info, and uses an LLM agent to extract info scores and unsatisfied reasons.
     The results are printed to stdout. This serves as a minimal, end-to-end example of
     integrating LLM-powered agents with Flink streaming jobs.
     """
@@ -46,15 +46,15 @@ def main() -> None:
     env = StreamExecutionEnvironment.get_execution_environment()
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
-    # Add Ollama chat model connection to be used by the ReviewAnalysisAgent.
+    # Add Ollama chat model connection to be used by the InfoAnalysisAgent.
     agents_env.add_resource(
         "ollama_server",
         ollama_server_descriptor,
     )
 
-    # Read product reviews from a text file as a streaming source.
-    # Each line in the file should be a JSON string representing a ProductReview.
-    product_review_stream = env.from_source(
+    # Read Alert infos from a text file as a streaming source.
+    # Each line in the file should be a JSON string representing a AlertInfo.
+    alert_info_stream = env.from_source(
         source=FileSource.for_record_stream_format(
             StreamFormat.text_line_format(), f"file:///{current_dir}/resources"
         )
@@ -63,22 +63,22 @@ def main() -> None:
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
     ).map(
-        lambda x: ProductReview.model_validate_json(
+        lambda x: AlertInfo.model_validate_json(
             x
-        )  # Deserialize JSON to ProductReview.
+        )  # Deserialize JSON to AlertInfo.
     )
 
-    # Use the ReviewAnalysisAgent to analyze each product review.
-    review_analysis_res_stream = (
+    # Use the InfoAnalysisAgent to analyze each Alert info.
+    info_analysis_res_stream = (
         agents_env.from_datastream(
-            input=product_review_stream, key_selector=lambda x: x.id
+            input=alert_info_stream, key_selector=lambda x: x.id
         )
-        .apply(ReviewAnalysisAgent())
+        .apply(InfoAnalysisAgent())
         .to_datastream()
     )
 
     # Print the analysis results to stdout.
-    review_analysis_res_stream.print()
+    info_analysis_res_stream.print()
 
     # Execute the Flink pipeline.
     agents_env.execute()

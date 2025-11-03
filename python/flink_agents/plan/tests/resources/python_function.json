@@ -1,5 +1,0 @@
-{
-    "func_type": "PythonFunction",
-    "module": "flink_agents.plan.tests.test_function",
-    "qualname": "check_class"
-}

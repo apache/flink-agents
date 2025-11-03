@@ -24,9 +24,9 @@ from flink_agents.api.prompts.prompt import LocalPrompt, Prompt
 @pytest.fixture(scope="module")
 def text_prompt() -> Prompt:  # noqa: D103
     template = (
-        "You ara a product review analyzer, please generate a score and the dislike reasons"
-        "(if any) for the review. "
-        "The product {product_id} is {description}, and user review is '{review}'."
+        "You ara a Alert info analyzer, please generate a score and the dislike reasons"
+        "(if any) for the info. "
+        "The Alert {Alert_id} is {description}, and user info is '{info}'."
     )
 
     return Prompt.from_text(text=template)
@@ -34,28 +34,28 @@ def text_prompt() -> Prompt:  # noqa: D103
 
 def test_prompt_from_text_to_string(text_prompt: LocalPrompt) -> None:  # noqa: D103
     assert text_prompt.format_string(
-        product_id="12345",
+        Alert_id="12345",
         description="wireless noise-canceling headphones with 20-hour battery life",
-        review="The headphones broke after one week of use. Very poor quality",
+        info="The headphones broke after one week of use. Very poor quality",
     ) == (
-        "You ara a product review analyzer, please generate a score and the "
-        "dislike reasons(if any) for the review. The product 12345 is wireless "
-        "noise-canceling headphones with 20-hour battery life, and user review is "
+        "You ara a Alert info analyzer, please generate a score and the "
+        "dislike reasons(if any) for the info. The Alert 12345 is wireless "
+        "noise-canceling headphones with 20-hour battery life, and user info is "
         "'The headphones broke after one week of use. Very poor quality'."
     )
 
 
 def test_prompt_from_text_to_messages(text_prompt: LocalPrompt) -> None:  # noqa: D103
     assert text_prompt.format_messages(
-        product_id="12345",
+        Alert_id="12345",
         description="wireless noise-canceling headphones with 20-hour battery life",
-        review="The headphones broke after one week of use. Very poor quality",
+        info="The headphones broke after one week of use. Very poor quality",
     ) == [
         ChatMessage(
             role=MessageRole.SYSTEM,
-            content="You ara a product review analyzer, please generate a score and the "
-            "dislike reasons(if any) for the review. The product 12345 is wireless "
-            "noise-canceling headphones with 20-hour battery life, and user review is "
+            content="You ara a Alert info analyzer, please generate a score and the "
+            "dislike reasons(if any) for the info. The Alert 12345 is wireless "
+            "noise-canceling headphones with 20-hour battery life, and user info is "
             "'The headphones broke after one week of use. Very poor quality'.",
         )
     ]
@@ -66,12 +66,12 @@ def messages_prompt() -> Prompt:  # noqa: D103
     template = [
         ChatMessage(
             role=MessageRole.SYSTEM,
-            content="You ara a product review analyzer, please generate a score and the dislike reasons"
-            "(if any) for the review.",
+            content="You ara a Alert info analyzer, please generate a score and the dislike reasons"
+            "(if any) for the info.",
         ),
         ChatMessage(
             role=MessageRole.USER,
-            content="The product {product_id} is {description}, and user review is '{review}'.",
+            content="The Alert {Alert_id} is {description}, and user info is '{info}'.",
         ),
     ]
 
@@ -80,33 +80,33 @@ def messages_prompt() -> Prompt:  # noqa: D103
 
 def test_prompt_from_messages_to_string(messages_prompt: LocalPrompt) -> None:  # noqa: D103
     assert messages_prompt.format_string(
-        product_id="12345",
+        Alert_id="12345",
         description="wireless noise-canceling headphones with 20-hour battery life",
-        review="The headphones broke after one week of use. Very poor quality",
+        info="The headphones broke after one week of use. Very poor quality",
     ) == (
-        "system: You ara a product review analyzer, please generate a score and the "
-        "dislike reasons(if any) for the review.\n"
-        "user: The product 12345 is wireless "
-        "noise-canceling headphones with 20-hour battery life, and user review is "
+        "system: You ara a Alert info analyzer, please generate a score and the "
+        "dislike reasons(if any) for the info.\n"
+        "user: The Alert 12345 is wireless "
+        "noise-canceling headphones with 20-hour battery life, and user info is "
         "'The headphones broke after one week of use. Very poor quality'."
     )
 
 
 def test_prompt_from_messages_to_messages(messages_prompt: LocalPrompt) -> None:  # noqa: D103
     assert messages_prompt.format_messages(
-        product_id="12345",
+        Alert_id="12345",
         description="wireless noise-canceling headphones with 20-hour battery life",
-        review="The headphones broke after one week of use. Very poor quality",
+        info="The headphones broke after one week of use. Very poor quality",
     ) == [
         ChatMessage(
             role=MessageRole.SYSTEM,
-            content="You ara a product review analyzer, please generate a score and the "
-            "dislike reasons(if any) for the review.",
+            content="You ara a Alert info analyzer, please generate a score and the "
+            "dislike reasons(if any) for the info.",
         ),
         ChatMessage(
             role=MessageRole.USER,
-            content="The product 12345 is wireless "
-            "noise-canceling headphones with 20-hour battery life, and user review is "
+            content="The Alert 12345 is wireless "
+            "noise-canceling headphones with 20-hour battery life, and user info is "
             "'The headphones broke after one week of use. Very poor quality'.",
         ),
     ]
@@ -114,12 +114,12 @@ def test_prompt_from_messages_to_messages(messages_prompt: LocalPrompt) -> None:
 
 def test_prompt_lack_one_argument(text_prompt: LocalPrompt) -> None:  # noqa: D103
     assert text_prompt.format_string(
-        product_id="12345",
-        review="The headphones broke after one week of use. Very poor quality",
+        Alert_id="12345",
+        info="The headphones broke after one week of use. Very poor quality",
     ) == (
-        "You ara a product review analyzer, please generate a score and the "
-        "dislike reasons(if any) for the review. The product 12345 is {description}, "
-        "and user review is 'The headphones broke after one week of use. Very poor quality'."
+        "You ara a Alert info analyzer, please generate a score and the "
+        "dislike reasons(if any) for the info. The Alert 12345 is {description}, "
+        "and user info is 'The headphones broke after one week of use. Very poor quality'."
     )
 
 

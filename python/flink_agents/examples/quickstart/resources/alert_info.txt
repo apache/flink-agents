@@ -1,0 +1,1 @@
+{"id":"2024-07-28T06:58", "info": "告警来源:zone-business:python datasource_cdn_sftp-realtime-detect.py,异常ID:呼池中心-20240728065700-65,异常位置:呼池中心,异常消息:CDN-集中上报：上传超时(详情请查看监控),异常级别:高,异常详情:{threshold_upload_delay_minutes: 60, delayed_sftp_user_lists: [{zx_byjd: {CN_access_2107715101012001_BCS-CDN-0771-GX1073_20240719T101120Z_1.log.gz: 737035.0}}], info: 请联系平面处理，谢谢},异常负责人:[平面, 李鸿飞, 魏千博]"}

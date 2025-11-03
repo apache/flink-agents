@@ -49,7 +49,7 @@ from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import (
     ChromaVectorStore,
 )
 
-OLLAMA_CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b")
+OLLAMA_CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:14b")
 OLLAMA_EMBEDDING_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 
 

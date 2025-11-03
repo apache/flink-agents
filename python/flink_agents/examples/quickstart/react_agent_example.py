@@ -25,11 +25,11 @@ from flink_agents.api.agents.react_agent import ReActAgent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.tools.tool import Tool
-from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
-    ProductReview,
-    ProductReviewAnalysisRes,
+from flink_agents.examples.quickstart.agents.alert_types_and_resources import (
+    AlertInfo,
+    AlertInfoAnalysisRes,
     notify_shipping_manager,
-    review_analysis_react_prompt,
+    info_analysis_react_prompt,
 )
 from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
@@ -40,12 +40,12 @@ current_dir = Path(__file__).parent
 
 
 def main() -> None:
-    """Main function for the product shipping question record quickstart example.
+    """Main function for the Alert shipping question record quickstart example.
 
-    This example demonstrates how to use the Flink Agents to analyze product reviews
+    This example demonstrates how to use the Flink Agents to analyze Alert infos
     and record shipping questions in a streaming pipeline. The pipeline reads product
-    reviews from a file, deserializes each review, and uses an LLM agent to extract
-    review scores and unsatisfied reasons. If the unsatisfied reasons are related to
+    infos from a file, deserializes each info, and uses an LLM agent to extract
+    info scores and unsatisfied reasons. If the unsatisfied reasons are related to
     shipping, the agent will notify the shipping manager. This serves as a minimal,
     end-to-end example of integrating LLM-powered react agent with Flink streaming jobs.
     """
@@ -62,9 +62,9 @@ def main() -> None:
         "notify_shipping_manager", Tool.from_callable(notify_shipping_manager)
     )
 
-    # Read product reviews from a text file as a streaming source.
-    # Each line in the file should be a JSON string representing a ProductReview.
-    product_review_stream = env.from_source(
+    # Read Alert infos from a text file as a streaming source.
+    # Each line in the file should be a JSON string representing a AlertInfo.
+    alert_info_stream = env.from_source(
         source=FileSource.for_record_stream_format(
             StreamFormat.text_line_format(),
             f"file:///{current_dir}/resources/",
@@ -74,35 +74,35 @@ def main() -> None:
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
     ).map(
-        lambda x: ProductReview.model_validate_json(
+        lambda x: AlertInfo.model_validate_json(
             x
-        )  # Deserialize JSON to ProductReview.
+        )  # Deserialize JSON to AlertInfo.
     )
 
     # Create react agent
-    review_analysis_react_agent = ReActAgent(
+    info_analysis_react_agent = ReActAgent(
         chat_model=ResourceDescriptor(
             clazz=OllamaChatModelSetup,
             connection="ollama_server",
-            model="qwen3:8b",
+            model="qwen3:14b",
             tools=["notify_shipping_manager"],
         ),
-        prompt=review_analysis_react_prompt,
-        output_schema=ProductReviewAnalysisRes,
+        prompt=info_analysis_react_prompt,
+        output_schema=AlertInfoAnalysisRes,
     )
 
-    # Use the ReAct agent to analyze each product review and notify the shipping manager
+    # Use the ReAct agent to analyze each Alert info and notify the shipping manager
     # when needed.
-    review_analysis_res_stream = (
+    info_analysis_res_stream = (
         agents_env.from_datastream(
-            input=product_review_stream, key_selector=lambda x: x.id
+            input=alert_info_stream, key_selector=lambda x: x.id
         )
-        .apply(review_analysis_react_agent)
+        .apply(info_analysis_react_agent)
         .to_datastream()
     )
 
     # Print the analysis results to stdout.
-    review_analysis_res_stream.print()
+    info_analysis_res_stream.print()
 
     # Execute the Flink pipeline.
     agents_env.execute()
