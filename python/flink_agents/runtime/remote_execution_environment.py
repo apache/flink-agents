@@ -296,19 +296,18 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         Path | None
             Path to the config file if found, None otherwise.
         """
-        # Try primary config file name
+        # Try legacy config file name first
+        legacy_config_path = Path(flink_conf_dir).joinpath(_LEGACY_CONFIG_FILE_NAME)
+        if legacy_config_path.exists():
+            logging.warning(
+                f"Using legacy config file {_LEGACY_CONFIG_FILE_NAME}"
+            )
+            return legacy_config_path
+
+        # Try new config file name as fallback
         primary_config_path = Path(flink_conf_dir).joinpath(_CONFIG_FILE_NAME)
         if primary_config_path.exists():
             return primary_config_path
-
-        # Try legacy config file name
-        logging.warning(
-            f"Config file {primary_config_path} not found, "
-            f"using legacy config file {_LEGACY_CONFIG_FILE_NAME} instead"
-        )
-        legacy_config_path = Path(flink_conf_dir).joinpath(_LEGACY_CONFIG_FILE_NAME)
-        if legacy_config_path.exists():
-            return legacy_config_path
 
         return None
 

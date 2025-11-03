@@ -116,6 +116,63 @@ def test_remote_execution_environment_load_legacy_config_file() -> None:
                 os.environ["FLINK_CONF_DIR"] = original_env
 
 
+def test_remote_execution_environment_prioritizes_legacy_config() -> None:
+    """Test RemoteExecutionEnvironment prioritizes flink-conf.yaml over config.yaml."""
+    # Create a temporary directory with both config files
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Create config.yaml with one set of values
+        config_file = Path(temp_dir) / "config.yaml"
+        config_data = {
+            "agent": {
+                "database": {
+                    "host": "config-host",
+                    "port": 9999,
+                },
+            }
+        }
+        with config_file.open("w") as f:
+            yaml.dump(config_data, f)
+
+        # Create flink-conf.yaml with different values
+        legacy_config_file = Path(temp_dir) / "flink-conf.yaml"
+        legacy_data = {
+            "agent": {
+                "database": {
+                    "host": "legacy-host",
+                    "port": 1234,
+                },
+            }
+        }
+        with legacy_config_file.open("w") as f:
+            yaml.dump(legacy_data, f)
+
+        # Set FLINK_CONF_DIR environment variable
+        original_env = os.environ.get("FLINK_CONF_DIR")
+        try:
+            os.environ["FLINK_CONF_DIR"] = temp_dir
+
+            # Mock StreamExecutionEnvironment
+            mock_stream_env = MagicMock()
+
+            # Create RemoteExecutionEnvironment instance
+            with patch(
+                "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+            ):
+                remote_env = RemoteExecutionEnvironment(env=mock_stream_env)
+
+                # Verify that configuration was loaded from flink-conf.yaml (legacy)
+                config = remote_env.get_config()
+                assert config.get_str("database.host") == "legacy-host"
+                assert config.get_int("database.port") == 1234
+
+        finally:
+            # Restore original environment variable
+            if original_env is None:
+                os.environ.pop("FLINK_CONF_DIR", None)
+            else:
+                os.environ["FLINK_CONF_DIR"] = original_env
+
+
 def _verify_config(config: AgentConfiguration) -> None:
     assert config.get_str("database.host") == "localhost"
     assert config.get_int("database.port") == 5432
