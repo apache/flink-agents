@@ -45,4 +45,7 @@ public interface MemoryStore {
      * @return true if the MemoryItem exists, false otherwise
      */
     boolean contains(String key) throws Exception;
+
+    /** Remove all the MemoryItem. */
+    void clear() throws Exception;
 }

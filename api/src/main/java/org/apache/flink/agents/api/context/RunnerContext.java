@@ -38,6 +38,14 @@ public interface RunnerContext {
     void sendEvent(Event event);
 
     /**
+     * Gets the sensory memory.
+     *
+     * @return MemoryObject the root of the sensory memory
+     * @throws Exception if the underlying state backend cannot be accessed
+     */
+    MemoryObject getSensoryMemory() throws Exception;
+
+    /**
      * Gets the short-term memory.
      *
      * @return MemoryObject the root of the short-term memory

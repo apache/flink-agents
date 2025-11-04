@@ -57,4 +57,9 @@ public class CachedMemoryStore implements MemoryStore {
         }
         cache.clear();
     }
+
+    public void clear() throws Exception {
+        cache.clear();
+        store.clear();
+    }
 }
