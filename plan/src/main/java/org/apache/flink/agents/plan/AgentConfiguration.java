@@ -19,6 +19,7 @@ package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.configuration.Configuration;
+import org.apache.flink.configuration.ConfigurationUtils;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -146,6 +147,8 @@ public class AgentConfiguration implements Configuration {
             return targetType.cast(Double.parseDouble(rawValue.toString()));
         } else if (Boolean.class.equals(targetType)) {
             return targetType.cast(Boolean.parseBoolean(rawValue.toString()));
+        } else if (targetType.isEnum()) {
+            return ConfigurationUtils.convertValue(rawValue, targetType);
         } else {
             throw new ClassCastException(
                     "Unsupported type conversion from "

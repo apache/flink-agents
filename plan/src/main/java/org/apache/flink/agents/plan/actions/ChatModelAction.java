@@ -83,6 +83,7 @@ public class ChatModelAction {
                     new ArrayList<>((List<ChatMessage>) toolCallContext.get(initialRequestId));
 
             messageContext.add(response);
+            toolCallContext.put(initialRequestId, messageContext);
             stm.set(TOOL_CALL_CONTEXT, toolCallContext);
 
             ToolRequestEvent toolRequestEvent =
@@ -182,6 +183,7 @@ public class ChatModelAction {
                                     extraArgs));
                 }
             }
+            toolCallContext.put(initialRequestId, messages);
             // overwrite tool call context
             stm.set(TOOL_CALL_CONTEXT, toolCallContext);
 

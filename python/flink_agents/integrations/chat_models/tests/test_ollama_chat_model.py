@@ -60,7 +60,7 @@ except Exception:
     client is None, reason="Ollama client is not available or test model is missing"
 )
 def test_ollama_chat() -> None:  # noqa :D103
-    server = OllamaChatModelConnection(name="ollama")
+    server = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
     response = server.chat(
         [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
     )
@@ -94,7 +94,7 @@ def get_tool(name: str, type: ResourceType) -> FunctionTool:  # noqa :D103
     client is None, reason="Ollama client is not available or test model is missing"
 )
 def test_ollama_chat_with_tools() -> None:  # noqa :D103
-    connection = OllamaChatModelConnection(name="ollama")
+    connection = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.TOOL:

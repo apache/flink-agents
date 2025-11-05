@@ -17,14 +17,22 @@
 #################################################################################
 import importlib
 import json
+import logging
+from enum import Enum
 from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    model_serializer,
+    model_validator,
+)
 from pyflink.common import Row
 from pyflink.common.typeinfo import BasicType, BasicTypeInfo, RowTypeInfo
 
 from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.configuration import ConfigOption
 from flink_agents.api.decorators import action
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import InputEvent, OutputEvent
@@ -36,6 +44,23 @@ _DEFAULT_CHAT_MODEL = "_default_chat_model"
 _DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt"
 _DEFAULT_USER_PROMPT = "_default_user_prompt"
 _OUTPUT_SCHEMA = "_output_schema"
+
+
+class ErrorHandlingStrategy(Enum):
+    """Error handling strategy for ReActAgent."""
+
+    FAIL = "fail"
+    IGNORE = "ignore"
+
+
+class ReActAgentOptions:
+    """Config options for ReActAgent."""
+
+    ERROR_HANDLING_STRATEGY = ConfigOption(
+        key="error-handling-strategy",
+        config_type=ErrorHandlingStrategy,
+        default=ErrorHandlingStrategy.FAIL,
+    )
 
 
 class OutputSchema(BaseModel):
@@ -134,7 +159,7 @@ class ReActAgent(Agent):
                     tools=["notify_shipping_manager"],
                 ),
                 prompt=prompt,
-                output_schema=OutputData
+                output_schema=OutputData,
             )
     """
 
@@ -241,19 +266,33 @@ class ReActAgent(Agent):
     def stop_action(event: ChatResponseEvent, ctx: RunnerContext) -> None:
         """Stop action to output result."""
         output = event.response.content
-
         # parse llm response to target schema.
-        # TODO: config error handle strategy by configuration.
         output_schema = ctx.get_action_config_value(key="output_schema")
-        if output_schema:
-            output_schema = output_schema.output_schema
-            output = json.loads(output.strip())
-            if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
-                output = output_schema.model_validate(output)
-            elif isinstance(output_schema, RowTypeInfo):
-                field_names = output_schema.get_field_names()
-                values = {}
-                for field_name in field_names:
-                    values[field_name] = output[field_name]
-                output = Row(**values)
+
+        error_handling_strategy = ctx.config.get(
+            ReActAgentOptions.ERROR_HANDLING_STRATEGY
+        )
+        try:
+            if output_schema:
+                output_schema = output_schema.output_schema
+                output = json.loads(output.strip())
+                if isinstance(output_schema, type) and issubclass(
+                    output_schema, BaseModel
+                ):
+                    output = output_schema.model_validate(output)
+                elif isinstance(output_schema, RowTypeInfo):
+                    field_names = output_schema.get_field_names()
+                    values = {}
+                    for field_name in field_names:
+                        values[field_name] = output[field_name]
+                    output = Row(**values)
+        except Exception:
+            if error_handling_strategy == ErrorHandlingStrategy.IGNORE:
+                logging.warning(
+                    f"The response of llm {output} doesn't match schema constraint, ignoring."
+                )
+                return
+            elif error_handling_strategy == ErrorHandlingStrategy.FAIL:
+                raise
+
         ctx.send_event(OutputEvent(output=output))

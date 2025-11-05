@@ -21,6 +21,7 @@ package org.apache.flink.agents.integration.test;
 import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.agents.ReActAgent;
+import org.apache.flink.agents.api.agents.ReActAgentConfigOptions;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -75,7 +76,7 @@ public class ReActAgentExample {
         agentsEnv
                 .addResource(
                         "ollama",
-                        ResourceType.CHAT_MODEL,
+                        ResourceType.CHAT_MODEL_CONNECTION,
                         ResourceDescriptor.Builder.newBuilder(
                                         OllamaChatModelConnection.class.getName())
                                 .addInitialArgument("endpoint", "http://localhost:11434")
@@ -92,6 +93,12 @@ public class ReActAgentExample {
                         Tool.fromMethod(
                                 ReActAgentExample.class.getMethod(
                                         "multiply", Double.class, Double.class)));
+
+        agentsEnv
+                .getConfig()
+                .set(
+                        ReActAgentConfigOptions.ERROR_HANDLING_STRATEGY,
+                        ReActAgent.ErrorHandlingStrategy.IGNORE);
 
         // Declare the ReAct agent.
         Agent agent = getAgent();
@@ -135,6 +142,7 @@ public class ReActAgentExample {
                         .addInitialArgument("connection", "ollama")
                         .addInitialArgument("model", "qwen3:8b")
                         .addInitialArgument("tools", List.of("add", "multiply"))
+                        .addInitialArgument("extract_reasoning", "true")
                         .build();
 
         Prompt prompt =

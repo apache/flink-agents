@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import logging
 import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List
@@ -42,6 +43,8 @@ from flink_agents.api.resource import ResourceType
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 
+_CONFIG_FILE_NAME = "config.yaml"
+_LEGACY_CONFIG_FILE_NAME = "flink-conf.yaml"
 
 class RemoteAgentBuilder(AgentBuilder):
     """RemoteAgentBuilder for integrating datastream/table and agent."""
@@ -171,10 +174,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         self.__env = env
         self.__t_env = t_env
         self.__config = AgentConfiguration()
-        flink_conf_dir = os.environ.get("FLINK_CONF_DIR")
-        if flink_conf_dir is not None:
-            config_dir = Path(flink_conf_dir) / "config.yaml"
-            self.__config.load_from_file(str(config_dir))
+        self.__load_config_from_flink_conf_dir()
 
     @property
     def t_env(self) -> StreamTableEnvironment:
@@ -267,6 +267,49 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
     def execute(self) -> None:
         """Execute agent."""
         self.__env.execute()
+
+
+    def __load_config_from_flink_conf_dir(self) -> None:
+        """Load agent configuration from FLINK_CONF_DIR if available."""
+        flink_conf_dir = os.environ.get("FLINK_CONF_DIR")
+        if flink_conf_dir is None:
+            return
+
+        # Try to find config file, with fallback to legacy name
+        config_path = self.__find_config_file(flink_conf_dir)
+
+        if config_path is None:
+            logging.error(f"Config file not found in {flink_conf_dir}")
+        else:
+            self.__config.load_from_file(str(config_path))
+
+    def __find_config_file(self, flink_conf_dir: str) -> Path | None:
+        """Find config file in the given directory, checking both new and legacy names.
+
+        Parameters
+        ----------
+        flink_conf_dir : str
+            Directory to search for config files.
+
+        Returns:
+        -------
+        Path | None
+            Path to the config file if found, None otherwise.
+        """
+        # Try legacy config file name first
+        legacy_config_path = Path(flink_conf_dir).joinpath(_LEGACY_CONFIG_FILE_NAME)
+        if legacy_config_path.exists():
+            logging.warning(
+                f"Using legacy config file {_LEGACY_CONFIG_FILE_NAME}"
+            )
+            return legacy_config_path
+
+        # Try new config file name as fallback
+        primary_config_path = Path(flink_conf_dir).joinpath(_CONFIG_FILE_NAME)
+        if primary_config_path.exists():
+            return primary_config_path
+
+        return None
 
 
 def create_instance(

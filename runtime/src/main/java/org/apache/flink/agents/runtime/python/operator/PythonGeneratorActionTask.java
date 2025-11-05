@@ -20,30 +20,25 @@ package org.apache.flink.agents.runtime.python.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
-import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 
 /** An {@link ActionTask} wrapper a Python Generator to represent a code block in Python action. */
 public class PythonGeneratorActionTask extends PythonActionTask {
     private final String pythonGeneratorRef;
 
     public PythonGeneratorActionTask(
-            Object key,
-            Event event,
-            Action action,
-            PythonActionExecutor pythonActionExecutor,
-            String pythonGeneratorRef) {
-        super(key, event, action, pythonActionExecutor);
+            Object key, Event event, Action action, String pythonGeneratorRef) {
+        super(key, event, action);
         this.pythonGeneratorRef = pythonGeneratorRef;
     }
 
     @Override
-    public ActionTaskResult invoke() throws Exception {
+    public ActionTaskResult invoke() {
         LOG.debug(
                 "Try execute python generator action {} for event {} with key {}.",
                 action.getName(),
                 event,
                 key);
-        boolean finished = pythonActionExecutor.callPythonGenerator(pythonGeneratorRef);
+        boolean finished = getPythonActionExecutor().callPythonGenerator(pythonGeneratorRef);
         ActionTask generatedActionTask = finished ? null : this;
         return new ActionTaskResult(
                 finished,
