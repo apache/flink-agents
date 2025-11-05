@@ -110,7 +110,11 @@ public class FileEventLogger implements EventLogger {
                         config.getProperties()
                                 .getOrDefault(BASE_LOG_DIR_PROPERTY_KEY, DEFAULT_BASE_LOG_DIR);
         String jobId = params.getRuntimeContext().getJobInfo().getJobId().toString();
-        String taskName = params.getRuntimeContext().getTaskInfo().getTaskName().replaceAll("[\\\\/:*?\"<>|]", "_");
+        String taskName =
+                params.getRuntimeContext()
+                        .getTaskInfo()
+                        .getTaskName()
+                        .replaceAll("[\\\\/:*?\"<>|]", "_");
         int subTaskId = params.getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
         String fileName = String.format("events-%s-%s-%d.log", jobId, taskName, subTaskId);
         return Paths.get(baseLogDir, fileName).toString();
