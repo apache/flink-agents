@@ -79,7 +79,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         Integer requestTimeout = descriptor.getArgument("requestTimeout");
         this.caller =
                 new OllamaChatEndpointCaller(
-                        endpoint, null, requestTimeout != null ? requestTimeout : 10);
+                        endpoint, null, requestTimeout != null ? requestTimeout : 60);
     }
 
     /**

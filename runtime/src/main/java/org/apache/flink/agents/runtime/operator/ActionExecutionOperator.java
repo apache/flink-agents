@@ -641,7 +641,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             return new JavaActionTask(
                     key, event, action, getRuntimeContext().getUserCodeClassLoader());
         } else if (action.getExec() instanceof PythonFunction) {
-            return new PythonActionTask(key, event, action, pythonActionExecutor);
+            return new PythonActionTask(key, event, action);
         } else {
             throw new IllegalStateException(
                     "Unsupported action type: " + action.getExec().getClass());
@@ -669,7 +669,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             new CachedMemoryStore(shortTermMemState),
                             metricGroup,
                             this::checkMailboxThread,
-                            agentPlan);
+                            agentPlan,
+                            pythonActionExecutor);
         } else {
             throw new IllegalStateException(
                     "Unsupported action type: " + actionTask.action.getExec().getClass());

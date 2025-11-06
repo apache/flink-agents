@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
+import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 
@@ -34,16 +35,12 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 public class PythonActionTask extends ActionTask {
 
-    protected final PythonActionExecutor pythonActionExecutor;
-
-    public PythonActionTask(
-            Object key, Event event, Action action, PythonActionExecutor pythonActionExecutor) {
+    public PythonActionTask(Object key, Event event, Action action) {
         super(key, event, action);
         checkState(action.getExec() instanceof PythonFunction);
         checkState(
                 event instanceof PythonEvent,
                 "Python action only accept python event, but got " + event);
-        this.pythonActionExecutor = pythonActionExecutor;
     }
 
     public ActionTaskResult invoke() throws Exception {
@@ -54,6 +51,7 @@ public class PythonActionTask extends ActionTask {
                 key);
         runnerContext.checkNoPendingEvents();
 
+        PythonActionExecutor pythonActionExecutor = getPythonActionExecutor();
         String pythonGeneratorRef =
                 pythonActionExecutor.executePythonFunction(
                         (PythonFunction) action.getExec(), (PythonEvent) event, runnerContext);
@@ -64,12 +62,16 @@ public class PythonActionTask extends ActionTask {
             // The Python action generates a generator. We need to execute it once, which will
             // submit an asynchronous task and return whether the action has been completed.
             ActionTask tempGeneratedActionTask =
-                    new PythonGeneratorActionTask(
-                            key, event, action, pythonActionExecutor, pythonGeneratorRef);
+                    new PythonGeneratorActionTask(key, event, action, pythonGeneratorRef);
             tempGeneratedActionTask.setRunnerContext(runnerContext);
             return tempGeneratedActionTask.invoke();
         }
         return new ActionTaskResult(
                 true, runnerContext.drainEvents(event.getSourceTimestamp()), null);
+    }
+
+    protected PythonActionExecutor getPythonActionExecutor() {
+        checkState(runnerContext != null && runnerContext instanceof PythonRunnerContextImpl);
+        return ((PythonRunnerContextImpl) runnerContext).getPythonActionExecutor();
     }
 }

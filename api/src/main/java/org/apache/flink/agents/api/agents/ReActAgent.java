@@ -49,6 +49,8 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotatio
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import org.apache.flink.types.Row;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
@@ -62,6 +64,8 @@ import java.util.Objects;
 
 /** Built-in ReAct Agent implementation based on the function call ability of llm. . */
 public class ReActAgent extends Agent {
+    private static final Logger LOG = LoggerFactory.getLogger(ReActAgent.class);
+
     private static final String DEFAULT_CHAT_MODEL = "_default_chat_model";
     private static final String DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt";
     private static final String DEFAULT_USER_PROMPT = "_default_user_prompt";
@@ -183,16 +187,29 @@ public class ReActAgent extends Agent {
 
         Object outputSchema = ctx.getActionConfigValue("output_schema");
 
-        // TODO: handle parse error according to configured strategy.
         if (outputSchema != null) {
-            if (outputSchema instanceof Class) {
-                output = mapper.readValue(String.valueOf(output), (Class<?>) outputSchema);
-            } else if (outputSchema instanceof OutputSchema) {
-                RowTypeInfo info = ((OutputSchema) outputSchema).getSchema();
-                Map<String, Object> fields = mapper.readValue(String.valueOf(output), Map.class);
-                output = Row.withNames();
-                for (String name : info.getFieldNames()) {
-                    ((Row) output).setField(name, fields.get(name));
+            ErrorHandlingStrategy strategy =
+                    ctx.getConfig().get(ReActAgentConfigOptions.ERROR_HANDLING_STRATEGY);
+            try {
+                if (outputSchema instanceof Class) {
+                    output = mapper.readValue(String.valueOf(output), (Class<?>) outputSchema);
+                } else if (outputSchema instanceof OutputSchema) {
+                    RowTypeInfo info = ((OutputSchema) outputSchema).getSchema();
+                    Map<String, Object> fields =
+                            mapper.readValue(String.valueOf(output), Map.class);
+                    output = Row.withNames();
+                    for (String name : info.getFieldNames()) {
+                        ((Row) output).setField(name, fields.get(name));
+                    }
+                }
+            } catch (Exception e) {
+                if (strategy == ErrorHandlingStrategy.FAIL) {
+                    throw e;
+                } else if (strategy == ErrorHandlingStrategy.IGNORE) {
+                    LOG.warn(
+                            "The response of llm {} doesn't match schema constraint, ignoring.",
+                            output);
+                    return;
                 }
             }
         }
@@ -291,6 +308,21 @@ public class ReActAgent extends Agent {
                     new RowTypeInfo(
                             types.toArray(new TypeInformation[0]),
                             fieldNames.toArray(new String[0])));
+        }
+    }
+
+    public enum ErrorHandlingStrategy {
+        FAIL("fail"),
+        IGNORE("ignore");
+
+        private final String value;
+
+        ErrorHandlingStrategy(String value) {
+            this.value = value;
+        }
+
+        public String getValue() {
+            return value;
         }
     }
 }

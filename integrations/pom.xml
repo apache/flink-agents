@@ -30,8 +30,13 @@ under the License.
     <name>Flink Agents : Integrations:</name>
     <packaging>pom</packaging>
 
+    <properties>
+        <ollama4j.version>1.1.2</ollama4j.version>
+    </properties>
+
     <modules>
         <module>chat-models</module>
+        <module>embedding-models</module>
     </modules>
 
 </project>

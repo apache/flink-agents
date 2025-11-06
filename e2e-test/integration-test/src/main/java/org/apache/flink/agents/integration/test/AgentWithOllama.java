@@ -30,6 +30,8 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
+import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
@@ -126,10 +128,15 @@ public class AgentWithOllama extends Agent {
     public static void process(InputEvent event, RunnerContext ctx) throws Exception {
         BaseChatModelSetup chatModel =
                 (BaseChatModelSetup) ctx.getResource("ollamaChatModel", ResourceType.CHAT_MODEL);
-        ChatMessage response =
-                chatModel.chat(
+        ctx.sendEvent(
+                new ChatRequestEvent(
+                        "ollamaChatModel",
                         Collections.singletonList(
-                                new ChatMessage(MessageRole.USER, (String) event.getInput())));
-        ctx.sendEvent(new OutputEvent(response.getContent()));
+                                new ChatMessage(MessageRole.USER, (String) event.getInput()))));
+    }
+
+    @Action(listenEvents = {ChatResponseEvent.class})
+    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
+        ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
     }
 }

@@ -17,7 +17,7 @@
 #################################################################################
 from pathlib import Path
 
-from pyflink.common import Duration, WatermarkStrategy
+from pyflink.common import Configuration, Duration, WatermarkStrategy
 from pyflink.datastream import (
     KeySelector,
     RuntimeExecutionMode,
@@ -43,8 +43,11 @@ current_dir = Path(__file__).parent
 # PYTHONPATH like "os.environ["PYTHONPATH"] = ($VENV_HOME/lib/$PYTHON_VERSION/
 # site-packages) in this file.
 if __name__ == "__main__":
-    env = StreamExecutionEnvironment.get_execution_environment()
-
+    config = Configuration()
+    config.set_string("state.backend.type", "rocksdb")
+    config.set_string("checkpointing.interval", "1s")
+    config.set_string("restart-strategy.type", "disable")
+    env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
 
