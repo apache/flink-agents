@@ -29,13 +29,14 @@ from flink_agents.integrations.embedding_models.openai_embedding_model import (
 )
 
 test_model = os.environ.get("TEST_EMBEDDING_MODEL", "text-embedding-3-small")
-api_key = os.environ.get("TEST_API_KEY", "fake-key")
+api_key = os.environ.get("TEST_API_KEY")
 
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
+@pytest.mark.integration
 def test_openai_embedding_model() -> None:  # noqa: D103
     connection = OpenAIEmbeddingModelConnection(
-        name="openai", api_key=api_key
+        name="openai", api_key=api_key or "fake-key"
     )
 
     def get_resource(name: str, type: ResourceType) -> Resource:

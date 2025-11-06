@@ -38,12 +38,15 @@ from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import (
     ChromaVectorStore,
 )
 
-api_key = os.environ.get("TEST_API_KEY", "fake-key")
-tenant = os.environ.get("TEST_TENANT", "fake-tenant")
-database = os.environ.get("TEST_DATABASE", "fake-database")
+api_key = os.environ.get("TEST_API_KEY")
+tenant = os.environ.get("TEST_TENANT")
+database = os.environ.get("TEST_DATABASE")
 
 
 class MockEmbeddingModel(Resource):  # noqa: D101
+    def __init__(self, name: str):  # noqa: D107
+        self._name = name
+
     @classmethod
     def resource_type(cls) -> ResourceType:  # noqa: D102
         return ResourceType.EMBEDDING_MODEL
@@ -116,6 +119,7 @@ def test_local_chroma_vector_store() -> None:
 
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
+@pytest.mark.integration
 def test_cloud_chroma_vector_store() -> None:
     """Test cloud ChromaDB vector store with embedding model integration."""
     embedding_model = MockEmbeddingModel(name="mock_embeddings")
@@ -131,9 +135,9 @@ def test_cloud_chroma_vector_store() -> None:
         name="chroma_vector_store",
         embedding_model="mock_embeddings",
         collection="test_collection",
-        api_key=api_key,
-        tenant=tenant,
-        database=database,
+        api_key=api_key or "fake-key",
+        tenant=tenant or "fake-tenant",
+        database=database or "fake-database",
         get_resource=get_resource
     )
 
