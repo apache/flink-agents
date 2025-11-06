@@ -20,6 +20,14 @@ from typing import Any, Dict
 
 import pytest
 
+from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.vector_stores.vector_store import (
+    VectorStoreQuery,
+)
+from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import (
+    ChromaVectorStore,
+)
+
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
 
@@ -30,21 +38,13 @@ try:
 except ImportError:
     chromadb_available = False
 
-from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.api.vector_stores.vector_store import (
-    VectorStoreQuery,
-)
-from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import (
-    ChromaVectorStore,
-)
-
 api_key = os.environ.get("TEST_API_KEY")
 tenant = os.environ.get("TEST_TENANT")
 database = os.environ.get("TEST_DATABASE")
 
 
 class MockEmbeddingModel(Resource):  # noqa: D101
-    def __init__(self, name: str):  # noqa: D107
+    def __init__(self, name: str) -> None:  # noqa: D107
         self._name = name
 
     @classmethod

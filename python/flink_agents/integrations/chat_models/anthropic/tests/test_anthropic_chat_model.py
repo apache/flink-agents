@@ -19,9 +19,6 @@ import os
 
 import pytest
 
-# Mark all tests in this module as integration tests
-pytestmark = pytest.mark.integration
-
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import (
@@ -29,6 +26,9 @@ from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import
     AnthropicChatModelSetup,
 )
 from flink_agents.plan.tools.function_tool import from_callable
+
+# Mark all tests in this module as integration tests
+pytestmark = pytest.mark.integration
 
 test_model = os.environ.get("TEST_MODEL", "claude-3-haiku-20240307")
 api_key = os.environ.get("TEST_API_KEY")
