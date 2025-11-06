@@ -66,7 +66,7 @@ jobs:
         run: tools/ut.sh -j
 
   python_tests:
-    name: python tests (non-ollama) on ${{ matrix.os }} ${{ matrix.python-version}}
+    name: python tests (non-integration) on ${{ matrix.os }} ${{ matrix.python-version}}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -88,10 +88,10 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
-      - name: Run Python Tests (excluding Ollama)
+      - name: Run Python Tests (excluding Integration)
         run: tools/ut.sh -p
         env:
-          PYTEST_SKIP_MARKERS: "ollama"
+          PYTEST_SKIP_MARKERS: "integration"
 
   ollama_integration_tests:
     name: ollama integration tests (linux python 3.10)
@@ -124,6 +124,31 @@ jobs:
           name: ollama-logs
           path: /tmp/ollama*.log
           retention-days: 7
+
+  integration_tests:
+    name: integration tests (linux python 3.10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'adopt'
+      - name: Install python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Run Integration Tests
+        run: tools/ut.sh -p
+        env:
+          PYTEST_ONLY_MARKERS: "integration"
+          PYTEST_VERBOSE: "true"
+          CI: true
 
   e2e_tests:
     name: e2e tests on ${{ matrix.os }} ${{ matrix.python-version}}

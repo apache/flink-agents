@@ -19,6 +19,9 @@ import os
 
 import pytest
 
+# Mark all tests in this module as integration tests
+pytestmark = pytest.mark.integration
+
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.integrations.embedding_models.openai_embedding_model import (
     OpenAIEmbeddingModelConnection,
@@ -26,7 +29,7 @@ from flink_agents.integrations.embedding_models.openai_embedding_model import (
 )
 
 test_model = os.environ.get("TEST_EMBEDDING_MODEL", "text-embedding-3-small")
-api_key = os.environ.get("TEST_API_KEY")
+api_key = os.environ.get("TEST_API_KEY", "fake-key")
 
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")

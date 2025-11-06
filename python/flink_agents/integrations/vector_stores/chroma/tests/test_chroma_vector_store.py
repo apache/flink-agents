@@ -20,6 +20,9 @@ from typing import Any, Dict
 
 import pytest
 
+# Mark all tests in this module as integration tests
+pytestmark = pytest.mark.integration
+
 try:
     import chromadb  # noqa: F401
 
@@ -35,9 +38,9 @@ from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import (
     ChromaVectorStore,
 )
 
-api_key = os.environ.get("TEST_API_KEY")
-tenant = os.environ.get("TEST_TENANT")
-database = os.environ.get("TEST_DATABASE")
+api_key = os.environ.get("TEST_API_KEY", "fake-key")
+tenant = os.environ.get("TEST_TENANT", "fake-tenant")
+database = os.environ.get("TEST_DATABASE", "fake-database")
 
 
 class MockEmbeddingModel(Resource):  # noqa: D101

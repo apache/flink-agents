@@ -19,6 +19,9 @@ import os
 
 import pytest
 
+# Mark all tests in this module as integration tests
+pytestmark = pytest.mark.integration
+
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
@@ -27,7 +30,7 @@ from flink_agents.integrations.chat_models.openai.openai_chat_model import (
 )
 from flink_agents.plan.tools.function_tool import from_callable
 
-test_model = os.environ.get("TEST_MODEL")
+test_model = os.environ.get("TEST_MODEL", "gpt-3.5-turbo")
 api_key = os.environ.get("TEST_API_KEY")
 api_base_url = os.environ.get("TEST_API_BASE_URL")
 
