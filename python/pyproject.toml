@@ -194,7 +194,6 @@ strict = true
 
 [tool.pytest.ini_options]
 markers = [
-    "ollama: marks tests that require Ollama server (deselect with '-m \"not ollama\"')",
     "integration: marks tests that require external services or integration (deselect with '-m \"not integration\"')",
 ]
 
