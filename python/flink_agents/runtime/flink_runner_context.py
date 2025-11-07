@@ -90,6 +90,23 @@ class FlinkRunnerContext(RunnerContext):
 
     @property
     @override
+    def sensory_memory(self) -> FlinkMemoryObject:
+        """Get the sensory memory object associated with this context.
+
+        Returns:
+        -------
+        MemoryObject
+            The sensory memory object that can be used to access and modify
+            temporary state data.
+        """
+        try:
+            return FlinkMemoryObject(self._j_runner_context.getSensoryMemory())
+        except Exception as e:
+            err_msg = "Failed to get sensory memory of runner context"
+            raise RuntimeError(err_msg) from e
+
+    @property
+    @override
     def short_term_memory(self) -> FlinkMemoryObject:
         """Get the short-term memory object associated with this context.
 
