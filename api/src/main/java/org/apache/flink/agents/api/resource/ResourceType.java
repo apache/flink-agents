@@ -30,7 +30,8 @@ public enum ResourceType {
     EMBEDDING_MODEL_CONNECTION("embedding_model_connection"),
     VECTOR_STORE("vector_store"),
     PROMPT("prompt"),
-    TOOL("tool");
+    TOOL("tool"),
+    MCP_SERVER("mcp_server");
 
     private final String value;
 
