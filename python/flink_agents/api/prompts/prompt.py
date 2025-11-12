@@ -22,10 +22,10 @@ from typing_extensions import override
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.prompts.utils import format_string
-from flink_agents.api.resource import ResourceType, SerializableResource
+from flink_agents.api.resource import Resource, ResourceType, SerializableResource
 
 
-class Prompt(SerializableResource, ABC):
+class Prompt(Resource, ABC):
     """Base prompt abstract."""
 
     @staticmethod
@@ -55,7 +55,7 @@ class Prompt(SerializableResource, ABC):
         return ResourceType.PROMPT
 
 
-class LocalPrompt(Prompt):
+class LocalPrompt(Prompt, SerializableResource):
     """Prompt for a language model.
 
     Attributes:
