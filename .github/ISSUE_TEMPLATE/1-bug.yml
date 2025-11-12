@@ -19,7 +19,7 @@
 name: Bug Report
 description: Something isn't working as expected.
 title: "[Bug] "
-labels: ["bug"]
+labels: ["bug", "priority/major"]
 body:
   - type: markdown
     attributes:

@@ -19,7 +19,7 @@
 name: Feature
 description: New features or improvements to existing features.
 title: "[Feature] "
-labels: ["feature"]
+labels: ["feature", "priority/major"]
 body:
   - type: markdown
     attributes:

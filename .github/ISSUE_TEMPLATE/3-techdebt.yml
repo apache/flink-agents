@@ -19,7 +19,7 @@
 name: Technical Debt
 description: User-unaware issues, such as code refactor and infrastructure maintenance.
 title: "[Tech Debt] "
-labels: ["tech debt"]
+labels: ["tech debt", "priority/major"]
 body:
   - type: markdown
     attributes:
