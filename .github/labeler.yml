@@ -1,0 +1,12 @@
+# Add 'priority/major' label to any changes within the entire repository
+priority/major:
+  - changed-files:
+      - any-glob-to-any-file: '**'
+
+# Add 'fixVersion/0.2.0' label to any PR that is opened against the `main` branch
+fixVersion/0.2.0:
+  - base-branch: 'main'
+
+# Add 'fixVersion/0.1.1' label to any PR that is opened against the `release-0.1` branch
+fixVersion/0.1.1:
+  - base-branch: 'release-0.1'
