@@ -17,10 +17,14 @@
 
 # Parse command-line arguments
 build_java=true
+build_python=true
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         -p|--python)
             build_java=false
+            ;;
+        -j|--java)
+            build_python=false
             ;;
         *)
             echo "Error: Unknown option '$1'" >&2
@@ -38,23 +42,25 @@ PROJECT_ROOT="${BASE_DIR}/../"
 # build java
 if $build_java; then
     mvn --version
-    mvn clean package -DskipTests -B
+    mvn clean install -DskipTests -B
 fi
 
-# copy flink-agents-dist jar to python lib
-PYTHON_LIB_DIR=${PROJECT_ROOT}/python/flink_agents/lib
-rm -rf ${PYTHON_LIB_DIR}
-mkdir -p ${PYTHON_LIB_DIR}
+if $build_python; then
+  # copy flink-agents-dist jar to python lib
+  PYTHON_LIB_DIR=${PROJECT_ROOT}/python/flink_agents/lib
+  rm -rf ${PYTHON_LIB_DIR}
+  mkdir -p ${PYTHON_LIB_DIR}
 
-PROJECT_VERSION=$(sed -n 's/.*<version>\(.*\)<\/version>.*/\1/p' pom.xml | head -n 2 | tail -n 1)
-cp "${PROJECT_ROOT}/dist/target/flink-agents-dist-${PROJECT_VERSION}.jar" ${PYTHON_LIB_DIR}
+  PROJECT_VERSION=$(sed -n 's/.*<version>\(.*\)<\/version>.*/\1/p' pom.xml | head -n 2 | tail -n 1)
+  cp "${PROJECT_ROOT}/dist/target/flink-agents-dist-${PROJECT_VERSION}.jar" ${PYTHON_LIB_DIR}
 
-# build python
-cd python
-rm -rf dist/  # Clean old build artifacts before building
-pip install uv
-uv sync --extra dev
-uv run python -m build
-uv pip install dist/*.whl
+  # build python
+  cd python
+  rm -rf dist/  # Clean old build artifacts before building
+  pip install uv
+  uv sync --extra dev
+  uv run python -m build
+  uv pip install dist/*.whl
 
-rm -rf ${PYTHON_LIB_DIR}
+  rm -rf ${PYTHON_LIB_DIR}
+fi
