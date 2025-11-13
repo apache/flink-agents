@@ -22,6 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel
 from pyflink.common import Row
+from pyflink.datastream import KeySelector
 
 from flink_agents.api.agent import Agent
 from flink_agents.api.decorators import action, tool
@@ -51,6 +52,14 @@ class ItemData(BaseModel):
 
 class MyEvent(Event):  # noqa D101
     value: Any
+
+
+class MyKeySelector(KeySelector):
+    """KeySelector for extracting key."""
+
+    def get_key(self, value: ItemData) -> int:
+        """Extract key from ItemData."""
+        return value.id
 
 
 class DataStreamAgent(Agent):

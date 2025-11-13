@@ -25,12 +25,14 @@ This example shows how to:
 Prerequisites:
 - Run the MCP server first: mcp_server.py
 """
+
 import multiprocessing
 import os
 import runpy
 import time
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 
 from flink_agents.api.agent import Agent
@@ -47,12 +49,13 @@ from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.tools.mcp import MCPServer
+from flink_agents.e2e_tests.ollama_prepare_utils import pull_model
 from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
 )
 
-OLLAMA_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b")
+OLLAMA_MODEL = os.environ.get("MCP_OLLAMA_CHAT_MODEL", "qwen3:1.7b")
 MCP_SERVER_ENDPOINT = "http://127.0.0.1:8000/mcp"
 
 
@@ -76,7 +79,9 @@ class MyMCPAgent(Agent):
     @staticmethod
     def ollama_connection() -> ResourceDescriptor:
         """ChatModelConnection for Ollama."""
-        return ResourceDescriptor(clazz=OllamaChatModelConnection)
+        return ResourceDescriptor(
+            clazz=OllamaChatModelConnection, request_timeout=240.0
+        )
 
     @chat_model_setup
     @staticmethod
@@ -125,7 +130,13 @@ def run_mcp_server() -> None:
 
 current_dir = Path(__file__).parent
 
-if __name__ == "__main__":
+client = pull_model(OLLAMA_MODEL)
+
+
+@pytest.mark.skipif(
+    client is None, reason="Ollama client is not available or test model is missing"
+)
+def test_mcp() -> None:  # noqa:D103
     # Start MCP server in background
     print("Starting MCP server...")
     server_process = multiprocessing.Process(target=run_mcp_server)

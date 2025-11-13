@@ -33,6 +33,7 @@ class ProcessedData(BaseModel):  # noqa D101
     content: str
     visit_count: int
 
+
 class MyEvent(Event):  # noqa D101
     value: Any
 
@@ -57,15 +58,14 @@ class MyAgent(Agent):
         current_count = previous_data.visit_count if previous_data else 0
         new_count = current_count + 1
 
-        data_to_store = ProcessedData(content=input_message,visit_count=new_count)
+        data_to_store = ProcessedData(content=input_message, visit_count=new_count)
         data_ref = memory.set(data_path, data_to_store)
 
         ctx.send_event(MyEvent(value=data_ref))
 
         processed_content = f"{input_message} -> processed_by_first_action"
         key_with_count = f"(visit {new_count} times)"
-        ctx.send_event(OutputEvent(output={key_with_count:processed_content}))
-
+        ctx.send_event(OutputEvent(output={key_with_count: processed_content}))
 
     @action(MyEvent)
     @staticmethod
@@ -79,7 +79,9 @@ class MyAgent(Agent):
         current_count = processed_data.visit_count
         new_count = current_count + 1
 
-        updated_data_to_store = ProcessedData(content=base_message, visit_count=new_count)
+        updated_data_to_store = ProcessedData(
+            content=base_message, visit_count=new_count
+        )
         memory.set(content_ref.path, updated_data_to_store)
 
         final_content = f"{base_message} -> processed by second_action"
@@ -87,7 +89,7 @@ class MyAgent(Agent):
         ctx.send_event(OutputEvent(output={key_with_count: final_content}))
 
 
-if __name__ == "__main__":
+def test_workflow() -> None:  # noqa: D103
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []
