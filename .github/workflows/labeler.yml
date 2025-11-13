@@ -18,11 +18,12 @@
 name: "Pull Request Labeler"
 
 on:
-  pull_request_target :
+  pull_request_target:
     types:
       - opened
 jobs:
   triage:
+    if: (github.repository == 'apache/flink-agents')
     permissions:
       contents: read
       pull-requests: write
