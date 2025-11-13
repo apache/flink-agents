@@ -28,12 +28,13 @@ import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
-import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelConnection;
+import org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup;
 
@@ -61,23 +62,52 @@ import java.util.List;
  * resource is configured with the connection name, the model name and the list of tool names that
  * the model is allowed to call.
  */
-public class AgentWithOllama extends Agent {
+public class ChatModelIntegrationAgent extends Agent {
+    public static final String OLLAMA_MODEL = "qwen3:0.6b";
+
     @ChatModelConnection
-    public static ResourceDescriptor ollamaChatModelConnection() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
-                .addInitialArgument("endpoint", "http://localhost:11434")
-                .build();
+    public static ResourceDescriptor chatModelConnection() {
+        String provider = System.getProperty("MODEL_PROVIDER", "OLLAMA");
+        if (provider.equals("OLLAMA")) {
+            return ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
+                    .addInitialArgument("endpoint", "http://localhost:11434")
+                    .addInitialArgument("requestTimeout", 240)
+                    .build();
+        } else if (provider.equals("AZURE")) {
+            String endpoint = System.getenv().get("AZURE_ENDPOINT");
+            String apiKey = System.getenv().get("AZURE_API_KEY");
+            return ResourceDescriptor.Builder.newBuilder(AzureAIChatModelConnection.class.getName())
+                    .addInitialArgument("endpoint", endpoint)
+                    .addInitialArgument("apiKey", apiKey)
+                    .build();
+        } else {
+            throw new RuntimeException(String.format("Unknown model provider %s", provider));
+        }
     }
 
     @ChatModelSetup
-    public static ResourceDescriptor ollamaChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
-                .addInitialArgument("connection", "ollamaChatModelConnection")
-                .addInitialArgument("model", "qwen3:8b")
-                .addInitialArgument(
-                        "tools",
-                        List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
-                .build();
+    public static ResourceDescriptor chatModel() {
+        String provider = System.getProperty("MODEL_PROVIDER", "OLLAMA");
+
+        if (provider.equals("OLLAMA")) {
+            return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+                    .addInitialArgument("connection", "chatModelConnection")
+                    .addInitialArgument("model", OLLAMA_MODEL)
+                    .addInitialArgument(
+                            "tools",
+                            List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+                    .build();
+        } else if (provider.equals("AZURE")) {
+            return ResourceDescriptor.Builder.newBuilder(AzureAIChatModelSetup.class.getName())
+                    .addInitialArgument("connection", "chatModelConnection")
+                    .addInitialArgument("model", "gpt-4o")
+                    .addInitialArgument(
+                            "tools",
+                            List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+                    .build();
+        } else {
+            throw new RuntimeException(String.format("Unknown model provider %s", provider));
+        }
     }
 
     @Tool(description = "Converts temperature between Celsius and Fahrenheit")
@@ -126,11 +156,9 @@ public class AgentWithOllama extends Agent {
 
     @Action(listenEvents = {InputEvent.class})
     public static void process(InputEvent event, RunnerContext ctx) throws Exception {
-        BaseChatModelSetup chatModel =
-                (BaseChatModelSetup) ctx.getResource("ollamaChatModel", ResourceType.CHAT_MODEL);
         ctx.sendEvent(
                 new ChatRequestEvent(
-                        "ollamaChatModel",
+                        "chatModel",
                         Collections.singletonList(
                                 new ChatMessage(MessageRole.USER, (String) event.getInput()))));
     }

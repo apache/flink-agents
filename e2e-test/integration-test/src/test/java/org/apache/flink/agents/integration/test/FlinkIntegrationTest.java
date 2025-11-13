@@ -20,12 +20,14 @@ package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
+import org.junit.jupiter.api.Test;
 
 /**
  * Example demonstrating how to integrate Flink Agents with Table API.
@@ -39,7 +41,7 @@ import org.apache.flink.types.Row;
  *   <li>Execute the pipeline
  * </ul>
  */
-public class TableIntegrationExample {
+public class FlinkIntegrationTest {
 
     /** Key selector for extracting keys from Row objects. */
     public static class RowKeySelector implements KeySelector<Object, Integer> {
@@ -53,7 +55,42 @@ public class TableIntegrationExample {
         }
     }
 
-    public static void main(String[] args) throws Exception {
+    @Test
+    public void testFromDataStreamToDataStream() throws Exception {
+        // Create the execution environment
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        // Create input DataStream
+        DataStream<FlinkIntegrationAgent.ItemData> inputStream =
+                env.fromElements(
+                        new FlinkIntegrationAgent.ItemData(1, "item1", 10.5),
+                        new FlinkIntegrationAgent.ItemData(2, "item2", 20.0),
+                        new FlinkIntegrationAgent.ItemData(3, "item3", 15.7),
+                        new FlinkIntegrationAgent.ItemData(1, "item1_updated", 12.3),
+                        new FlinkIntegrationAgent.ItemData(2, "item2_updated", 22.1),
+                        new FlinkIntegrationAgent.ItemData(1, "item1_updated_again", 15.3));
+
+        // Create agents execution environment
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        // Apply agent to the DataStream
+        DataStream<Object> outputStream =
+                agentsEnv
+                        .fromDataStream(inputStream, new FlinkIntegrationAgent.ItemKeySelector())
+                        .apply(new FlinkIntegrationAgent.DataStreamAgent())
+                        .toDataStream();
+
+        // Print the results
+        outputStream.print();
+
+        // Execute the pipeline
+        agentsEnv.execute();
+    }
+
+    @Test
+    public void testFromTableToTable() throws Exception {
         // Create the execution environment
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
@@ -87,13 +124,46 @@ public class TableIntegrationExample {
         Table outputTable =
                 agentsEnv
                         .fromTable(inputTable, new RowKeySelector())
-                        .apply(new TableAgent())
+                        .apply(new FlinkIntegrationAgent.TableAgent())
                         .toTable(outputSchema);
 
         // Print the results to fully display the data
         tableEnv.toDataStream(outputTable).print();
         env.execute();
         // Print the results in table format
+        outputTable.execute().print();
+    }
+
+    @Test
+    public void testFromDataStreamToTable() throws Exception {
+        // Create the execution environment
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        // Create input DataStream
+        DataStream<FlinkIntegrationAgent.ItemData> inputStream =
+                env.fromElements(
+                        new FlinkIntegrationAgent.ItemData(1, "item1", 10.5),
+                        new FlinkIntegrationAgent.ItemData(2, "item2", 20.0),
+                        new FlinkIntegrationAgent.ItemData(3, "item3", 15.7),
+                        new FlinkIntegrationAgent.ItemData(1, "item1_updated", 12.3),
+                        new FlinkIntegrationAgent.ItemData(2, "item2_updated", 22.1),
+                        new FlinkIntegrationAgent.ItemData(1, "item1_updated_again", 15.3));
+
+        // Create agents execution environment
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        // Define output schema
+        Schema outputSchema = Schema.newBuilder().column("f0", DataTypes.STRING()).build();
+
+        // Apply agent to the Table
+        Table outputTable =
+                agentsEnv
+                        .fromDataStream(inputStream, new FlinkIntegrationAgent.ItemKeySelector())
+                        .apply(new FlinkIntegrationAgent.DataStreamAgent())
+                        .toTable(outputSchema);
+
         outputTable.execute().print();
     }
 }

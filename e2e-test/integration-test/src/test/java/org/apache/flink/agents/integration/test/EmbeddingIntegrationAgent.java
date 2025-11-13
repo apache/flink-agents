@@ -44,24 +44,35 @@ import java.util.Map;
  *
  * <p>Used for e2e testing of the embedding model subsystem.
  */
-public class AgentWithOllamaEmbedding extends Agent {
-
+public class EmbeddingIntegrationAgent extends Agent {
+    public static final String OLLAMA_MODEL = "nomic-embed-text";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @EmbeddingModelConnection
-    public static ResourceDescriptor ollamaEmbeddingConnection() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaEmbeddingModelConnection.class.getName())
-                .addInitialArgument("host", "http://localhost:11434")
-                .addInitialArgument("timeout", 60)
-                .build();
+    public static ResourceDescriptor embeddingConnection() {
+        String provider = System.getProperty("MODEL_PROVIDER", "OLLAMA");
+        if (provider.equals("OLLAMA")) {
+            return ResourceDescriptor.Builder.newBuilder(
+                            OllamaEmbeddingModelConnection.class.getName())
+                    .addInitialArgument("host", "http://localhost:11434")
+                    .addInitialArgument("timeout", 60)
+                    .build();
+        } else {
+            throw new RuntimeException(String.format("Unknown model provider %s", provider));
+        }
     }
 
     @EmbeddingModelSetup
     public static ResourceDescriptor embeddingModel() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaEmbeddingModelSetup.class.getName())
-                .addInitialArgument("connection", "ollamaEmbeddingConnection")
-                .addInitialArgument("model", "nomic-embed-text")
-                .build();
+        String provider = System.getProperty("MODEL_PROVIDER", "OLLAMA");
+        if (provider.equals("OLLAMA")) {
+            return ResourceDescriptor.Builder.newBuilder(OllamaEmbeddingModelSetup.class.getName())
+                    .addInitialArgument("connection", "embeddingConnection")
+                    .addInitialArgument("model", OLLAMA_MODEL)
+                    .build();
+        } else {
+            throw new RuntimeException(String.format("Unknown model provider %s", provider));
+        }
     }
 
     /** Test tool for validating embedding storage operations. */

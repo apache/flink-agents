@@ -15,24 +15,46 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
-public class AgentWithAzureAIExample {
-    /** Runs the example pipeline. */
-    public static void main(String[] args) throws Exception {
-        if (!AgentWithAzureAI.callingRealMode()) {
-            // print warning information
-            System.err.println(
-                    "Please set the AZURE_ENDPOINT and AZURE_API_KEY in the AgentWithAzureAI class to run this example in real mode.");
-            System.err.println("Falling back to mock mode.");
-            AgentWithResourceExample.main(args);
-            return;
-        }
+import java.io.IOException;
+
+import static org.apache.flink.agents.integration.test.ChatModelIntegrationAgent.OLLAMA_MODEL;
+
+/**
+ * Example application that applies {@link ChatModelIntegrationAgent} to a DataStream of user
+ * prompts.
+ */
+public class ChatModelIntegrationTest extends OllamaPreparationUtils {
+    private static final String API_KEY = "_API_KEY";
+    private static final String OLLAMA = "OLLAMA";
+
+    private final boolean ollamaReady;
+
+    public ChatModelIntegrationTest() throws IOException {
+        ollamaReady = pullModel(OLLAMA_MODEL);
+    }
+
+    @ParameterizedTest()
+    @ValueSource(strings = {"OLLAMA", "AZURE"})
+    public void testChatModeIntegration(String provider) throws Exception {
+        Assumptions.assumeTrue(
+                (OLLAMA.equals(provider) && ollamaReady)
+                        || System.getenv().get(provider + API_KEY) != null,
+                String.format(
+                        "Server or authentication information is not provided for %s", provider));
+
+        System.setProperty("MODEL_PROVIDER", provider);
+
         // Create the execution environment
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
@@ -59,7 +81,7 @@ public class AgentWithAzureAIExample {
         DataStream<Object> outputStream =
                 agentsEnv
                         .fromDataStream(inputStream, (KeySelector<String, String>) value -> value)
-                        .apply(new AgentWithAzureAI())
+                        .apply(new ChatModelIntegrationAgent())
                         .toDataStream();
 
         // Print the results

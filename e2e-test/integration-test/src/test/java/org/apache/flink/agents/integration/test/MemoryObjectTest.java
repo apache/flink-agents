@@ -15,45 +15,38 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.junit.jupiter.api.Test;
 
-/** Example application that applies {@link AgentWithOllamaEmbedding} to a DataStream of prompts. */
-public class AgentWithOllamaEmbeddingExample {
-    /** Runs the example pipeline. */
-    public static void main(String[] args) throws Exception {
+/**
+ * Example to test MemoryObject in a complete Java Flink execution environment. This job triggers
+ * the {@link MemoryObjectAgent} to test storing and retrieving complex data structures.
+ */
+public class MemoryObjectTest {
+
+    @Test
+    public void testMemoryObject() throws Exception {
         // Create the execution environment
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
-        // Use prompts that exercise embedding generation and similarity checks
-        DataStream<String> inputStream =
-                env.fromData(
-                        "Generate embedding for: 'Machine learning'",
-                        "Generate embedding for: 'Deep learning techniques'",
-                        "Find texts similar to: 'neural networks'",
-                        "Produce embedding and return top-3 similar items for: 'natural language processing'",
-                        "Generate embedding for: 'hello world'",
-                        "Compare similarity between 'cat' and 'dog'",
-                        "Create embedding for: 'space exploration'",
-                        "Find nearest neighbors for: 'artificial intelligence'",
-                        "Generate embedding for: 'data science'",
-                        "Random embedding test");
+        // Use two different keys (1 and 2) to show that memory is isolated per key.
+        DataStream<Integer> inputStream = env.fromElements(1, 2, 3, 1);
 
         // Create agents execution environment
         AgentsExecutionEnvironment agentsEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
 
-        // Apply agent to the DataStream and use the prompt itself as the key
+        // Apply agent to the DataStream and use the integer itself as the key
         DataStream<Object> outputStream =
                 agentsEnv
-                        .fromDataStream(inputStream, (KeySelector<String, String>) value -> value)
-                        .apply(new AgentWithOllamaEmbedding())
+                        .fromDataStream(inputStream, (KeySelector<Integer, Integer>) value -> value)
+                        .apply(new MemoryObjectAgent())
                         .toDataStream();
 
         // Print the results

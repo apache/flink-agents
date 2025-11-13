@@ -42,10 +42,17 @@ import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.util.List;
 
-public class ReActAgentExample {
+import static org.apache.flink.agents.integration.test.OllamaPreparationUtils.pullModel;
+
+public class ReActAgentTest {
+    public static final String OLLAMA_MODEL = "qwen3:1.7b";
+
     @org.apache.flink.agents.api.annotation.Tool(
             description = "Useful function to add two numbers.")
     public static double add(@ToolParam(name = "a") Double a, @ToolParam(name = "b") Double b) {
@@ -59,8 +66,15 @@ public class ReActAgentExample {
         return a * b;
     }
 
-    /** Runs the example pipeline. */
-    public static void main(String[] args) throws Exception {
+    private final boolean ollamaReady;
+
+    public ReActAgentTest() throws IOException {
+        ollamaReady = pullModel(OLLAMA_MODEL);
+    }
+
+    @Test
+    public void testReActAgent() throws Exception {
+        Assumptions.assumeTrue(ollamaReady, String.format("%s is not ready", OLLAMA_MODEL));
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
@@ -80,18 +94,18 @@ public class ReActAgentExample {
                         ResourceDescriptor.Builder.newBuilder(
                                         OllamaChatModelConnection.class.getName())
                                 .addInitialArgument("endpoint", "http://localhost:11434")
+                                .addInitialArgument("requestTimeout", 240)
                                 .build())
                 .addResource(
                         "add",
                         ResourceType.TOOL,
                         Tool.fromMethod(
-                                ReActAgentExample.class.getMethod(
-                                        "add", Double.class, Double.class)))
+                                ReActAgentTest.class.getMethod("add", Double.class, Double.class)))
                 .addResource(
                         "multiply",
                         ResourceType.TOOL,
                         Tool.fromMethod(
-                                ReActAgentExample.class.getMethod(
+                                ReActAgentTest.class.getMethod(
                                         "multiply", Double.class, Double.class)));
 
         agentsEnv
@@ -110,7 +124,7 @@ public class ReActAgentExample {
                                 DataTypes.FIELD("a", DataTypes.DOUBLE()),
                                 DataTypes.FIELD("b", DataTypes.DOUBLE()),
                                 DataTypes.FIELD("c", DataTypes.DOUBLE())),
-                        Row.of(1, 2, 3));
+                        Row.of(2131, 29847, 3));
 
         // Define output schema
         Schema outputSchema =
@@ -140,7 +154,7 @@ public class ReActAgentExample {
         ResourceDescriptor chatModelDescriptor =
                 ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
                         .addInitialArgument("connection", "ollama")
-                        .addInitialArgument("model", "qwen3:8b")
+                        .addInitialArgument("model", OLLAMA_MODEL)
                         .addInitialArgument("tools", List.of("add", "multiply"))
                         .addInitialArgument("extract_reasoning", "true")
                         .build();
@@ -150,8 +164,11 @@ public class ReActAgentExample {
                         List.of(
                                 new ChatMessage(
                                         MessageRole.SYSTEM,
+                                        "Must call function tool to do the calculate."),
+                                new ChatMessage(
+                                        MessageRole.SYSTEM,
                                         "An example of output is {\"result\": 30.32}"),
-                                new ChatMessage(MessageRole.USER, "What is ({a} + {b}) * {c}")));
+                                new ChatMessage(MessageRole.USER, "What is ({a} + {b}) * {c}.")));
         RowTypeInfo outputTypeInfo =
                 new RowTypeInfo(
                         new TypeInformation[] {BasicTypeInfo.DOUBLE_TYPE_INFO},
