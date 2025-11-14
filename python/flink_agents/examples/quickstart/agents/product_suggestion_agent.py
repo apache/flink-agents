@@ -108,7 +108,7 @@ class ProductSuggestionAgent(Agent):
                     output=ProductSuggestion(
                         id=ctx.short_term_memory.get("id"),
                         score_hist=ctx.short_term_memory.get("score_hist"),
-                        suggestions=json_content["suggestions"],
+                        suggestions=json_content["suggestion_list"],
                     )
                 )
             )
