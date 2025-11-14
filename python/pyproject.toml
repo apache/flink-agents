@@ -186,5 +186,10 @@ ban-relative-imports = "all"
 [tool.ruff.lint.flake8-type-checking]
 strict = true
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests that require external services or integration (deselect with '-m \"not integration\"')",
+]
+
 [tool.ruff.format]
 docstring-code-format = true
