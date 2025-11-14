@@ -142,6 +142,95 @@ public class MyAgent extends Agent {
 
 ## Built-in Providers
 
+### Azure AI
+
+Azure AI provides cloud-based chat models through Azure AI Inference API, supporting various models including GPT-4, GPT-4o, and other Azure-hosted models.
+
+{{< hint warning >}}
+Azure AI is only supported in Java currently.
+{{< /hint >}}
+
+#### Prerequisites
+
+1. Create an Azure AI resource in the [Azure Portal](https://portal.azure.com/)
+2. Obtain your endpoint URL and API key from the Azure AI resource
+
+#### AzureAIChatModelConnection Parameters
+
+{{< tabs "AzureAIChatModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type   | Default  | Description                            |
+|-----------|--------|----------|----------------------------------------|
+| `endpoint` | String | Required | Azure AI service endpoint URL          |
+| `apiKey`   | String | Required | Azure AI API key for authentication   |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### AzureAIChatModelSetup Parameters
+
+{{< tabs "AzureAIChatModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter    | Type             | Default  | Description                                      |
+|--------------|------------------|----------|--------------------------------------------------|
+| `connection` | String           | Required | Reference to connection method name              |
+| `model`      | String           | Required | Name of the chat model to use (e.g., "gpt-4o")   |
+| `prompt`     | Prompt \| String | None     | Prompt template or reference to prompt resource  |
+| `tools`      | List[String]     | None     | List of tool names available to the model        |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Azure AI Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor azureAIConnection() {
+        return ResourceDescriptor.Builder.newBuilder(AzureAIChatModelConnection.class.getName())
+                .addInitialArgument("endpoint", "https://your-resource.inference.ai.azure.com")
+                .addInitialArgument("apiKey", "your-api-key-here")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor azureAIChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(AzureAIChatModelSetup.class.getName())
+                .addInitialArgument("connection", "azureAIConnection")
+                .addInitialArgument("model", "gpt-4o")
+                .build();
+    }
+    
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Azure AI supports various models through the Azure AI Inference API. Visit the [Azure AI Model Catalog](https://ai.azure.com/explore/models) for the complete and up-to-date list of available models.
+
+Some popular options include:
+- **GPT-4o** (gpt-4o)
+- **GPT-4** (gpt-4)
+- **GPT-4 Turbo** (gpt-4-turbo)
+- **GPT-3.5 Turbo** (gpt-3.5-turbo)
+
+{{< hint warning >}}
+Model availability and specifications may change. Always check the official Azure AI documentation for the latest information before implementing in production.
+{{< /hint >}}
+
 ### Anthropic
 
 Anthropic provides cloud-based chat models featuring the Claude family, known for their strong reasoning, coding, and safety capabilities.
