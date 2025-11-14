@@ -69,6 +69,11 @@ public class MemoryRefTest {
         }
 
         @Override
+        public MemoryObject getSensoryMemory() throws Exception {
+            return memoryObject;
+        }
+
+        @Override
         public MemoryObject getShortTermMemory() {
             return memoryObject;
         }
@@ -176,7 +181,7 @@ public class MemoryRefTest {
         for (Map.Entry<String, Object> entry : testData.entrySet()) {
             MemoryRef ref = memory.set(entry.getKey(), entry.getValue());
 
-            Object resolvedValue = ref.resolve(ctx).getValue();
+            Object resolvedValue = ref.resolve(ctx.getShortTermMemory()).getValue();
             assertEquals(entry.getValue(), resolvedValue);
         }
     }

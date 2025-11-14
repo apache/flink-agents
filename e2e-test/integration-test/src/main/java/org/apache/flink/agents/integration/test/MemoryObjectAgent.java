@@ -30,6 +30,17 @@ import java.util.*;
 
 /** An example agent that tests usages of MemoryObject. */
 public class MemoryObjectAgent extends Agent {
+    public static class MyEvent extends Event {
+        private final String value;
+
+        public MyEvent(String value) {
+            this.value = value;
+        }
+
+        public String getValue() {
+            return value;
+        }
+    }
 
     /** A custom POJO for testing serialization. */
     public static class Person implements Serializable {
@@ -65,6 +76,8 @@ public class MemoryObjectAgent extends Agent {
     @Action(listenEvents = {InputEvent.class})
     public static void testMemoryObject(Event event, RunnerContext ctx) throws Exception {
         MemoryObject stm = ctx.getShortTermMemory();
+        MemoryObject sm = ctx.getSensoryMemory();
+
         Integer key = (Integer) ((InputEvent) event).getInput();
 
         int visitCount = 1;
@@ -73,42 +86,70 @@ public class MemoryObjectAgent extends Agent {
         }
         stm.set("visit_count", visitCount);
 
-        // isExist
-        stm.set("existing.path", true);
-        assertEquals(stm.isExist("existing.path"), true);
-        assertEquals(stm.isExist("non.existing.path"), false);
-
-        // getFieldNames and getFields
-        MemoryObject fieldsTestObj = stm.newObject("fieldsTest", true);
-        fieldsTestObj.set("x", 1);
-        fieldsTestObj.set("y", 2);
-        fieldsTestObj.newObject("obj", false);
-        List<String> names = fieldsTestObj.getFieldNames();
-        assertEquals(new HashSet<>(names).containsAll(Arrays.asList("x", "y", "obj")), true);
-        Map<String, Object> fields = fieldsTestObj.getFields();
-        assertEquals(1, ((Number) fields.get("x")).intValue());
-        assertEquals("NestedObject", fields.get("obj"));
-
-        // List
         List<String> tags = Arrays.asList("gamer", "developer", "flink-user");
-        stm.set("list", tags);
-        assertEquals(tags, stm.get("list").getValue());
 
-        // Map
         Map<String, Integer> inventory = new HashMap<>();
         inventory.put("potion", 10);
         inventory.put("gold", 500);
-        stm.set("map", inventory);
-        assertEquals(inventory, stm.get("map").getValue());
 
-        // Custom POJO
         Person person = new Person("Bob", 22);
-        stm.set("person", person);
-        assertEquals(person, stm.get("person").getValue());
+
+        if (visitCount == 1) {
+            // Test sensory memory
+            sm.set("existing.path", true);
+            assertEquals(sm.isExist("existing"), true);
+            assertEquals(sm.isExist("existing.path"), true);
+
+            // Test short-term memory
+            // exist
+            stm.set("existing.path", true);
+
+            // getFieldNames and getFields
+            MemoryObject fieldsTestObj = stm.newObject("fieldsTest", true);
+            fieldsTestObj.set("x", 1);
+            fieldsTestObj.set("y", 2);
+            fieldsTestObj.newObject("obj", false);
+
+            // List
+            stm.set("list", tags);
+
+            // Map
+            stm.set("map", inventory);
+
+            // Custom POJO
+            stm.set("person", person);
+        } else {
+            // Test sensory memory
+            assertEquals(sm.isExist("existing"), false);
+            assertEquals(sm.isExist("existing.path"), false);
+
+            // Test short-term memory
+            // exist
+            assertEquals(stm.isExist("existing.path"), true);
+            assertEquals(stm.isExist("non.existing.path"), false);
+
+            // getFieldNames and getFields
+            MemoryObject fieldsTestObj = stm.get("fieldsTest");
+            List<String> names = fieldsTestObj.getFieldNames();
+            assertEquals(new HashSet<>(names).containsAll(Arrays.asList("x", "y", "obj")), true);
+            Map<String, Object> fields = fieldsTestObj.getFields();
+            assertEquals(1, ((Number) fields.get("x")).intValue());
+            assertEquals("NestedObject", fields.get("obj"));
+
+            // List
+            assertEquals(tags, stm.get("list").getValue());
+
+            // Map
+            assertEquals(inventory, stm.get("map").getValue());
+
+            // Custom POJO
+            assertEquals(person, stm.get("person").getValue());
+        }
 
         String result =
                 String.format("All assertions passed for key: %d (visit #%d)", key, visitCount);
         String output = result + " [Agent Complete]";
+
         ctx.sendEvent(new OutputEvent(output));
     }
 

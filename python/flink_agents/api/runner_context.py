@@ -83,6 +83,17 @@ class RunnerContext(ABC):
 
     @property
     @abstractmethod
+    def sensory_memory(self) -> "MemoryObject":
+        """Get the sensory memory.
+
+        Returns:
+        -------
+        MemoryObject
+          The root object of the sensory memory.
+        """
+
+    @property
+    @abstractmethod
     def short_term_memory(self) -> "MemoryObject":
         """Get the short-term memory.
 

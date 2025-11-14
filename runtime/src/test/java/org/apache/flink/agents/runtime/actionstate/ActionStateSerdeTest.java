@@ -40,11 +40,13 @@ public class ActionStateSerdeTest {
         OutputEvent outputEvent = new OutputEvent("test output");
         outputEvent.setAttr("outputAttr", 123);
 
-        MemoryUpdate memoryUpdate = new MemoryUpdate("test.path", "test value");
+        MemoryUpdate sensoryMemoryUpdate = new MemoryUpdate("sm.test.path", "sm test value");
+        MemoryUpdate shortTermMemoryUpdate = new MemoryUpdate("stm.test.path", "stm test value");
 
         // Create ActionState
         ActionState originalState = new ActionState(inputEvent);
-        originalState.addMemoryUpdate(memoryUpdate);
+        originalState.addSensoryMemoryUpdate(sensoryMemoryUpdate);
+        originalState.addShortTermMemoryUpdate(shortTermMemoryUpdate);
         originalState.addEvent(outputEvent);
 
         // Test Kafka seder/deserializer
@@ -67,10 +69,16 @@ public class ActionStateSerdeTest {
         assertEquals("testValue", deserializedInputEvent.getAttr("testAttr"));
 
         // Verify memoryUpdates
-        assertEquals(1, deserializedState.getMemoryUpdates().size());
-        MemoryUpdate deserializedMemoryUpdate = deserializedState.getMemoryUpdates().get(0);
-        assertEquals("test.path", deserializedMemoryUpdate.getPath());
-        assertEquals("test value", deserializedMemoryUpdate.getValue());
+        assertEquals(1, deserializedState.getSensoryMemoryUpdates().size());
+        MemoryUpdate deserializedSensoryMemoryUpdate =
+                deserializedState.getSensoryMemoryUpdates().get(0);
+        assertEquals("sm.test.path", deserializedSensoryMemoryUpdate.getPath());
+        assertEquals("sm test value", deserializedSensoryMemoryUpdate.getValue());
+        assertEquals(1, deserializedState.getShortTermMemoryUpdates().size());
+        MemoryUpdate deserializedShortTermMemoryUpdate =
+                deserializedState.getShortTermMemoryUpdates().get(0);
+        assertEquals("stm.test.path", deserializedShortTermMemoryUpdate.getPath());
+        assertEquals("stm test value", deserializedShortTermMemoryUpdate.getValue());
 
         // Verify outputEvents
         assertEquals(1, deserializedState.getOutputEvents().size());
@@ -86,7 +94,8 @@ public class ActionStateSerdeTest {
         // Create ActionState with null taskEvent
         ActionState originalState = new ActionState();
         MemoryUpdate memoryUpdate = new MemoryUpdate("test.path", "test value");
-        originalState.addMemoryUpdate(memoryUpdate);
+        originalState.addShortTermMemoryUpdate(memoryUpdate);
+        originalState.addSensoryMemoryUpdate(memoryUpdate);
 
         // Test serialization/deserialization
         ActionStateKafkaSeder seder = new ActionStateKafkaSeder();
@@ -98,7 +107,8 @@ public class ActionStateSerdeTest {
         assertNull(deserializedState.getTaskEvent());
 
         // Verify other fields
-        assertEquals(1, deserializedState.getMemoryUpdates().size());
+        assertEquals(1, deserializedState.getSensoryMemoryUpdates().size());
+        assertEquals(1, deserializedState.getShortTermMemoryUpdates().size());
         assertEquals(0, deserializedState.getOutputEvents().size());
     }
 
