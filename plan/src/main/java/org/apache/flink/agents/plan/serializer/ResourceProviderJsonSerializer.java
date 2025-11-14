@@ -68,6 +68,7 @@ public class ResourceProviderJsonSerializer extends StdSerializer<ResourceProvid
             throws IOException {
         gen.writeStringField("name", provider.getName());
         gen.writeStringField("type", provider.getType().getValue());
+        gen.writeObjectField("descriptor", provider.getDescriptor());
         gen.writeStringField("module", provider.getModule());
         gen.writeStringField("clazz", provider.getClazz());
 

@@ -29,6 +29,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonTyp
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -74,6 +75,14 @@ public class Prompt extends SerializableResource {
                     }
                     return String.join("\n", formattedMessages);
                 });
+    }
+
+    public List<ChatMessage> formatMessages(String defaultRoleValue, Map<String, Object> kwargs) {
+        Map<String, String> arguments = new HashMap<>();
+        for (Map.Entry<String, Object> entry : kwargs.entrySet()) {
+            arguments.put(entry.getKey(), entry.getValue().toString());
+        }
+        return formatMessages(MessageRole.fromValue(defaultRoleValue), arguments);
     }
 
     public List<ChatMessage> formatMessages(MessageRole defaultRole, Map<String, String> kwargs) {
