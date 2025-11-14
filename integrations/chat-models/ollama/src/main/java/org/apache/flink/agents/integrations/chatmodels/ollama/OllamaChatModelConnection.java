@@ -19,11 +19,13 @@
 package org.apache.flink.agents.integrations.chatmodels.ollama;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.ollama4j.exceptions.RoleNotFoundException;
 import io.github.ollama4j.models.chat.*;
 import io.github.ollama4j.models.request.OllamaChatEndpointCaller;
 import io.github.ollama4j.tools.Tools;
+import io.github.ollama4j.utils.Utils;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
@@ -80,6 +82,10 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         this.caller =
                 new OllamaChatEndpointCaller(
                         endpoint, null, requestTimeout != null ? requestTimeout : 60);
+        // TODO: Workaround to resolve bug in ollama4j:
+        // https://github.com/ollama4j/ollama4j/issues/237, should remove
+        // after bumping fixed version.
+        Utils.getObjectMapper().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
     }
 
     /**
