@@ -40,6 +40,9 @@ public interface RunnerContext {
     /**
      * Gets the sensory memory.
      *
+     * <p>Sensory memory is similar to short-term memory, but will be auto cleared after agent run
+     * finished. User could use it to store data that does not need to be shared across agent runs.
+     *
      * @return MemoryObject the root of the sensory memory
      * @throws Exception if the underlying state backend cannot be accessed
      */
