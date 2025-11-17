@@ -86,6 +86,10 @@ class RunnerContext(ABC):
     def sensory_memory(self) -> "MemoryObject":
         """Get the sensory memory.
 
+        Sensory memory is similar to short-term memory, but will be auto cleared
+        after agent run finished. User could use it to store data that does not need
+        to be shared across agent runs.
+
         Returns:
         -------
         MemoryObject

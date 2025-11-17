@@ -131,7 +131,7 @@ class LocalRunnerContext(RunnerContext):
     @property
     @override
     def sensory_memory(self) -> MemoryObject:
-        """Get the short-term memory object associated with this context.
+        """Get the sensory memory object associated with this context.
 
         Returns:
         -------
