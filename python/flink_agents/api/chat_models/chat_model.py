@@ -185,7 +185,9 @@ class BaseChatModelSetup(Resource):
 
             # fill the prompt template
             for msg in messages:
-                input_variable.update(msg.extra_args)
+                # Convert Any values to str to match format_messages signature
+                str_extra_args = {k: str(v) for k, v in msg.extra_args.items()}
+                input_variable.update(str_extra_args)
             prompt_messages = prompt.format_messages(**input_variable)
 
             # append meaningful messages

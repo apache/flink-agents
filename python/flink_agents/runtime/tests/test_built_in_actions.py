@@ -94,7 +94,9 @@ class MockChatModel(BaseChatModelSetup):
             if "sum" in messages[-1].content:
                 input_variable = {}
                 for msg in messages:
-                    input_variable.update(msg.extra_args)
+                    # Convert Any values to str to match format_messages signature
+                    str_extra_args = {k: str(v) for k, v in msg.extra_args.items()}
+                    input_variable.update(str_extra_args)
                 messages = prompt.format_messages(**input_variable)
 
         # Bind tools

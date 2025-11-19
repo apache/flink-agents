@@ -242,7 +242,9 @@ class ReActAgent(Agent):
                 usr_input = usr_input.as_dict(recursive=True)
             else:  # regard as pojo
                 usr_input = usr_input.__dict__
-            usr_msgs = prompt.format_messages(role=MessageRole.USER, **usr_input)
+            # Convert Any values to str to match format_messages signature
+            str_usr_input = {k: str(v) for k, v in usr_input.items()}
+            usr_msgs = prompt.format_messages(role=MessageRole.USER, **str_usr_input)
 
         try:
             schema_prompt = cast(
