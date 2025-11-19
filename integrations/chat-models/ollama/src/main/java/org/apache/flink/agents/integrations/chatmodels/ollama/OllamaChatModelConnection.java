@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.ollama4j.exceptions.RoleNotFoundException;
 import io.github.ollama4j.models.chat.*;
 import io.github.ollama4j.models.request.OllamaChatEndpointCaller;
+import io.github.ollama4j.models.request.ThinkMode;
 import io.github.ollama4j.tools.Tools;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -192,7 +193,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
                     OllamaChatRequest.builder()
                             .withMessages(ollamaChatMessages)
                             .withModel((String) arguments.get("model"))
-                            .withThinking(extractReasoning)
+                            .withThinking(extractReasoning ? ThinkMode.ENABLED : ThinkMode.DISABLED)
                             .withUseTools(false)
                             .build();
 
