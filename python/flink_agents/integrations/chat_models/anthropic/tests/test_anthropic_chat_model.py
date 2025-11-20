@@ -27,7 +27,10 @@ from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import
 )
 from flink_agents.plan.tools.function_tool import from_callable
 
-test_model = os.environ.get("TEST_MODEL")
+# Mark all tests in this module as integration tests
+pytestmark = pytest.mark.integration
+
+test_model = os.environ.get("TEST_MODEL", "claude-3-haiku-20240307")
 api_key = os.environ.get("TEST_API_KEY")
 
 
