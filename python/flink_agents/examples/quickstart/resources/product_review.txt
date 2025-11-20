@@ -2485,7 +2485,8 @@
 {"id": "B009MA34NY", "review": "love these shoes. use them to workout inside and to work"}
 {"id": "B0014F7B98", "review": "Lightweight, comfortable, supportive. Very happy I bought these shoes for working out."}
 {"id": "B000YFSR5G", "review": "Did not fit well. Was not comfortable. Switched to \"Fruit of the loom\". Fruit of the loom are somewhat oversized but fit well and are very comfortable."}
-{"id": "B005AGO4LU", "review": "I wear these everyday to work, the gym, etc."}{"id": "B0058YEJ5K", "review": "Love the fit"}
+{"id": "B005AGO4LU", "review": "I wear these everyday to work, the gym, etc."}
+{"id": "B0058YEJ5K", "review": "Love the fit"}
 {"id": "B0058YEJ5K", "review": "Super comfy!"}
 {"id": "B0014F7B98", "review": "I have gotten so many compliments on the blue color and look of this shoe.  It is super comfortable.  The grip is wonderful for my indoor gym cross training classes.  I always order a half size larger in Nike brand shoes and thy fit perfectly as I did with this shoe."}
 {"id": "B000YFSR5G", "review": "I only give four stars because the pants have no pockets."}
