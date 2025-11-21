@@ -46,7 +46,7 @@ under the License.
         <dependency>
             <groupId>com.openai</groupId>
             <artifactId>openai-java</artifactId>
-            <version>${openai.java.version}</version>
+            <version>${openai.version}</version>
         </dependency>
     </dependencies>
 

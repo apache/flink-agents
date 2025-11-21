@@ -148,22 +148,14 @@ public class OpenAIChatModelConnection extends BaseChatModelConnection {
     }
 
     private ChatCompletionCreateParams buildRequest(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> rawArguments)
-            throws JsonProcessingException {
-
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> rawArguments) {
         Map<String, Object> arguments =
                 rawArguments != null ? new HashMap<>(rawArguments) : new HashMap<>();
 
-        boolean strictMode = Boolean.TRUE.equals(arguments.get("strict"));
-
-        String modelName = (String) arguments.get("model");
+        boolean strictMode = Boolean.TRUE.equals(arguments.remove("strict"));
+        String modelName = (String) arguments.remove("model");
         if (modelName == null || modelName.isBlank()) {
             modelName = this.defaultModel;
-        }
-        if (modelName == null || modelName.isBlank()) {
-            throw new IllegalArgumentException(
-                    "OpenAI chat model requires a model name. "
-                            + "Provide it via setup parameters or connection defaults.");
         }
 
         ChatCompletionCreateParams.Builder builder =
@@ -180,18 +172,11 @@ public class OpenAIChatModelConnection extends BaseChatModelConnection {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> additionalKwargs =
-                (Map<String, Object>) arguments.get("additional_kwargs");
+                (Map<String, Object>) arguments.remove("additional_kwargs");
         if (additionalKwargs != null) {
             additionalKwargs.forEach(
                     (key, value) -> builder.putAdditionalBodyProperty(key, toJsonValue(value)));
         }
-
-        arguments.forEach(
-                (key, value) -> {
-                    if (!"additional_kwargs".equals(key)) {
-                        builder.putAdditionalBodyProperty(key, toJsonValue(value));
-                    }
-                });
 
         return builder.build();
     }
@@ -274,18 +259,12 @@ public class OpenAIChatModelConnection extends BaseChatModelConnection {
             case TOOL:
                 ChatCompletionToolMessageParam.Builder toolBuilder =
                         ChatCompletionToolMessageParam.builder().content(content);
-                Object toolCallId =
-                        Optional.ofNullable(message.getExtraArgs().get("tool_call_id"))
-                                .orElse(message.getExtraArgs().get("externalId"));
+                Object toolCallId = message.getExtraArgs().get("externalId");
                 if (toolCallId == null) {
-                    List<Map<String, Object>> assistantToolCalls = message.getToolCalls();
-                    if (assistantToolCalls != null && !assistantToolCalls.isEmpty()) {
-                        toolCallId = assistantToolCalls.get(0).get("id");
-                    }
+                    throw new IllegalArgumentException(
+                            "Tool message must have an externalId in extraArgs.");
                 }
-                if (toolCallId != null) {
-                    toolBuilder.toolCallId(toolCallId.toString());
-                }
+                toolBuilder.toolCallId(toolCallId.toString());
                 return ChatCompletionMessageParam.ofTool(toolBuilder.build());
             default:
                 throw new IllegalArgumentException("Unsupported role: " + role);
@@ -373,7 +352,7 @@ public class OpenAIChatModelConnection extends BaseChatModelConnection {
             functionMap.put("name", function.name());
             functionMap.put("arguments", parseArguments(function.arguments()));
             callMap.put("function", functionMap);
-            callMap.put("original_id", functionToolCall.id());
+            callMap.put("original_id", toolCallId);
             result.add(callMap);
         }
         return result;
