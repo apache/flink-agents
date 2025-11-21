@@ -71,6 +71,10 @@ public class ResourceProviderJsonSerializer extends StdSerializer<ResourceProvid
         gen.writeStringField("module", provider.getModule());
         gen.writeStringField("clazz", provider.getClazz());
 
+        if (provider.getDescriptor() != null) {
+            gen.writeObjectField("descriptor", provider.getDescriptor());
+        }
+
         gen.writeFieldName("kwargs");
         gen.writeStartObject();
         provider.getKwargs()

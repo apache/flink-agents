@@ -70,7 +70,6 @@ public class PythonActionExecutor {
     }
 
     public void open() throws Exception {
-        environmentManager.open();
         EmbeddedPythonEnvironment env = environmentManager.createEnvironment();
 
         interpreter = env.getInterpreter();
@@ -157,10 +156,6 @@ public class PythonActionExecutor {
                 interpreter.invoke(CLOSE_ASYNC_THREAD_POOL, pythonAsyncThreadPool);
             }
             interpreter.close();
-        }
-
-        if (environmentManager != null) {
-            environmentManager.close();
         }
     }
 

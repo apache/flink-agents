@@ -57,6 +57,12 @@ under the License.
             <version>${flink.version}</version>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>pemja</artifactId>
+            <version>${pemja.version}</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 
 </project>
