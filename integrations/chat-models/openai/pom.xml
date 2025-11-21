@@ -22,18 +22,33 @@ under the License.
 
     <parent>
         <groupId>org.apache.flink</groupId>
-        <artifactId>flink-agents-integrations</artifactId>
+        <artifactId>flink-agents-integrations-chat-models</artifactId>
         <version>0.2-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>flink-agents-integrations-chat-models</artifactId>
-    <name>Flink Agents : Integrations: Chat Models</name>
-    <packaging>pom</packaging>
+    <artifactId>flink-agents-integrations-chat-models-openai</artifactId>
+    <name>Flink Agents : Integrations: Chat Models: OpenAI</name>
+    <packaging>jar</packaging>
 
-    <modules>
-        <module>azureai</module>
-        <module>ollama</module>
-        <module>openai</module>
-    </modules>
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-plan</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.openai</groupId>
+            <artifactId>openai-java</artifactId>
+            <version>${openai.version}</version>
+        </dependency>
+    </dependencies>
 
 </project>
+
