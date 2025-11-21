@@ -17,6 +17,7 @@
 #################################################################################
 import json
 import os
+import uuid
 from typing import List, Sequence, Tuple, cast
 
 import openai
@@ -113,14 +114,17 @@ def convert_from_openai_message(message: ChatCompletionMessage) -> ChatMessage:
     """Convert an OpenAI message to a chat message."""
     tool_calls = []
     if message.tool_calls:
+        # Generate internal UUID for each tool call while preserving OpenAI's original ID
+        # in the original_id field for later conversion back to OpenAI format
         tool_calls = [
             {
-                "id": tool_call.id,
+                "id": uuid.uuid4(),
                 "type": tool_call.type,
                 "function": {
                     "name": tool_call.function.name,
                     "arguments": json.loads(tool_call.function.arguments),
                 },
+                "original_id": tool_call.id
             }
             for tool_call in message.tool_calls
         ]
