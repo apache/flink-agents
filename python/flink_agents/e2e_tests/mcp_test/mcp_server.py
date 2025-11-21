@@ -16,6 +16,7 @@
 #  limitations under the License.
 ################################################################################
 """MCP server providing prompts and tools for calculation tasks."""
+
 import dotenv
 from mcp.server.fastmcp import FastMCP
 

@@ -91,6 +91,57 @@ jobs:
       - name: Run Python Tests
         run: tools/ut.sh -p
 
+  python_e2e_tests:
+    name: python end-to-end tests on ${{ matrix.os }} ${{ matrix.python-version}}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ 'ubuntu-latest' ]
+        python-version: [ '3.11' ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'adopt'
+      - name: Install python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Install flink-agents
+        run: bash tools/build.sh
+      - name: Install ollama
+        run: bash tools/start_ollama_server.sh
+      - name: Run Python E2E Tests
+        run: tools/ut.sh -p -e
+
+  java_e2e_tests:
+    name: java end-to-end tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ 'ubuntu-latest' ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'adopt'
+      - name: Install flink-agents Java
+        run: bash tools/build.sh -j
+      - name: Install ollama
+        run: bash tools/start_ollama_server.sh
+      - name: Run Java E2E Tests
+        run: tools/ut.sh -j -e
+
   e2e_tests:
     name: e2e tests on ${{ matrix.os }} ${{ matrix.python-version}}
     runs-on: ${{ matrix.os }}
