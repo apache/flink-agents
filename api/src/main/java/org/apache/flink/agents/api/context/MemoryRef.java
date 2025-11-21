@@ -47,12 +47,12 @@ public final class MemoryRef implements Serializable {
     /**
      * Resolves the reference using the provided RunnerContext to get the actual data.
      *
-     * @param ctx The current execution context, used to access Short-Term Memory.
+     * @param memory The memory this ref based on.
      * @return The deserialized, original data object.
      * @throws Exception if the memory cannot be accessed or the data cannot be resolved.
      */
-    public MemoryObject resolve(RunnerContext ctx) throws Exception {
-        return ctx.getShortTermMemory().get(this);
+    public MemoryObject resolve(MemoryObject memory) throws Exception {
+        return memory.get(this);
     }
 
     public String getPath() {

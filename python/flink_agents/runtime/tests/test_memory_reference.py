@@ -95,7 +95,7 @@ def test_memory_ref_resolve() -> None:  # noqa: D103
 
     for path, value in test_data.items():
         ref = mem.set(path, value)
-        resolved_value = ref.resolve(ctx)
+        resolved_value = ref.resolve(ctx.short_term_memory)
         assert resolved_value == value
 
 

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
-    from flink_agents.api.runner_context import RunnerContext
+    from flink_agents.api.memory_object import MemoryObject
 
 
 class MemoryRef(BaseModel):
@@ -48,17 +48,17 @@ class MemoryRef(BaseModel):
         """
         return MemoryRef(path=path)
 
-    def resolve(self, ctx: RunnerContext) -> Any:
+    def resolve(self, memory: MemoryObject) -> Any:
         """Resolve the reference to get the actual data.
 
         Parameters
         ----------
-        ctx: RunnerContext
-            The current execution context, used to access Short-Term Memory.
+        memory: MemoryObject
+            The memory object this ref points to.
 
         Returns:
         -------
         Any
             The deserialized, original data object.
         """
-        return ctx.short_term_memory.get(self)
+        return memory.get(self)
