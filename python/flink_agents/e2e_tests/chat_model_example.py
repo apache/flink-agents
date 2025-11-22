@@ -38,6 +38,10 @@ from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
 )
+from flink_agents.integrations.chat_models.openai.openai_chat_model import (
+    OpenAIChatModelConnection,
+    OpenAIChatModelSetup,
+)
 from flink_agents.integrations.chat_models.tongyi_chat_model import (
     TongyiChatModelConnection,
     TongyiChatModelSetup,
@@ -45,7 +49,8 @@ from flink_agents.integrations.chat_models.tongyi_chat_model import (
 
 TONGYI_MODEL = os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus")
 OLLAMA_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:0.6b")
-BACKENDS_TO_RUN: List[str] = ["Tongyi", "Ollama"]
+OPENAI_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo")
+BACKENDS_TO_RUN: List[str] = ["Tongyi", "OpenAI", "Ollama"]
 
 
 class MyAgent(Agent):
@@ -55,9 +60,6 @@ class MyAgent(Agent):
     @staticmethod
     def tongyi_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for tongyi model service connection."""
-        if not os.environ.get("DASHSCOPE_API_KEY"):
-            msg = "Please set the 'DASHSCOPE_API_KEY' environment variable."
-            raise ValueError(msg)
         return ResourceDescriptor(clazz=TongyiChatModelConnection)
 
     @chat_model_connection
@@ -65,6 +67,15 @@ class MyAgent(Agent):
     def ollama_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for ollama model service connection."""
         return ResourceDescriptor(clazz=OllamaChatModelConnection)
+
+    @chat_model_connection
+    @staticmethod
+    def openai_connection() -> ResourceDescriptor:
+        """ChatModelConnection responsible for openai model service connection."""
+        return ResourceDescriptor(
+            clazz=OpenAIChatModelConnection,
+            api_key=os.environ.get("OPENAI_API_KEY")
+        )
 
     @chat_model_setup
     @staticmethod
@@ -76,6 +87,13 @@ class MyAgent(Agent):
                 connection="tongyi_connection",
                 model=TONGYI_MODEL,
                 tools=["add"],
+            )
+        elif CURRENT_BACKEND == "OpenAI":
+            return ResourceDescriptor(
+                clazz=OpenAIChatModelSetup,
+                connection="openai_connection",
+                model=OPENAI_MODEL,
+                tools=["add"]
             )
         else:
             return ResourceDescriptor(
@@ -95,6 +113,13 @@ class MyAgent(Agent):
                 clazz=TongyiChatModelSetup,
                 connection="tongyi_connection",
                 model=TONGYI_MODEL,
+            )
+        elif CURRENT_BACKEND == "OpenAI":
+            return ResourceDescriptor(
+                clazz=OpenAIChatModelSetup,
+                connection="openai_connection",
+                model=OPENAI_MODEL,
+                tools=["add"]
             )
         else:
             return ResourceDescriptor(
@@ -155,10 +180,19 @@ class MyAgent(Agent):
 if __name__ == "__main__":
     for backend in BACKENDS_TO_RUN:
         CURRENT_BACKEND = backend
-        CURRENT_MODEL = TONGYI_MODEL if backend == "Tongyi" else OLLAMA_MODEL
+        if backend == "Tongyi":
+            CURRENT_MODEL = TONGYI_MODEL
+        elif backend == "OpenAI":
+            CURRENT_MODEL = OPENAI_MODEL
+        else:
+            CURRENT_MODEL = OLLAMA_MODEL
 
         if backend == "Tongyi" and not os.environ.get("DASHSCOPE_API_KEY"):
             print("[SKIP] TongyiChatModel because DASHSCOPE_API_KEY is not set.")
+            continue
+
+        if backend == "OpenAI" and not os.environ.get("OPENAI_API_KEY"):
+            print("[SKIP] OpenAIChatModel because OPENAI_API_KEY is not set.")
             continue
 
         print(
