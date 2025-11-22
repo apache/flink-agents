@@ -18,19 +18,23 @@
 import json
 import os
 import uuid
-from typing import List, Sequence, Tuple, cast
+from typing import TYPE_CHECKING, List, Sequence, Tuple
 
 import openai
 from openai.types.chat import (
-    ChatCompletionAssistantMessageParam,
     ChatCompletionMessage,
     ChatCompletionMessageParam,
     ChatCompletionMessageToolCallParam,
-    ChatCompletionSystemMessageParam,
-    ChatCompletionToolMessageParam,
-    ChatCompletionUserMessageParam,
 )
-from openai.types.chat.chat_completion_message_tool_call_param import Function
+
+if TYPE_CHECKING:
+    from openai.types.chat import (
+        ChatCompletionAssistantMessageParam,
+        ChatCompletionSystemMessageParam,
+        ChatCompletionToolMessageParam,
+        ChatCompletionUserMessageParam,
+    )
+    from openai.types.chat.chat_completion_message_tool_call_param import Function
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 
@@ -92,13 +96,13 @@ def _get_from_param_or_env(
 
 def _convert_to_openai_tool_call(tool_call: dict) -> ChatCompletionMessageToolCallParam:
     """Convert framework tool call format to OpenAI tool call format."""
-
     # Use original_id if available, otherwise use id (and convert to string)
     openai_tool_call_id = tool_call.get("original_id")
     if openai_tool_call_id is None:
         tool_call_id = tool_call.get("id")
         if tool_call_id is None:
-            raise ValueError("Tool call must have either 'original_id' or 'id' field")
+            msg = "Tool call must have either 'original_id' or 'id' field"
+            raise ValueError(msg)
         openai_tool_call_id = str(tool_call_id)
 
     function: Function = {
@@ -174,7 +178,8 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
     elif role == MessageRole.TOOL:
         tool_call_id = message.extra_args.get("external_id")
         if not tool_call_id or not isinstance(tool_call_id, str):
-            raise ValueError("Tool message must have 'external_id' as a string in extra_args")
+            msg = "Tool message must have 'external_id' as a string in extra_args"
+            raise ValueError(msg)
         tool_message: ChatCompletionToolMessageParam = {
             "role": "tool",
             "content": message.content,
@@ -183,15 +188,17 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
         return tool_message
 
     else:
-        raise ValueError(f"Unsupported message role: {role}")
+        msg = f"Unsupported message role: {role}"
+        raise ValueError(msg)
 
 
 def convert_from_openai_message(message: ChatCompletionMessage) -> ChatMessage:
     """Convert an OpenAI message to a chat message."""
     tool_calls = []
     if message.tool_calls:
-        # Generate internal UUID for each tool call while preserving OpenAI's original ID
-        # in the original_id field for later conversion back to OpenAI format
+        # Generate internal UUID for each tool call while preserving
+        # OpenAI's original ID in the original_id field for later
+        # conversion back to OpenAI format
         tool_calls = [
             {
                 "id": uuid.uuid4(),

@@ -38,8 +38,10 @@ from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
 )
-from flink_agents.integrations.chat_models.openai.openai_chat_model import OpenAIChatModelConnection, \
-    OpenAIChatModelSetup
+from flink_agents.integrations.chat_models.openai.openai_chat_model import (
+    OpenAIChatModelConnection,
+    OpenAIChatModelSetup,
+)
 from flink_agents.integrations.chat_models.tongyi_chat_model import (
     TongyiChatModelConnection,
     TongyiChatModelSetup,
