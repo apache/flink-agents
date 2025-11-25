@@ -27,6 +27,7 @@ import com.openai.core.JsonValue;
 import com.openai.models.ChatModel;
 import com.openai.models.FunctionDefinition;
 import com.openai.models.FunctionParameters;
+import com.openai.models.ReasoningEffort;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
@@ -168,6 +169,33 @@ public class OpenAIChatModelConnection extends BaseChatModelConnection {
 
         if (tools != null && !tools.isEmpty()) {
             builder.tools(convertTools(tools, strictMode));
+        }
+
+        Object temperature = arguments.remove("temperature");
+        if (temperature instanceof Number) {
+            builder.temperature(((Number) temperature).doubleValue());
+        }
+
+        Object maxTokens = arguments.remove("max_tokens");
+        if (maxTokens instanceof Number) {
+            builder.maxCompletionTokens(((Number) maxTokens).longValue());
+        }
+
+        Object logprobs = arguments.remove("logprobs");
+        boolean logprobsEnabled = Boolean.TRUE.equals(logprobs);
+        if (logprobsEnabled) {
+            builder.logprobs(true);
+            Object topLogprobs = arguments.remove("top_logprobs");
+            if (topLogprobs instanceof Number) {
+                builder.topLogprobs(((Number) topLogprobs).longValue());
+            }
+        } else {
+            arguments.remove("top_logprobs");
+        }
+
+        Object reasoningEffort = arguments.remove("reasoning_effort");
+        if (reasoningEffort instanceof String) {
+            builder.reasoningEffort(ReasoningEffort.of((String) reasoningEffort));
         }
 
         @SuppressWarnings("unchecked")
