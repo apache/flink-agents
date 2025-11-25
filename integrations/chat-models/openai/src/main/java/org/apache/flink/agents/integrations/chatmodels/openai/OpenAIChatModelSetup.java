@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.BiFunction;
 
 /**
@@ -61,6 +62,9 @@ public class OpenAIChatModelSetup extends BaseChatModelSetup {
 
     private static final String DEFAULT_MODEL = "gpt-3.5-turbo";
     private static final double DEFAULT_TEMPERATURE = 0.1d;
+    private static final int DEFAULT_TOP_LOGPROBS = 0;
+    private static final boolean DEFAULT_STRICT = false;
+    private static final Set<String> VALID_REASONING_EFFORTS = Set.of("low", "medium", "high");
 
     private final Double temperature;
     private final Integer maxTokens;
@@ -90,15 +94,25 @@ public class OpenAIChatModelSetup extends BaseChatModelSetup {
         }
 
         this.logprobs = descriptor.getArgument("logprobs");
+
         this.topLogprobs =
                 Optional.ofNullable(descriptor.<Number>getArgument("top_logprobs"))
                         .map(Number::intValue)
-                        .orElse(null);
-        if (this.topLogprobs != null && (this.topLogprobs < 0 || this.topLogprobs > 20)) {
+                        .orElse(DEFAULT_TOP_LOGPROBS);
+        if (this.topLogprobs < 0 || this.topLogprobs > 20) {
             throw new IllegalArgumentException("top_logprobs must be between 0 and 20");
         }
-        this.strict = descriptor.getArgument("strict");
+
+        this.strict =
+                Optional.ofNullable(descriptor.<Boolean>getArgument("strict"))
+                        .orElse(DEFAULT_STRICT);
+
         this.reasoningEffort = descriptor.getArgument("reasoning_effort");
+        if (this.reasoningEffort != null
+                && !VALID_REASONING_EFFORTS.contains(this.reasoningEffort)) {
+            throw new IllegalArgumentException(
+                    "reasoning_effort must be one of: low, medium, high");
+        }
 
         Map<String, Object> additional =
                 Optional.ofNullable(
@@ -147,19 +161,19 @@ public class OpenAIChatModelSetup extends BaseChatModelSetup {
         if (maxTokens != null) {
             parameters.put("max_tokens", maxTokens);
         }
-        if (logprobs != null) {
-            parameters.put("logprobs", logprobs);
-        }
-        if (topLogprobs != null) {
+        if (Boolean.TRUE.equals(logprobs)) {
+            parameters.put("logprobs", true);
             parameters.put("top_logprobs", topLogprobs);
         }
-        if (strict != null) {
-            parameters.put("strict", strict);
+        if (strict) {
+            parameters.put("strict", true);
         }
         if (reasoningEffort != null) {
             parameters.put("reasoning_effort", reasoningEffort);
         }
-        parameters.putAll(additionalArguments);
+        if (additionalArguments != null && !additionalArguments.isEmpty()) {
+            parameters.put("additional_kwargs", additionalArguments);
+        }
         return parameters;
     }
 
