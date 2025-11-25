@@ -253,7 +253,6 @@ public class ElasticsearchVectorStore extends BaseVectorStore<Map<String, Object
             int numCandidates = (int) args.getOrDefault("num_candidates", Math.max(100, k * 2));
             String filter = (String) args.get("filter_query");
 
-
             List<Float> queryVector = new ArrayList<>(embedding.length);
             for (float v : embedding) queryVector.add(v);
 
