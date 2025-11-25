@@ -162,11 +162,11 @@ public class OpenAIChatModelSetup extends BaseChatModelSetup {
             parameters.put("max_tokens", maxTokens);
         }
         if (Boolean.TRUE.equals(logprobs)) {
-            parameters.put("logprobs", true);
+            parameters.put("logprobs", logprobs);
             parameters.put("top_logprobs", topLogprobs);
         }
         if (strict) {
-            parameters.put("strict", true);
+            parameters.put("strict", strict);
         }
         if (reasoningEffort != null) {
             parameters.put("reasoning_effort", reasoningEffort);
