@@ -131,6 +131,7 @@ public class RunnerContextImpl implements RunnerContext {
     public MemoryObject getSensoryMemory() throws Exception {
         mailboxThreadChecker.run();
         return new MemoryObjectImpl(
+                MemoryObject.MemoryType.SENSORY,
                 sensoryMemStore,
                 MemoryObjectImpl.ROOT_KEY,
                 mailboxThreadChecker,
@@ -141,6 +142,7 @@ public class RunnerContextImpl implements RunnerContext {
     public MemoryObject getShortTermMemory() throws Exception {
         mailboxThreadChecker.run();
         return new MemoryObjectImpl(
+                MemoryObject.MemoryType.SHORT_TERM,
                 shortTermMemStore,
                 MemoryObjectImpl.ROOT_KEY,
                 mailboxThreadChecker,

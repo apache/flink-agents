@@ -117,6 +117,7 @@ public class MemoryRefTest {
         ForTestMemoryMapState<MemoryObjectImpl.MemoryItem> mapState = new ForTestMemoryMapState<>();
         memory =
                 new MemoryObjectImpl(
+                        MemoryObject.MemoryType.SHORT_TERM,
                         new CachedMemoryStore(mapState),
                         MemoryObjectImpl.ROOT_KEY,
                         new LinkedList<>());
@@ -181,7 +182,7 @@ public class MemoryRefTest {
         for (Map.Entry<String, Object> entry : testData.entrySet()) {
             MemoryRef ref = memory.set(entry.getKey(), entry.getValue());
 
-            Object resolvedValue = ref.resolve(ctx.getShortTermMemory()).getValue();
+            Object resolvedValue = ref.resolve(ctx).getValue();
             assertEquals(entry.getValue(), resolvedValue);
         }
     }
