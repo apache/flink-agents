@@ -24,7 +24,7 @@ from typing_extensions import override
 
 from flink_agents.api.agent import Agent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
-from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.memory_object import MemoryObject, MemoryType
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -81,10 +81,10 @@ class LocalRunnerContext(RunnerContext):
         self._sensory_mem_store = {}
         self._short_term_mem_store = {}
         self._sensory_memory = LocalMemoryObject(
-            self._sensory_mem_store, LocalMemoryObject.ROOT_KEY
+            MemoryType.SENSORY, self._sensory_mem_store, LocalMemoryObject.ROOT_KEY
         )
         self._short_term_memory = LocalMemoryObject(
-            self._short_term_mem_store, LocalMemoryObject.ROOT_KEY
+            MemoryType.SHORT_TERM, self._short_term_mem_store, LocalMemoryObject.ROOT_KEY
         )
         self._config = config
 
