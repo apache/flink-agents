@@ -61,7 +61,9 @@ public class SchemaUtils {
             }
 
             Map<String, Object> paramSchema = getParamSchema(param);
-            paramSchema.put("description", paramDescription);
+            if (paramDescription != null) {
+                paramSchema.put("description", paramDescription);
+            }
 
             properties.put(paramName, paramSchema);
         }
