@@ -15,11 +15,22 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any
+import importlib
+from typing import Any, Callable, Dict
 
 import cloudpickle
+from pemja import findClass
 
+from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.events.event import InputEvent
+from flink_agents.api.resource import Resource
+from flink_agents.api.tools.tool import ToolMetadata
+from flink_agents.api.tools.utils import create_model_from_java_tool_schema_str
+from flink_agents.runtime.java.java_resource_wrapper import (
+    JavaGetResourceWrapper,
+    JavaPrompt,
+    JavaTool,
+)
 
 
 def convert_to_python_object(bytesObject: bytes) -> Any:
@@ -35,3 +46,124 @@ def wrap_to_input_event(bytesObject: bytes) -> bytes:
 def get_output_from_output_event(bytesObject: bytes) -> Any:
     """Get output data from OutputEvent and serialize."""
     return cloudpickle.dumps(convert_to_python_object(bytesObject).output)
+
+def create_resource(resource_module: str, resource_clazz: str, func_kwargs: Dict[str, Any]) -> Resource:
+    """Dynamically create a resource instance from module and class name.
+
+    Args:
+        resource_module: The module path containing the resource class
+        resource_clazz: The class name to instantiate
+        func_kwargs: Keyword arguments to pass to the class constructor
+
+    Returns:
+        Resource: An instance of the specified resource class
+    """
+    module = importlib.import_module(resource_module)
+    cls = getattr(module, resource_clazz)
+    return cls(**func_kwargs)
+
+def get_resource_function(j_resource_adapter: Any) -> Callable:
+    """Create a callable wrapper for Java resource adapter.
+
+    Args:
+        j_resource_adapter: Java resource adapter object
+
+    Returns:
+        Callable: A Python callable that wraps the Java resource adapter
+    """
+    return JavaGetResourceWrapper(j_resource_adapter).get_resource
+
+def from_java_tool(j_tool: Any) -> JavaTool:
+    """Convert a Java tool object to a Python JavaTool instance.
+
+    Args:
+        j_tool: Java tool object
+
+    Returns:
+        JavaTool: Python wrapper for the Java tool with extracted metadata
+    """
+    name = j_tool.getName()
+    metadata = ToolMetadata(
+        name=name,
+        description=j_tool.getDescription(),
+        args_schema=create_model_from_java_tool_schema_str(name, j_tool.getMetadata().getInputSchema()),
+    )
+    return JavaTool(metadata=metadata)
+
+def from_java_prompt(j_prompt: Any) -> JavaPrompt:
+    """Convert a Java prompt object to a Python JavaPrompt instance.
+
+    Args:
+        j_prompt: Java prompt object to be wrapped
+
+    Returns:
+        JavaPrompt: Python wrapper for the Java prompt
+    """
+    return JavaPrompt(j_prompt=j_prompt)
+
+def from_java_chat_message(j_chat_message: Any) -> ChatMessage:
+    """Convert a chat message to a python chat message."""
+    return ChatMessage(role=MessageRole(j_chat_message.getRole().getValue()),
+                       content=j_chat_message.getContent(),
+                       tool_calls=j_chat_message.getToolCalls(),
+                       extra_args=j_chat_message.getExtraArgs())
+
+def convert_tool_call_to_java_format(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a tool call dictionary to Java-compatible format.
+
+    Args:
+        tool_call: Dictionary containing tool call information with keys:
+                  - id: Tool call identifier
+                  - function: Function details
+                  - additional_kwargs: Optional additional parameters containing
+                  original_tool_call_id
+
+    Returns:
+        Dict containing Java-formatted tool call with keys:
+        - id: String representation of tool call ID
+        - function: Original function details
+        - original_id: Original tool call ID from additional_kwargs (if present)
+    """
+    return {
+        "id": str(tool_call.get("id", "")),
+        "function": tool_call["function"],  # Will raise KeyError if missing
+        "original_id": tool_call.get("additional_kwargs", {}).get(
+            "original_tool_call_id"
+        ),
+    }
+
+def to_java_chat_message(chat_message: ChatMessage) -> Any:
+    """Convert a chat message to a java chat message."""
+    j_ChatMessage = findClass("org.apache.flink.agents.api.chat.messages.ChatMessage")
+    j_chat_message = j_ChatMessage()
+
+    j_MessageRole = findClass("org.apache.flink.agents.api.chat.messages.MessageRole")
+    j_chat_message.setRole(j_MessageRole.fromValue(chat_message.role.value))
+    j_chat_message.setContent(chat_message.content)
+    j_chat_message.setExtraArgs(chat_message.extra_args)
+    if chat_message.tool_calls:
+        tool_calls = [convert_tool_call_to_java_format(tool_call) for tool_call in chat_message.tool_calls]
+        j_chat_message.setToolCalls(tool_calls)
+
+    return j_chat_message
+
+def call_method(obj: Any, method_name: str, kwargs: Dict[str, Any]) -> Any:
+    """Calls a method on `obj` by name and passes in positional and keyword arguments.
+
+    Parameters:
+        obj: Any Python object
+        method_name: A string representing the name of the method to call
+        kwargs: Keyword arguments to pass to the method
+
+    Returns:
+        The return value of the method
+
+    Raises:
+        AttributeError: If the object does not have the specified method
+    """
+    if not hasattr(obj, method_name):
+        err_msg = f"Object {obj} has no attribute '{method_name}'"
+        raise AttributeError(err_msg)
+
+    method = getattr(obj, method_name)
+    return method(**kwargs)

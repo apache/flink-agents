@@ -30,12 +30,15 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
+import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
+import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ToolCallAction;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
@@ -75,6 +78,8 @@ public class AgentPlan implements Serializable {
     private Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
 
     private AgentConfiguration config;
+
+    private transient PythonResourceAdapter pythonResourceAdapter;
 
     /** Cache for instantiated resources. */
     private transient Map<ResourceType, Map<String, Resource>> resourceCache;
@@ -128,6 +133,10 @@ public class AgentPlan implements Serializable {
         this.config = config;
     }
 
+    public void setPythonResourceAdapter(PythonResourceAdapter adapter) {
+        this.pythonResourceAdapter = adapter;
+    }
+
     public Map<String, Action> getActions() {
         return actions;
     }
@@ -173,6 +182,10 @@ public class AgentPlan implements Serializable {
         }
 
         ResourceProvider provider = resourceProviders.get(type).get(name);
+
+        if (pythonResourceAdapter != null && provider instanceof PythonResourceProvider) {
+            ((PythonResourceProvider) provider).setPythonResourceAdapter(pythonResourceAdapter);
+        }
 
         // Create resource using provider
         Resource resource =
@@ -279,8 +292,13 @@ public class AgentPlan implements Serializable {
 
     private void extractResource(ResourceType type, Method method) throws Exception {
         String name = method.getName();
+        ResourceProvider provider;
         ResourceDescriptor descriptor = (ResourceDescriptor) method.invoke(null);
-        JavaResourceProvider provider = new JavaResourceProvider(name, type, descriptor);
+        if (PythonResourceWrapper.class.isAssignableFrom(Class.forName(descriptor.getClazz()))) {
+            provider = new PythonResourceProvider(name, type, descriptor);
+        } else {
+            provider = new JavaResourceProvider(name, type, descriptor);
+        }
         addResourceProvider(provider);
     }
 
@@ -385,9 +403,17 @@ public class AgentPlan implements Serializable {
             ResourceType type = entry.getKey();
             if (type == ResourceType.CHAT_MODEL || type == ResourceType.CHAT_MODEL_CONNECTION) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
-                    JavaResourceProvider provider =
-                            new JavaResourceProvider(
-                                    kv.getKey(), type, (ResourceDescriptor) kv.getValue());
+                    ResourceProvider provider;
+                    if (PythonResourceWrapper.class.isAssignableFrom(
+                            Class.forName(((ResourceDescriptor) kv.getValue()).getClazz()))) {
+                        provider =
+                                new PythonResourceProvider(
+                                        kv.getKey(), type, (ResourceDescriptor) kv.getValue());
+                    } else {
+                        provider =
+                                new JavaResourceProvider(
+                                        kv.getKey(), type, (ResourceDescriptor) kv.getValue());
+                    }
                     addResourceProvider(provider);
                 }
             } else if (type == ResourceType.PROMPT) {
