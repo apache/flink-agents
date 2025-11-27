@@ -62,7 +62,7 @@ public class OllamaChatModelSetup extends BaseChatModelSetup {
             ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
         this.model = descriptor.getArgument("model");
-        this.extractReasoning = Boolean.parseBoolean(descriptor.getArgument("extract_reasoning"));
+        this.extractReasoning = descriptor.getArgument("extract_reasoning", false);
     }
 
     /**

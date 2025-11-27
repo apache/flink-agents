@@ -33,9 +33,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMap
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -82,7 +80,7 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
         JsonNode kwargsNode = node.get("kwargs");
         Map<String, Object> kwargs = new HashMap<>();
         if (kwargsNode != null && kwargsNode.isObject()) {
-            kwargs = (Map<String, Object>) parseJsonNode(kwargsNode);
+            kwargs = mapper.convertValue(kwargsNode, Map.class);
         }
         return new PythonResourceProvider(
                 name, ResourceType.fromValue(type), module, clazz, kwargs);
@@ -98,7 +96,7 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
         JsonNode serializedNode = node.get("serialized");
         Map<String, Object> serialized = new HashMap<>();
         if (serializedNode != null && serializedNode.isObject()) {
-            serialized = (Map<String, Object>) parseJsonNode(serializedNode);
+            serialized = mapper.convertValue(serializedNode, Map.class);
         }
         return new PythonSerializableResourceProvider(
                 name, ResourceType.fromValue(type), module, clazz, serialized);
@@ -125,23 +123,5 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
         String serializedResource = node.get("serializedResource").asText();
         return new JavaSerializableResourceProvider(
                 name, ResourceType.fromValue(type), module, clazz, serializedResource);
-    }
-
-    private Object parseJsonNode(JsonNode node) {
-        if (node.isObject()) {
-            Map<String, Object> map = new HashMap<>();
-            node.fields()
-                    .forEachRemaining(
-                            entry -> map.put(entry.getKey(), parseJsonNode(entry.getValue())));
-            return map;
-        } else if (node.isArray()) {
-            List<Object> list = new ArrayList<>();
-            node.forEach(element -> list.add(parseJsonNode(element)));
-            return list;
-        } else if (node.isValueNode()) {
-            return node.asText();
-        } else {
-            throw new UnsupportedOperationException("Unsupported node type: " + node.getNodeType());
-        }
     }
 }

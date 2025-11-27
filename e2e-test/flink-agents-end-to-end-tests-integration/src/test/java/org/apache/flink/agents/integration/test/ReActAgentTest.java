@@ -162,7 +162,7 @@ public class ReActAgentTest {
                         .addInitialArgument("connection", "ollama")
                         .addInitialArgument("model", OLLAMA_MODEL)
                         .addInitialArgument("tools", List.of("add", "multiply"))
-                        .addInitialArgument("extract_reasoning", "true")
+                        .addInitialArgument("extract_reasoning", true)
                         .build();
 
         Prompt prompt =

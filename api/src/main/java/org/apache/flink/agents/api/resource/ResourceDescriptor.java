@@ -59,6 +59,11 @@ public class ResourceDescriptor {
         return (T) initialArguments.get(argName);
     }
 
+    public <T> T getArgument(String argName, T defaultValue) {
+        T value = getArgument(argName);
+        return value != null ? value : defaultValue;
+    }
+
     public static class Builder {
         private final String clazz;
         private final Map<String, Object> initialArguments;
