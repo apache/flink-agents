@@ -137,7 +137,7 @@ public class AgentPlanTest {
         AgentPlan agentPlan = new AgentPlan(agent);
 
         // Verify that actions were collected correctly
-        assertThat(agentPlan.getActions().size()).isEqualTo(4);
+        assertThat(agentPlan.getActions().size()).isEqualTo(5);
         assertThat(agentPlan.getActions()).containsKey("handleInputEvent");
         assertThat(agentPlan.getActions()).containsKey("handleMultipleEvents");
 
@@ -164,7 +164,7 @@ public class AgentPlanTest {
         assertThat(multiAction.getExec()).isInstanceOf(JavaFunction.class);
 
         // Verify actionsByEvent mapping
-        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(6);
+        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(8);
 
         // Check InputEvent mapping
         List<Action> inputEventActions =
@@ -199,8 +199,8 @@ public class AgentPlanTest {
         AgentPlan agentPlan = new AgentPlan(emptyAgent);
 
         // Verify that no actions were collected
-        assertThat(agentPlan.getActions().size()).isEqualTo(2);
-        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(3);
+        assertThat(agentPlan.getActions().size()).isEqualTo(3);
+        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(5);
     }
 
     @Test
