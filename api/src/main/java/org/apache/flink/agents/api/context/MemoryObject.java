@@ -27,6 +27,10 @@ import java.util.Map;
  * nested object.Fields can be accessed using an absolute or relative path.
  */
 public interface MemoryObject {
+    enum MemoryType {
+        SENSORY,
+        SHORT_TERM
+    }
     /**
      * Returns a MemoryObject that represents the given path.
      *

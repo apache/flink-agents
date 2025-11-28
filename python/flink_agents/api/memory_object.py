@@ -16,12 +16,18 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Union
 
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from flink_agents.api.memory_reference import MemoryRef
+
+class MemoryType(Enum):
+    """Memory types based on MemoryObject."""
+    SENSORY = "sensory",
+    SHORT_TERM = "short_term"
 
 class MemoryObject(BaseModel, ABC):
     """Representation of an object in the short-term memory.

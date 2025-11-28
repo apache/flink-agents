@@ -17,12 +17,13 @@
 #################################################################################
 from typing import Dict, List, Set
 
+from flink_agents.api.memory_object import MemoryType
 from flink_agents.runtime.local_memory_object import LocalMemoryObject
 
 
 def create_memory() -> LocalMemoryObject:
     """Return a MemoryObject for every test case."""
-    return LocalMemoryObject({})
+    return LocalMemoryObject(MemoryType.SHORT_TERM, {})
 
 
 class User:  # noqa: D101

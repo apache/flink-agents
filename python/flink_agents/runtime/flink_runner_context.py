@@ -24,6 +24,7 @@ from typing_extensions import override
 
 from flink_agents.api.configuration import ReadableConfiguration
 from flink_agents.api.events.event import Event
+from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
@@ -90,6 +91,23 @@ class FlinkRunnerContext(RunnerContext):
 
     @property
     @override
+    def sensory_memory(self) -> FlinkMemoryObject:
+        """Get the sensory memory object associated with this context.
+
+        Returns:
+        -------
+        MemoryObject
+            The sensory memory object that can be used to access and modify
+            temporary state data.
+        """
+        try:
+            return FlinkMemoryObject(MemoryType.SENSORY, self._j_runner_context.getSensoryMemory())
+        except Exception as e:
+            err_msg = "Failed to get sensory memory of runner context"
+            raise RuntimeError(err_msg) from e
+
+    @property
+    @override
     def short_term_memory(self) -> FlinkMemoryObject:
         """Get the short-term memory object associated with this context.
 
@@ -100,7 +118,7 @@ class FlinkRunnerContext(RunnerContext):
             temporary state data.
         """
         try:
-            return FlinkMemoryObject(self._j_runner_context.getShortTermMemory())
+            return FlinkMemoryObject(MemoryType.SHORT_TERM, self._j_runner_context.getShortTermMemory())
         except Exception as e:
             err_msg = "Failed to get short-term memory of runner context"
             raise RuntimeError(err_msg) from e

@@ -44,23 +44,28 @@ import java.util.Map;
 public class RunnerContextImpl implements RunnerContext {
 
     protected final List<Event> pendingEvents = new ArrayList<>();
-    protected final CachedMemoryStore store;
+    protected final CachedMemoryStore sensoryMemStore;
+    protected final CachedMemoryStore shortTermMemStore;
     protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
     protected final Runnable mailboxThreadChecker;
     protected final AgentPlan agentPlan;
-    protected final List<MemoryUpdate> memoryUpdates;
+    protected final List<MemoryUpdate> sensoryMemoryUpdates;
+    protected final List<MemoryUpdate> shortTermMemoryUpdates;
     protected String actionName;
 
     public RunnerContextImpl(
-            CachedMemoryStore store,
+            CachedMemoryStore sensoryMemStore,
+            CachedMemoryStore shortTermMemStore,
             FlinkAgentsMetricGroupImpl agentMetricGroup,
             Runnable mailboxThreadChecker,
             AgentPlan agentPlan) {
-        this.store = store;
+        this.sensoryMemStore = sensoryMemStore;
+        this.shortTermMemStore = shortTermMemStore;
         this.agentMetricGroup = agentMetricGroup;
         this.mailboxThreadChecker = mailboxThreadChecker;
         this.agentPlan = agentPlan;
-        this.memoryUpdates = new LinkedList<>();
+        this.sensoryMemoryUpdates = new LinkedList<>();
+        this.shortTermMemoryUpdates = new LinkedList<>();
     }
 
     public void setActionName(String actionName) {
@@ -105,6 +110,11 @@ public class RunnerContextImpl implements RunnerContext {
                 this.pendingEvents.isEmpty(), "There are pending events remaining in the context.");
     }
 
+    public List<MemoryUpdate> getSensoryMemoryUpdates() {
+        mailboxThreadChecker.run();
+        return List.copyOf(sensoryMemoryUpdates);
+    }
+
     /**
      * Gets all the updates made to this MemoryObject since it was created or the last time this
      * method was called. This method lives here because it is internally used by the ActionTask to
@@ -112,16 +122,31 @@ public class RunnerContextImpl implements RunnerContext {
      *
      * @return list of memory updates
      */
-    public List<MemoryUpdate> getAllMemoryUpdates() {
+    public List<MemoryUpdate> getShortTermMemoryUpdates() {
         mailboxThreadChecker.run();
-        return List.copyOf(memoryUpdates);
+        return List.copyOf(shortTermMemoryUpdates);
+    }
+
+    @Override
+    public MemoryObject getSensoryMemory() throws Exception {
+        mailboxThreadChecker.run();
+        return new MemoryObjectImpl(
+                MemoryObject.MemoryType.SENSORY,
+                sensoryMemStore,
+                MemoryObjectImpl.ROOT_KEY,
+                mailboxThreadChecker,
+                sensoryMemoryUpdates);
     }
 
     @Override
     public MemoryObject getShortTermMemory() throws Exception {
         mailboxThreadChecker.run();
         return new MemoryObjectImpl(
-                store, MemoryObjectImpl.ROOT_KEY, mailboxThreadChecker, memoryUpdates);
+                MemoryObject.MemoryType.SHORT_TERM,
+                shortTermMemStore,
+                MemoryObjectImpl.ROOT_KEY,
+                mailboxThreadChecker,
+                shortTermMemoryUpdates);
     }
 
     @Override
@@ -152,6 +177,11 @@ public class RunnerContextImpl implements RunnerContext {
     }
 
     public void persistMemory() throws Exception {
-        store.persistCache();
+        sensoryMemStore.persistCache();
+        shortTermMemStore.persistCache();
+    }
+
+    public void clearSensoryMemory() throws Exception {
+        sensoryMemStore.clear();
     }
 }

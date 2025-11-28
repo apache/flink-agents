@@ -24,7 +24,7 @@ from typing_extensions import override
 
 from flink_agents.api.agent import Agent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
-from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.memory_object import MemoryObject, MemoryType
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -58,7 +58,9 @@ class LocalRunnerContext(RunnerContext):
     __key: Any
     events: deque[Event]
     action_name: str
-    _store: dict[str, Any]
+    _sensory_mem_store: dict[str, Any]
+    _short_term_mem_store: dict[str, Any]
+    _sensory_memory: MemoryObject
     _short_term_memory: MemoryObject
     _config: AgentConfiguration
 
@@ -76,9 +78,13 @@ class LocalRunnerContext(RunnerContext):
         self.__agent_plan = agent_plan
         self.__key = key
         self.events = deque()
-        self._store = {}
+        self._sensory_mem_store = {}
+        self._short_term_mem_store = {}
+        self._sensory_memory = LocalMemoryObject(
+            MemoryType.SENSORY, self._sensory_mem_store, LocalMemoryObject.ROOT_KEY
+        )
         self._short_term_memory = LocalMemoryObject(
-            self._store, LocalMemoryObject.ROOT_KEY
+            MemoryType.SHORT_TERM, self._short_term_mem_store, LocalMemoryObject.ROOT_KEY
         )
         self._config = config
 
@@ -121,6 +127,18 @@ class LocalRunnerContext(RunnerContext):
         return self.__agent_plan.get_action_config_value(
             action_name=self.action_name, key=key
         )
+
+    @property
+    @override
+    def sensory_memory(self) -> MemoryObject:
+        """Get the sensory memory object associated with this context.
+
+        Returns:
+        -------
+        MemoryObject
+            The root object of the short-term memory.
+        """
+        return self._sensory_memory
 
     @property
     @override
@@ -168,6 +186,10 @@ class LocalRunnerContext(RunnerContext):
     @override
     def config(self) -> AgentConfiguration:
         return self._config
+
+    def clear_sensory_memory(self) -> None:
+        """Clean up sensory memory."""
+        self._sensory_mem_store.clear()
 
 
 class LocalRunner(AgentRunner):
@@ -228,6 +250,7 @@ class LocalRunner(AgentRunner):
         if key not in self.__keyed_contexts:
             self.__keyed_contexts[key] = LocalRunnerContext(self.__agent_plan, key, self.__config)
         context = self.__keyed_contexts[key]
+        context.clear_sensory_memory()
 
         if "value" in data:
             input_event = InputEvent(input=data["value"])
