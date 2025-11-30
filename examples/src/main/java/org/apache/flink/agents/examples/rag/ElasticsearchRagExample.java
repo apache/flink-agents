@@ -36,6 +36,7 @@ import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup;
 import org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelConnection;
+import org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelSetup;
 import org.apache.flink.agents.integrations.vectorstores.elasticsearch.ElasticsearchVectorStore;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -159,15 +160,23 @@ public class ElasticsearchRagExample {
             return new org.apache.flink.agents.api.prompt.Prompt(template);
         }
 
-        @EmbeddingModelSetup
-        public static ResourceDescriptor textEmbedder() {
-            // Embedding setup referencing the embedding connection name
+        @EmbeddingModelConnection
+        public static ResourceDescriptor textEmbedderConnection() {
             return ResourceDescriptor.Builder.newBuilder(
                             OllamaEmbeddingModelConnection.class.getName())
-                    .addInitialArgument("connection", "ollamaEmbeddingConnection")
+                    .addInitialArgument(
+                            "host", System.getProperty("OLLAMA_ENDPOINT", "http://localhost:11434"))
                     .addInitialArgument(
                             "model",
                             System.getProperty("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"))
+                    .build();
+        }
+
+        @EmbeddingModelSetup
+        public static ResourceDescriptor textEmbedder() {
+            // Embedding setup referencing the embedding connection name
+            return ResourceDescriptor.Builder.newBuilder(OllamaEmbeddingModelSetup.class.getName())
+                    .addInitialArgument("connection", "textEmbedderConnection")
                     .build();
         }
 

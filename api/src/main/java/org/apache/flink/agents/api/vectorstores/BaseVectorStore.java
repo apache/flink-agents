@@ -18,7 +18,7 @@
 
 package org.apache.flink.agents.api.vectorstores;
 
-import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
+import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -66,8 +66,8 @@ public abstract class BaseVectorStore<ContentT> extends Resource {
      * @return VectorStoreQueryResult containing the retrieved documents
      */
     public VectorStoreQueryResult<ContentT> query(VectorStoreQuery query) {
-        final BaseEmbeddingModelConnection embeddingModel =
-                (BaseEmbeddingModelConnection)
+        final BaseEmbeddingModelSetup embeddingModel =
+                (BaseEmbeddingModelSetup)
                         this.getResource.apply(this.embeddingModel, ResourceType.EMBEDDING_MODEL);
 
         // TODO
