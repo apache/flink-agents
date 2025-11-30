@@ -32,7 +32,7 @@ if __name__ == "__main__":
     agent_plan = AgentPlan.model_validate_json(java_plan_json)
     actions = agent_plan.actions
 
-    assert len(actions) == 4
+    assert len(actions) == 5
 
     event = "org.apache.flink.agents.api.Event"
     input_event = "org.apache.flink.agents.api.InputEvent"
@@ -72,7 +72,7 @@ if __name__ == "__main__":
 
     # check actions_by_event
     actions_by_event = agent_plan.actions_by_event
-    assert len(actions_by_event) == 5
+    assert len(actions_by_event) == 6
 
     assert input_event in actions_by_event
     assert sorted(actions_by_event[input_event]) == ["firstAction", "secondAction"]
