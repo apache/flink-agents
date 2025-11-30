@@ -59,7 +59,7 @@ public class ContextRetrievalAction {
             final VectorStoreQuery vectorStoreQuery =
                     new VectorStoreQuery(
                             contextRetrievalRequestEvent.getQuery(),
-                            ((ContextRetrievalRequestEvent) event).getMaxResults());
+                            contextRetrievalRequestEvent.getMaxResults());
 
             final VectorStoreQueryResult<DocumentT> result = vectorStore.query(vectorStoreQuery);
 
