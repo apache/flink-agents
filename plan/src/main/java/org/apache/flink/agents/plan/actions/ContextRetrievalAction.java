@@ -40,9 +40,7 @@ public class ContextRetrievalAction {
                         ContextRetrievalAction.class,
                         "processContextRetrievalRequest",
                         new Class[] {Event.class, RunnerContext.class}),
-                List.of(
-                        ContextRetrievalRequestEvent.class.getName(),
-                        ContextRetrievalResponseEvent.class.getName()));
+                List.of(ContextRetrievalRequestEvent.class.getName()));
     }
 
     @SuppressWarnings("unchecked")

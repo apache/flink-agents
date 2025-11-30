@@ -164,7 +164,7 @@ public class AgentPlanTest {
         assertThat(multiAction.getExec()).isInstanceOf(JavaFunction.class);
 
         // Verify actionsByEvent mapping
-        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(8);
+        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(7);
 
         // Check InputEvent mapping
         List<Action> inputEventActions =
@@ -200,7 +200,7 @@ public class AgentPlanTest {
 
         // Verify that no actions were collected
         assertThat(agentPlan.getActions().size()).isEqualTo(3);
-        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(5);
+        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(4);
     }
 
     @Test
