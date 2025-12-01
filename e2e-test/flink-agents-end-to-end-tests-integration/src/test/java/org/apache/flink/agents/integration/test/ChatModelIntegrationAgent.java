@@ -37,6 +37,8 @@ import org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelC
 import org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup;
+import org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelConnection;
+import org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelSetup;
 
 import java.util.Collections;
 import java.util.List;
@@ -80,6 +82,11 @@ public class ChatModelIntegrationAgent extends Agent {
                     .addInitialArgument("endpoint", endpoint)
                     .addInitialArgument("apiKey", apiKey)
                     .build();
+        } else if (provider.equals("OPENAI")) {
+            String apiKey = System.getenv().get("OPENAI_API_KEY");
+            return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelConnection.class.getName())
+                    .addInitialArgument("api_key", apiKey)
+                    .build();
         } else {
             throw new RuntimeException(String.format("Unknown model provider %s", provider));
         }
@@ -101,6 +108,14 @@ public class ChatModelIntegrationAgent extends Agent {
             return ResourceDescriptor.Builder.newBuilder(AzureAIChatModelSetup.class.getName())
                     .addInitialArgument("connection", "chatModelConnection")
                     .addInitialArgument("model", "gpt-4o")
+                    .addInitialArgument(
+                            "tools",
+                            List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+                    .build();
+        } else if (provider.equals("OPENAI")) {
+            return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelSetup.class.getName())
+                    .addInitialArgument("connection", "chatModelConnection")
+                    .addInitialArgument("model", "gpt-4o-mini")
                     .addInitialArgument(
                             "tools",
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
