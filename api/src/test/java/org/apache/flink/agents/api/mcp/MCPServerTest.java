@@ -1,0 +1,254 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.flink.agents.api.mcp;
+
+import org.apache.flink.agents.api.mcp.auth.ApiKeyAuth;
+import org.apache.flink.agents.api.mcp.auth.BasicAuth;
+import org.apache.flink.agents.api.mcp.auth.BearerTokenAuth;
+import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/** Tests for {@link MCPServer}. */
+class MCPServerTest {
+
+    @Test
+    @DisplayName("Create MCPServer with builder")
+    void testBuilderCreation() {
+        MCPServer server =
+                MCPServer.builder("http://localhost:8000/mcp")
+                        .header("X-Custom-Header", "value")
+                        .timeout(Duration.ofSeconds(30))
+                        .sseReadTimeout(Duration.ofSeconds(300))
+                        .auth(new BearerTokenAuth("test-token"))
+                        .build();
+
+        assertThat(server.getEndpoint()).isEqualTo("http://localhost:8000/mcp");
+        assertThat(server.getHeaders()).containsEntry("X-Custom-Header", "value");
+        assertThat(server.getTimeoutSeconds()).isEqualTo(30);
+        assertThat(server.getSseReadTimeoutSeconds()).isEqualTo(300);
+        assertThat(server.getAuth()).isInstanceOf(BearerTokenAuth.class);
+    }
+
+    @Test
+    @DisplayName("Create MCPServer with simple constructor")
+    void testSimpleConstructor() {
+        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+
+        assertThat(server.getEndpoint()).isEqualTo("http://localhost:8000/mcp");
+        assertThat(server.getHeaders()).isEmpty();
+        assertThat(server.getTimeoutSeconds()).isEqualTo(30);
+        assertThat(server.getSseReadTimeoutSeconds()).isEqualTo(300);
+        assertThat(server.getAuth()).isNull();
+    }
+
+    @Test
+    @DisplayName("Builder with multiple headers")
+    void testBuilderWithMultipleHeaders() {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Authorization", "Bearer token");
+        headers.put("X-API-Key", "key123");
+
+        MCPServer server = MCPServer.builder("http://localhost:8000/mcp").headers(headers).build();
+
+        assertThat(server.getHeaders()).hasSize(2);
+        assertThat(server.getHeaders()).containsEntry("Authorization", "Bearer token");
+        assertThat(server.getHeaders()).containsEntry("X-API-Key", "key123");
+    }
+
+    @Test
+    @DisplayName("Test different authentication types")
+    void testAuthenticationTypes() {
+        // Bearer token auth
+        MCPServer bearerServer =
+                MCPServer.builder("http://localhost:8000/mcp")
+                        .auth(new BearerTokenAuth("my-token"))
+                        .build();
+        assertThat(bearerServer.getAuth()).isInstanceOf(BearerTokenAuth.class);
+
+        // Basic auth
+        MCPServer basicServer =
+                MCPServer.builder("http://localhost:8000/mcp")
+                        .auth(new BasicAuth("user", "pass"))
+                        .build();
+        assertThat(basicServer.getAuth()).isInstanceOf(BasicAuth.class);
+
+        // API key auth
+        MCPServer apiKeyServer =
+                MCPServer.builder("http://localhost:8000/mcp")
+                        .auth(new ApiKeyAuth("X-API-Key", "secret"))
+                        .build();
+        assertThat(apiKeyServer.getAuth()).isInstanceOf(ApiKeyAuth.class);
+    }
+
+    @Test
+    @DisplayName("Validate HTTP endpoint")
+    void testEndpointValidation() {
+        // Valid endpoints
+        new MCPServer("http://localhost:8000/mcp");
+        new MCPServer("https://api.example.com/mcp");
+
+        // Invalid endpoints
+        assertThatThrownBy(() -> new MCPServer(null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("endpoint cannot be null");
+    }
+
+    @Test
+    @DisplayName("Test resource type")
+    void testResourceType() {
+        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        assertThat(server.getResourceType()).isEqualTo(ResourceType.MCP_SERVER);
+    }
+
+    @Test
+    @DisplayName("Test equals and hashCode")
+    void testEqualsAndHashCode() {
+        MCPServer server1 =
+                MCPServer.builder("http://localhost:8000/mcp")
+                        .timeout(Duration.ofSeconds(30))
+                        .build();
+
+        MCPServer server2 =
+                MCPServer.builder("http://localhost:8000/mcp")
+                        .timeout(Duration.ofSeconds(30))
+                        .build();
+
+        MCPServer server3 =
+                MCPServer.builder("http://localhost:8000/mcp")
+                        .timeout(Duration.ofSeconds(60))
+                        .build();
+
+        assertThat(server1).isEqualTo(server2);
+        assertThat(server1.hashCode()).isEqualTo(server2.hashCode());
+        assertThat(server1).isNotEqualTo(server3);
+    }
+
+    @Test
+    @DisplayName("Test toString")
+    void testToString() {
+        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        assertThat(server.toString()).contains("MCPServer");
+        assertThat(server.toString()).contains("http://localhost:8000/mcp");
+    }
+
+    @Test
+    @DisplayName("JSON serialization and deserialization")
+    void testJsonSerialization() throws Exception {
+        MCPServer original =
+                MCPServer.builder("http://localhost:8000/mcp")
+                        .header("X-Custom", "value")
+                        .timeout(Duration.ofSeconds(45))
+                        .sseReadTimeout(Duration.ofSeconds(600))
+                        .auth(new BearerTokenAuth("test-token"))
+                        .build();
+
+        ObjectMapper mapper = new ObjectMapper();
+        // Configure to ignore unknown properties during deserialization
+        mapper.configure(FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+        String json = mapper.writeValueAsString(original);
+
+        MCPServer deserialized = mapper.readValue(json, MCPServer.class);
+
+        assertThat(deserialized.getEndpoint()).isEqualTo(original.getEndpoint());
+        assertThat(deserialized.getHeaders()).isEqualTo(original.getHeaders());
+        assertThat(deserialized.getTimeoutSeconds()).isEqualTo(original.getTimeoutSeconds());
+        assertThat(deserialized.getSseReadTimeoutSeconds())
+                .isEqualTo(original.getSseReadTimeoutSeconds());
+        assertThat(deserialized.getAuth()).isEqualTo(original.getAuth());
+    }
+
+    @Test
+    @DisplayName("JSON serialization with different auth types")
+    void testJsonSerializationWithAuth() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        // Configure to ignore unknown properties during deserialization
+        mapper.configure(FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+        // Bearer token auth
+        MCPServer bearerServer =
+                MCPServer.builder("http://localhost:8000")
+                        .auth(new BearerTokenAuth("token"))
+                        .build();
+        String bearerJson = mapper.writeValueAsString(bearerServer);
+        MCPServer bearerDeserialized = mapper.readValue(bearerJson, MCPServer.class);
+        assertThat(bearerDeserialized.getAuth()).isInstanceOf(BearerTokenAuth.class);
+
+        // Basic auth
+        MCPServer basicServer =
+                MCPServer.builder("http://localhost:8000")
+                        .auth(new BasicAuth("user", "pass"))
+                        .build();
+        String basicJson = mapper.writeValueAsString(basicServer);
+        MCPServer basicDeserialized = mapper.readValue(basicJson, MCPServer.class);
+        assertThat(basicDeserialized.getAuth()).isInstanceOf(BasicAuth.class);
+
+        // API key auth
+        MCPServer apiKeyServer =
+                MCPServer.builder("http://localhost:8000")
+                        .auth(new ApiKeyAuth("X-API-Key", "secret"))
+                        .build();
+        String apiKeyJson = mapper.writeValueAsString(apiKeyServer);
+        MCPServer apiKeyDeserialized = mapper.readValue(apiKeyJson, MCPServer.class);
+        assertThat(apiKeyDeserialized.getAuth()).isInstanceOf(ApiKeyAuth.class);
+    }
+
+    @Test
+    @DisplayName("Headers are immutable from outside")
+    void testHeadersImmutability() {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("X-Test", "value");
+
+        MCPServer server = MCPServer.builder("http://localhost:8000").headers(headers).build();
+
+        // Modify original map
+        headers.put("X-New", "new-value");
+
+        // Server should not be affected
+        assertThat(server.getHeaders()).hasSize(1);
+        assertThat(server.getHeaders()).doesNotContainKey("X-New");
+
+        // Modify returned map
+        Map<String, String> returnedHeaders = server.getHeaders();
+        returnedHeaders.put("X-Another", "another-value");
+
+        // Server should not be affected
+        assertThat(server.getHeaders()).hasSize(1);
+        assertThat(server.getHeaders()).doesNotContainKey("X-Another");
+    }
+
+    @Test
+    @DisplayName("Close server gracefully")
+    void testClose() {
+        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        // Should not throw any exception
+        server.close();
+        server.close(); // Calling twice should be safe
+    }
+}

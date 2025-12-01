@@ -41,6 +41,7 @@ import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.prompt.LocalPrompt;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -91,7 +92,7 @@ public class ReActAgent extends Agent {
                         "Output schema must be RowTypeInfo or Pojo class.");
             }
             Prompt schemaPrompt =
-                    new Prompt(
+                    new LocalPrompt(
                             String.format(
                                     "The final response should be json format, and match the schema %s",
                                     jsonSchema));
