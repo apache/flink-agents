@@ -102,7 +102,7 @@ public class ChatModelIntegrationTest extends OllamaPreparationUtils {
 
     public void checkResult(CloseableIterator<Object> results) {
         List<String> expectedWords =
-                List.of(" 77", "37", "89", "23", "68", "22", "26", "22", "23", "");
+                List.of("77", "37", "89", "23", "68", "22", "26", "22", "23", "");
         for (String expected : expectedWords) {
             Assertions.assertTrue(
                     results.hasNext(), "Output messages count %s is less than expected.");
