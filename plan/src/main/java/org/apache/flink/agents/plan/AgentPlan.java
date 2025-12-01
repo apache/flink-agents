@@ -26,6 +26,9 @@ import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
 import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.mcp.MCPPrompt;
+import org.apache.flink.agents.api.mcp.MCPServer;
+import org.apache.flink.agents.api.mcp.MCPTool;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -62,6 +65,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+
+import static org.apache.flink.agents.api.resource.ResourceType.*;
 
 /** Agent plan compiled from user defined agent. */
 @JsonSerialize(using = AgentPlanJsonSerializer.class)
@@ -314,10 +319,31 @@ public class AgentPlan implements Serializable {
 
         FunctionTool tool = new FunctionTool(metadata, javaFunction);
         JavaSerializableResourceProvider provider =
-                JavaSerializableResourceProvider.createResourceProvider(
-                        name, ResourceType.TOOL, tool);
+                JavaSerializableResourceProvider.createResourceProvider(name, TOOL, tool);
 
         addResourceProvider(provider);
+    }
+
+    private void extractMCPServer(Method method) throws Exception {
+        String name = method.getName();
+        MCPServer mcpServer = (MCPServer) method.invoke(null);
+
+        addResourceProvider(
+                JavaSerializableResourceProvider.createResourceProvider(
+                        name, MCP_SERVER, mcpServer));
+
+        for (MCPTool tool : mcpServer.listTools()) {
+            addResourceProvider(
+                    JavaSerializableResourceProvider.createResourceProvider(
+                            tool.getName(), TOOL, tool));
+        }
+
+        for (MCPPrompt prompt : mcpServer.listPrompts()) {
+            addResourceProvider(
+                    JavaSerializableResourceProvider.createResourceProvider(
+                            prompt.getName(), PROMPT, prompt));
+        }
+        mcpServer.close();
     }
 
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
@@ -342,8 +368,7 @@ public class AgentPlan implements Serializable {
                     if (fieldValue instanceof Resource) {
                         Resource resource = (Resource) fieldValue;
                         ResourceProvider provider =
-                                createResourceProvider(
-                                        resourceName, ResourceType.TOOL, resource, agentClass);
+                                createResourceProvider(resourceName, TOOL, resource, agentClass);
                         addResourceProvider(provider);
                     }
                 } catch (IllegalAccessException e) {
@@ -385,7 +410,7 @@ public class AgentPlan implements Serializable {
 
                 JavaSerializableResourceProvider provider =
                         JavaSerializableResourceProvider.createResourceProvider(
-                                promptName, ResourceType.PROMPT, prompt);
+                                promptName, PROMPT, prompt);
 
                 addResourceProvider(provider);
             } else if (method.isAnnotationPresent(ChatModelSetup.class)) {
@@ -396,6 +421,10 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.EMBEDDING_MODEL, method);
             } else if (method.isAnnotationPresent(EmbeddingModelConnection.class)) {
                 extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
+            } else if (method.isAnnotationPresent(
+                            org.apache.flink.agents.api.annotation.MCPServer.class)
+                    && Modifier.isStatic(method.getModifiers())) {
+                extractMCPServer(method);
             }
         }
 
@@ -416,17 +445,15 @@ public class AgentPlan implements Serializable {
                     }
                     addResourceProvider(provider);
                 }
-            } else if (type == ResourceType.PROMPT) {
+            } else if (type == PROMPT) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     JavaSerializableResourceProvider provider =
                             JavaSerializableResourceProvider.createResourceProvider(
-                                    kv.getKey(),
-                                    ResourceType.PROMPT,
-                                    (SerializableResource) kv.getValue());
+                                    kv.getKey(), PROMPT, (SerializableResource) kv.getValue());
 
                     addResourceProvider(provider);
                 }
-            } else if (type == ResourceType.TOOL) {
+            } else if (type == TOOL) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     extractTool(
                             ((org.apache.flink.agents.api.tools.FunctionTool) kv.getValue())
