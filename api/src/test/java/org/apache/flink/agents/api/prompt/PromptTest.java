@@ -43,8 +43,8 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class PromptTest {
 
-    private Prompt textPrompt;
-    private Prompt messagesPrompt;
+    private LocalPrompt textPrompt;
+    private LocalPrompt messagesPrompt;
     private Map<String, String> variables;
 
     @BeforeEach
@@ -53,7 +53,7 @@ class PromptTest {
         String textTemplate =
                 "You are a product review analyzer, please generate a score and the dislike reasons "
                         + "(if any) for the review. The product {product_id} is {description}, and user review is '{review}'.";
-        textPrompt = new Prompt(textTemplate);
+        textPrompt = new LocalPrompt(textTemplate);
 
         // Create message-based prompt template
         List<ChatMessage> messageTemplate =
@@ -65,7 +65,7 @@ class PromptTest {
                         new ChatMessage(
                                 MessageRole.USER,
                                 "The product {product_id} is {description}, and user review is '{review}'."));
-        messagesPrompt = new Prompt(messageTemplate);
+        messagesPrompt = new LocalPrompt(messageTemplate);
 
         // Set up test variables
         variables = new HashMap<>();
@@ -170,7 +170,7 @@ class PromptTest {
     @Test
     @DisplayName("Test empty prompt")
     void testEmptyPrompt() {
-        Prompt emptyPrompt = new Prompt("");
+        Prompt emptyPrompt = new LocalPrompt("");
         String result = emptyPrompt.formatString(new HashMap<>());
         assertEquals("", result);
 
@@ -183,7 +183,7 @@ class PromptTest {
     @DisplayName("Test prompt with special characters")
     void testPromptWithSpecialCharacters() {
         String specialTemplate = "Handle special chars: {text} with symbols like @#$%^&*()";
-        Prompt specialPrompt = new Prompt(specialTemplate);
+        Prompt specialPrompt = new LocalPrompt(specialTemplate);
 
         Map<String, String> specialVars = new HashMap<>();
         specialVars.put("text", "Hello & Welcome!");
@@ -197,7 +197,7 @@ class PromptTest {
     @DisplayName("Test prompt with nested braces")
     void testPromptWithNestedBraces() {
         String nestedTemplate = "JSON example: {{\"key\": \"{value}\"}}";
-        Prompt nestedPrompt = new Prompt(nestedTemplate);
+        Prompt nestedPrompt = new LocalPrompt(nestedTemplate);
 
         Map<String, String> nestedVars = new HashMap<>();
         nestedVars.put("value", "test");
@@ -220,7 +220,7 @@ class PromptTest {
                                 "I'd be happy to help with {task}. Let me know what specifically you need."),
                         new ChatMessage(MessageRole.USER, "{user_request}"));
 
-        Prompt conversationPrompt = new Prompt(conversationTemplate);
+        Prompt conversationPrompt = new LocalPrompt(conversationTemplate);
 
         Map<String, String> conversationVars = new HashMap<>();
         conversationVars.put("assistant_type", "an AI assistant");
@@ -242,7 +242,7 @@ class PromptTest {
     void testStringPromptSerializeAndDeserialize() throws JsonProcessingException {
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(textPrompt);
-        Prompt deserialized = mapper.readValue(json, Prompt.class);
+        Prompt deserialized = mapper.readValue(json, LocalPrompt.class);
         Map<String, String> empty = new HashMap<>();
         Assertions.assertEquals(textPrompt.formatString(empty), deserialized.formatString(empty));
     }
@@ -252,7 +252,7 @@ class PromptTest {
     void testMessagePromptSerializeAndDeserialize() throws JsonProcessingException {
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(messagesPrompt);
-        Prompt deserialized = mapper.readValue(json, Prompt.class);
+        Prompt deserialized = mapper.readValue(json, LocalPrompt.class);
         Map<String, String> empty = new HashMap<>();
         Assertions.assertEquals(
                 messagesPrompt.formatString(empty), deserialized.formatString(empty));
