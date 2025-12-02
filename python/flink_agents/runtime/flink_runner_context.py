@@ -64,8 +64,10 @@ class FlinkRunnerContext(RunnerContext):
             The event to be processed by the agent system.
         """
         class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
+        event_bytes = cloudpickle.dumps(event)
+        event_string = str(event)
         try:
-            self._j_runner_context.sendEvent(class_path, cloudpickle.dumps(event))
+            self._j_runner_context.sendEvent(class_path, event_bytes, event_string)
         except Exception as e:
             err_msg = "Failed to send event " + class_path + " to runner context"
             raise RuntimeError(err_msg) from e

@@ -58,7 +58,6 @@ public class PythonActionExecutor {
     private static final String WRAP_TO_INPUT_EVENT = "python_java_utils.wrap_to_input_event";
     private static final String GET_OUTPUT_FROM_OUTPUT_EVENT =
             "python_java_utils.get_output_from_output_event";
-    static final String PYTHON_EVENT_TO_STRING = "python_java_utils.python_event_to_string";
 
     private final PythonEnvironmentManager environmentManager;
     private final String agentPlanJson;
@@ -125,13 +124,13 @@ public class PythonActionExecutor {
 
     public PythonEvent wrapToInputEvent(Object eventData) {
         checkState(eventData instanceof byte[]);
-        return new PythonEvent(
-                (byte[]) interpreter.invoke(WRAP_TO_INPUT_EVENT, eventData),
-                EventUtil.PYTHON_INPUT_EVENT_NAME);
-    }
-
-    public String pythonEventToString(PythonEvent pythonEvent) {
-        return (String) interpreter.invoke(PYTHON_EVENT_TO_STRING, pythonEvent.getEvent());
+        // wrap_to_input_event returns a tuple of (bytes, str)
+        Object result = interpreter.invoke(WRAP_TO_INPUT_EVENT, eventData);
+        checkState(result.getClass().isArray() && ((Object[]) result).length == 2);
+        Object[] resultArray = (Object[]) result;
+        byte[] eventBytes = (byte[]) resultArray[0];
+        String eventString = (String) resultArray[1];
+        return new PythonEvent(eventBytes, EventUtil.PYTHON_INPUT_EVENT_NAME, eventString);
     }
 
     public Object getOutputFromOutputEvent(byte[] pythonOutputEvent) {

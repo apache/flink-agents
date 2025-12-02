@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -59,8 +60,12 @@ class PythonEventLoggingAgent(Agent):
         )
 
 
-def test_python_event_logging(tmp_path: Path) -> None:
+def test_python_event_logging() -> None:
     """Test that PythonEvent can be logged with readable content."""
+    # Check that log files were created in the default location
+    default_log_dir = Path(tempfile.gettempdir()) / "flink-agents"
+    shutil.rmtree(default_log_dir, ignore_errors=True)
+
     config = Configuration()
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
@@ -91,9 +96,6 @@ def test_python_event_logging(tmp_path: Path) -> None:
     # Execute the job
     agents_env.execute()
 
-    # Check that log files were created in the default location
-    default_log_dir = Path(tempfile.gettempdir()) / "flink-agents"
-
     # Also check our custom log directory
     log_files = []
     if default_log_dir.exists():
@@ -110,10 +112,12 @@ def test_python_event_logging(tmp_path: Path) -> None:
         with log_file.open() as f:
             log_content += f.read()
 
-    # Verify log contains expected content - should have readable OutputEvent data
+    print(log_content)
+
+    # Verify log contains expected content - should have readable event data via
+    # eventString
     assert "processed_review" in log_content, (
-        "Log should contain processed event content"
+        "Log should contain processed event content from eventString"
     )
-    assert "OutputEvent" in log_content or "LoggablePythonEvent" in log_content, (
-        "Log should contain event type information"
-    )
+    assert "eventString" in log_content, "Log should contain eventString field"
+    assert "eventType" in log_content, "Log should contain event type information"
