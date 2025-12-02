@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.prompt.LocalPrompt;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
@@ -56,14 +57,14 @@ public class CustomTypesAndResources {
                     + "no need to disclose whether the tool was used.";
 
     public static final Prompt REVIEW_ANALYSIS_PROMPT =
-            new Prompt(
+            new LocalPrompt(
                     Arrays.asList(
                             new ChatMessage(MessageRole.SYSTEM, REVIEW_ANALYSIS_SYSTEM_PROMPT_STR),
                             new ChatMessage(MessageRole.USER, "\"input\":\n" + "{input}")));
 
     // Prompt for review analysis react agent
     public static final Prompt REVIEW_ANALYSIS_REACT_PROMPT =
-            new Prompt(
+            new LocalPrompt(
                     Arrays.asList(
                             new ChatMessage(MessageRole.SYSTEM, REVIEW_ANALYSIS_SYSTEM_PROMPT_STR),
                             new ChatMessage(
@@ -91,7 +92,7 @@ public class CustomTypesAndResources {
                     + "{input}";
 
     public static final Prompt PRODUCT_SUGGESTION_PROMPT =
-            new Prompt(PRODUCT_SUGGESTION_PROMPT_STR);
+            new LocalPrompt(PRODUCT_SUGGESTION_PROMPT_STR);
 
     /**
      * Tool for notifying the shipping manager when product received a negative review due to
