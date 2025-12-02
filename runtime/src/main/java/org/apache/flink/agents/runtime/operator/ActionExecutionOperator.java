@@ -42,6 +42,7 @@ import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.agents.runtime.python.event.LoggablePythonEvent;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -343,17 +344,33 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void notifyEventProcessed(Event event) throws Exception {
-        EventContext eventContext = new EventContext(event);
         if (eventLogger != null) {
             // If event logging is enabled, we log the event along with its context.
-            eventLogger.append(eventContext, event);
+            // For PythonEvent, we convert it to LoggablePythonEvent for human-readable logging.
+            Event eventToLog = event;
+            if (event instanceof PythonEvent) {
+                PythonEvent pythonEvent = (PythonEvent) event;
+                LoggablePythonEvent loggableEvent =
+                        new LoggablePythonEvent(
+                                pythonEvent.getId(),
+                                pythonEvent.getAttributes(),
+                                pythonActionExecutor.pythonEventToString(pythonEvent),
+                                pythonEvent.getEventType());
+                if (pythonEvent.hasSourceTimestamp()) {
+                    loggableEvent.setSourceTimestamp(pythonEvent.getSourceTimestamp());
+                }
+                eventToLog = loggableEvent;
+            }
+            EventContext eventContext = new EventContext(eventToLog);
+            eventLogger.append(eventContext, eventToLog);
             // For now, we flush the event logger after each event to ensure immediate logging.
             // This is a temporary solution to ensure that events are logged immediately.
             // TODO: In the future, we may want to implement a more efficient batching mechanism.
             eventLogger.flush();
         }
         if (eventListeners != null) {
-            // Notify all registered event listeners about the event.
+            // Notify all registered event listeners about the original event.
+            EventContext eventContext = new EventContext(event);
             for (EventListener listener : eventListeners) {
                 listener.onEventProcessed(eventContext, event);
             }
