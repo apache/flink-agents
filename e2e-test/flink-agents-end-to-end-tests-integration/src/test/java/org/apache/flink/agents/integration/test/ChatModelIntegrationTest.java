@@ -44,6 +44,7 @@ public class ChatModelIntegrationTest extends OllamaPreparationUtils {
 
     private static final String API_KEY = "_API_KEY";
     private static final String OLLAMA = "OLLAMA";
+    private static final String PYTHON = "PYTHON";
 
     private final boolean ollamaReady;
 
@@ -52,10 +53,10 @@ public class ChatModelIntegrationTest extends OllamaPreparationUtils {
     }
 
     @ParameterizedTest()
-    @ValueSource(strings = {"OLLAMA", "AZURE", "OPENAI"})
+    @ValueSource(strings = {"OLLAMA", "AZURE", "OPENAI", "PYTHON"})
     public void testChatModeIntegration(String provider) throws Exception {
         Assumptions.assumeTrue(
-                (OLLAMA.equals(provider) && ollamaReady)
+                ((OLLAMA.equals(provider) || PYTHON.equals(provider)) && ollamaReady)
                         || System.getenv().get(provider + API_KEY) != null,
                 String.format(
                         "Server or authentication information is not provided for %s", provider));
@@ -87,7 +88,8 @@ public class ChatModelIntegrationTest extends OllamaPreparationUtils {
         // Apply agent to the DataStream and use the prompt itself as the key
         DataStream<Object> outputStream =
                 agentsEnv
-                        .fromDataStream(inputStream, (KeySelector<String, String>) value -> value)
+                        .fromDataStream(
+                                inputStream, (KeySelector<String, String>) value -> "orderKey")
                         .apply(new ChatModelIntegrationAgent())
                         .toDataStream();
 

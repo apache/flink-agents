@@ -19,8 +19,13 @@
 package org.apache.flink.agents.plan.resourceprovider;
 
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
+import pemja.core.object.PyObject;
 
+import java.lang.reflect.Constructor;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.BiFunction;
@@ -35,6 +40,9 @@ public class PythonResourceProvider extends ResourceProvider {
     private final String module;
     private final String clazz;
     private final Map<String, Object> kwargs;
+    private final ResourceDescriptor descriptor;
+
+    protected PythonResourceAdapter pythonResourceAdapter;
 
     public PythonResourceProvider(
             String name,
@@ -46,6 +54,25 @@ public class PythonResourceProvider extends ResourceProvider {
         this.module = module;
         this.clazz = clazz;
         this.kwargs = kwargs;
+        this.descriptor = null;
+    }
+
+    public PythonResourceProvider(String name, ResourceType type, ResourceDescriptor descriptor) {
+        super(name, type);
+        this.kwargs = new HashMap<>(descriptor.getInitialArguments());
+        module = (String) kwargs.remove("module");
+        if (module == null || module.isEmpty()) {
+            throw new IllegalArgumentException("module should not be null or empty.");
+        }
+        clazz = (String) kwargs.remove("clazz");
+        if (clazz == null || clazz.isEmpty()) {
+            throw new IllegalArgumentException("clazz should not be null or empty.");
+        }
+        this.descriptor = descriptor;
+    }
+
+    public void setPythonResourceAdapter(PythonResourceAdapter pythonResourceAdapter) {
+        this.pythonResourceAdapter = pythonResourceAdapter;
     }
 
     public String getModule() {
@@ -63,11 +90,21 @@ public class PythonResourceProvider extends ResourceProvider {
     @Override
     public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
             throws Exception {
-        // TODO: Implement Python resource creation logic
-        // This would typically involve calling into Python runtime to create the
-        // resource
-        throw new UnsupportedOperationException(
-                "Python resource creation not yet implemented in Java runtime");
+        if (pythonResourceAdapter != null) {
+            Class<?> clazz = Class.forName(descriptor.getClazz());
+            PyObject pyResource =
+                    pythonResourceAdapter.initPythonResource(this.module, this.clazz, kwargs);
+            Constructor<?> constructor =
+                    clazz.getConstructor(
+                            PythonResourceAdapter.class,
+                            PyObject.class,
+                            ResourceDescriptor.class,
+                            BiFunction.class);
+            return (Resource)
+                    constructor.newInstance(
+                            pythonResourceAdapter, pyResource, descriptor, getResource);
+        }
+        throw new UnsupportedOperationException("PythonResourceAdapter is not set.");
     }
 
     @Override
@@ -91,5 +128,9 @@ public class PythonResourceProvider extends ResourceProvider {
     @Override
     public int hashCode() {
         return Objects.hash(this.getName(), this.getType(), module, clazz, kwargs);
+    }
+
+    public ResourceDescriptor getDescriptor() {
+        return descriptor;
     }
 }

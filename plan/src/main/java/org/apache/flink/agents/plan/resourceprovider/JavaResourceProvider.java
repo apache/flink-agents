@@ -23,15 +23,28 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.lang.reflect.Constructor;
+import java.util.Map;
 import java.util.function.BiFunction;
 
 /** Java Resource provider that carries resource instance to be used at runtime. */
 public class JavaResourceProvider extends ResourceProvider {
+    private final String clazz;
+    private final Map<String, Object> kwargs;
     private final ResourceDescriptor descriptor;
 
     public JavaResourceProvider(String name, ResourceType type, ResourceDescriptor descriptor) {
         super(name, type);
+        this.clazz = null;
+        this.kwargs = null;
         this.descriptor = descriptor;
+    }
+
+    public JavaResourceProvider(
+            String name, ResourceType type, String clazz, Map<String, Object> kwargs) {
+        super(name, type);
+        this.clazz = clazz;
+        this.kwargs = kwargs;
+        this.descriptor = new ResourceDescriptor(clazz, kwargs);
     }
 
     @Override
@@ -41,6 +54,14 @@ public class JavaResourceProvider extends ResourceProvider {
         Constructor<?> constructor =
                 clazz.getConstructor(ResourceDescriptor.class, BiFunction.class);
         return (Resource) constructor.newInstance(descriptor, getResource);
+    }
+
+    public String getClazz() {
+        return clazz;
+    }
+
+    public Map<String, Object> getKwargs() {
+        return kwargs;
     }
 
     public ResourceDescriptor getDescriptor() {

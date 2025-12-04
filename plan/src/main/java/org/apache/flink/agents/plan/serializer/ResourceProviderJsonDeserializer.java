@@ -76,6 +76,15 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
     private PythonResourceProvider deserializePythonResourceProvider(JsonNode node) {
         String name = node.get("name").asText();
         String type = node.get("type").asText();
+        try {
+            if (node.has("descriptor")) {
+                ResourceDescriptor descriptor =
+                        mapper.treeToValue(node.get("descriptor"), ResourceDescriptor.class);
+                return new PythonResourceProvider(name, ResourceType.fromValue(type), descriptor);
+            }
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
         String module = node.get("module").asText();
         String clazz = node.get("clazz").asText();
 
@@ -107,6 +116,17 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
     private JavaResourceProvider deserializeJavaResourceProvider(JsonNode node) {
         String name = node.get("name").asText();
         String type = node.get("type").asText();
+        if (node.has("clazz")) {
+            String clazz = node.get("clazz").asText();
+
+            JsonNode kwargsNode = node.get("kwargs");
+            Map<String, Object> kwargs = new HashMap<>();
+            if (kwargsNode != null && kwargsNode.isObject()) {
+                ObjectMapper mapper = new ObjectMapper();
+                kwargs = mapper.convertValue(kwargsNode, Map.class);
+            }
+            return new JavaResourceProvider(name, ResourceType.fromValue(type), clazz, kwargs);
+        }
         try {
             ResourceDescriptor descriptor =
                     mapper.treeToValue(node.get("descriptor"), ResourceDescriptor.class);
