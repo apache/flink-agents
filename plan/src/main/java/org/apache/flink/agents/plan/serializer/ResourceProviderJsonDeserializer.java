@@ -116,6 +116,17 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
     private JavaResourceProvider deserializeJavaResourceProvider(JsonNode node) {
         String name = node.get("name").asText();
         String type = node.get("type").asText();
+        if (node.has("clazz")) {
+            String clazz = node.get("clazz").asText();
+
+            JsonNode kwargsNode = node.get("kwargs");
+            Map<String, Object> kwargs = new HashMap<>();
+            if (kwargsNode != null && kwargsNode.isObject()) {
+                ObjectMapper mapper = new ObjectMapper();
+                kwargs = mapper.convertValue(kwargsNode, Map.class);
+            }
+            return new JavaResourceProvider(name, ResourceType.fromValue(type), clazz, kwargs);
+        }
         try {
             ResourceDescriptor descriptor =
                     mapper.treeToValue(node.get("descriptor"), ResourceDescriptor.class);

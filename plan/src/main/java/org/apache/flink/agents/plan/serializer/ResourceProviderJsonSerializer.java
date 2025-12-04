@@ -135,7 +135,26 @@ public class ResourceProviderJsonSerializer extends StdSerializer<ResourceProvid
             throws IOException {
         gen.writeStringField("name", provider.getName());
         gen.writeStringField("type", provider.getType().getValue());
-        gen.writeObjectField("descriptor", provider.getDescriptor());
+        if (provider.getClazz() != null) {
+            gen.writeStringField("clazz", provider.getClazz());
+            gen.writeFieldName("kwargs");
+            gen.writeStartObject();
+            provider.getKwargs()
+                    .forEach(
+                            (name, value) -> {
+                                try {
+                                    gen.writeObjectField(name, value);
+                                } catch (IOException e) {
+                                    throw new RuntimeException(
+                                            "Error writing kwargs of PythonResourceProvider: "
+                                                    + name,
+                                            e);
+                                }
+                            });
+            gen.writeEndObject();
+        } else {
+            gen.writeObjectField("descriptor", provider.getDescriptor());
+        }
         gen.writeStringField(
                 "__resource_provider_type__", JavaResourceProvider.class.getSimpleName());
     }

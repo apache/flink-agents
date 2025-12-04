@@ -150,6 +150,17 @@ def to_java_chat_message(chat_message: ChatMessage) -> Any:
 
     return j_chat_message
 
+# TODO: Replace this with `to_java_chat_message()` when the `find_class` bug is fixed.
+def update_java_chat_message(chat_message: ChatMessage, j_chat_message: Any) -> str:
+    """Update a Java chat message using Python chat message."""
+    j_chat_message.setContent(chat_message.content)
+    j_chat_message.setExtraArgs(chat_message.extra_args)
+    if chat_message.tool_calls:
+        tool_calls = [normalize_tool_call_id(tool_call) for tool_call in chat_message.tool_calls]
+        j_chat_message.setToolCalls(tool_calls)
+
+    return chat_message.role.value
+
 def call_method(obj: Any, method_name: str, kwargs: Dict[str, Any]) -> Any:
     """Calls a method on `obj` by name and passes in positional and keyword arguments.
 
