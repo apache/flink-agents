@@ -80,8 +80,9 @@ public class Prompt extends SerializableResource {
         return template.match(
                 // Handle string template
                 content ->
-                        Collections.singletonList(
-                                new ChatMessage(defaultRole, format(content, kwargs))),
+                        new ArrayList<>(
+                                Collections.singletonList(
+                                        new ChatMessage(defaultRole, format(content, kwargs)))),
                 // Handle messages template
                 messages ->
                         messages.stream()
