@@ -61,6 +61,11 @@ under the License.
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-chat-models-anthropic</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
             <artifactId>flink-agents-integrations-chat-models-azureai</artifactId>
             <version>${project.version}</version>
         </dependency>

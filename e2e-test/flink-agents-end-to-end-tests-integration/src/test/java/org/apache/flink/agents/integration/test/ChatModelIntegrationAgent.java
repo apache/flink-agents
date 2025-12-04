@@ -33,6 +33,8 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelConnection;
+import org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelSetup;
 import org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelConnection;
 import org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
@@ -87,6 +89,13 @@ public class ChatModelIntegrationAgent extends Agent {
             return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelConnection.class.getName())
                     .addInitialArgument("api_key", apiKey)
                     .build();
+        } else if (provider.equals("ANTHROPIC")) {
+            String apiKey = System.getenv().get("ANTHROPIC_API_KEY");
+            return ResourceDescriptor.Builder.newBuilder(
+                            AnthropicChatModelConnection.class.getName())
+                    .addInitialArgument("api_key", apiKey)
+                    .addInitialArgument("timeout", 240)
+                    .build();
         } else {
             throw new RuntimeException(String.format("Unknown model provider %s", provider));
         }
@@ -108,6 +117,14 @@ public class ChatModelIntegrationAgent extends Agent {
             return ResourceDescriptor.Builder.newBuilder(AzureAIChatModelSetup.class.getName())
                     .addInitialArgument("connection", "chatModelConnection")
                     .addInitialArgument("model", "gpt-4o")
+                    .addInitialArgument(
+                            "tools",
+                            List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+                    .build();
+        } else if (provider.equals("ANTHROPIC")) {
+            return ResourceDescriptor.Builder.newBuilder(AnthropicChatModelSetup.class.getName())
+                    .addInitialArgument("connection", "chatModelConnection")
+                    .addInitialArgument("model", "claude-sonnet-4-20250514")
                     .addInitialArgument(
                             "tools",
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
