@@ -82,7 +82,7 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
         JsonNode kwargsNode = node.get("kwargs");
         Map<String, Object> kwargs = new HashMap<>();
         if (kwargsNode != null && kwargsNode.isObject()) {
-            kwargs = (Map<String, Object>) parseJsonNode(kwargsNode);
+            kwargs = mapper.convertValue(kwargsNode, Map.class);
         }
         return new PythonResourceProvider(
                 name, ResourceType.fromValue(type), module, clazz, kwargs);
@@ -98,7 +98,7 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
         JsonNode serializedNode = node.get("serialized");
         Map<String, Object> serialized = new HashMap<>();
         if (serializedNode != null && serializedNode.isObject()) {
-            serialized = (Map<String, Object>) parseJsonNode(serializedNode);
+            serialized = mapper.convertValue(serializedNode, Map.class);
         }
         return new PythonSerializableResourceProvider(
                 name, ResourceType.fromValue(type), module, clazz, serialized);
