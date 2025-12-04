@@ -28,6 +28,8 @@ import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.model.python.PythonChatModelConnection;
+import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
@@ -87,6 +89,12 @@ public class ChatModelIntegrationAgent extends Agent {
             return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelConnection.class.getName())
                     .addInitialArgument("api_key", apiKey)
                     .build();
+        } else if (provider.equals("PYTHON")) {
+            return ResourceDescriptor.Builder.newBuilder(PythonChatModelConnection.class.getName())
+                    .addInitialArgument(
+                            "module", "flink_agents.integrations.chat_models.ollama_chat_model")
+                    .addInitialArgument("clazz", "OllamaChatModelConnection")
+                    .build();
         } else {
             throw new RuntimeException(String.format("Unknown model provider %s", provider));
         }
@@ -119,6 +127,18 @@ public class ChatModelIntegrationAgent extends Agent {
                     .addInitialArgument(
                             "tools",
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+                    .build();
+        } else if (provider.equals("PYTHON")) {
+            return ResourceDescriptor.Builder.newBuilder(PythonChatModelSetup.class.getName())
+                    .addInitialArgument("connection", "chatModelConnection")
+                    .addInitialArgument(
+                            "module", "flink_agents.integrations.chat_models.ollama_chat_model")
+                    .addInitialArgument("clazz", "OllamaChatModelSetup")
+                    .addInitialArgument("model", OLLAMA_MODEL)
+                    .addInitialArgument(
+                            "tools",
+                            List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+                    .addInitialArgument("extract_reasoning", "true")
                     .build();
         } else {
             throw new RuntimeException(String.format("Unknown model provider %s", provider));

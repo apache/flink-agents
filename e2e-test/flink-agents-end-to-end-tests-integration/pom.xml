@@ -79,6 +79,11 @@ under the License.
             <artifactId>flink-agents-integrations-embedding-models-ollama</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-python</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
     </dependencies>
 
 </project>
