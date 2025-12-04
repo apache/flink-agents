@@ -72,7 +72,16 @@ public abstract class BaseChatModelSetup extends Resource {
                     arguments.put(entry.getKey(), entry.getValue().toString());
                 }
             }
-            messages = prompt.formatMessages(MessageRole.USER, arguments);
+
+            // append meaningful messages
+            List<ChatMessage> promptMessages = prompt.formatMessages(MessageRole.USER, arguments);
+            for (ChatMessage message : messages) {
+                if ((message.getContent() != null && !message.getContent().isEmpty())
+                        || message.getRole() == MessageRole.ASSISTANT) {
+                    promptMessages.add(message);
+                }
+            }
+            messages = promptMessages;
         }
 
         // Get tools can be used.
