@@ -22,23 +22,32 @@ under the License.
 
     <parent>
         <groupId>org.apache.flink</groupId>
-        <artifactId>flink-agents</artifactId>
+        <artifactId>flink-agents-integrations-chat-models</artifactId>
         <version>0.2-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>flink-agents-integrations</artifactId>
-    <name>Flink Agents : Integrations:</name>
-    <packaging>pom</packaging>
+    <artifactId>flink-agents-integrations-chat-models-anthropic</artifactId>
+    <name>Flink Agents : Integrations: Chat Models: Anthropic</name>
+    <packaging>jar</packaging>
 
-    <properties>
-        <ollama4j.version>1.1.5</ollama4j.version>
-        <openai.version>4.8.0</openai.version>
-        <anthropic.version>2.11.1</anthropic.version>
-    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-plan</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
-    <modules>
-        <module>chat-models</module>
-        <module>embedding-models</module>
-    </modules>
+        <dependency>
+            <groupId>com.anthropic</groupId>
+            <artifactId>anthropic-java</artifactId>
+            <version>${anthropic.version}</version>
+        </dependency>
+    </dependencies>
 
 </project>
