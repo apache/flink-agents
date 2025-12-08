@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import typing
 from inspect import signature
 from typing import Any, Callable, Dict, Optional, Type, Union
@@ -178,6 +179,19 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
 
     return create_model(name, **main_fields, __doc__=schema.get("description", ""))
 
+def create_model_from_java_tool_schema_str(name: str, schema_str: str) -> type[BaseModel]:
+    """Create Pydantic model from a java tool input schema."""
+    json_schema = json.loads(schema_str)
+    properties = json_schema["properties"]
+
+    fields = {}
+    for param_name in properties:
+        description = properties[param_name]["description"]
+        if description is None:
+            description = f"Parameter: {param_name}"
+        type = TYPE_MAPPING.get(properties[param_name]["type"])
+        fields[param_name] = (type, FieldInfo(description=description))
+    return create_model(name, **fields)
 
 def extract_mcp_content_item(content_item: Any) -> Dict[str, Any] | str:
     """Extract and normalize a single MCP content item.

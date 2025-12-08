@@ -19,6 +19,17 @@ import os
 from pathlib import Path
 
 import pytest
+from pyflink.common import Encoder, WatermarkStrategy
+from pyflink.common.typeinfo import Types
+from pyflink.datastream import (
+    RuntimeExecutionMode,
+    StreamExecutionEnvironment,
+)
+from pyflink.datastream.connectors.file_system import (
+    FileSource,
+    StreamFormat,
+    StreamingFileSink,
+)
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.e2e_tests.chat_model_integration_agent import ChatModelTestAgent
@@ -82,3 +93,59 @@ def test_chat_model_integration(model_provider: str) -> None:  # noqa: D103
 
     assert "3" in output_list[0]["0001"]
     assert "cat" in output_list[1]["0002"]
+
+@pytest.mark.skipif(client is None, reason="Ollama client is not available or test model is missing.")
+def test_java_chat_model_integration(tmp_path: Path) -> None:  # noqa: D103
+    os.environ["MODEL_PROVIDER"] = "JAVA"
+    env = StreamExecutionEnvironment.get_execution_environment()
+    env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
+    env.set_parallelism(1)
+
+    # currently, bounded source is not supported due to runtime implementation, so
+    # we use continuous file source here.
+    input_datastream = env.from_source(
+        source=FileSource.for_record_stream_format(
+            StreamFormat.text_line_format(), f"file:///{current_dir}/resources/java_chat_module_input"
+        ).build(),
+        watermark_strategy=WatermarkStrategy.no_watermarks(),
+        source_name="streaming_agent_example",
+    )
+
+    deserialize_datastream = input_datastream.map(
+        lambda x: str(x)
+    )
+
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    output_datastream = (
+        agents_env.from_datastream(
+            input=deserialize_datastream, key_selector= lambda x: "orderKey"
+        )
+        .apply(ChatModelTestAgent())
+        .to_datastream()
+    )
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir(parents=True, exist_ok=True)
+
+    (output_datastream.map(lambda x: str(x).replace('\n', '')
+                          .replace('\r', ''), Types.STRING()).add_sink(
+        StreamingFileSink.for_row_format(
+            base_path=str(result_dir.absolute()),
+            encoder=Encoder.simple_string_encoder(),
+        ).build()
+    ))
+
+    agents_env.execute()
+
+    actual_result = []
+    for file in result_dir.iterdir():
+        if file.is_dir():
+            for child in file.iterdir():
+                with child.open() as f:
+                    actual_result.extend(f.readlines())
+        if file.is_file():
+            with file.open() as f:
+                actual_result.extend(f.readlines())
+
+    assert "3" in actual_result[0]
+    assert "cat" in actual_result[1]

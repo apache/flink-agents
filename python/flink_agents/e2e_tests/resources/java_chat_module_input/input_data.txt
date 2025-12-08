@@ -1,0 +1,2 @@
+calculate the sum of 1 and 2.
+Tell me a joke about cats.
