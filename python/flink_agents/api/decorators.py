@@ -188,3 +188,8 @@ def vector_store(func: Callable) -> Callable:
     """
     func._is_vector_store = True
     return func
+
+def java_resource(cls: Type) -> Type:
+    """Decorator to mark a class as Java resource."""
+    cls._is_java_resource = True
+    return cls
