@@ -75,24 +75,12 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
         String name = node.get("name").asText();
         String type = node.get("type").asText();
         try {
-            if (node.has("descriptor")) {
-                ResourceDescriptor descriptor =
-                        mapper.treeToValue(node.get("descriptor"), ResourceDescriptor.class);
-                return new PythonResourceProvider(name, ResourceType.fromValue(type), descriptor);
-            }
+            ResourceDescriptor descriptor =
+                    mapper.treeToValue(node.get("descriptor"), ResourceDescriptor.class);
+            return new PythonResourceProvider(name, ResourceType.fromValue(type), descriptor);
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }
-        String module = node.get("module").asText();
-        String clazz = node.get("clazz").asText();
-
-        JsonNode kwargsNode = node.get("kwargs");
-        Map<String, Object> kwargs = new HashMap<>();
-        if (kwargsNode != null && kwargsNode.isObject()) {
-            kwargs = mapper.convertValue(kwargsNode, Map.class);
-        }
-        return new PythonResourceProvider(
-                name, ResourceType.fromValue(type), module, clazz, kwargs);
     }
 
     private PythonSerializableResourceProvider deserializePythonSerializableResourceProvider(

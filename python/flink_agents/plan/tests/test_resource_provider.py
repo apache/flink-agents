@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource import Resource, ResourceDescriptor, ResourceType
 from flink_agents.plan.resource_provider import PythonResourceProvider, ResourceProvider
 
 current_dir = Path(__file__).parent
@@ -40,9 +40,7 @@ def resource_provider() -> ResourceProvider:  # noqa: D103
     return PythonResourceProvider(
         name="mock",
         type=MockChatModelImpl.resource_type(),
-        module=MockChatModelImpl.__module__,
-        clazz=MockChatModelImpl.__name__,
-        kwargs={"host": "8.8.8.8", "desc": "mock chat model"},
+        descriptor=ResourceDescriptor(clazz=MockChatModelImpl, host="8.8.8.8", desc="mock chat model"),
     )
 
 

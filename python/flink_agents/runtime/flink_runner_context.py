@@ -41,7 +41,7 @@ class FlinkRunnerContext(RunnerContext):
     __agent_plan: AgentPlan
 
     def __init__(
-        self, j_runner_context: Any, agent_plan_json: str, executor: ThreadPoolExecutor
+        self, j_runner_context: Any, agent_plan_json: str, executor: ThreadPoolExecutor, j_resource_adapter: Any
     ) -> None:
         """Initialize a flink runner context with the given java runner context.
 
@@ -52,6 +52,7 @@ class FlinkRunnerContext(RunnerContext):
         """
         self._j_runner_context = j_runner_context
         self.__agent_plan = AgentPlan.model_validate_json(agent_plan_json)
+        self.__agent_plan.set_java_resource_adapter(j_resource_adapter)
         self.executor = executor
 
     @override
@@ -182,10 +183,10 @@ class FlinkRunnerContext(RunnerContext):
 
 
 def create_flink_runner_context(
-    j_runner_context: Any, agent_plan_json: str, executor: ThreadPoolExecutor
+    j_runner_context: Any, agent_plan_json: str, executor: ThreadPoolExecutor, j_resource_adapter: Any
 ) -> FlinkRunnerContext:
     """Used to create a FlinkRunnerContext Python object in Pemja environment."""
-    return FlinkRunnerContext(j_runner_context, agent_plan_json, executor)
+    return FlinkRunnerContext(j_runner_context, agent_plan_json, executor, j_resource_adapter)
 
 
 def create_async_thread_pool() -> ThreadPoolExecutor:

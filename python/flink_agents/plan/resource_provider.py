@@ -27,6 +27,7 @@ from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
     SerializableResource,
+    get_resource_class,
 )
 from flink_agents.plan.configuration import AgentConfiguration
 
@@ -89,9 +90,7 @@ class PythonResourceProvider(ResourceProvider):
         The initialization arguments of the resource.
     """
 
-    module: str
-    clazz: str
-    kwargs: Dict[str, Any]
+    descriptor: ResourceDescriptor
 
     @staticmethod
     def get(name: str, descriptor: ResourceDescriptor) -> "PythonResourceProvider":
@@ -100,23 +99,20 @@ class PythonResourceProvider(ResourceProvider):
         return PythonResourceProvider(
                     name=name,
                     type=clazz.resource_type(),
-                    module=clazz.__module__,
-                    clazz=clazz.__name__,
-                    kwargs=descriptor.arguments,
+                    descriptor= descriptor,
                 )
 
 
     def provide(self, get_resource: Callable, config: AgentConfiguration) -> Resource:
         """Create resource in runtime."""
-        module = importlib.import_module(self.module)
-        cls = getattr(module, self.clazz)
+        cls = self.descriptor.clazz
 
         final_kwargs = {}
 
-        resource_class_config = config.get_config_data_by_prefix(self.clazz)
+        resource_class_config = config.get_config_data_by_prefix(cls.__name__)
 
         final_kwargs.update(resource_class_config)
-        final_kwargs.update(self.kwargs)
+        final_kwargs.update(self.descriptor.arguments)
 
         resource = cls(**final_kwargs, get_resource=get_resource)
         return resource
@@ -158,21 +154,60 @@ class PythonSerializableResourceProvider(SerializableResourceProvider):
             self.resource = clazz.model_validate(self.serialized)
         return self.resource
 
+JAVA_RESOURCE_MAPPING: dict[ResourceType, str] = {
+    ResourceType.CHAT_MODEL: "flink_agents.runtime.java.java_chat_model.JavaChatModelSetupImpl",
+    ResourceType.CHAT_MODEL_CONNECTION: "flink_agents.runtime.java.java_chat_model.JavaChatModelConnectionImpl",
+}
 
-# TODO: implementation
 class JavaResourceProvider(ResourceProvider):
     """Represent Resource Provider declared by Java.
 
     Currently, this class only used for deserializing Java agent plan json
     """
 
+    descriptor: ResourceDescriptor
+    _j_resource_adapter: Any = None
+
+    @staticmethod
+    def get(name: str, descriptor: ResourceDescriptor) -> "JavaResourceProvider":
+        """Create JavaResourceProvider instance."""
+        wrapper_clazz = descriptor.clazz
+        kwargs = {}
+        kwargs.update(descriptor.arguments)
+
+        clazz = descriptor.java_clazz
+        if len(clazz) <1:
+            err_msg = f"java_class are not set for {wrapper_clazz.__name__}"
+            raise KeyError(err_msg)
+
+        return JavaResourceProvider(
+            name=name,
+            type=wrapper_clazz.resource_type(),
+            descriptor=descriptor,
+        )
+
     def provide(self, get_resource: Callable, config: AgentConfiguration) -> Resource:
         """Create resource in runtime."""
-        err_msg = (
-            "Currently, flink-agents doesn't support create resource "
-            "by JavaResourceProvider in python."
-        )
-        raise NotImplementedError(err_msg)
+        if not self._j_resource_adapter:
+            err_msg = "java resource adapter is not set"
+            raise RuntimeError(err_msg)
+
+        j_resource = self._j_resource_adapter.getResource(self.name, self.type.value)
+
+        class_path = JAVA_RESOURCE_MAPPING.get(self.type)
+        if not class_path:
+            err_msg = f"No Java resource mapping found for {self.type.value}"
+            raise ValueError(err_msg)
+        module_path, class_name = class_path.rsplit(".", 1)
+        cls = get_resource_class(module_path, class_name)
+        kwargs = self.descriptor.arguments
+
+        return cls(**kwargs, get_resource=get_resource, j_resource=j_resource, j_resource_adapter= self._j_resource_adapter)
+
+
+    def set_java_resource_adapter(self, j_resource_adapter: Any) -> None:
+        """Set java resource adapter for java resource initialization."""
+        self._j_resource_adapter = j_resource_adapter
 
 
 # TODO: implementation

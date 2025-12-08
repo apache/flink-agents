@@ -25,8 +25,6 @@ import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import pemja.core.object.PyObject;
 
 import java.lang.reflect.Constructor;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Objects;
 import java.util.function.BiFunction;
 
@@ -39,54 +37,28 @@ import static org.apache.flink.util.Preconditions.checkState;
  * class, and initialization arguments.
  */
 public class PythonResourceProvider extends ResourceProvider {
-    private final String module;
-    private final String clazz;
-    private final Map<String, Object> kwargs;
     private final ResourceDescriptor descriptor;
 
     protected PythonResourceAdapter pythonResourceAdapter;
 
-    public PythonResourceProvider(
-            String name,
-            ResourceType type,
-            String module,
-            String clazz,
-            Map<String, Object> kwargs) {
-        super(name, type);
-        this.module = module;
-        this.clazz = clazz;
-        this.kwargs = kwargs;
-        this.descriptor = null;
-    }
-
     public PythonResourceProvider(String name, ResourceType type, ResourceDescriptor descriptor) {
         super(name, type);
-        this.kwargs = new HashMap<>(descriptor.getInitialArguments());
-        module = (String) kwargs.remove("module");
-        if (module == null || module.isEmpty()) {
-            throw new IllegalArgumentException("module should not be null or empty.");
-        }
-        clazz = (String) kwargs.remove("clazz");
-        if (clazz == null || clazz.isEmpty()) {
-            throw new IllegalArgumentException("clazz should not be null or empty.");
-        }
         this.descriptor = descriptor;
+        if (descriptor.getPythonModule() == null
+                || descriptor.getPythonClazz() == null
+                || descriptor.getPythonModule().isEmpty()
+                || descriptor.getPythonClazz().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Module and clazz should not be null or empty for the Python resource.");
+        }
     }
 
     public void setPythonResourceAdapter(PythonResourceAdapter pythonResourceAdapter) {
         this.pythonResourceAdapter = pythonResourceAdapter;
     }
 
-    public String getModule() {
-        return module;
-    }
-
-    public String getClazz() {
-        return clazz;
-    }
-
-    public Map<String, Object> getKwargs() {
-        return kwargs;
+    public ResourceDescriptor getDescriptor() {
+        return descriptor;
     }
 
     @Override
@@ -95,7 +67,10 @@ public class PythonResourceProvider extends ResourceProvider {
         checkState(pythonResourceAdapter != null, "PythonResourceAdapter is not set");
         Class<?> clazz = Class.forName(descriptor.getClazz());
         PyObject pyResource =
-                pythonResourceAdapter.initPythonResource(this.module, this.clazz, kwargs);
+                pythonResourceAdapter.initPythonResource(
+                        this.descriptor.getPythonModule(),
+                        this.descriptor.getPythonClazz(),
+                        this.descriptor.getInitialArguments());
         Constructor<?> constructor =
                 clazz.getConstructor(
                         PythonResourceAdapter.class,
@@ -119,17 +94,11 @@ public class PythonResourceProvider extends ResourceProvider {
         PythonResourceProvider that = (PythonResourceProvider) o;
         return Objects.equals(this.getName(), that.getName())
                 && Objects.equals(this.getType(), that.getType())
-                && Objects.equals(this.module, that.module)
-                && Objects.equals(this.clazz, that.clazz)
-                && Objects.equals(this.kwargs, that.kwargs);
+                && Objects.equals(this.getDescriptor(), that.getDescriptor());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(this.getName(), this.getType(), module, clazz, kwargs);
-    }
-
-    public ResourceDescriptor getDescriptor() {
-        return descriptor;
+        return Objects.hash(this.getName(), this.getType(), this.getDescriptor());
     }
 }

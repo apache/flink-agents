@@ -152,8 +152,7 @@ public class AgentPlanTest {
         @ChatModelSetup
         public static ResourceDescriptor pythonChatModel() {
             return ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
-                    .addInitialArgument("module", "test.module")
-                    .addInitialArgument("clazz", "TestClazz")
+                    .setPythonResourceClass("test.module", "TestClazz")
                     .build();
         }
 
@@ -414,10 +413,10 @@ public class AgentPlanTest {
         assertThat(pythonChatModelProvider.getType()).isEqualTo(ResourceType.CHAT_MODEL);
 
         // Test PythonResourceProvider specific methods
-        PythonResourceProvider pythonResourceProvider =
-                (PythonResourceProvider) pythonChatModelProvider;
-        assertThat(pythonResourceProvider.getClazz()).isEqualTo("TestClazz");
-        assertThat(pythonResourceProvider.getModule()).isEqualTo("test.module");
+        ResourceDescriptor resourceDescriptor =
+                ((PythonResourceProvider) pythonChatModelProvider).getDescriptor();
+        assertThat(resourceDescriptor.getPythonClazz()).isEqualTo("TestClazz");
+        assertThat(resourceDescriptor.getPythonModule()).isEqualTo("test.module");
     }
 
     @Test
@@ -462,6 +461,7 @@ public class AgentPlanTest {
         // Expect IllegalArgumentException when creating AgentPlan with illegal resource
         assertThatThrownBy(() -> new AgentPlan(agent))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("module should not be null or empty");
+                .hasMessageContaining(
+                        "Module and clazz should not be null or empty for the Python resource.");
     }
 }

@@ -47,6 +47,7 @@ import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
+import org.apache.flink.agents.runtime.python.utils.JavaResourceAdapter;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.agents.runtime.utils.EventUtil;
@@ -551,9 +552,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void initPythonActionExecutor() throws Exception {
+        JavaResourceAdapter javaResourceAdapter =
+                new JavaResourceAdapter(agentPlan, pythonInterpreter);
         pythonActionExecutor =
                 new PythonActionExecutor(
-                        pythonInterpreter, new ObjectMapper().writeValueAsString(agentPlan));
+                        pythonInterpreter,
+                        new ObjectMapper().writeValueAsString(agentPlan),
+                        javaResourceAdapter);
         pythonActionExecutor.open();
     }
 

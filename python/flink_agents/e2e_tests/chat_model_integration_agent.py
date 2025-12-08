@@ -19,14 +19,20 @@ import os
 
 from flink_agents.api.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.java_chat_model import (
+    JavaChatModelConnection,
+    JavaChatModelSetup,
+)
 from flink_agents.api.decorators import (
     action,
     chat_model_connection,
     chat_model_setup,
+    prompt,
     tool,
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.integrations.chat_models.ollama_chat_model import (
@@ -46,6 +52,25 @@ from flink_agents.integrations.chat_models.tongyi_chat_model import (
 class ChatModelTestAgent(Agent):
     """Example agent demonstrating the new ChatModel architecture."""
 
+    @prompt
+    @staticmethod
+    def from_text_prompt() -> Prompt:
+        """Prompt for instruction."""
+        return Prompt.from_text("Please answer the user's question.")
+
+    @prompt
+    @staticmethod
+    def from_messages_prompt() -> Prompt:
+        """Prompt for instruction."""
+        return Prompt.from_messages(
+            messages=[
+                ChatMessage(
+                    role=MessageRole.SYSTEM,
+                    content="Please answer the user's question.",
+                ),
+            ],
+        )
+
     @chat_model_connection
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
@@ -64,6 +89,14 @@ class ChatModelTestAgent(Agent):
     @staticmethod
     def ollama_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for ollama model service connection."""
+        model_provider = os.environ.get("MODEL_PROVIDER")
+        if model_provider == "JAVA":
+            return ResourceDescriptor(
+                clazz=JavaChatModelConnection,
+                java_clazz="org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection",
+                endpoint="http://localhost:11434",
+                requestTimeout=120,
+            )
         return ResourceDescriptor(
             clazz=OllamaChatModelConnection, request_timeout=240.0
         )
@@ -95,6 +128,16 @@ class ChatModelTestAgent(Agent):
                 model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo"),
                 tools=["add"],
             )
+        elif model_provider == "JAVA":
+            return ResourceDescriptor(
+                clazz=JavaChatModelSetup,
+                connection="ollama_connection",
+                java_clazz="org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup",
+                model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b"),
+                prompt="from_messages_prompt",
+                tools=["add"],
+                extract_reasoning=True,
+            )
         else:
             err_msg = f"Unknown model_provider {model_provider}"
             raise RuntimeError(err_msg)
@@ -122,6 +165,15 @@ class ChatModelTestAgent(Agent):
                 clazz=OpenAIChatModelSetup,
                 connection="openai_connection",
                 model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo"),
+            )
+        elif model_provider == "JAVA":
+            return ResourceDescriptor(
+                clazz=JavaChatModelSetup,
+                connection="ollama_connection",
+                java_clazz="org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup",
+                model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b"),
+                prompt="from_text_prompt",
+                extract_reasoning=True,
             )
         else:
             err_msg = f"Unknown model_provider {model_provider}"

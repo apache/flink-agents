@@ -66,19 +66,19 @@ public class ChatModelCrossLanguageAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor chatModelConnection() {
         return ResourceDescriptor.Builder.newBuilder(PythonChatModelConnection.class.getName())
-                .addInitialArgument(
-                        "module", "flink_agents.integrations.chat_models.ollama_chat_model")
-                .addInitialArgument("clazz", "OllamaChatModelConnection")
+                .setPythonResourceClass(
+                        "flink_agents.integrations.chat_models.ollama_chat_model",
+                        "OllamaChatModelConnection")
                 .build();
     }
 
     @ChatModelSetup
     public static ResourceDescriptor chatModel() {
         return ResourceDescriptor.Builder.newBuilder(PythonChatModelSetup.class.getName())
+                .setPythonResourceClass(
+                        "flink_agents.integrations.chat_models.ollama_chat_model",
+                        "OllamaChatModelSetup")
                 .addInitialArgument("connection", "chatModelConnection")
-                .addInitialArgument(
-                        "module", "flink_agents.integrations.chat_models.ollama_chat_model")
-                .addInitialArgument("clazz", "OllamaChatModelSetup")
                 .addInitialArgument("model", OLLAMA_MODEL)
                 .addInitialArgument(
                         "tools",
