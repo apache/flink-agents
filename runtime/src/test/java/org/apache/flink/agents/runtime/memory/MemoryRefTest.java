@@ -74,6 +74,11 @@ public class MemoryRefTest {
         }
 
         @Override
+        public MemoryObject getSensoryMemory() {
+            return null;
+        }
+
+        @Override
         public void sendEvent(org.apache.flink.agents.api.Event event) {}
 
         @Override
@@ -112,6 +117,7 @@ public class MemoryRefTest {
         ForTestMemoryMapState<MemoryObjectImpl.MemoryItem> mapState = new ForTestMemoryMapState<>();
         memory =
                 new MemoryObjectImpl(
+                        MemoryObject.MemoryType.SHORT_TERM,
                         new CachedMemoryStore(mapState),
                         MemoryObjectImpl.ROOT_KEY,
                         new LinkedList<>());
@@ -157,7 +163,7 @@ public class MemoryRefTest {
     void testMemoryRefCreate() {
         String path = "a.b.c";
         String typeName = "String";
-        MemoryRef ref = MemoryRef.create(path);
+        MemoryRef ref = MemoryRef.create(MemoryObject.MemoryType.SHORT_TERM, path);
 
         assertNotNull(ref);
         assertEquals(path, ref.getPath());
@@ -186,7 +192,7 @@ public class MemoryRefTest {
         MemoryObject obj = memory.newObject("a.b", false);
         obj.set("c", 10);
 
-        MemoryRef ref = MemoryRef.create("a");
+        MemoryRef ref = MemoryRef.create(MemoryObject.MemoryType.SHORT_TERM, "a");
 
         MemoryObject resolvedObj = memory.get(ref);
         assertNotNull(resolvedObj);
@@ -196,15 +202,16 @@ public class MemoryRefTest {
 
     @Test
     void testGetWithNonExistentRef() throws Exception {
-        MemoryRef nonExistentRef = MemoryRef.create("this.path.does.not.exist");
+        MemoryRef nonExistentRef =
+                MemoryRef.create(MemoryObject.MemoryType.SHORT_TERM, "this.path.does.not.exist");
         assertNull(memory.get(nonExistentRef));
     }
 
     @Test
     void testRefEqualityAndHashing() {
-        MemoryRef ref1 = MemoryRef.create("a.b");
-        MemoryRef ref2 = MemoryRef.create("a.b");
-        MemoryRef ref3 = MemoryRef.create("a.c");
+        MemoryRef ref1 = MemoryRef.create(MemoryObject.MemoryType.SHORT_TERM, "a.b");
+        MemoryRef ref2 = MemoryRef.create(MemoryObject.MemoryType.SHORT_TERM, "a.b");
+        MemoryRef ref3 = MemoryRef.create(MemoryObject.MemoryType.SHORT_TERM, "a.c");
 
         assertEquals(ref1, ref2);
         assertNotEquals(ref1, ref3);

@@ -29,7 +29,7 @@ under the License.
     <packaging>pom</packaging>
     <name>Flink Agents : E2E Tests: </name>
     <modules>
-        <module>agent-plan-compatibility-test</module>
-        <module>integration-test</module>
+        <module>flink-agents-end-to-end-tests-agent-plan-compatibility</module>
+        <module>flink-agents-end-to-end-tests-integration</module>
     </modules>
 </project>

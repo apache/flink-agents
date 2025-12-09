@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.memory_reference import MemoryRef
 from flink_agents.runtime.local_memory_object import LocalMemoryObject
 
@@ -31,7 +32,7 @@ class MockRunnerContext:  # noqa D101
 
 def create_memory() -> LocalMemoryObject:
     """Return a MemoryObject for every test case."""
-    return LocalMemoryObject({})
+    return LocalMemoryObject(MemoryType.SHORT_TERM, {})
 
 
 class User:  # noqa: D101
@@ -73,7 +74,7 @@ def test_set_get_involved_ref() -> None:  # noqa: D103
 
 def test_memory_ref_create() -> None:  # noqa: D103
     path = "a.b.c"
-    ref = MemoryRef.create(path)
+    ref = MemoryRef.create(MemoryType.SHORT_TERM, path)
 
     assert isinstance(ref, MemoryRef)
     assert ref.path == path
@@ -104,7 +105,7 @@ def test_get_with_ref_to_nested_object() -> None:  # noqa: D103
     obj = mem.new_object("a.b")
     obj.set("c", 10)
 
-    ref = MemoryRef.create("a")
+    ref = MemoryRef.create(MemoryType.SHORT_TERM, "a")
 
     resolved_obj = mem.get(ref)
     assert isinstance(resolved_obj, LocalMemoryObject)
@@ -114,7 +115,7 @@ def test_get_with_ref_to_nested_object() -> None:  # noqa: D103
 def test_get_with_non_existent_ref() -> None:  # noqa: D103
     mem = create_memory()
 
-    non_existent_ref = MemoryRef.create("this.path.does.not.exist")
+    non_existent_ref = MemoryRef.create(MemoryType.SHORT_TERM, "this.path.does.not.exist")
 
     assert mem.get(non_existent_ref) is None
 

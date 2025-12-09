@@ -17,7 +17,7 @@
 #################################################################################
 from typing import Any, ClassVar, Dict, List
 
-from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.memory_object import MemoryObject, MemoryType
 from flink_agents.api.memory_reference import MemoryRef
 
 
@@ -33,10 +33,11 @@ class LocalMemoryObject(MemoryObject):
     __SEPARATOR: ClassVar[str] = "."
     __NESTED_MARK: ClassVar[str] = "NestedObject"
 
+    __type: MemoryType
     __store: dict[str, Any]
     __prefix: str
 
-    def __init__(self, store: Dict[str, Any], prefix: str = ROOT_KEY) -> None:
+    def __init__(self, type: MemoryType, store: Dict[str, Any], prefix: str = ROOT_KEY) -> None:
         """Initialize a LocalMemoryObject.
 
         Parameters
@@ -48,6 +49,7 @@ class LocalMemoryObject(MemoryObject):
             shared store.
         """
         super().__init__()
+        self.__type = type
         self.__store = store if store is not None else {}
         self.__prefix = prefix
 
@@ -79,7 +81,7 @@ class LocalMemoryObject(MemoryObject):
         if abs_path in self.__store:
             value = self.__store[abs_path]
             if self._is_nested_object(value):
-                return LocalMemoryObject(self.__store, abs_path)
+                return LocalMemoryObject(self.__type, self.__store, abs_path)
             return value
         return None
 
@@ -115,7 +117,7 @@ class LocalMemoryObject(MemoryObject):
         self._add_subfield(parent_path, parts[-1])
 
         self.__store[abs_path] = value
-        return MemoryRef(path=abs_path)
+        return MemoryRef(memory_type=self.__type, path=abs_path)
 
     def new_object(self, path: str, *, overwrite: bool = False) -> "LocalMemoryObject":
         """Create a new object as the value of an indirect field in the object.
@@ -146,7 +148,7 @@ class LocalMemoryObject(MemoryObject):
                 raise ValueError(msg)
 
         self.__store[abs_path] = _ObjMarker()
-        return LocalMemoryObject(self.__store, abs_path)
+        return LocalMemoryObject(self.__type, self.__store, abs_path)
 
     def is_exist(self, path: str) -> bool:
         """Check whether a (direct or indirect) field exist in the object.

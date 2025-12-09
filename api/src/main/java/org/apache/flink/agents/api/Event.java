@@ -22,6 +22,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCre
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /** Base class for all event types in the system. */
@@ -67,5 +68,19 @@ public abstract class Event {
 
     public void setSourceTimestamp(long timestamp) {
         this.sourceTimestamp = timestamp;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Event other = (Event) o;
+        return Objects.equals(this.id, other.id)
+                && Objects.equals(this.attributes, other.attributes);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, attributes);
     }
 }

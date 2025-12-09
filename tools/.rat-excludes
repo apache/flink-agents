@@ -1,4 +1,3 @@
-.github/*
 .rat-excludes
 build
 docs
@@ -13,6 +12,7 @@ docs
 .*\.txt$
 target/*
 README.md
+PULL_REQUEST_TEMPLATE.md
 .pytest_cache/*
 .ruff_cache/*
 .*\.egg-info/*

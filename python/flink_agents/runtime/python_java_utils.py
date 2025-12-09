@@ -27,9 +27,14 @@ def convert_to_python_object(bytesObject: bytes) -> Any:
     return cloudpickle.loads(bytesObject)
 
 
-def wrap_to_input_event(bytesObject: bytes) -> bytes:
-    """Wrap data to python input event and serialize."""
-    return cloudpickle.dumps(InputEvent(input=cloudpickle.loads(bytesObject)))
+def wrap_to_input_event(bytesObject: bytes) -> tuple[bytes, str]:
+    """Wrap data to python input event and serialize.
+
+    Returns:
+        A tuple of (serialized_event_bytes, event_string_representation)
+    """
+    event = InputEvent(input=cloudpickle.loads(bytesObject))
+    return (cloudpickle.dumps(event), str(event))
 
 
 def get_output_from_output_event(bytesObject: bytes) -> Any:

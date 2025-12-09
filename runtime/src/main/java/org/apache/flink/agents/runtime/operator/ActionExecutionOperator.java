@@ -115,6 +115,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient StreamRecord<OUT> reusedStreamRecord;
 
+    private transient MapState<String, MemoryObjectImpl.MemoryItem> sensoryMemState;
+
     private transient MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState;
 
     // PythonActionExecutor for Python actions
@@ -182,6 +184,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void open() throws Exception {
         super.open();
         reusedStreamRecord = new StreamRecord<>(null);
+        // init sensoryMemState
+        MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> sensoryMemStateDescriptor =
+                new MapStateDescriptor<>(
+                        "sensoryMemory",
+                        TypeInformation.of(String.class),
+                        TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
+        sensoryMemState = getRuntimeContext().getMapState(sensoryMemStateDescriptor);
 
         // init shortTermMemState
         MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> shortTermMemStateDescriptor =
@@ -397,10 +406,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (actionState != null) {
             isFinished = true;
             outputEvents = actionState.getOutputEvents();
-            for (MemoryUpdate memoryUpdate : actionState.getMemoryUpdates()) {
+            for (MemoryUpdate memoryUpdate : actionState.getShortTermMemoryUpdates()) {
                 actionTask
                         .getRunnerContext()
                         .getShortTermMemory()
+                        .set(memoryUpdate.getPath(), memoryUpdate.getValue());
+            }
+
+            for (MemoryUpdate memoryUpdate : actionState.getSensoryMemoryUpdates()) {
+                actionTask
+                        .getRunnerContext()
+                        .getSensoryMemory()
                         .set(memoryUpdate.getPath(), memoryUpdate.getValue());
             }
         } else {
@@ -452,6 +468,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         // 3. Process the next InputEvent or next action task
         if (currentInputEventFinished) {
+            // Clean up sensory memory when a single run finished.
+            actionTask.getRunnerContext().clearSensoryMemory();
+
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.
             int removedCount = removeFromListState(currentProcessingKeysOpState, key);
@@ -659,6 +678,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         } else if (actionTask.action.getExec() instanceof JavaFunction) {
             runnerContext =
                     new RunnerContextImpl(
+                            new CachedMemoryStore(sensoryMemState),
                             new CachedMemoryStore(shortTermMemState),
                             metricGroup,
                             this::checkMailboxThread,
@@ -666,6 +686,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         } else if (actionTask.action.getExec() instanceof PythonFunction) {
             runnerContext =
                     new PythonRunnerContextImpl(
+                            new CachedMemoryStore(sensoryMemState),
                             new CachedMemoryStore(shortTermMemState),
                             metricGroup,
                             this::checkMailboxThread,
@@ -755,8 +776,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         ActionState actionState = actionStateStore.get(key, sequenceNum, action, event);
 
-        for (MemoryUpdate memoryUpdate : context.getAllMemoryUpdates()) {
-            actionState.addMemoryUpdate(memoryUpdate);
+        for (MemoryUpdate memoryUpdate : context.getSensoryMemoryUpdates()) {
+            actionState.addSensoryMemoryUpdate(memoryUpdate);
+        }
+
+        for (MemoryUpdate memoryUpdate : context.getShortTermMemoryUpdates()) {
+            actionState.addShortTermMemoryUpdate(memoryUpdate);
         }
 
         for (Event outputEvent : actionTaskResult.getOutputEvents()) {

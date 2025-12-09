@@ -124,9 +124,13 @@ public class PythonActionExecutor {
 
     public PythonEvent wrapToInputEvent(Object eventData) {
         checkState(eventData instanceof byte[]);
-        return new PythonEvent(
-                (byte[]) interpreter.invoke(WRAP_TO_INPUT_EVENT, eventData),
-                EventUtil.PYTHON_INPUT_EVENT_NAME);
+        // wrap_to_input_event returns a tuple of (bytes, str)
+        Object result = interpreter.invoke(WRAP_TO_INPUT_EVENT, eventData);
+        checkState(result.getClass().isArray() && ((Object[]) result).length == 2);
+        Object[] resultArray = (Object[]) result;
+        byte[] eventBytes = (byte[]) resultArray[0];
+        String eventString = (String) resultArray[1];
+        return new PythonEvent(eventBytes, EventUtil.PYTHON_INPUT_EVENT_NAME, eventString);
     }
 
     public Object getOutputFromOutputEvent(byte[] pythonOutputEvent) {

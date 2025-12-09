@@ -19,6 +19,8 @@ package org.apache.flink.agents.plan;
 
 import pemja.core.PythonInterpreter;
 
+import java.util.Objects;
+
 /** Represent a Python function. */
 public class PythonFunction implements Function {
     private static final String CALL_PYTHON_FUNCTION = "function.call_python_function";
@@ -56,5 +58,19 @@ public class PythonFunction implements Function {
 
     public String getQualName() {
         return qualName;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        PythonFunction other = (PythonFunction) o;
+        return Objects.equals(this.module, other.module)
+                && Objects.equals(this.qualName, other.qualName);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(module, qualName);
     }
 }

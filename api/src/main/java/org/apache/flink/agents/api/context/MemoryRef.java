@@ -28,9 +28,11 @@ import java.util.Objects;
 public final class MemoryRef implements Serializable {
     private static final long serialVersionUID = 1L;
 
+    private final MemoryObject.MemoryType type;
     private final String path;
 
-    private MemoryRef(String path) {
+    private MemoryRef(MemoryObject.MemoryType type, String path) {
+        this.type = type;
         this.path = path;
     }
 
@@ -40,8 +42,8 @@ public final class MemoryRef implements Serializable {
      * @param path The absolute path of the data in Short-Term Memory.
      * @return A new MemoryRef instance.
      */
-    public static MemoryRef create(String path) {
-        return new MemoryRef(path);
+    public static MemoryRef create(MemoryObject.MemoryType type, String path) {
+        return new MemoryRef(type, path);
     }
 
     /**
@@ -52,7 +54,13 @@ public final class MemoryRef implements Serializable {
      * @throws Exception if the memory cannot be accessed or the data cannot be resolved.
      */
     public MemoryObject resolve(RunnerContext ctx) throws Exception {
-        return ctx.getShortTermMemory().get(this);
+        if (type.equals(MemoryObject.MemoryType.SENSORY)) {
+            return ctx.getSensoryMemory().get(this);
+        } else if (type.equals(MemoryObject.MemoryType.SHORT_TERM)) {
+            return ctx.getShortTermMemory().get(this);
+        } else {
+            throw new RuntimeException(String.format("Unknown memory type %s", type));
+        }
     }
 
     public String getPath() {

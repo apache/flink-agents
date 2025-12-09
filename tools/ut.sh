@@ -23,6 +23,7 @@ ROOT="$(cd "$( dirname "$0" )" && pwd)/.."
 # Default values
 run_java=true
 run_python=true
+run_e2e=false
 verbose=false
 
 # Help information
@@ -35,6 +36,7 @@ Usage: $0 [options]
 Options:
   -j, --java        Run only Java tests
   -p, --python      Run only Python tests
+  -e, --e2e         Run e2e tests
   -b, --both        Run both Java and Python tests (default)
   -v, --verbose     Show verbose output
   -h, --help        Display this help message
@@ -67,6 +69,9 @@ while [[ "$#" -gt 0 ]]; do
             run_java=true
             run_python=true
             ;;
+        -e|--e2e)
+            run_e2e=true
+            ;;
         -v|--verbose)
             verbose=true
             ;;
@@ -90,7 +95,11 @@ java_tests() {
     set +e
     echo "Executing Java test suite..."
     pushd "${ROOT}"
-    mvn -T16 --batch-mode --no-transfer-progress test
+    if $run_e2e; then
+        mvn -T16 --batch-mode --no-transfer-progress test -pl 'e2e-test/flink-agents-end-to-end-tests-integration'
+    else
+        mvn -T16 --batch-mode --no-transfer-progress test -pl '!e2e-test/flink-agents-end-to-end-tests-integration'
+    fi
     testcode=$?
     case $testcode in
         0)  # All tests passed
@@ -128,11 +137,16 @@ python_tests() {
         if $verbose; then
             echo "Using uv for dependency management"
         fi
-        uv sync --extra test
         if $verbose; then
             echo "Running tests with uv..."
         fi
-        uv run pytest flink_agents
+        if $run_e2e; then
+            # There will be an individual build step before run e2e test for including java dist
+            uv run --no-sync pytest flink_agents -s -k "e2e_tests"
+        else
+            uv sync --extra test
+            uv run pytest flink_agents -k "not e2e_tests"
+        fi
         testcode=$?
     else
         if $verbose; then
@@ -153,7 +167,11 @@ python_tests() {
         if $verbose; then
             echo "Running tests with pytest..."
         fi
-        pytest flink_agents
+        if $run_e2e; then
+            pytest flink_agents -k "e2e_tests"
+        else
+            pytest flink_agents -k "not e2e_tests"
+        fi
         testcode=$?
     fi
     

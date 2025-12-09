@@ -31,8 +31,10 @@ under the License.
     <packaging>pom</packaging>
 
     <modules>
+        <module>anthropic</module>
         <module>azureai</module>
         <module>ollama</module>
+        <module>openai</module>
     </modules>
 
 </project>

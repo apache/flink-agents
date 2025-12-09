@@ -1,0 +1,6 @@
++I[Processed: ItemData{id=1, name='item1', value=10.50，visit_count=1} [Agent Complete]]
++I[Processed: ItemData{id=2, name='item2', value=20.00，visit_count=1} [Agent Complete]]
++I[Processed: ItemData{id=3, name='item3', value=15.70，visit_count=1} [Agent Complete]]
++I[Processed: ItemData{id=1, name='item1_updated', value=12.30，visit_count=2} [Agent Complete]]
++I[Processed: ItemData{id=2, name='item2_updated', value=22.10，visit_count=2} [Agent Complete]]
++I[Processed: ItemData{id=1, name='item1_updated_again', value=15.30，visit_count=3} [Agent Complete]]

@@ -36,12 +36,18 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
     private final PythonActionExecutor pythonActionExecutor;
 
     public PythonRunnerContextImpl(
-            CachedMemoryStore store,
+            CachedMemoryStore sensoryMemStore,
+            CachedMemoryStore shortTermMemStore,
             FlinkAgentsMetricGroupImpl agentMetricGroup,
             Runnable mailboxThreadChecker,
             AgentPlan agentPlan,
             PythonActionExecutor pythonActionExecutor) {
-        super(store, agentMetricGroup, mailboxThreadChecker, agentPlan);
+        super(
+                sensoryMemStore,
+                shortTermMemStore,
+                agentMetricGroup,
+                mailboxThreadChecker,
+                agentPlan);
         this.pythonActionExecutor = pythonActionExecutor;
     }
 
@@ -52,9 +58,9 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
         super.sendEvent(event);
     }
 
-    public void sendEvent(String type, byte[] event) {
+    public void sendEvent(String type, byte[] event, String eventString) {
         // this method will be invoked by PythonActionExecutor's python interpreter.
-        sendEvent(new PythonEvent(event, type));
+        sendEvent(new PythonEvent(event, type, eventString));
     }
 
     public PythonActionExecutor getPythonActionExecutor() {

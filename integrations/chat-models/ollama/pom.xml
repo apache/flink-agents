@@ -37,11 +37,6 @@ under the License.
             <artifactId>flink-agents-api</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-agents-plan</artifactId>
-            <version>${project.version}</version>
-        </dependency>
 
         <dependency>
             <groupId>io.github.ollama4j</groupId>

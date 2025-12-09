@@ -17,7 +17,7 @@
 #################################################################################
 from typing import Any, Dict, List
 
-from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.memory_object import MemoryObject, MemoryType
 from flink_agents.api.memory_reference import MemoryRef
 
 
@@ -29,9 +29,13 @@ class FlinkMemoryObject(MemoryObject):
     memory implemented in Java.
     """
 
-    def __init__(self, j_memory_object: Any) -> None:
+    __type: MemoryType
+
+    def __init__(self, type: MemoryType, j_memory_object: Any, /, **data: Any) -> None:
         """Initialize with a Java MemoryObject instance."""
+        super().__init__(**data)
         self._j_memory_object = j_memory_object
+        self.__type = type
 
     def get(self, path_or_ref: str | MemoryRef) -> Any:
         """Get a nested object or value by path or MemoryRef.
@@ -51,7 +55,7 @@ class FlinkMemoryObject(MemoryObject):
             if j_result is None:
                 return None
             if j_result.isNestedObject():
-                return FlinkMemoryObject(j_result)
+                return FlinkMemoryObject(self.__type, j_result)
             else:
                 return j_result.getValue()
         except Exception as e:
@@ -62,7 +66,7 @@ class FlinkMemoryObject(MemoryObject):
         """Set a value at the given path. Creates intermediate objects if needed."""
         try:
             j_ref = self._j_memory_object.set(path, value)
-            return MemoryRef(path=j_ref.getPath())
+            return MemoryRef.create(memory_type=self.__type, path=j_ref.getPath())
         except Exception as e:
             msg = f"Failed to set value at path '{path}'"
             raise MemoryObjectError(msg) from e
@@ -70,7 +74,7 @@ class FlinkMemoryObject(MemoryObject):
     def new_object(self, path: str, *, overwrite: bool = False) -> "FlinkMemoryObject":
         """Create a new object at the given path."""
         try:
-            return FlinkMemoryObject(self._j_memory_object.newObject(path, overwrite))
+            return FlinkMemoryObject(self.__type, self._j_memory_object.newObject(path, overwrite))
         except Exception as e:
             msg = f"Failed to create new object at path '{path}'"
             raise MemoryObjectError(msg) from e

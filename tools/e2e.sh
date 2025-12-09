@@ -112,7 +112,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "$script_dir/.." && pwd)"
 
 # Find jar file more robustly
-jar_files=("$project_root"/e2e-test/agent-plan-compatibility-test/target/flink-agents-agent-plan-compatibility-tests-*.jar)
+jar_files=("$project_root"/e2e-test/flink-agents-end-to-end-tests-agent-plan-compatibility/target/flink-agents-end-to-end-tests-agent-plan-compatibility-*.jar)
 if [[ ${#jar_files[@]} -eq 0 ]] || [[ ! -f "${jar_files[0]}" ]]; then
   echo "Error: Could not find jar file in e2e-test/agent-plan-compatibility-test/target/"
   exit 1

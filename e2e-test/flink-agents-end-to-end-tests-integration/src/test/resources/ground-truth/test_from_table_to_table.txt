@@ -1,0 +1,6 @@
++I[Processed: +I[1, Alice, 85.5], visit_count=1 [Agent Complete]]
++I[Processed: +I[2, Bob, 92.0], visit_count=1 [Agent Complete]]
++I[Processed: +I[3, Charlie, 78.3], visit_count=1 [Agent Complete]]
++I[Processed: +I[1, Alice, 87.2], visit_count=2 [Agent Complete]]
++I[Processed: +I[2, Bob, 94.1], visit_count=2 [Agent Complete]]
++I[Processed: +I[1, Alice, 90.3], visit_count=3 [Agent Complete]]

@@ -17,10 +17,24 @@
 #################################################################################
 import json
 import os
-from typing import List, Sequence, Tuple, cast
+import uuid
+from typing import TYPE_CHECKING, List, Sequence, Tuple
 
 import openai
-from openai.types.chat import ChatCompletionMessage, ChatCompletionMessageParam
+from openai.types.chat import (
+    ChatCompletionMessage,
+    ChatCompletionMessageParam,
+    ChatCompletionMessageToolCallParam,
+)
+
+if TYPE_CHECKING:
+    from openai.types.chat import (
+        ChatCompletionAssistantMessageParam,
+        ChatCompletionSystemMessageParam,
+        ChatCompletionToolMessageParam,
+        ChatCompletionUserMessageParam,
+    )
+    from openai.types.chat.chat_completion_message_tool_call_param import Function
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 
@@ -80,6 +94,33 @@ def _get_from_param_or_env(
         raise ValueError(msg)
 
 
+def _convert_to_openai_tool_call(tool_call: dict) -> ChatCompletionMessageToolCallParam:
+    """Convert framework tool call format to OpenAI tool call format."""
+    # Use original_id if available, otherwise use id (and convert to string)
+    openai_tool_call_id = tool_call.get("original_id")
+    if openai_tool_call_id is None:
+        tool_call_id = tool_call.get("id")
+        if tool_call_id is None:
+            msg = "Tool call must have either 'original_id' or 'id' field"
+            raise ValueError(msg)
+        openai_tool_call_id = str(tool_call_id)
+
+    function: Function = {
+        "name": tool_call["function"]["name"],
+        # OpenAI expects arguments as JSON string, but our format has it as dict
+        "arguments": json.dumps(tool_call["function"]["arguments"])
+        if isinstance(tool_call["function"]["arguments"], dict)
+        else tool_call["function"]["arguments"],
+    }
+
+    openai_tool_call: ChatCompletionMessageToolCallParam = {
+        "id": openai_tool_call_id,
+        "type": "function",
+        "function": function,
+    }
+    return openai_tool_call
+
+
 def convert_to_openai_messages(
     messages: Sequence[ChatMessage],
 ) -> List[ChatCompletionMessageParam]:
@@ -88,39 +129,85 @@ def convert_to_openai_messages(
 
 
 def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessageParam:
-    """Convert a chat message to an OpenAI message."""
-    context_txt = message.content
-    context_txt = (
-        None
-        if context_txt == ""
-        and message.role == MessageRole.ASSISTANT
-        and len(message.tool_calls) > 0
-        else context_txt
-    )
-    if len(message.tool_calls) > 0:
-        openai_message = {
-            "role": message.role.value,
-            "content": context_txt,
-            "tool_calls": message.tool_calls,
+    """Convert a chat message to an OpenAI message.
+
+    Converts framework ChatMessage to the appropriate OpenAI message type:
+    - TOOL role -> ChatCompletionToolMessageParam
+    - ASSISTANT role with tool_calls -> ChatCompletionAssistantMessageParam
+    - USER role -> ChatCompletionUserMessageParam
+    - SYSTEM role -> ChatCompletionSystemMessageParam
+    """
+    role = message.role
+
+    # Handle SYSTEM role messages
+    if role == MessageRole.SYSTEM:
+        system_message: ChatCompletionSystemMessageParam = {
+            "role": "system",
+            "content": message.content,
         }
+        system_message.update(message.extra_args)
+        return system_message
+
+    # Handle USER role messages
+    elif role == MessageRole.USER:
+        user_message: ChatCompletionUserMessageParam = {
+            "role": "user",
+            "content": message.content,
+        }
+        user_message.update(message.extra_args)
+        return user_message
+    # Handle ASSISTANT role messages
+
+    elif role == MessageRole.ASSISTANT:
+        # Assistant messages may have empty content when tool_calls are present
+        content = message.content if message.content or not message.tool_calls else None
+        assistant_message: ChatCompletionAssistantMessageParam = {
+            "role": "assistant",
+            "content": content,
+        }
+        if message.tool_calls:
+            openai_tool_calls = [
+                _convert_to_openai_tool_call(tool_call) for tool_call in message.tool_calls
+            ]
+            assistant_message["tool_calls"] = openai_tool_calls
+
+        assistant_message.update(message.extra_args)
+        return assistant_message
+
+    # Handle TOOL role messages
+    elif role == MessageRole.TOOL:
+        tool_call_id = message.extra_args.get("external_id")
+        if not tool_call_id or not isinstance(tool_call_id, str):
+            msg = "Tool message must have 'external_id' as a string in extra_args"
+            raise ValueError(msg)
+        tool_message: ChatCompletionToolMessageParam = {
+            "role": "tool",
+            "content": message.content,
+            "tool_call_id": tool_call_id,
+        }
+        return tool_message
+
     else:
-        openai_message = {"role": message.role.value, "content": context_txt}
-    openai_message.update(message.extra_args)
-    return cast("ChatCompletionMessageParam", openai_message)
+        msg = f"Unsupported message role: {role}"
+        raise ValueError(msg)
 
 
 def convert_from_openai_message(message: ChatCompletionMessage) -> ChatMessage:
     """Convert an OpenAI message to a chat message."""
     tool_calls = []
     if message.tool_calls:
+        # Generate internal UUID for each tool call while preserving
+        # OpenAI's original ID in the original_id field for later
+        # conversion back to OpenAI format
         tool_calls = [
             {
-                "id": tool_call.id,
+                "id": uuid.uuid4(),
                 "type": tool_call.type,
                 "function": {
                     "name": tool_call.function.name,
                     "arguments": json.loads(tool_call.function.arguments),
                 },
+                "original_id": tool_call.id
             }
             for tool_call in message.tool_calls
         ]
