@@ -70,9 +70,7 @@ public abstract class BaseVectorStore<ContentT> extends Resource {
                 (BaseEmbeddingModelSetup)
                         this.getResource.apply(this.embeddingModel, ResourceType.EMBEDDING_MODEL);
 
-        // TODO
-        // for now, we don't need to use additional parameters.
-        final float[] queryEmbedding = embeddingModel.embed(query.getQueryText(), Map.of());
+        final float[] queryEmbedding = embeddingModel.embed(query.getQueryText());
 
         final Map<String, Object> storeKwargs = this.getStoreKwargs();
         storeKwargs.putAll(query.getExtraArgs());
