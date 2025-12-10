@@ -124,7 +124,7 @@ Clone the repository and checkout the release tag:
 git clone https://github.com/apache/flink-agents.git
 cd flink-agents
 # Checkout the release tag
-git checkout release-0.1.0
+git checkout release-0.1.1
 ```
 {{< /tab >}}
 
@@ -132,12 +132,12 @@ git checkout release-0.1.0
 Download the source tarball from the Apache mirror:
 
 ```shell
-# Download Flink Agents 0.1.0 source: https://archive.apache.org/dist/flink/flink-agents-0.1.0
-curl -LO https://archive.apache.org/dist/flink/flink-agents-0.1.0/flink-agents-0.1.0-src.tgz
+# Download Flink Agents 0.1.1 source: https://archive.apache.org/dist/flink/flink-agents-0.1.1
+curl -LO https://archive.apache.org/dist/flink/flink-agents-0.1.1/flink-agents-0.1.1-src.tgz
 
 # Extract the archive
-tar -xzf flink-agents-0.1.0-src.tgz
-cd flink-agents-0.1.0-src
+tar -xzf flink-agents-0.1.1-src.tgz
+cd flink-agents-0.1.1-src
 ```
 {{< /tab >}}
 
@@ -163,7 +163,7 @@ This script will:
 
 After building:
 - The Python package is installed and ready to use
-- The distribution JAR is located at: `dist/target/flink-agents-dist-0.1.0.jar`
+- The distribution JAR is located at: `dist/target/flink-agents-dist-0.1.1.jar`
 
 
 ## Deploy to Flink Cluster
@@ -208,7 +208,7 @@ The Flink Agents JAR is bundled inside the Python package. Use the PYTHONPATH yo
 
 ```shell
 # Copy the JAR from the Python package to Flink's lib directory
-cp $PYTHONPATH/flink_agents/lib/flink-agents-dist-0.1.0.jar $FLINK_HOME/lib/
+cp $PYTHONPATH/flink_agents/lib/flink-agents-dist-0.1.1.jar $FLINK_HOME/lib/
 ```
 
 {{< /tab >}}
@@ -218,7 +218,7 @@ After building from source, the distribution JAR is located in the `dist/target/
 
 ```shell
 # Copy the JAR to Flink's lib directory
-cp dist/target/flink-agents-dist-0.1.0.jar $FLINK_HOME/lib/
+cp dist/target/flink-agents-dist-0.1.1.jar $FLINK_HOME/lib/
 ```
 {{< /tab >}}
 
