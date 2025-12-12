@@ -43,7 +43,7 @@ public class PythonActionTask extends ActionTask {
                 "Python action only accept python event, but got " + event);
     }
 
-    public ActionTaskResult invoke() throws Exception {
+    public ActionTaskResult invoke(ClassLoader userCodeClassLoader) throws Exception {
         LOG.debug(
                 "Try execute python action {} for event {} with key {}.",
                 action.getName(),
@@ -64,7 +64,7 @@ public class PythonActionTask extends ActionTask {
             ActionTask tempGeneratedActionTask =
                     new PythonGeneratorActionTask(key, event, action, pythonGeneratorRef);
             tempGeneratedActionTask.setRunnerContext(runnerContext);
-            return tempGeneratedActionTask.invoke();
+            return tempGeneratedActionTask.invoke(userCodeClassLoader);
         }
         return new ActionTaskResult(
                 true, runnerContext.drainEvents(event.getSourceTimestamp()), null);

@@ -433,7 +433,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
         } else {
             maybeInitActionState(key, sequenceNumber, actionTask.action, actionTask.event);
-            ActionTask.ActionTaskResult actionTaskResult = actionTask.invoke();
+            ActionTask.ActionTaskResult actionTaskResult =
+                    actionTask.invoke(getRuntimeContext().getUserCodeClassLoader());
 
             // We remove the RunnerContext of the action task from the map after it is finished. The
             // RunnerContext will be added later if the action task has a generated action task,
@@ -712,8 +713,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private ActionTask createActionTask(Object key, Action action, Event event) {
         if (action.getExec() instanceof JavaFunction) {
-            return new JavaActionTask(
-                    key, event, action, getRuntimeContext().getUserCodeClassLoader());
+            return new JavaActionTask(key, event, action);
         } else if (action.getExec() instanceof PythonFunction) {
             return new PythonActionTask(key, event, action);
         } else {

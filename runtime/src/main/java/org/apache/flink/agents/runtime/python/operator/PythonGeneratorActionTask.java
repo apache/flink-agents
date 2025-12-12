@@ -32,7 +32,7 @@ public class PythonGeneratorActionTask extends PythonActionTask {
     }
 
     @Override
-    public ActionTaskResult invoke() {
+    public ActionTaskResult invoke(ClassLoader userCodeClassLoader) {
         LOG.debug(
                 "Try execute python generator action {} for event {} with key {}.",
                 action.getName(),
