@@ -21,6 +21,8 @@ package org.apache.flink.agents.api.mcp;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnJre;
+import org.junit.jupiter.api.condition.JRE;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -32,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MCPPromptTest {
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPPrompt with required arguments")
     void testCreationWithRequiredArgs() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
@@ -47,6 +50,7 @@ class MCPPromptTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPPrompt with optional arguments")
     void testCreationWithOptionalArgs() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
@@ -62,6 +66,7 @@ class MCPPromptTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test prompt argument validation - all required args present")
     void testValidationWithAllRequiredArgs() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
@@ -82,6 +87,7 @@ class MCPPromptTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Validate argument handling - required vs optional")
     void testArgumentValidation() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
@@ -98,6 +104,7 @@ class MCPPromptTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test PromptArgument creation and getters")
     void testPromptArgument() {
         MCPPrompt.PromptArgument arg = new MCPPrompt.PromptArgument("city", "City name", true);
@@ -108,6 +115,7 @@ class MCPPromptTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test PromptArgument equals and hashCode")
     void testPromptArgumentEquals() {
         MCPPrompt.PromptArgument arg1 = new MCPPrompt.PromptArgument("name", "Name", true);
@@ -120,6 +128,7 @@ class MCPPromptTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test MCPPrompt equals and hashCode")
     void testEquals() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
@@ -136,6 +145,7 @@ class MCPPromptTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test toString")
     void testToString() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
@@ -148,6 +158,7 @@ class MCPPromptTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("JSON serialization and deserialization")
     void testJsonSerialization() throws Exception {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
@@ -172,6 +183,7 @@ class MCPPromptTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Arguments map is immutable from outside")
     void testArgumentsImmutability() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
