@@ -34,6 +34,8 @@ under the License.
             <artifactId>flink-agents-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+
+        <!-- Dependencies required for running agents in minicluster -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-agents-runtime</artifactId>
