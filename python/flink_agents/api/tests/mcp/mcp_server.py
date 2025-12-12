@@ -16,10 +16,14 @@
 # limitations under the License.
 #################################################################################
 
-import dotenv
-from mcp.server.fastmcp import FastMCP
+try:
+    import dotenv
+    dotenv.load_dotenv()
+except ImportError:
+    # dotenv is optional for this test server
+    pass
 
-dotenv.load_dotenv()
+from mcp.server.fastmcp import FastMCP
 
 # Create MCP server
 mcp = FastMCP("BasicServer")
