@@ -24,9 +24,6 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.annotation.*;
-import org.apache.flink.agents.api.mcp.MCPPrompt;
-import org.apache.flink.agents.api.mcp.MCPServer;
-import org.apache.flink.agents.api.mcp.MCPTool;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -322,25 +319,44 @@ public class AgentPlan implements Serializable {
     }
 
     private void extractMCPServer(Method method) throws Exception {
+        // Use reflection to handle MCP classes to support Java 11 without MCP
         String name = method.getName();
-        MCPServer mcpServer = (MCPServer) method.invoke(null);
+        Object mcpServer = method.invoke(null);
 
         addResourceProvider(
                 JavaSerializableResourceProvider.createResourceProvider(
-                        name, MCP_SERVER, mcpServer));
+                        name, MCP_SERVER, (SerializableResource) mcpServer));
 
-        for (MCPTool tool : mcpServer.listTools()) {
+        // Call listTools() via reflection
+        Method listToolsMethod = mcpServer.getClass().getMethod("listTools");
+        @SuppressWarnings("unchecked")
+        Iterable<? extends SerializableResource> tools =
+                (Iterable<? extends SerializableResource>) listToolsMethod.invoke(mcpServer);
+
+        for (SerializableResource tool : tools) {
+            Method getNameMethod = tool.getClass().getMethod("getName");
+            String toolName = (String) getNameMethod.invoke(tool);
             addResourceProvider(
-                    JavaSerializableResourceProvider.createResourceProvider(
-                            tool.getName(), TOOL, tool));
+                    JavaSerializableResourceProvider.createResourceProvider(toolName, TOOL, tool));
         }
 
-        for (MCPPrompt prompt : mcpServer.listPrompts()) {
+        // Call listPrompts() via reflection
+        Method listPromptsMethod = mcpServer.getClass().getMethod("listPrompts");
+        @SuppressWarnings("unchecked")
+        Iterable<? extends SerializableResource> prompts =
+                (Iterable<? extends SerializableResource>) listPromptsMethod.invoke(mcpServer);
+
+        for (SerializableResource prompt : prompts) {
+            Method getNameMethod = prompt.getClass().getMethod("getName");
+            String promptName = (String) getNameMethod.invoke(prompt);
             addResourceProvider(
                     JavaSerializableResourceProvider.createResourceProvider(
-                            prompt.getName(), PROMPT, prompt));
+                            promptName, PROMPT, prompt));
         }
-        mcpServer.close();
+
+        // Call close() via reflection
+        Method closeMethod = mcpServer.getClass().getMethod("close");
+        closeMethod.invoke(mcpServer);
     }
 
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
@@ -420,10 +436,19 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
             } else if (method.isAnnotationPresent(VectorStore.class)) {
                 extractResource(ResourceType.VECTOR_STORE, method);
-            } else if (method.isAnnotationPresent(
-                            org.apache.flink.agents.api.annotation.MCPServer.class)
-                    && Modifier.isStatic(method.getModifiers())) {
-                extractMCPServer(method);
+            }  else if (Modifier.isStatic(method.getModifiers())) {
+                // Check for MCPServer annotation using reflection to support Java 11 without MCP
+                try {
+                    Class<?> mcpServerAnnotation =
+                            Class.forName("org.apache.flink.agents.api.annotation.MCPServer");
+                    if (method.isAnnotationPresent(
+                            (Class<? extends java.lang.annotation.Annotation>)
+                                    mcpServerAnnotation)) {
+                        extractMCPServer(method);
+                    }
+                } catch (ClassNotFoundException e) {
+                    // MCP annotation not available (Java 11 build), skip MCP processing
+                }
             }
         }
 

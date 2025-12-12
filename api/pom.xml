@@ -91,10 +91,11 @@ under the License.
                         <artifactId>maven-compiler-plugin</artifactId>
                         <configuration>
                             <excludes>
-                                <exclude>**/mcp/**/*.java</exclude>
+                                <exclude>org/apache/flink/agents/api/mcp/**/*.java</exclude>
+                                <exclude>org/apache/flink/agents/api/annotation/MCPServer.java</exclude>
                             </excludes>
                             <testExcludes>
-                                <testExclude>**/mcp/**/*.java</testExclude>
+                                <testExclude>org/apache/flink/agents/api/mcp/**/*.java</testExclude>
                             </testExcludes>
                         </configuration>
                     </plugin>
