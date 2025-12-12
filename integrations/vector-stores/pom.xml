@@ -22,25 +22,16 @@ under the License.
 
     <parent>
         <groupId>org.apache.flink</groupId>
-        <artifactId>flink-agents</artifactId>
+        <artifactId>flink-agents-integrations</artifactId>
         <version>0.2-SNAPSHOT</version>
     </parent>
 
-    <artifactId>flink-agents-integrations</artifactId>
-    <name>Flink Agents : Integrations:</name>
+    <artifactId>flink-agents-integrations-vector-stores</artifactId>
+    <name>Flink Agents : Integrations: Vector Stores</name>
     <packaging>pom</packaging>
 
-    <properties>
-        <ollama4j.version>1.1.5</ollama4j.version>
-        <elasticsearch.version>8.19.0</elasticsearch.version>
-        <openai.version>4.8.0</openai.version>
-        <anthropic.version>2.11.1</anthropic.version>
-    </properties>
-
     <modules>
-        <module>chat-models</module>
-        <module>embedding-models</module>
-        <module>vector-stores</module>
+        <module>elasticsearch</module>
     </modules>
 
 </project>

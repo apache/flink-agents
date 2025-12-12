@@ -20,12 +20,7 @@ package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.annotation.ChatModelConnection;
-import org.apache.flink.agents.api.annotation.ChatModelSetup;
-import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
-import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
-import org.apache.flink.agents.api.annotation.Prompt;
-import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.annotation.*;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -35,6 +30,7 @@ import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
+import org.apache.flink.agents.plan.actions.ContextRetrievalAction;
 import org.apache.flink.agents.plan.actions.ToolCallAction;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
@@ -267,6 +263,7 @@ public class AgentPlan implements Serializable {
         // Add built-in actions
         addBuiltAction(ChatModelAction.getChatModelAction());
         addBuiltAction(ToolCallAction.getToolCallAction());
+        addBuiltAction(ContextRetrievalAction.getContextRetrievalAction());
 
         // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
@@ -396,6 +393,8 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.EMBEDDING_MODEL, method);
             } else if (method.isAnnotationPresent(EmbeddingModelConnection.class)) {
                 extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
+            } else if (method.isAnnotationPresent(VectorStore.class)) {
+                extractResource(ResourceType.VECTOR_STORE, method);
             }
         }
 
