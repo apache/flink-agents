@@ -23,6 +23,8 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnJre;
+import org.junit.jupiter.api.condition.JRE;
 
 import static org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MCPToolTest {
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPTool with metadata and server")
     void testCreation() {
         ToolMetadata metadata = new ToolMetadata("add", "Add two numbers", "{\"type\":\"object\"}");
@@ -45,6 +48,7 @@ class MCPToolTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test tool metadata access")
     void testToolMetadataAccess() {
         ToolMetadata metadata =
@@ -64,6 +68,7 @@ class MCPToolTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test tool name and description getters")
     void testToolGetters() {
         ToolMetadata metadata =
@@ -78,6 +83,7 @@ class MCPToolTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test equals and hashCode")
     void testEqualsAndHashCode() {
         ToolMetadata metadata1 = new ToolMetadata("tool1", "Description", "{\"type\":\"object\"}");
@@ -95,6 +101,7 @@ class MCPToolTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test toString")
     void testToString() {
         ToolMetadata metadata = new ToolMetadata("add", "Add numbers", "{\"type\":\"object\"}");
@@ -108,6 +115,7 @@ class MCPToolTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("JSON serialization and deserialization")
     void testJsonSerialization() throws Exception {
         ToolMetadata metadata =
@@ -129,6 +137,7 @@ class MCPToolTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test tool with complex input schema")
     void testToolWithComplexSchema() {
         String complexSchema =

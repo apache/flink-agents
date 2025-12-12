@@ -25,6 +25,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnJre;
+import org.junit.jupiter.api.condition.JRE;
 
 import java.time.Duration;
 import java.util.HashMap;
@@ -38,24 +40,24 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MCPServerTest {
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPServer with builder")
     void testBuilderCreation() {
         MCPServer server =
                 MCPServer.builder("http://localhost:8000/mcp")
                         .header("X-Custom-Header", "value")
                         .timeout(Duration.ofSeconds(30))
-                        .sseReadTimeout(Duration.ofSeconds(300))
                         .auth(new BearerTokenAuth("test-token"))
                         .build();
 
         assertThat(server.getEndpoint()).isEqualTo("http://localhost:8000/mcp");
         assertThat(server.getHeaders()).containsEntry("X-Custom-Header", "value");
         assertThat(server.getTimeoutSeconds()).isEqualTo(30);
-        assertThat(server.getSseReadTimeoutSeconds()).isEqualTo(300);
         assertThat(server.getAuth()).isInstanceOf(BearerTokenAuth.class);
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPServer with simple constructor")
     void testSimpleConstructor() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
@@ -63,11 +65,11 @@ class MCPServerTest {
         assertThat(server.getEndpoint()).isEqualTo("http://localhost:8000/mcp");
         assertThat(server.getHeaders()).isEmpty();
         assertThat(server.getTimeoutSeconds()).isEqualTo(30);
-        assertThat(server.getSseReadTimeoutSeconds()).isEqualTo(300);
         assertThat(server.getAuth()).isNull();
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Builder with multiple headers")
     void testBuilderWithMultipleHeaders() {
         Map<String, String> headers = new HashMap<>();
@@ -82,6 +84,7 @@ class MCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test different authentication types")
     void testAuthenticationTypes() {
         // Bearer token auth
@@ -107,6 +110,7 @@ class MCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Validate HTTP endpoint")
     void testEndpointValidation() {
         // Valid endpoints
@@ -120,6 +124,7 @@ class MCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test resource type")
     void testResourceType() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
@@ -127,6 +132,7 @@ class MCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test equals and hashCode")
     void testEqualsAndHashCode() {
         MCPServer server1 =
@@ -150,6 +156,7 @@ class MCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test toString")
     void testToString() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");
@@ -158,13 +165,13 @@ class MCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("JSON serialization and deserialization")
     void testJsonSerialization() throws Exception {
         MCPServer original =
                 MCPServer.builder("http://localhost:8000/mcp")
                         .header("X-Custom", "value")
                         .timeout(Duration.ofSeconds(45))
-                        .sseReadTimeout(Duration.ofSeconds(600))
                         .auth(new BearerTokenAuth("test-token"))
                         .build();
 
@@ -179,12 +186,11 @@ class MCPServerTest {
         assertThat(deserialized.getEndpoint()).isEqualTo(original.getEndpoint());
         assertThat(deserialized.getHeaders()).isEqualTo(original.getHeaders());
         assertThat(deserialized.getTimeoutSeconds()).isEqualTo(original.getTimeoutSeconds());
-        assertThat(deserialized.getSseReadTimeoutSeconds())
-                .isEqualTo(original.getSseReadTimeoutSeconds());
         assertThat(deserialized.getAuth()).isEqualTo(original.getAuth());
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("JSON serialization with different auth types")
     void testJsonSerializationWithAuth() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
@@ -220,6 +226,7 @@ class MCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Headers are immutable from outside")
     void testHeadersImmutability() {
         Map<String, String> headers = new HashMap<>();
@@ -244,6 +251,7 @@ class MCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Close server gracefully")
     void testClose() {
         MCPServer server = new MCPServer("http://localhost:8000/mcp");

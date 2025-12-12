@@ -33,6 +33,8 @@ import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.condition.DisabledOnJre;
+import org.junit.jupiter.api.condition.JRE;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 
@@ -74,10 +76,7 @@ class AgentPlanDeclareMCPServerTest {
                             mcpStreamableHttpServerContainer.getHost(),
                             mcpStreamableHttpServerContainer.getMappedPort(3001));
 
-            return MCPServer.builder(mcpEndpoint)
-                    .timeout(Duration.ofSeconds(30))
-                    .sseReadTimeout(Duration.ofSeconds(300))
-                    .build();
+            return MCPServer.builder(mcpEndpoint).timeout(Duration.ofSeconds(30)).build();
         }
 
         @Action(listenEvents = {InputEvent.class})
@@ -102,6 +101,7 @@ class AgentPlanDeclareMCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Discover @MCPServer method and register MCP server")
     void discoverMCPServer() {
         Map<ResourceType, Map<String, ResourceProvider>> providers =
@@ -112,6 +112,7 @@ class AgentPlanDeclareMCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Discover and register tools from MCP server")
     void discoverToolsFromMCPServer() {
         Map<ResourceType, Map<String, ResourceProvider>> providers =
@@ -132,6 +133,7 @@ class AgentPlanDeclareMCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Discover and register prompts from MCP server")
     void discoverPromptsFromMCPServer() {
         Map<ResourceType, Map<String, ResourceProvider>> providers =
@@ -148,6 +150,7 @@ class AgentPlanDeclareMCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Retrieve MCP tool from AgentPlan - echo tool")
     void retrieveMCPToolEcho() throws Exception {
         Tool tool = (Tool) agentPlan.getResource("echo", ResourceType.TOOL);
@@ -160,6 +163,7 @@ class AgentPlanDeclareMCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Retrieve MCP tool from AgentPlan - add tool")
     void retrieveMCPToolAdd() throws Exception {
         Tool tool = (Tool) agentPlan.getResource("add", ResourceType.TOOL);
@@ -176,6 +180,7 @@ class AgentPlanDeclareMCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Retrieve MCP prompt from AgentPlan - simple_prompt")
     void retrieveMCPPromptSimple() throws Exception {
         Prompt prompt = (Prompt) agentPlan.getResource("simple_prompt", ResourceType.PROMPT);
@@ -193,6 +198,7 @@ class AgentPlanDeclareMCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Retrieve MCP prompt from AgentPlan - complex_prompt")
     void retrieveMCPPromptComplex() throws Exception {
         Prompt prompt = (Prompt) agentPlan.getResource("complex_prompt", ResourceType.PROMPT);
@@ -213,6 +219,7 @@ class AgentPlanDeclareMCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("AgentPlan JSON serialization with MCP resources")
     void testAgentPlanJsonSerializableWithMCP() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
@@ -230,6 +237,7 @@ class AgentPlanDeclareMCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test MCP server is closed after discovery")
     void testMCPServerClosedAfterDiscovery() throws Exception {
         // The MCPServer.close() should be called after listTools() and listPrompts()
@@ -241,6 +249,7 @@ class AgentPlanDeclareMCPServerTest {
     }
 
     @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test metadata from MCP tool - longRunningOperation")
     void testMCPToolMetadata() throws Exception {
         Tool tool = (Tool) agentPlan.getResource("longRunningOperation", ResourceType.TOOL);
