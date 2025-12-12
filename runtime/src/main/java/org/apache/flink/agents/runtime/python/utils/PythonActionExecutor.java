@@ -19,8 +19,6 @@ package org.apache.flink.agents.runtime.python.utils;
 
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
-import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
-import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import pemja.core.PythonInterpreter;
@@ -59,21 +57,16 @@ public class PythonActionExecutor {
     private static final String GET_OUTPUT_FROM_OUTPUT_EVENT =
             "python_java_utils.get_output_from_output_event";
 
-    private final PythonEnvironmentManager environmentManager;
+    private final PythonInterpreter interpreter;
     private final String agentPlanJson;
-    private PythonInterpreter interpreter;
     private Object pythonAsyncThreadPool;
 
-    public PythonActionExecutor(PythonEnvironmentManager environmentManager, String agentPlanJson) {
-        this.environmentManager = environmentManager;
+    public PythonActionExecutor(PythonInterpreter interpreter, String agentPlanJson) {
+        this.interpreter = interpreter;
         this.agentPlanJson = agentPlanJson;
     }
 
     public void open() throws Exception {
-        environmentManager.open();
-        EmbeddedPythonEnvironment env = environmentManager.createEnvironment();
-
-        interpreter = env.getInterpreter();
         interpreter.exec(PYTHON_IMPORTS);
 
         pythonAsyncThreadPool = interpreter.invoke(CREATE_ASYNC_THREAD_POOL);
@@ -160,11 +153,6 @@ public class PythonActionExecutor {
             if (pythonAsyncThreadPool != null) {
                 interpreter.invoke(CLOSE_ASYNC_THREAD_POOL, pythonAsyncThreadPool);
             }
-            interpreter.close();
-        }
-
-        if (environmentManager != null) {
-            environmentManager.close();
         }
     }
 

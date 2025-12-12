@@ -27,14 +27,17 @@ import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerFactory;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
@@ -45,6 +48,7 @@ import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
@@ -75,6 +79,7 @@ import org.apache.flink.types.Row;
 import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import pemja.core.PythonInterpreter;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -119,8 +124,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState;
 
+    private transient PythonEnvironmentManager pythonEnvironmentManager;
+
+    private transient PythonInterpreter pythonInterpreter;
+
     // PythonActionExecutor for Python actions
     private transient PythonActionExecutor pythonActionExecutor;
+
+    // PythonResourceAdapter for Python resources in Java actions
+    private transient PythonResourceAdapterImpl pythonResourceAdapter;
 
     private transient FlinkAgentsMetricGroupImpl metricGroup;
 
@@ -251,8 +263,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 new ListStateDescriptor<>(
                                         "currentProcessingKeys", TypeInformation.of(Object.class)));
 
-        // init PythonActionExecutor
-        initPythonActionExecutor();
+        // init PythonActionExecutor and PythonResourceAdapter
+        initPythonEnvironment();
 
         mailboxProcessor = getMailboxProcessor();
 
@@ -496,17 +508,29 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
-    private void initPythonActionExecutor() throws Exception {
+    private void initPythonEnvironment() throws Exception {
         boolean containPythonAction =
                 agentPlan.getActions().values().stream()
                         .anyMatch(action -> action.getExec() instanceof PythonFunction);
-        if (containPythonAction) {
-            LOG.debug("Begin initialize PythonActionExecutor.");
+
+        boolean containPythonResource =
+                agentPlan.getResourceProviders().values().stream()
+                        .anyMatch(
+                                resourceProviderMap ->
+                                        resourceProviderMap.values().stream()
+                                                .anyMatch(
+                                                        resourceProvider ->
+                                                                resourceProvider
+                                                                        instanceof
+                                                                        PythonResourceProvider));
+
+        if (containPythonAction || containPythonResource) {
+            LOG.debug("Begin initialize PythonEnvironmentManager.");
             PythonDependencyInfo dependencyInfo =
                     PythonDependencyInfo.create(
                             getExecutionConfig().toConfiguration(),
                             getRuntimeContext().getDistributedCache());
-            PythonEnvironmentManager pythonEnvironmentManager =
+            pythonEnvironmentManager =
                     new PythonEnvironmentManager(
                             dependencyInfo,
                             getContainingTask()
@@ -515,12 +539,37 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                     .getTmpDirectories(),
                             new HashMap<>(System.getenv()),
                             getRuntimeContext().getJobInfo().getJobId());
-            pythonActionExecutor =
-                    new PythonActionExecutor(
-                            pythonEnvironmentManager,
-                            new ObjectMapper().writeValueAsString(agentPlan));
-            pythonActionExecutor.open();
+            pythonEnvironmentManager.open();
+            EmbeddedPythonEnvironment env = pythonEnvironmentManager.createEnvironment();
+            pythonInterpreter = env.getInterpreter();
+            if (containPythonAction) {
+                initPythonActionExecutor();
+            } else {
+                initPythonResourceAdapter();
+            }
         }
+    }
+
+    private void initPythonActionExecutor() throws Exception {
+        pythonActionExecutor =
+                new PythonActionExecutor(
+                        pythonInterpreter, new ObjectMapper().writeValueAsString(agentPlan));
+        pythonActionExecutor.open();
+    }
+
+    private void initPythonResourceAdapter() throws Exception {
+        pythonResourceAdapter =
+                new PythonResourceAdapterImpl(
+                        (String anotherName, ResourceType anotherType) -> {
+                            try {
+                                return agentPlan.getResource(anotherName, anotherType);
+                            } catch (Exception e) {
+                                throw new RuntimeException(e);
+                            }
+                        },
+                        pythonInterpreter);
+        pythonResourceAdapter.open();
+        agentPlan.setPythonResourceAdapter(pythonResourceAdapter);
     }
 
     @Override
@@ -539,6 +588,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void close() throws Exception {
         if (pythonActionExecutor != null) {
             pythonActionExecutor.close();
+        }
+        if (pythonInterpreter != null) {
+            pythonInterpreter.close();
+        }
+        if (pythonEnvironmentManager != null) {
+            pythonEnvironmentManager.close();
         }
         if (eventLogger != null) {
             eventLogger.close();

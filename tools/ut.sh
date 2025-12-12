@@ -98,7 +98,7 @@ java_tests() {
     if $run_e2e; then
         mvn -T16 --batch-mode --no-transfer-progress test -pl 'e2e-test/flink-agents-end-to-end-tests-integration'
     else
-        mvn -T16 --batch-mode --no-transfer-progress test -pl '!e2e-test/flink-agents-end-to-end-tests-integration'
+        mvn -T16 --batch-mode --no-transfer-progress test -pl '!e2e-test/flink-agents-end-to-end-tests-integration,!e2e-test/flink-agents-end-to-end-tests-resource-cross-language'
     fi
     testcode=$?
     case $testcode in

@@ -170,5 +170,9 @@ jobs:
           version: "latest"
       - name: Build flink-agents
         run: bash tools/build.sh
+      - name: Install ollama
+        run: bash tools/start_ollama_server.sh
       - name: Run e2e tests
-        run: bash tools/e2e.sh
+        run: |
+          export PYTHONPATH="${{ github.workspace }}/python/.venv/lib/python${{ matrix.python-version }}/site-packages:$PYTHONPATH"
+          tools/e2e.sh

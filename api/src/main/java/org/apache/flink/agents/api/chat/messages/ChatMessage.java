@@ -32,9 +32,6 @@ import java.util.Objects;
  */
 public class ChatMessage {
 
-    /** The key for the message type in the metadata. */
-    public static final String MESSAGE_TYPE = "messageType";
-
     private MessageRole role;
     private String content;
     private List<Map<String, Object>> toolCalls;
@@ -68,7 +65,6 @@ public class ChatMessage {
         this.content = content != null ? content : "";
         this.toolCalls = toolCalls != null ? toolCalls : new ArrayList<>();
         this.extraArgs = extraArgs != null ? new HashMap<>(extraArgs) : new HashMap<>();
-        this.extraArgs.put(MESSAGE_TYPE, this.role);
     }
 
     public MessageRole getRole() {
@@ -77,7 +73,6 @@ public class ChatMessage {
 
     public void setRole(MessageRole role) {
         this.role = role;
-        this.extraArgs.put(MESSAGE_TYPE, this.role);
     }
 
     public String getContent() {
@@ -102,7 +97,6 @@ public class ChatMessage {
 
     public void setExtraArgs(Map<String, Object> extraArgs) {
         this.extraArgs = extraArgs != null ? extraArgs : new HashMap<>();
-        this.extraArgs.put(MESSAGE_TYPE, this.role);
     }
 
     @JsonIgnore

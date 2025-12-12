@@ -66,6 +66,18 @@ function run_cross_language_config_test {
   cd "$python_dir" && uv run bash ../e2e-test/test-scripts/test_java_config_in_python.sh
 }
 
+function run_resource_cross_language_test {
+  # This test only runs Maven, no need for Python environment
+  # Ensure we're in the project root directory
+  cd "$project_root"
+  uv run bash e2e-test/test-scripts/test_resource_cross_language.sh
+}
+
+export TOTAL=0
+export PASSED=0
+
+run_test "Resource Cross-Language end-to-end test" "run_resource_cross_language_test"
+
 if [[ ! -d "e2e-test/target" ]]; then
   echo "Build flink-agents before run e2e tests."
   bash tools/build.sh
@@ -93,9 +105,6 @@ fi
 uv sync --extra dev
 uv pip install -e .
 cd ..
-
-export TOTAL=0
-export PASSED=0
 
 # Create temporary directory with better cross-platform compatibility
 if command -v mktemp >/dev/null 2>&1; then

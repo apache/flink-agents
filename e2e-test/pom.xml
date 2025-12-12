@@ -31,5 +31,6 @@ under the License.
     <modules>
         <module>flink-agents-end-to-end-tests-agent-plan-compatibility</module>
         <module>flink-agents-end-to-end-tests-integration</module>
+        <module>flink-agents-end-to-end-tests-resource-cross-language</module>
     </modules>
 </project>
