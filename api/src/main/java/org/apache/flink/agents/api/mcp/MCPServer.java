@@ -90,9 +90,6 @@ public class MCPServer extends SerializableResource {
     @JsonProperty(FIELD_TIMEOUT_SECONDS)
     private final long timeoutSeconds;
 
-    @JsonProperty(FIELD_SSE_READ_TIMEOUT_SECONDS)
-    private final long sseReadTimeoutSeconds;
-
     @JsonProperty(FIELD_AUTH)
     private final Auth auth;
 
@@ -103,7 +100,6 @@ public class MCPServer extends SerializableResource {
         private String endpoint;
         private final Map<String, String> headers = new HashMap<>();
         private long timeoutSeconds = 30;
-        private long sseReadTimeoutSeconds = 300;
         private Auth auth = null;
 
         public Builder endpoint(String endpoint) {
@@ -126,18 +122,13 @@ public class MCPServer extends SerializableResource {
             return this;
         }
 
-        public Builder sseReadTimeout(Duration sseReadTimeout) {
-            this.sseReadTimeoutSeconds = sseReadTimeout.getSeconds();
-            return this;
-        }
-
         public Builder auth(Auth auth) {
             this.auth = auth;
             return this;
         }
 
         public MCPServer build() {
-            return new MCPServer(endpoint, headers, timeoutSeconds, sseReadTimeoutSeconds, auth);
+            return new MCPServer(endpoint, headers, timeoutSeconds, auth);
         }
     }
 
@@ -147,7 +138,7 @@ public class MCPServer extends SerializableResource {
      * @param endpoint The HTTP endpoint of the MCP server
      */
     public MCPServer(String endpoint) {
-        this(endpoint, new HashMap<>(), 30, 300, null);
+        this(endpoint, new HashMap<>(), 30, null);
     }
 
     @JsonCreator
@@ -155,12 +146,10 @@ public class MCPServer extends SerializableResource {
             @JsonProperty(FIELD_ENDPOINT) String endpoint,
             @JsonProperty(FIELD_HEADERS) Map<String, String> headers,
             @JsonProperty(FIELD_TIMEOUT_SECONDS) long timeoutSeconds,
-            @JsonProperty(FIELD_SSE_READ_TIMEOUT_SECONDS) long sseReadTimeoutSeconds,
             @JsonProperty(FIELD_AUTH) Auth auth) {
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint cannot be null");
         this.headers = headers != null ? new HashMap<>(headers) : new HashMap<>();
         this.timeoutSeconds = timeoutSeconds;
-        this.sseReadTimeoutSeconds = sseReadTimeoutSeconds;
         this.auth = auth;
     }
 
@@ -184,10 +173,6 @@ public class MCPServer extends SerializableResource {
 
     public long getTimeoutSeconds() {
         return timeoutSeconds;
-    }
-
-    public long getSseReadTimeoutSeconds() {
-        return sseReadTimeoutSeconds;
     }
 
     public Auth getAuth() {
@@ -422,7 +407,6 @@ public class MCPServer extends SerializableResource {
         if (o == null || getClass() != o.getClass()) return false;
         MCPServer that = (MCPServer) o;
         return timeoutSeconds == that.timeoutSeconds
-                && sseReadTimeoutSeconds == that.sseReadTimeoutSeconds
                 && Objects.equals(endpoint, that.endpoint)
                 && Objects.equals(headers, that.headers)
                 && Objects.equals(auth, that.auth);
@@ -430,7 +414,7 @@ public class MCPServer extends SerializableResource {
 
     @Override
     public int hashCode() {
-        return Objects.hash(endpoint, headers, timeoutSeconds, sseReadTimeoutSeconds, auth);
+        return Objects.hash(endpoint, headers, timeoutSeconds, auth);
     }
 
     @Override
