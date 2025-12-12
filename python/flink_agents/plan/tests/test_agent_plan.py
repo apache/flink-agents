@@ -17,7 +17,7 @@
 #################################################################################
 import json
 from pathlib import Path
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, List, Sequence
 
 import pytest
 
@@ -130,7 +130,35 @@ class MockVectorStore(BaseVectorStore):  # noqa: D101
     def store_kwargs(self) -> Dict[str, Any]:  # noqa: D102
         return {"collection_name": self.collection_name}
 
-    def query_embedding(
+    def size(self, collection_name: str | None = None) -> int:
+        """For Testing."""
+
+    def get(
+        self,
+        ids: str | List[str] | None = None,
+        collection_name: str | None = None,
+        **kwargs: Any,
+    ) -> List[Document]:
+        """For Testing."""
+
+    def delete(
+        self,
+        ids: str | List[str] | None = None,
+        collection_name: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """For Testing."""
+
+    def _add_embedding(
+        self,
+        *,
+        documents: List[Document],
+        collection_name: str | None = None,
+        **kwargs: Any,
+    ) -> List[str]:
+        """For Testing."""
+
+    def _query_embedding(
         self, embedding: list[float], limit: int = 10, **kwargs: Any
     ) -> list[Document]:
         """Testing Implementation."""
