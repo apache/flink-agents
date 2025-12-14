@@ -41,7 +41,7 @@ under the License.
         <maven.compiler.target>${target.java.version}</maven.compiler.target>
         <spotless.version>2.27.1</spotless.version>
         <spotless.skip>false</spotless.skip>
-        <flink.version>1.20.3</flink.version>
+        <flink.version>2.3-SNAPSHOT</flink.version>
         <kafka.version>4.0.0</kafka.version>
         <junit5.version>5.10.1</junit5.version>
         <flink.shaded.version>17.0</flink.shaded.version>
