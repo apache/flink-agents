@@ -61,14 +61,16 @@ import org.apache.flink.runtime.state.StateSnapshotContext;
 import org.apache.flink.runtime.state.VoidNamespace;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.BoundedOneInput;
-import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
+import org.apache.flink.streaming.api.operators.Output;
 import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
+import org.apache.flink.streaming.runtime.tasks.StreamTask;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxExecutorImpl;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxProcessor;
 import org.apache.flink.types.Row;
@@ -171,13 +173,24 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
         this.processingTimeService = processingTimeService;
-        this.chainingStrategy = ChainingStrategy.ALWAYS;
+        // chainingStrategy is now managed by StreamOperatorFactory in Flink 2.x
         this.mailboxExecutor = mailboxExecutor;
         this.eventLogger = EventLoggerFactory.createLogger(EventLoggerConfig.builder().build());
         this.eventListeners = new ArrayList<>();
         this.actionStateStore = actionStateStore;
         this.checkpointIdToSeqNums = new HashMap<>();
         this.actionTaskRunnerContexts = new HashMap<>();
+    }
+
+    /**
+     * Public setup method that delegates to the protected setup in AbstractStreamOperator. This
+     * allows the factory to properly initialize the operator.
+     */
+    public void setupOperator(
+            StreamTask<?, ?> containingTask,
+            StreamConfig config,
+            Output<StreamRecord<OUT>> output) {
+        setup(containingTask, config, output);
     }
 
     @Override
