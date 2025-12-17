@@ -87,7 +87,7 @@ public abstract class ActionTask {
     }
 
     /** Invokes the action task. */
-    public abstract ActionTaskResult invoke() throws Exception;
+    public abstract ActionTaskResult invoke(ClassLoader userCodeClassLoader) throws Exception;
 
     public class ActionTaskResult {
         private final boolean finished;

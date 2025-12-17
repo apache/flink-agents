@@ -89,7 +89,7 @@ import static org.junit.Assert.assertTrue;
 
 /** This test case is derived from an existing test in Flink. */
 @RunWith(Parameterized.class)
-public class RescalingITCase extends TestLogger {
+public class RescalingTest extends TestLogger {
 
     @ClassRule
     public static final TestExecutorResource<ScheduledExecutorService> EXECUTOR_RESOURCE =
@@ -104,7 +104,7 @@ public class RescalingITCase extends TestLogger {
         return Arrays.asList(new Object[][] {{"hashmap"}, {"rocksdb"}});
     }
 
-    public RescalingITCase(String backend) {
+    public RescalingTest(String backend) {
         this.backend = backend;
     }
 

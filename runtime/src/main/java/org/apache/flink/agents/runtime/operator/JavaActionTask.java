@@ -30,17 +30,13 @@ import static org.apache.flink.util.Preconditions.checkState;
  * action task will be invoked only once.
  */
 public class JavaActionTask extends ActionTask {
-
-    private final ClassLoader userCodeClassLoader;
-
-    public JavaActionTask(Object key, Event event, Action action, ClassLoader userCodeClassLoader) {
+    public JavaActionTask(Object key, Event event, Action action) {
         super(key, event, action);
         checkState(action.getExec() instanceof JavaFunction);
-        this.userCodeClassLoader = userCodeClassLoader;
     }
 
     @Override
-    public ActionTaskResult invoke() throws Exception {
+    public ActionTaskResult invoke(ClassLoader userCodeClassLoader) throws Exception {
         LOG.debug(
                 "Try execute java action {} for event {} with key {}.",
                 action.getName(),
