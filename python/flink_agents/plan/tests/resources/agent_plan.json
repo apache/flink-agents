@@ -90,9 +90,8 @@
                 "name": "mock",
                 "type": "chat_model",
                 "descriptor": {
-                    "java_clazz": "",
-                    "python_module": "flink_agents.plan.tests.test_agent_plan",
-                    "python_clazz": "MockChatModelImpl",
+                    "target_module": "flink_agents.plan.tests.test_agent_plan",
+                    "target_clazz": "MockChatModelImpl",
                     "arguments": {
                         "host": "8.8.8.8",
                         "desc": "mock resource just for testing.",
@@ -107,9 +106,8 @@
                 "name": "mock_embedding",
                 "type": "embedding_model",
                 "descriptor": {
-                    "java_clazz": "",
-                    "python_module": "flink_agents.plan.tests.test_agent_plan",
-                    "python_clazz": "MockEmbeddingModelSetup",
+                    "target_module": "flink_agents.plan.tests.test_agent_plan",
+                    "target_clazz": "MockEmbeddingModelSetup",
                     "arguments": {
                         "model": "test-model",
                         "connection": "mock_embedding_conn"
@@ -123,9 +121,8 @@
                 "name": "mock_embedding_conn",
                 "type": "embedding_model_connection",
                 "descriptor": {
-                    "java_clazz": "",
-                    "python_module": "flink_agents.plan.tests.test_agent_plan",
-                    "python_clazz": "MockEmbeddingModelConnection",
+                    "target_module": "flink_agents.plan.tests.test_agent_plan",
+                    "target_clazz": "MockEmbeddingModelConnection",
                     "arguments": {
                         "api_key": "mock-api-key"
                     }
@@ -138,9 +135,8 @@
                 "name": "mock_vector_store",
                 "type": "vector_store",
                 "descriptor": {
-                    "java_clazz": "",
-                    "python_module": "flink_agents.plan.tests.test_agent_plan",
-                    "python_clazz": "MockVectorStore",
+                    "target_module": "flink_agents.plan.tests.test_agent_plan",
+                    "target_clazz": "MockVectorStore",
                     "arguments": {
                         "embedding_model": "mock_embedding",
                         "host": "localhost",

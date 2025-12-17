@@ -62,12 +62,6 @@ public class PythonActionExecutor {
     private final JavaResourceAdapter javaResourceAdapter;
     private Object pythonAsyncThreadPool;
 
-    public PythonActionExecutor(PythonInterpreter interpreter, String agentPlanJson) {
-        this.interpreter = interpreter;
-        this.agentPlanJson = agentPlanJson;
-        this.javaResourceAdapter = null;
-    }
-
     public PythonActionExecutor(
             PythonInterpreter interpreter,
             String agentPlanJson,

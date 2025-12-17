@@ -175,9 +175,9 @@ class JavaResourceProvider(ResourceProvider):
         kwargs = {}
         kwargs.update(descriptor.arguments)
 
-        clazz = descriptor.java_clazz
+        clazz = descriptor.arguments.get("java_clazz", "")
         if len(clazz) <1:
-            err_msg = f"java_class are not set for {wrapper_clazz.__name__}"
+            err_msg = f"java_clazz are not set for {wrapper_clazz.__name__}"
             raise KeyError(err_msg)
 
         return JavaResourceProvider(

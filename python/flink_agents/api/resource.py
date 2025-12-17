@@ -80,27 +80,19 @@ class ResourceDescriptor(BaseModel):
 
     Attributes:
         clazz: The Python Resource class name.
-        java_clazz: The Java class full path (e.g., 'com.example.YourJavaClass').
-                   Empty string for Python-only resources.
         arguments: Dictionary containing resource initialization parameters.
     """
     clazz: Type[Resource] | None = None
-    java_clazz: str
     arguments: Dict[str, Any]
 
     def __init__(self, /,
                  *,
                  clazz: Type[Resource] | None = None,
-                 java_clazz: str = "",
                  **arguments: Any) -> None:
         """Initialize ResourceDescriptor.
 
         Args:
             clazz: The Resource class type to create a descriptor for.
-            java_clazz: The Java class full path for cross-platform compatibility.
-                       **REQUIRED when declaring Java resources in Python.**
-                       Defaults to empty string for Python-only resources.
-                       Example: "com.example.YourJavaClass"
             **arguments: Additional arguments for resource initialization.
 
         Usage:
@@ -108,7 +100,7 @@ class ResourceDescriptor(BaseModel):
                                             param1="value1",
                                             param2="value2")
         """
-        super().__init__(clazz=clazz, java_clazz=java_clazz, arguments=arguments)
+        super().__init__(clazz=clazz, arguments=arguments)
 
     @model_serializer
     def __custom_serializer(self) -> dict[str, Any]:
@@ -119,9 +111,8 @@ class ResourceDescriptor(BaseModel):
             arguments.
         """
         return {
-            "python_clazz": self.clazz.__name__,
-            "python_module": self.clazz.__module__,
-            "java_clazz": self.java_clazz,
+            "target_clazz": self.clazz.__name__,
+            "target_module": self.clazz.__module__,
             "arguments": self.arguments,
         }
 
@@ -143,8 +134,8 @@ class ResourceDescriptor(BaseModel):
             return data
 
         args = data["arguments"]
-        python_clazz = args.pop("python_clazz")
-        python_module = args.pop("python_module")
+        python_clazz = args.pop("target_clazz")
+        python_module = args.pop("target_module")
         data["clazz"] = get_resource_class(python_module, python_clazz)
         data["arguments"] = args["arguments"]
         return data
@@ -160,14 +151,12 @@ class ResourceDescriptor(BaseModel):
             return False
         return (
             self.clazz == other.clazz
-            and self.java_clazz == other.java_clazz
             and self.arguments == other.arguments
         )
 
     def __hash__(self) -> int:
-        """Generate hash for ResourceDescriptor, ignoring private _clazz field."""
-        return hash((self.clazz, self.java_clazz,
-                     tuple(sorted(self.arguments.items()))))
+        """Generate hash for ResourceDescriptor."""
+        return hash((self.clazz, tuple(sorted(self.arguments.items()))))
 
 
 def get_resource_class(module_path: str, class_name: str) -> Type[Resource]:

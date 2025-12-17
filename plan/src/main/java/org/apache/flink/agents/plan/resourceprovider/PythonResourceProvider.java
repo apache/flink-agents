@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import pemja.core.object.PyObject;
 
 import java.lang.reflect.Constructor;
+import java.util.HashMap;
 import java.util.Objects;
 import java.util.function.BiFunction;
 
@@ -44,13 +45,6 @@ public class PythonResourceProvider extends ResourceProvider {
     public PythonResourceProvider(String name, ResourceType type, ResourceDescriptor descriptor) {
         super(name, type);
         this.descriptor = descriptor;
-        if (descriptor.getPythonModule() == null
-                || descriptor.getPythonClazz() == null
-                || descriptor.getPythonModule().isEmpty()
-                || descriptor.getPythonClazz().isEmpty()) {
-            throw new IllegalArgumentException(
-                    "Module and clazz should not be null or empty for the Python resource.");
-        }
     }
 
     public void setPythonResourceAdapter(PythonResourceAdapter pythonResourceAdapter) {
@@ -66,11 +60,17 @@ public class PythonResourceProvider extends ResourceProvider {
             throws Exception {
         checkState(pythonResourceAdapter != null, "PythonResourceAdapter is not set");
         Class<?> clazz = Class.forName(descriptor.getClazz());
-        PyObject pyResource =
-                pythonResourceAdapter.initPythonResource(
-                        this.descriptor.getPythonModule(),
-                        this.descriptor.getPythonClazz(),
-                        this.descriptor.getInitialArguments());
+
+        HashMap<String, Object> kwargs = new HashMap<>(descriptor.getInitialArguments());
+        String pyModule = (String) kwargs.remove("module");
+        if (pyModule == null || pyModule.isEmpty()) {
+            throw new IllegalArgumentException("module should not be null or empty.");
+        }
+        String pyClazz = (String) kwargs.remove("clazz");
+        if (pyClazz == null || pyClazz.isEmpty()) {
+            throw new IllegalArgumentException("clazz should not be null or empty.");
+        }
+        PyObject pyResource = pythonResourceAdapter.initPythonResource(pyModule, pyClazz, kwargs);
         Constructor<?> constructor =
                 clazz.getConstructor(
                         PythonResourceAdapter.class,

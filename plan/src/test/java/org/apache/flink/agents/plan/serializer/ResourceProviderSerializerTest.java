@@ -63,7 +63,6 @@ public class ResourceProviderSerializerTest {
         // Create a resource provider.
         ResourceDescriptor mockChatModelImpl =
                 new ResourceDescriptor(
-                        "",
                         "flink_agents.plan.tests.test_resource_provider",
                         "MockChatModelImpl",
                         kwargs);

@@ -2,9 +2,8 @@
   "name" : "my_chat_model",
   "type" : "chat_model",
   "descriptor" : {
-    "java_clazz" : "",
-    "python_clazz" : "MockChatModelImpl",
-    "python_module" : "flink_agents.plan.tests.test_resource_provider",
+    "target_clazz" : "MockChatModelImpl",
+    "target_module" : "flink_agents.plan.tests.test_resource_provider",
     "arguments" : {
       "host" : "8.8.8.8",
       "desc" : "mock chat model"

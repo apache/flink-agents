@@ -152,7 +152,8 @@ public class AgentPlanTest {
         @ChatModelSetup
         public static ResourceDescriptor pythonChatModel() {
             return ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
-                    .setPythonResourceClass("test.module", "TestClazz")
+                    .addInitialArgument("module", "test.module")
+                    .addInitialArgument("clazz", "TestClazz")
                     .build();
         }
 
@@ -411,12 +412,6 @@ public class AgentPlanTest {
         assertThat(pythonChatModelProvider).isInstanceOf(PythonResourceProvider.class);
         assertThat(pythonChatModelProvider.getName()).isEqualTo("pythonChatModel");
         assertThat(pythonChatModelProvider.getType()).isEqualTo(ResourceType.CHAT_MODEL);
-
-        // Test PythonResourceProvider specific methods
-        ResourceDescriptor resourceDescriptor =
-                ((PythonResourceProvider) pythonChatModelProvider).getDescriptor();
-        assertThat(resourceDescriptor.getPythonClazz()).isEqualTo("TestClazz");
-        assertThat(resourceDescriptor.getPythonModule()).isEqualTo("test.module");
     }
 
     @Test
@@ -451,17 +446,5 @@ public class AgentPlanTest {
         // Test that resources are cached (should be the same instance)
         Resource myToolAgain = agentPlan.getResource("myTool", ResourceType.TOOL);
         assertThat(myTool).isSameAs(myToolAgain);
-    }
-
-    @Test
-    public void testExtractIllegalResourceProviderFromAgent() throws Exception {
-        // Create an agent with resource annotations
-        TestAgentWithIllegalPythonResource agent = new TestAgentWithIllegalPythonResource();
-
-        // Expect IllegalArgumentException when creating AgentPlan with illegal resource
-        assertThatThrownBy(() -> new AgentPlan(agent))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining(
-                        "Module and clazz should not be null or empty for the Python resource.");
     }
 }

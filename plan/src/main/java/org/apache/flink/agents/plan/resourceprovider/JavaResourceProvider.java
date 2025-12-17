@@ -37,7 +37,13 @@ public class JavaResourceProvider extends ResourceProvider {
     @Override
     public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
             throws Exception {
-        Class<?> clazz = Class.forName(descriptor.getClazz());
+        String clazzName;
+        if (descriptor.getModule() == null || descriptor.getModule().isEmpty()) {
+            clazzName = descriptor.getClazz();
+        } else {
+            clazzName = descriptor.getInitialArguments().remove("java_clazz").toString();
+        }
+        Class<?> clazz = Class.forName(clazzName);
         Constructor<?> constructor =
                 clazz.getConstructor(ResourceDescriptor.class, BiFunction.class);
         return (Resource) constructor.newInstance(descriptor, getResource);

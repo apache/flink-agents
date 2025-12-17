@@ -51,9 +51,8 @@ public class ResourceProviderDeserializerTest {
         assertEquals(ResourceType.CHAT_MODEL, pythonResourceProvider.getType());
 
         ResourceDescriptor descriptor = pythonResourceProvider.getDescriptor();
-        assertEquals(
-                "flink_agents.plan.tests.test_resource_provider", descriptor.getPythonModule());
-        assertEquals("MockChatModelImpl", descriptor.getPythonClazz());
+        assertEquals("flink_agents.plan.tests.test_resource_provider", descriptor.getModule());
+        assertEquals("MockChatModelImpl", descriptor.getClazz());
 
         Map<String, Object> kwargs = new HashMap<>();
         kwargs.put("host", "8.8.8.8");
