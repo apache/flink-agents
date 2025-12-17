@@ -83,7 +83,6 @@ public class VectorStoreIntegrationTest {
 
     @SuppressWarnings("unchecked")
     private void checkResult(CloseableIterator<Object> results) {
-        // 단일 입력에 대한 결과 1건 검증 및 벤더 비의존 최소 계약 확인
         Assertions.assertTrue(
                 results.hasNext(), "No output received from VectorStoreIntegrationAgent");
 
