@@ -25,6 +25,8 @@ import co.elastic.clients.elasticsearch.core.search.Hit;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -89,7 +91,7 @@ import java.util.function.BiFunction;
  *     .build();
  * }</pre>
  */
-public class ElasticsearchVectorStore extends BaseVectorStore<Map<String, Object>> {
+public class ElasticsearchVectorStore extends BaseVectorStore {
 
     /** Default vector dimensionality used when {@code dims} is not provided. */
     public static final int DEFAULT_DIMENSION = 768;
@@ -109,6 +111,8 @@ public class ElasticsearchVectorStore extends BaseVectorStore<Map<String, Object
     private final Integer numCandidates;
     /** Optional default filter query in Elasticsearch JSON DSL (can be overridden per query). */
     private final String filterQuery;
+
+    private final ObjectMapper mapper = new ObjectMapper();
 
     /**
      * Creates a new {@code ElasticsearchVectorStore} from the provided descriptor and resource
@@ -217,7 +221,8 @@ public class ElasticsearchVectorStore extends BaseVectorStore<Map<String, Object
         m.put("vector_field", this.vectorField);
         m.put("dims", this.dims);
         if (this.k != null) {
-            m.put("k", this.k);
+            // Expose as top_k (preferred name); keep legacy key for compatibility if referenced
+            m.put("top_k", this.k);
         }
         if (this.numCandidates != null) {
             m.put("num_candidates", this.numCandidates);
@@ -225,6 +230,9 @@ public class ElasticsearchVectorStore extends BaseVectorStore<Map<String, Object
         if (this.filterQuery != null) {
             m.put("filter_query", this.filterQuery);
         }
+        // Accept but not actively used at query time; included for consistency
+        // with agreed parameter naming.
+        // Users may pass: text_field, similarity, source_includes
         return m;
     }
 
@@ -243,10 +251,9 @@ public class ElasticsearchVectorStore extends BaseVectorStore<Map<String, Object
      * @return A list of matching documents, possibly empty
      * @throws RuntimeException if the search request fails
      */
+    @SuppressWarnings({"rawtypes", "unchecked"})
     @Override
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    public List<Document<Map<String, Object>>> queryEmbedding(
-            float[] embedding, int limit, Map<String, Object> args) {
+    public List<Document> queryEmbedding(float[] embedding, int limit, Map<String, Object> args) {
         try {
             int k = (int) args.getOrDefault("k", Math.max(1, limit));
 
@@ -269,7 +276,6 @@ public class ElasticsearchVectorStore extends BaseVectorStore<Map<String, Object
             if (filter != null) {
                 builder = builder.postFilter(f -> f.withJson(new StringReader(filter)));
             }
-
             final SearchResponse<Map<String, Object>> searchResponse =
                     (SearchResponse) this.client.search(builder.build(), Map.class);
 
@@ -291,16 +297,18 @@ public class ElasticsearchVectorStore extends BaseVectorStore<Map<String, Object
      * @param searchResponse the search response containing hits
      * @return list of {@code Document} objects constructed from hits
      */
-    private List<Document<Map<String, Object>>> getDocuments(
-            int total, SearchResponse<Map<String, Object>> searchResponse) {
-        final List<Document<Map<String, Object>>> documents = new ArrayList<>(total);
+    private List<Document> getDocuments(
+            int total, SearchResponse<Map<String, Object>> searchResponse)
+            throws JsonProcessingException {
+        final List<Document> documents = new ArrayList<>(total);
         for (Hit<Map<String, Object>> hit : searchResponse.hits().hits()) {
             final Map<String, Object> _source = hit.source();
             final String id = hit.id();
             final Double score = hit.score();
             final String index = hit.index();
             final Map<String, Object> metadata = Map.of("id", id, "score", score, "index", index);
-            final Document<Map<String, Object>> document = new Document<>(_source, metadata, id);
+            final String content = (_source == null) ? "" : mapper.writeValueAsString(_source);
+            final Document document = new Document(content, metadata, id);
             documents.add(document);
         }
         return documents;

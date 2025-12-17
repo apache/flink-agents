@@ -26,27 +26,25 @@ import java.util.Map;
  * <p>Represents a single piece of content with associated metadata. This class is generic to
  * support different content types while maintaining consistent metadata and identification
  * structure.
- *
- * @param <ContentT> the type of the document content
  */
-public class Document<ContentT> {
+public class Document {
 
     /** Unique identifier of the document (if available). */
     private final String id;
 
     /** The actual content of the document. */
-    private final ContentT content;
+    private final String content;
 
     /** Document metadata such as source, author, timestamp, etc. */
     private final Map<String, Object> metadata;
 
-    public Document(ContentT content, Map<String, Object> metadata, String id) {
+    public Document(String content, Map<String, Object> metadata, String id) {
         this.content = content;
         this.metadata = metadata;
         this.id = id;
     }
 
-    public ContentT getContent() {
+    public String getContent() {
         return content;
     }
 

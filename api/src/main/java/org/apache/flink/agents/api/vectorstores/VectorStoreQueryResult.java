@@ -25,24 +25,22 @@ import java.util.List;
  *
  * <p>Wraps the list of {@link Document} instances returned by a {@link BaseVectorStore} query in a
  * simple value object.
- *
- * @param <DocumentT> the type of the document content in the result
  */
-public class VectorStoreQueryResult<DocumentT> {
+public class VectorStoreQueryResult {
     /** The documents matched by the query, ordered by relevance. */
-    private final List<Document<DocumentT>> documents;
+    private final List<Document> documents;
 
     /**
      * Creates a new query result.
      *
      * @param documents the matched documents
      */
-    public VectorStoreQueryResult(List<Document<DocumentT>> documents) {
+    public VectorStoreQueryResult(List<Document> documents) {
         this.documents = documents;
     }
 
     /** Returns the matched documents. */
-    public List<Document<DocumentT>> getDocuments() {
+    public List<Document> getDocuments() {
         return documents;
     }
 }

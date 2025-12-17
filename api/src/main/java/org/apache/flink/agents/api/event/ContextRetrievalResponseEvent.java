@@ -24,19 +24,14 @@ import org.apache.flink.agents.api.vectorstores.Document;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Event representing retrieved context results.
- *
- * @param <ContentT>
- */
-public class ContextRetrievalResponseEvent<ContentT> extends Event {
+/** Event representing retrieved context results. */
+public class ContextRetrievalResponseEvent extends Event {
 
     private final UUID requestId;
     private final String query;
-    private final List<Document<ContentT>> documents;
+    private final List<Document> documents;
 
-    public ContextRetrievalResponseEvent(
-            UUID requestId, String query, List<Document<ContentT>> documents) {
+    public ContextRetrievalResponseEvent(UUID requestId, String query, List<Document> documents) {
         this.requestId = requestId;
         this.query = query;
         this.documents = documents;
@@ -50,7 +45,7 @@ public class ContextRetrievalResponseEvent<ContentT> extends Event {
         return query;
     }
 
-    public List<Document<ContentT>> getDocuments() {
+    public List<Document> getDocuments() {
         return documents;
     }
 

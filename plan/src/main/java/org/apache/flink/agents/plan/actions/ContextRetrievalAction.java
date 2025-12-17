@@ -43,15 +43,14 @@ public class ContextRetrievalAction {
                 List.of(ContextRetrievalRequestEvent.class.getName()));
     }
 
-    @SuppressWarnings("unchecked")
-    public static <DocumentT> void processContextRetrievalRequest(Event event, RunnerContext ctx)
+    public static void processContextRetrievalRequest(Event event, RunnerContext ctx)
             throws Exception {
         if (event instanceof ContextRetrievalRequestEvent) {
             final ContextRetrievalRequestEvent contextRetrievalRequestEvent =
                     (ContextRetrievalRequestEvent) event;
 
-            final BaseVectorStore<DocumentT> vectorStore =
-                    (BaseVectorStore<DocumentT>)
+            final BaseVectorStore vectorStore =
+                    (BaseVectorStore)
                             ctx.getResource(
                                     contextRetrievalRequestEvent.getVectorStore(),
                                     ResourceType.VECTOR_STORE);
@@ -61,10 +60,10 @@ public class ContextRetrievalAction {
                             contextRetrievalRequestEvent.getQuery(),
                             contextRetrievalRequestEvent.getMaxResults());
 
-            final VectorStoreQueryResult<DocumentT> result = vectorStore.query(vectorStoreQuery);
+            final VectorStoreQueryResult result = vectorStore.query(vectorStoreQuery);
 
             ctx.sendEvent(
-                    new ContextRetrievalResponseEvent<>(
+                    new ContextRetrievalResponseEvent(
                             contextRetrievalRequestEvent.getId(),
                             contextRetrievalRequestEvent.getQuery(),
                             result.getDocuments()));

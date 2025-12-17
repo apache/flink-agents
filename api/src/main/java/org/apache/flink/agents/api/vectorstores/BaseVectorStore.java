@@ -31,10 +31,8 @@ import java.util.function.BiFunction;
  * Base abstract class for vector store. Provides vector store functionality that integrates
  * embedding models for text-based semantic search. Handles both connection management and embedding
  * generation internally.
- *
- * @param <ContentT> The type of content stored in the vector store documents
  */
-public abstract class BaseVectorStore<ContentT> extends Resource {
+public abstract class BaseVectorStore extends Resource {
 
     /** Name of the embedding model resource to use. */
     protected final String embeddingModel;
@@ -65,7 +63,7 @@ public abstract class BaseVectorStore<ContentT> extends Resource {
      * @param query VectorStoreQuery object containing query parameters
      * @return VectorStoreQueryResult containing the retrieved documents
      */
-    public VectorStoreQueryResult<ContentT> query(VectorStoreQuery query) {
+    public VectorStoreQueryResult query(VectorStoreQuery query) {
         final BaseEmbeddingModelSetup embeddingModel =
                 (BaseEmbeddingModelSetup)
                         this.getResource.apply(this.embeddingModel, ResourceType.EMBEDDING_MODEL);
@@ -75,10 +73,10 @@ public abstract class BaseVectorStore<ContentT> extends Resource {
         final Map<String, Object> storeKwargs = this.getStoreKwargs();
         storeKwargs.putAll(query.getExtraArgs());
 
-        final List<Document<ContentT>> documents =
+        final List<Document> documents =
                 this.queryEmbedding(queryEmbedding, query.getLimit(), storeKwargs);
 
-        return new VectorStoreQueryResult<>(documents);
+        return new VectorStoreQueryResult(documents);
     }
 
     /**
@@ -89,6 +87,6 @@ public abstract class BaseVectorStore<ContentT> extends Resource {
      * @param args Additional arguments for the vector search
      * @return List of documents matching the query embedding
      */
-    public abstract List<Document<ContentT>> queryEmbedding(
+    public abstract List<Document> queryEmbedding(
             float[] embedding, int limit, Map<String, Object> args);
 }
