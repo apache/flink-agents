@@ -35,16 +35,16 @@ from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.integrations.chat_models.openai.openai_chat_model import (
-    OpenAIChatModelConnection,
-)
-from flink_agents.integrations.chat_models.tongyi_chat_model import (
-    TongyiChatModelConnection,
-)
 
 
 class ChatModelCrossLanguageAgent(Agent):
-    """Example agent demonstrating the new ChatModel architecture."""
+    """Example agent demonstrating cross-language integration testing.
+
+    This test includes:
+    - Python scheduling Java ChatModel
+    - Java ChatModel scheduling Python Prompt
+    - Java ChatModel scheduling Python Tool
+    """
 
     @prompt
     @staticmethod
@@ -64,20 +64,6 @@ class ChatModelCrossLanguageAgent(Agent):
                 ),
             ],
         )
-
-    @chat_model_connection
-    @staticmethod
-    def openai_connection() -> ResourceDescriptor:
-        """ChatModelConnection responsible for openai model service connection."""
-        return ResourceDescriptor(
-            clazz=OpenAIChatModelConnection, api_key=os.environ.get("OPENAI_API_KEY")
-        )
-
-    @chat_model_connection
-    @staticmethod
-    def tongyi_connection() -> ResourceDescriptor:
-        """ChatModelConnection responsible for tongyi model service connection."""
-        return ResourceDescriptor(clazz=TongyiChatModelConnection)
 
     @chat_model_connection
     @staticmethod
