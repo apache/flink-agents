@@ -173,13 +173,12 @@ public class MCPPrompt extends Prompt {
     }
 
     /**
-     * Format the prompt as a list of chat messages with the given arguments. This overloaded
-     * version accepts Object values for flexibility.
+     * Format the prompt as a list of chat messages with the given arguments.
      *
      * @param arguments Arguments to pass to the prompt (Object values)
      * @return List of formatted chat messages
      */
-    public List<ChatMessage> formatMessages(Map<String, Object> arguments) {
+    private List<ChatMessage> formatMessages(Map<String, Object> arguments) {
         return mcpServer.getPrompt(name, validateAndPrepareArguments(arguments));
     }
 

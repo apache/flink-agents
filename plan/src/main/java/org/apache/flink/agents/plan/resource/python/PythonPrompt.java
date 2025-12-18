@@ -19,17 +19,17 @@ package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
-import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.prompt.LocalPrompt;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /**
- * PythonPrompt is a subclass of Prompt that provides a method to parse a Python prompt from a
+ * PythonPrompt is a subclass of LocalPrompt that provides a method to parse a Python prompt from a
  * serialized map.
  */
-public class PythonPrompt extends Prompt {
+public class PythonPrompt extends LocalPrompt {
     public PythonPrompt(String template) {
         super(template);
     }

@@ -59,7 +59,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static org.apache.flink.agents.api.resource.ResourceType.*;
+import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
+import static org.apache.flink.agents.api.resource.ResourceType.PROMPT;
+import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
 
 /** Agent plan compiled from user defined agent. */
 @JsonSerialize(using = AgentPlanJsonSerializer.class)
@@ -436,7 +438,7 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
             } else if (method.isAnnotationPresent(VectorStore.class)) {
                 extractResource(ResourceType.VECTOR_STORE, method);
-            }  else if (Modifier.isStatic(method.getModifiers())) {
+            } else if (Modifier.isStatic(method.getModifiers())) {
                 // Check for MCPServer annotation using reflection to support Java 11 without MCP
                 try {
                     Class<?> mcpServerAnnotation =

@@ -16,11 +16,8 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.runtime.mcp;
+package org.apache.flink.agents.api.mcp;
 
-import org.apache.flink.agents.api.mcp.MCPPrompt;
-import org.apache.flink.agents.api.mcp.MCPServer;
-import org.apache.flink.agents.api.mcp.MCPTool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -32,16 +29,18 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
+import static org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Tests for MCP classes serialization with Flink's Kryo serializer.
+ * Tests for MCP classes serialization.
  *
  * <p>This test ensures that MCP objects (MCPServer, MCPTool, MCPPrompt) can be properly serialized
- * and deserialized by Flink's serialization framework, which uses Kryo under the hood. This is
- * critical for distributed execution where these objects need to be sent across the network.
+ * and deserialized by Flink's serialization framework. It verifies that all fields are preserved
  */
 class MCPSerializationTest {
+
+    private static final String DEFAULT_ENDPOINT = "http://localhost:8000/mcp";
 
     /**
      * Create an ObjectMapper configured to ignore unknown properties during deserialization. This
@@ -49,10 +48,7 @@ class MCPSerializationTest {
      */
     private ObjectMapper createObjectMapper() {
         ObjectMapper mapper = new ObjectMapper();
-        mapper.configure(
-                org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind
-                        .DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES,
-                false);
+        mapper.configure(FAIL_ON_UNKNOWN_PROPERTIES, false);
         return mapper;
     }
 
@@ -61,7 +57,7 @@ class MCPSerializationTest {
     @DisplayName("Test MCPServer JSON serialization and deserialization")
     void testMCPServerJsonSerialization() throws Exception {
         MCPServer original =
-                MCPServer.builder("http://localhost:8000/mcp")
+                MCPServer.builder(DEFAULT_ENDPOINT)
                         .timeout(Duration.ofSeconds(30))
                         .header("X-Custom", "value")
                         .build();
@@ -79,7 +75,7 @@ class MCPSerializationTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test MCPTool JSON serialization and deserialization")
     void testMCPToolJsonSerialization() throws Exception {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         ToolMetadata metadata =
                 new ToolMetadata("add", "Add numbers", "{\"type\":\"object\",\"properties\":{}}");
         MCPTool original = new MCPTool(metadata, server);
@@ -97,7 +93,7 @@ class MCPSerializationTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test MCPPrompt JSON serialization and deserialization")
     void testMCPPromptJsonSerialization() throws Exception {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         Map<String, MCPPrompt.PromptArgument> args = new HashMap<>();
         args.put("name", new MCPPrompt.PromptArgument("name", "User name", true));
 
@@ -109,8 +105,7 @@ class MCPSerializationTest {
 
         assertThat(deserialized.getName()).isEqualTo(original.getName());
         assertThat(deserialized.getDescription()).isEqualTo(original.getDescription());
-        assertThat(deserialized.getPromptArguments().size())
-                .isEqualTo(original.getPromptArguments().size());
+        assertThat(deserialized.getPromptArguments()).hasSameSizeAs(original.getPromptArguments());
         assertThat(deserialized.getMcpServer()).isEqualTo(original.getMcpServer());
     }
 
@@ -126,7 +121,7 @@ class MCPSerializationTest {
         headers.put("Header2", "Value2");
         headers.put("Header3", "Value3");
 
-        MCPServer server = MCPServer.builder("http://localhost:8000/mcp").headers(headers).build();
+        MCPServer server = MCPServer.builder(DEFAULT_ENDPOINT).headers(headers).build();
 
         Map<String, MCPPrompt.PromptArgument> args = new HashMap<>();
         args.put("arg1", new MCPPrompt.PromptArgument("arg1", "Argument 1", true));

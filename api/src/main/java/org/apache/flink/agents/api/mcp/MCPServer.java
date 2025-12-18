@@ -78,7 +78,6 @@ public class MCPServer extends SerializableResource {
     private static final String FIELD_ENDPOINT = "endpoint";
     private static final String FIELD_HEADERS = "headers";
     private static final String FIELD_TIMEOUT_SECONDS = "timeoutSeconds";
-    private static final String FIELD_SSE_READ_TIMEOUT_SECONDS = "sseReadTimeoutSeconds";
     private static final String FIELD_AUTH = "auth";
 
     @JsonProperty(FIELD_ENDPOINT)
