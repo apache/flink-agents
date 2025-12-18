@@ -113,7 +113,7 @@ def test_workflow() -> None:  # noqa: D103
 
     expected_output = []
     with Path.open(
-        Path(f"{current_dir}/resources/ground_truth/test_workflow.txt")
+        Path(f"{current_dir}/../resources/ground_truth/test_workflow.txt")
     ) as f:
         for line in f:
             expected_output.append(json.loads(line))  # noqa:PERF401

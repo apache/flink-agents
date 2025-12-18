@@ -142,7 +142,7 @@ python_tests() {
         fi
         if $run_e2e; then
             # There will be an individual build step before run e2e test for including java dist
-            uv run --no-sync pytest flink_agents -s -k "e2e_tests"
+            uv run --no-sync pytest flink_agents -s -k "e2e_tests_integration"
         else
             uv sync --extra test
             uv run pytest flink_agents -k "not e2e_tests"
@@ -168,7 +168,7 @@ python_tests() {
             echo "Running tests with pytest..."
         fi
         if $run_e2e; then
-            pytest flink_agents -k "e2e_tests"
+            pytest flink_agents -k "e2e_tests_integration"
         else
             pytest flink_agents -k "not e2e_tests"
         fi

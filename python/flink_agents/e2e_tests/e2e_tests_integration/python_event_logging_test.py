@@ -79,7 +79,7 @@ def test_python_event_logging() -> None:
     input_datastream = env.from_source(
         source=FileSource.for_record_stream_format(
             StreamFormat.text_line_format(),
-            f"file:///{current_dir}/resources/input/input_data.txt",
+            f"file:///{current_dir}/../resources/input/input_data.txt",
         ).build(),
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="python_event_logging_test",

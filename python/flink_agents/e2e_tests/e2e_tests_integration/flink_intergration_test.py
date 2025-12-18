@@ -33,7 +33,7 @@ from pyflink.datastream.connectors.file_system import (
 from pyflink.table import DataTypes, Schema, StreamTableEnvironment, TableDescriptor
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from flink_agents.e2e_tests.flink_integration_agent import (
+from flink_agents.e2e_tests.e2e_tests_integration.flink_integration_agent import (
     DataStreamAgent,
     DataStreamToTableAgent,
     ItemData,
@@ -60,7 +60,7 @@ def test_from_datastream_to_datastream(tmp_path: Path) -> None:  # noqa: D103
     # we use continuous file source here.
     input_datastream = env.from_source(
         source=FileSource.for_record_stream_format(
-            StreamFormat.text_line_format(), f"file:///{current_dir}/resources/input"
+            StreamFormat.text_line_format(), f"file:///{current_dir}/../resources/input"
         ).build(),
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
@@ -94,7 +94,7 @@ def test_from_datastream_to_datastream(tmp_path: Path) -> None:  # noqa: D103
     check_result(
         result_dir=result_dir,
         groud_truth_dir=Path(
-            f"{current_dir}/resources/ground_truth/test_from_datastream_to_datastream.txt"
+            f"{current_dir}/../resources/ground_truth/test_from_datastream_to_datastream.txt"
         ),
     )
 
@@ -118,7 +118,7 @@ def test_from_table_to_table(tmp_path: Path) -> None:  # noqa: D103
             .build()
         )
         .option("format", "json")
-        .option("path", f"file:///{current_dir}/resources/input")
+        .option("path", f"file:///{current_dir}/../resources/input")
         .build(),
     )
 
@@ -169,7 +169,7 @@ def test_from_table_to_table(tmp_path: Path) -> None:  # noqa: D103
     check_result(
         result_dir=result_dir,
         groud_truth_dir=Path(
-            f"{current_dir}/resources/ground_truth/test_from_table_to_table.txt"
+            f"{current_dir}/../resources/ground_truth/test_from_table_to_table.txt"
         ),
     )
 
@@ -185,7 +185,7 @@ def test_from_datastream_to_table(tmp_path: Path) -> None:  # noqa: D103
     # we use continuous file source here.
     input_datastream = env.from_source(
         source=FileSource.for_record_stream_format(
-            StreamFormat.text_line_format(), f"file:///{current_dir}/resources/input"
+            StreamFormat.text_line_format(), f"file:///{current_dir}/../resources/input"
         ).build(),
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
@@ -242,6 +242,6 @@ def test_from_datastream_to_table(tmp_path: Path) -> None:  # noqa: D103
     check_result(
         result_dir=result_dir,
         groud_truth_dir=Path(
-            f"{current_dir}/resources/ground_truth/test_from_table_to_table.txt"
+            f"{current_dir}/../resources/ground_truth/test_from_table_to_table.txt"
         ),
     )

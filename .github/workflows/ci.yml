@@ -173,6 +173,4 @@ jobs:
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
       - name: Run e2e tests
-        run: |
-          export PYTHONPATH="${{ github.workspace }}/python/.venv/lib/python${{ matrix.python-version }}/site-packages:$PYTHONPATH"
-          tools/e2e.sh
+        run: bash tools/e2e.sh

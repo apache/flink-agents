@@ -21,7 +21,9 @@ from pathlib import Path
 import pytest
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from flink_agents.e2e_tests.chat_model_integration_agent import ChatModelTestAgent
+from flink_agents.e2e_tests.e2e_tests_integration.chat_model_integration_agent import (
+    ChatModelTestAgent,
+)
 from flink_agents.e2e_tests.test_utils import pull_model
 
 current_dir = Path(__file__).parent

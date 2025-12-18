@@ -35,18 +35,6 @@ function run_test {
   fi
 }
 
-function run_python_test {
-  local test_script="$1"
-  shift
-  local args=("$@")
-
-  if [[ ! -d "$python_dir" ]]; then
-    echo "Error: Python directory '$python_dir' does not exist. Skipping test."
-    return 1
-  fi
-
-  cd "$python_dir" && uv run bash "$test_script" "${args[@]}"
-}
 
 function run_agent_plan_compatibility_test {
   if [[ ! -d "$python_dir" ]]; then
@@ -54,7 +42,7 @@ function run_agent_plan_compatibility_test {
     return 1
   fi
 
-  cd "$python_dir" && uv run bash ../e2e-test/test-scripts/test_agent_plan_compatibility.sh "$tempdir" "$jar_path"
+  cd "$python_dir" && uv run --no-sync bash ../e2e-test/test-scripts/test_agent_plan_compatibility.sh "$tempdir" "$jar_path"
 }
 
 function run_cross_language_config_test {
@@ -63,20 +51,38 @@ function run_cross_language_config_test {
     return 1
   fi
 
-  cd "$python_dir" && uv run bash ../e2e-test/test-scripts/test_java_config_in_python.sh
+  cd "$python_dir" && uv run --no-sync bash ../e2e-test/test-scripts/test_java_config_in_python.sh
 }
 
-function run_resource_cross_language_test {
-  # This test only runs Maven, no need for Python environment
-  # Ensure we're in the project root directory
-  cd "$project_root"
-  uv run bash e2e-test/test-scripts/test_resource_cross_language.sh
+function run_resource_cross_language_test_in_java {
+  if [[ ! -d "$python_dir" ]]; then
+    echo "Error: Python directory '$python_dir' does not exist. Skipping test."
+    return 1
+  fi
+
+  cd "$python_dir"
+
+  # Get Python version from uv's virtual environment and set PYTHONPATH
+  local python_version=$(uv run --no-sync python -c "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
+  if [[ -n "$python_version" ]]; then
+    export PYTHONPATH="$python_dir/.venv/lib/$python_version/site-packages:$PYTHONPATH"
+    echo "PYTHONPATH set to: $PYTHONPATH"
+  fi
+
+  uv run --no-sync bash ../e2e-test/test-scripts/test_resource_cross_language.sh
+}
+
+function run_resource_cross_language_test_in_python {
+  if [[ ! -d "$python_dir" ]]; then
+      echo "Error: Python directory '$python_dir' does not exist. Skipping test."
+      return 1
+    fi
+
+    cd "$python_dir" && uv run --no-sync pytest flink_agents -s -k "e2e_tests_resource_cross_language"
 }
 
 export TOTAL=0
 export PASSED=0
-
-run_test "Resource Cross-Language end-to-end test" "run_resource_cross_language_test"
 
 if [[ ! -d "e2e-test/target" ]]; then
   echo "Build flink-agents before run e2e tests."
@@ -101,9 +107,6 @@ if [[ ! -f "uv.lock" ]]; then
   cd python
 fi
 
-# Sync dependencies and ensure flink_agents is installed in editable mode
-uv sync --extra dev
-uv pip install -e .
 cd ..
 
 # Create temporary directory with better cross-platform compatibility
@@ -137,9 +140,8 @@ if [[ ! -d "$python_dir" ]]; then
   exit 1
 fi
 
-# Set up environment variables for uv
-export PYTHONPATH="$(pwd)/python"
-
+run_test "Resource Cross-Language end-to-end test in Java" "run_resource_cross_language_test_in_java"
+run_test "Resource Cross-Language end-to-end test in Python" "run_resource_cross_language_test_in_python"
 run_test "Agent plan compatibility end-to-end test" "run_agent_plan_compatibility_test"
 run_test "Cross-Language Config Option end-to-end test" "run_cross_language_config_test"
 

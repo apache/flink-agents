@@ -37,7 +37,7 @@ from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.tools.tool import Tool
-from flink_agents.e2e_tests.react_agent_tools import add, multiply
+from flink_agents.e2e_tests.e2e_tests_integration.react_agent_tools import add, multiply
 from flink_agents.e2e_tests.test_utils import pull_model
 from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
