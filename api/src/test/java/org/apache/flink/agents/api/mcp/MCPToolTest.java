@@ -32,12 +32,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Tests for {@link MCPTool}. */
 class MCPToolTest {
 
+    private static final String DEFAULT_ENDPOINT = "http://localhost:8000/mcp";
+
     @Test
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPTool with metadata and server")
     void testCreation() {
         ToolMetadata metadata = new ToolMetadata("add", "Add two numbers", "{\"type\":\"object\"}");
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
 
         MCPTool tool = new MCPTool(metadata, server);
 
@@ -56,7 +58,7 @@ class MCPToolTest {
                         "calculator",
                         "Calculate mathematical expressions",
                         "{\"type\":\"object\",\"properties\":{\"expression\":{\"type\":\"string\"}}}");
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
 
         MCPTool tool = new MCPTool(metadata, server);
 
@@ -73,7 +75,7 @@ class MCPToolTest {
     void testToolGetters() {
         ToolMetadata metadata =
                 new ToolMetadata("multiply", "Multiply two numbers", "{\"type\":\"object\"}");
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
 
         MCPTool tool = new MCPTool(metadata, server);
 
@@ -87,7 +89,7 @@ class MCPToolTest {
     @DisplayName("Test equals and hashCode")
     void testEqualsAndHashCode() {
         ToolMetadata metadata1 = new ToolMetadata("tool1", "Description", "{\"type\":\"object\"}");
-        MCPServer server1 = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server1 = new MCPServer(DEFAULT_ENDPOINT);
 
         MCPTool tool1 = new MCPTool(metadata1, server1);
         MCPTool tool2 = new MCPTool(metadata1, server1);
@@ -95,9 +97,7 @@ class MCPToolTest {
         ToolMetadata metadata2 = new ToolMetadata("tool2", "Description", "{\"type\":\"object\"}");
         MCPTool tool3 = new MCPTool(metadata2, server1);
 
-        assertThat(tool1).isEqualTo(tool2);
-        assertThat(tool1.hashCode()).isEqualTo(tool2.hashCode());
-        assertThat(tool1).isNotEqualTo(tool3);
+        assertThat(tool1).isEqualTo(tool2).hasSameHashCodeAs(tool2).isNotEqualTo(tool3);
     }
 
     @Test
@@ -105,13 +105,11 @@ class MCPToolTest {
     @DisplayName("Test toString")
     void testToString() {
         ToolMetadata metadata = new ToolMetadata("add", "Add numbers", "{\"type\":\"object\"}");
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         MCPTool tool = new MCPTool(metadata, server);
 
         String str = tool.toString();
-        assertThat(str).contains("MCPTool");
-        assertThat(str).contains("add");
-        assertThat(str).contains("http://localhost:8000/mcp");
+        assertThat(str).contains("MCPTool").contains("add").contains(DEFAULT_ENDPOINT);
     }
 
     @Test
@@ -120,7 +118,7 @@ class MCPToolTest {
     void testJsonSerialization() throws Exception {
         ToolMetadata metadata =
                 new ToolMetadata("multiply", "Multiply two numbers", "{\"type\":\"object\"}");
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         MCPTool original = new MCPTool(metadata, server);
 
         ObjectMapper mapper = new ObjectMapper();
@@ -149,7 +147,7 @@ class MCPToolTest {
 
         ToolMetadata metadata =
                 new ToolMetadata("complexTool", "Tool with complex schema", complexSchema);
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
 
         MCPTool tool = new MCPTool(metadata, server);
 

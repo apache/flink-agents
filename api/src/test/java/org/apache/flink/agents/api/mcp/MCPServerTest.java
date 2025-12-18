@@ -39,12 +39,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Tests for {@link MCPServer}. */
 class MCPServerTest {
 
+    private static final String DEFAULT_ENDPOINT = "http://localhost:8000/mcp";
+
     @Test
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPServer with builder")
     void testBuilderCreation() {
         MCPServer server =
-                MCPServer.builder("http://localhost:8000/mcp")
+                MCPServer.builder(DEFAULT_ENDPOINT)
                         .header("X-Custom-Header", "value")
                         .timeout(Duration.ofSeconds(30))
                         .auth(new BearerTokenAuth("test-token"))
@@ -60,9 +62,9 @@ class MCPServerTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPServer with simple constructor")
     void testSimpleConstructor() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
 
-        assertThat(server.getEndpoint()).isEqualTo("http://localhost:8000/mcp");
+        assertThat(server.getEndpoint()).isEqualTo(DEFAULT_ENDPOINT);
         assertThat(server.getHeaders()).isEmpty();
         assertThat(server.getTimeoutSeconds()).isEqualTo(30);
         assertThat(server.getAuth()).isNull();
@@ -76,7 +78,7 @@ class MCPServerTest {
         headers.put("Authorization", "Bearer token");
         headers.put("X-API-Key", "key123");
 
-        MCPServer server = MCPServer.builder("http://localhost:8000/mcp").headers(headers).build();
+        MCPServer server = MCPServer.builder(DEFAULT_ENDPOINT).headers(headers).build();
 
         assertThat(server.getHeaders()).hasSize(2);
         assertThat(server.getHeaders()).containsEntry("Authorization", "Bearer token");
@@ -89,21 +91,17 @@ class MCPServerTest {
     void testAuthenticationTypes() {
         // Bearer token auth
         MCPServer bearerServer =
-                MCPServer.builder("http://localhost:8000/mcp")
-                        .auth(new BearerTokenAuth("my-token"))
-                        .build();
+                MCPServer.builder(DEFAULT_ENDPOINT).auth(new BearerTokenAuth("my-token")).build();
         assertThat(bearerServer.getAuth()).isInstanceOf(BearerTokenAuth.class);
 
         // Basic auth
         MCPServer basicServer =
-                MCPServer.builder("http://localhost:8000/mcp")
-                        .auth(new BasicAuth("user", "pass"))
-                        .build();
+                MCPServer.builder(DEFAULT_ENDPOINT).auth(new BasicAuth("user", "pass")).build();
         assertThat(basicServer.getAuth()).isInstanceOf(BasicAuth.class);
 
         // API key auth
         MCPServer apiKeyServer =
-                MCPServer.builder("http://localhost:8000/mcp")
+                MCPServer.builder(DEFAULT_ENDPOINT)
                         .auth(new ApiKeyAuth("X-API-Key", "secret"))
                         .build();
         assertThat(apiKeyServer.getAuth()).isInstanceOf(ApiKeyAuth.class);
@@ -114,10 +112,10 @@ class MCPServerTest {
     @DisplayName("Validate HTTP endpoint")
     void testEndpointValidation() {
         // Valid endpoints
-        new MCPServer("http://localhost:8000/mcp");
+        new MCPServer(DEFAULT_ENDPOINT);
         new MCPServer("https://api.example.com/mcp");
 
-        // Invalid endpoints
+        // Null endpoint
         assertThatThrownBy(() -> new MCPServer(null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("endpoint cannot be null");
@@ -127,7 +125,7 @@ class MCPServerTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test resource type")
     void testResourceType() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         assertThat(server.getResourceType()).isEqualTo(ResourceType.MCP_SERVER);
     }
 
@@ -136,32 +134,24 @@ class MCPServerTest {
     @DisplayName("Test equals and hashCode")
     void testEqualsAndHashCode() {
         MCPServer server1 =
-                MCPServer.builder("http://localhost:8000/mcp")
-                        .timeout(Duration.ofSeconds(30))
-                        .build();
+                MCPServer.builder(DEFAULT_ENDPOINT).timeout(Duration.ofSeconds(30)).build();
 
         MCPServer server2 =
-                MCPServer.builder("http://localhost:8000/mcp")
-                        .timeout(Duration.ofSeconds(30))
-                        .build();
+                MCPServer.builder(DEFAULT_ENDPOINT).timeout(Duration.ofSeconds(30)).build();
 
         MCPServer server3 =
-                MCPServer.builder("http://localhost:8000/mcp")
-                        .timeout(Duration.ofSeconds(60))
-                        .build();
+                MCPServer.builder(DEFAULT_ENDPOINT).timeout(Duration.ofSeconds(60)).build();
 
-        assertThat(server1).isEqualTo(server2);
-        assertThat(server1.hashCode()).isEqualTo(server2.hashCode());
-        assertThat(server1).isNotEqualTo(server3);
+        assertThat(server1).hasSameHashCodeAs(server2).isEqualTo(server2).isNotEqualTo(server3);
     }
 
     @Test
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test toString")
     void testToString() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         assertThat(server.toString()).contains("MCPServer");
-        assertThat(server.toString()).contains("http://localhost:8000/mcp");
+        assertThat(server.toString()).contains(DEFAULT_ENDPOINT);
     }
 
     @Test
@@ -169,7 +159,7 @@ class MCPServerTest {
     @DisplayName("JSON serialization and deserialization")
     void testJsonSerialization() throws Exception {
         MCPServer original =
-                MCPServer.builder("http://localhost:8000/mcp")
+                MCPServer.builder(DEFAULT_ENDPOINT)
                         .header("X-Custom", "value")
                         .timeout(Duration.ofSeconds(45))
                         .auth(new BearerTokenAuth("test-token"))
@@ -194,30 +184,24 @@ class MCPServerTest {
     @DisplayName("JSON serialization with different auth types")
     void testJsonSerializationWithAuth() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
-        // Configure to ignore unknown properties during deserialization
-        mapper.configure(FAIL_ON_UNKNOWN_PROPERTIES, false);
 
         // Bearer token auth
         MCPServer bearerServer =
-                MCPServer.builder("http://localhost:8000")
-                        .auth(new BearerTokenAuth("token"))
-                        .build();
+                MCPServer.builder(DEFAULT_ENDPOINT).auth(new BearerTokenAuth("token")).build();
         String bearerJson = mapper.writeValueAsString(bearerServer);
         MCPServer bearerDeserialized = mapper.readValue(bearerJson, MCPServer.class);
         assertThat(bearerDeserialized.getAuth()).isInstanceOf(BearerTokenAuth.class);
 
         // Basic auth
         MCPServer basicServer =
-                MCPServer.builder("http://localhost:8000")
-                        .auth(new BasicAuth("user", "pass"))
-                        .build();
+                MCPServer.builder(DEFAULT_ENDPOINT).auth(new BasicAuth("user", "pass")).build();
         String basicJson = mapper.writeValueAsString(basicServer);
         MCPServer basicDeserialized = mapper.readValue(basicJson, MCPServer.class);
         assertThat(basicDeserialized.getAuth()).isInstanceOf(BasicAuth.class);
 
         // API key auth
         MCPServer apiKeyServer =
-                MCPServer.builder("http://localhost:8000")
+                MCPServer.builder(DEFAULT_ENDPOINT)
                         .auth(new ApiKeyAuth("X-API-Key", "secret"))
                         .build();
         String apiKeyJson = mapper.writeValueAsString(apiKeyServer);
@@ -232,7 +216,7 @@ class MCPServerTest {
         Map<String, String> headers = new HashMap<>();
         headers.put("X-Test", "value");
 
-        MCPServer server = MCPServer.builder("http://localhost:8000").headers(headers).build();
+        MCPServer server = MCPServer.builder(DEFAULT_ENDPOINT).headers(headers).build();
 
         // Modify original map
         headers.put("X-New", "new-value");
@@ -254,7 +238,7 @@ class MCPServerTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Close server gracefully")
     void testClose() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         // Should not throw any exception
         server.close();
         server.close(); // Calling twice should be safe

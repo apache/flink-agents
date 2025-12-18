@@ -33,11 +33,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Tests for {@link MCPPrompt}. */
 class MCPPromptTest {
 
+    private static final String DEFAULT_ENDPOINT = "http://localhost:8000/mcp";
+
     @Test
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPPrompt with required arguments")
     void testCreationWithRequiredArgs() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         Map<String, MCPPrompt.PromptArgument> args = new HashMap<>();
         args.put("name", new MCPPrompt.PromptArgument("name", "User name", true));
 
@@ -53,7 +55,7 @@ class MCPPromptTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPPrompt with optional arguments")
     void testCreationWithOptionalArgs() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         Map<String, MCPPrompt.PromptArgument> args = new HashMap<>();
         args.put("city", new MCPPrompt.PromptArgument("city", "City name", true));
         args.put("units", new MCPPrompt.PromptArgument("units", "Temperature units", false));
@@ -67,30 +69,9 @@ class MCPPromptTest {
 
     @Test
     @DisabledOnJre(JRE.JAVA_11)
-    @DisplayName("Test prompt argument validation - all required args present")
-    void testValidationWithAllRequiredArgs() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
-        Map<String, MCPPrompt.PromptArgument> args = new HashMap<>();
-        args.put("topic", new MCPPrompt.PromptArgument("topic", "Topic", true));
-        args.put("style", new MCPPrompt.PromptArgument("style", "Style", false));
-
-        MCPPrompt prompt = new MCPPrompt("essay", "Essay prompt", args, server);
-
-        // This should not throw - all required args are present
-        Map<String, String> params = new HashMap<>();
-        params.put("topic", "AI");
-        params.put("style", "formal");
-
-        // Verify prompt was created successfully
-        assertThat(prompt.getName()).isEqualTo("essay");
-        assertThat(prompt.getPromptArguments()).hasSize(2);
-    }
-
-    @Test
-    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Validate argument handling - required vs optional")
     void testArgumentValidation() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         Map<String, MCPPrompt.PromptArgument> args = new HashMap<>();
         args.put("required", new MCPPrompt.PromptArgument("required", "Required", true));
         args.put("optional", new MCPPrompt.PromptArgument("optional", "Optional", false));
@@ -122,16 +103,14 @@ class MCPPromptTest {
         MCPPrompt.PromptArgument arg2 = new MCPPrompt.PromptArgument("name", "Name", true);
         MCPPrompt.PromptArgument arg3 = new MCPPrompt.PromptArgument("name", "Different", true);
 
-        assertThat(arg1).isEqualTo(arg2);
-        assertThat(arg1.hashCode()).isEqualTo(arg2.hashCode());
-        assertThat(arg1).isNotEqualTo(arg3);
+        assertThat(arg1).isEqualTo(arg2).hasSameHashCodeAs(arg2).isNotEqualTo(arg3);
     }
 
     @Test
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test MCPPrompt equals and hashCode")
     void testEquals() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         Map<String, MCPPrompt.PromptArgument> args = new HashMap<>();
         args.put("arg1", new MCPPrompt.PromptArgument("arg1", "Arg 1", true));
 
@@ -139,29 +118,25 @@ class MCPPromptTest {
         MCPPrompt prompt2 = new MCPPrompt("test", "Test", args, server);
         MCPPrompt prompt3 = new MCPPrompt("other", "Other", args, server);
 
-        assertThat(prompt1).isEqualTo(prompt2);
-        assertThat(prompt1.hashCode()).isEqualTo(prompt2.hashCode());
-        assertThat(prompt1).isNotEqualTo(prompt3);
+        assertThat(prompt1).isEqualTo(prompt2).hasSameHashCodeAs(prompt2).isNotEqualTo(prompt3);
     }
 
     @Test
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test toString")
     void testToString() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         MCPPrompt prompt = new MCPPrompt("greeting", "Greeting prompt", new HashMap<>(), server);
 
         String str = prompt.toString();
-        assertThat(str).contains("MCPPrompt");
-        assertThat(str).contains("greeting");
-        assertThat(str).contains("http://localhost:8000/mcp");
+        assertThat(str).contains("MCPPrompt").contains("greeting").contains(DEFAULT_ENDPOINT);
     }
 
     @Test
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("JSON serialization and deserialization")
     void testJsonSerialization() throws Exception {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         Map<String, MCPPrompt.PromptArgument> args = new HashMap<>();
         args.put("topic", new MCPPrompt.PromptArgument("topic", "Topic name", true));
         args.put("style", new MCPPrompt.PromptArgument("style", "Writing style", false));
@@ -186,7 +161,7 @@ class MCPPromptTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Arguments map is immutable from outside")
     void testArgumentsImmutability() {
-        MCPServer server = new MCPServer("http://localhost:8000/mcp");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
         Map<String, MCPPrompt.PromptArgument> args = new HashMap<>();
         args.put("arg1", new MCPPrompt.PromptArgument("arg1", "Arg 1", true));
 

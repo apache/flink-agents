@@ -62,7 +62,7 @@ under the License.
 
     <profiles>
         <profile>
-            <id>mcp-disabled</id>
+            <id>java-11</id>
             <activation>
                 <jdk>[11,17)</jdk>
             </activation>
