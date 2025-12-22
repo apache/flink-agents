@@ -103,7 +103,7 @@ String PRODUCT_SUGGESTION_PROMPT_STR =
                 + "{input}";
 
 
-Prompt productSuggestionPrompt = new LocalPrompt(PRODUCT_SUGGESTION_PROMPT_STR);
+Prompt productSuggestionPrompt = Prompt.fromText(PRODUCT_SUGGESTION_PROMPT_STR);
 ```
 {{< /tab >}}
 
@@ -158,7 +158,7 @@ review_analysis_prompt = Prompt.from_messages(
 {{< tab "Java" >}}
 ```java
 Prompt reviewAnalysisPrompt =
-        new LocalPrompt(
+        new Prompt.fromMessages(
                 Arrays.asList(
                         new ChatMessage(
                                 MessageRole.SYSTEM,

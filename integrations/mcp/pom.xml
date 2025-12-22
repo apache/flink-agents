@@ -19,52 +19,41 @@ under the License.
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
+
     <parent>
         <groupId>org.apache.flink</groupId>
-        <artifactId>flink-agents</artifactId>
+        <artifactId>flink-agents-integrations</artifactId>
         <version>0.2-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>flink-agents-api</artifactId>
-    <name>Flink Agents : API</name>
+    <artifactId>flink-agents-integrations-mcp</artifactId>
+    <name>Flink Agents : Integrations: MCP</name>
+    <packaging>jar</packaging>
+
     <dependencies>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-metrics-core</artifactId>
-            <version>${flink.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-streaming-java</artifactId>
-            <version>${flink.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-api-java</artifactId>
-            <version>${flink.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-api-java-bridge</artifactId>
-            <version>${flink.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.alibaba</groupId>
-            <artifactId>pemja</artifactId>
-            <version>${pemja.version}</version>
-            <scope>provided</scope>
+            <artifactId>flink-agents-api</artifactId>
+            <version>${project.version}</version>
         </dependency>
     </dependencies>
 
     <profiles>
+        <profile>
+            <id>java-17</id>
+            <activation>
+                <jdk>[17,)</jdk>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>io.modelcontextprotocol.sdk</groupId>
+                    <artifactId>mcp</artifactId>
+                    <version>0.16.0</version>
+                </dependency>
+            </dependencies>
+        </profile>
+
         <profile>
             <id>java-11</id>
             <activation>
@@ -77,7 +66,19 @@ under the License.
                         <artifactId>maven-compiler-plugin</artifactId>
                         <configuration>
                             <excludes>
-                                <exclude>org/apache/flink/agents/api/annotation/MCPServer.java</exclude>
+                                <exclude>org/apache/flink/agents/integrations/mcp/**/*.java</exclude>
+                            </excludes>
+                            <testExcludes>
+                                <testExclude>org/apache/flink/agents/integrations/mcp/**/*.java</testExclude>
+                            </testExcludes>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes>
+                                <exclude>**/mcp/**/*Test.java</exclude>
                             </excludes>
                         </configuration>
                     </plugin>

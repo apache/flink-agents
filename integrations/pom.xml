@@ -41,6 +41,7 @@ under the License.
         <module>chat-models</module>
         <module>embedding-models</module>
         <module>vector-stores</module>
+        <module>mcp</module>
     </modules>
 
 </project>

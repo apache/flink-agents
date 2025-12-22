@@ -16,12 +16,12 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api.mcp;
+package org.apache.flink.agents.integrations.mcp;
 
-import org.apache.flink.agents.api.mcp.auth.ApiKeyAuth;
-import org.apache.flink.agents.api.mcp.auth.BasicAuth;
-import org.apache.flink.agents.api.mcp.auth.BearerTokenAuth;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.integrations.mcp.auth.ApiKeyAuth;
+import org.apache.flink.agents.integrations.mcp.auth.BasicAuth;
+import org.apache.flink.agents.integrations.mcp.auth.BearerTokenAuth;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

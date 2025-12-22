@@ -30,7 +30,6 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
-import org.apache.flink.agents.api.prompt.LocalPrompt;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -112,7 +111,7 @@ class AgentPlanDeclareChatModelTest {
                         agentPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
         assertNotNull(model);
 
-        Prompt prompt = new LocalPrompt("Hello world");
+        Prompt prompt = Prompt.fromText("Hello world");
         ChatMessage reply = model.chat(prompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertEquals(MessageRole.ASSISTANT, reply.getRole());
@@ -129,7 +128,7 @@ class AgentPlanDeclareChatModelTest {
         BaseChatModelSetup model =
                 (BaseChatModelSetup) restored.getResource("testChatModel", ResourceType.CHAT_MODEL);
         ChatMessage reply =
-                model.chat(new LocalPrompt("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
+                model.chat(Prompt.fromText("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
         assertEquals("ok:Hi", reply.getContent());
     }
 

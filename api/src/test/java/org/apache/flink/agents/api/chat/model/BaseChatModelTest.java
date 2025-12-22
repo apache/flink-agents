@@ -20,7 +20,6 @@ package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
-import org.apache.flink.agents.api.prompt.LocalPrompt;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -95,14 +94,14 @@ class BaseChatModelTest {
                         null);
 
         // Create simple prompt
-        simplePrompt = new LocalPrompt("You are a helpful assistant. User says: {user_input}");
+        simplePrompt = Prompt.fromText("You are a helpful assistant. User says: {user_input}");
 
         // Create conversation prompt
         List<ChatMessage> conversationTemplate =
                 Arrays.asList(
                         new ChatMessage(MessageRole.SYSTEM, "You are a helpful AI assistant."),
                         new ChatMessage(MessageRole.USER, "{user_message}"));
-        conversationPrompt = new LocalPrompt(conversationTemplate);
+        conversationPrompt = Prompt.fromMessages(conversationTemplate);
     }
 
     @Test
@@ -119,7 +118,7 @@ class BaseChatModelTest {
 
         // Format the prompt with variables
         Prompt formattedPrompt =
-                new LocalPrompt(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
+                Prompt.fromMessages(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
 
         ChatMessage response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
@@ -136,7 +135,8 @@ class BaseChatModelTest {
         variables.put("user_message", "What's the weather like?");
 
         Prompt formattedPrompt =
-                new LocalPrompt(conversationPrompt.formatMessages(MessageRole.SYSTEM, variables));
+                Prompt.fromMessages(
+                        conversationPrompt.formatMessages(MessageRole.SYSTEM, variables));
 
         ChatMessage response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
@@ -149,7 +149,7 @@ class BaseChatModelTest {
     @Test
     @DisplayName("Test chat with empty prompt")
     void testChatWithEmptyPrompt() {
-        Prompt emptyPrompt = new LocalPrompt("");
+        Prompt emptyPrompt = Prompt.fromText("");
 
         ChatMessage response =
                 chatModel.chat(emptyPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
@@ -170,7 +170,7 @@ class BaseChatModelTest {
                         new ChatMessage(
                                 MessageRole.USER, "Second message - this should be the response"));
 
-        Prompt multiPrompt = new LocalPrompt(multipleMessages);
+        Prompt multiPrompt = Prompt.fromMessages(multipleMessages);
 
         ChatMessage response =
                 chatModel.chat(multiPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
@@ -188,7 +188,7 @@ class BaseChatModelTest {
         variables.put("user_input", "Test message");
 
         Prompt formattedPrompt =
-                new LocalPrompt(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
+                Prompt.fromMessages(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
 
         ChatMessage response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
@@ -200,7 +200,7 @@ class BaseChatModelTest {
     @DisplayName("Test chat with system-only prompt")
     void testChatWithSystemOnlyPrompt() {
         Prompt systemOnlyPrompt =
-                new LocalPrompt(
+                Prompt.fromMessages(
                         Arrays.asList(
                                 new ChatMessage(MessageRole.SYSTEM, "System instruction only")));
 
@@ -219,7 +219,7 @@ class BaseChatModelTest {
         variables.put("user_input", "Format test");
 
         Prompt formattedPrompt =
-                new LocalPrompt(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
+                Prompt.fromMessages(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
 
         ChatMessage response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
@@ -244,7 +244,7 @@ class BaseChatModelTest {
         variables.put("user_input", longInput.toString());
 
         Prompt formattedPrompt =
-                new LocalPrompt(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
+                Prompt.fromMessages(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
 
         ChatMessage response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));

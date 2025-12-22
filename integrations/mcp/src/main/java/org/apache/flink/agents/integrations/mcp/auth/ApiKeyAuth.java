@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api.mcp.auth;
+package org.apache.flink.agents.integrations.mcp.auth;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
@@ -25,39 +25,48 @@ import java.net.http.HttpRequest;
 import java.util.Objects;
 
 /**
- * Bearer token authentication for OAuth 2.0 and similar token-based authentication schemes.
+ * API key authentication for HTTP requests.
  *
- * <p>This authentication method adds an "Authorization: Bearer {token}" header to requests.
+ * <p>This authentication method adds a custom header with an API key to requests. Common header
+ * names include "X-API-Key", "Api-Key", or any custom header.
  *
  * <p>Example usage:
  *
  * <pre>{@code
  * MCPServer server = MCPServer.builder("https://api.example.com/mcp")
- *     .auth(new BearerTokenAuth("your-oauth-token"))
+ *     .auth(new ApiKeyAuth("X-API-Key", "your-api-key"))
  *     .build();
  * }</pre>
  */
-public class BearerTokenAuth implements Auth {
+public class ApiKeyAuth implements Auth {
 
-    private static final String AUTH_TYPE = "bearer";
-    private static final String FIELD_TOKEN = "token";
+    private static final String AUTH_TYPE = "api_key";
+    private static final String FIELD_HEADER_NAME = "headerName";
+    private static final String FIELD_API_KEY = "apiKey";
 
-    @JsonProperty(FIELD_TOKEN)
-    private final String token;
+    @JsonProperty(FIELD_HEADER_NAME)
+    private final String headerName;
+
+    @JsonProperty(FIELD_API_KEY)
+    private final String apiKey;
 
     /**
-     * Create a new Bearer token authentication.
+     * Create a new API key authentication.
      *
-     * @param token The bearer token to use for authentication
+     * @param headerName The name of the header to use (e.g., "X-API-Key")
+     * @param apiKey The API key value
      */
     @JsonCreator
-    public BearerTokenAuth(@JsonProperty(FIELD_TOKEN) String token) {
-        this.token = Objects.requireNonNull(token, "token cannot be null");
+    public ApiKeyAuth(
+            @JsonProperty(FIELD_HEADER_NAME) String headerName,
+            @JsonProperty(FIELD_API_KEY) String apiKey) {
+        this.headerName = Objects.requireNonNull(headerName, "headerName cannot be null");
+        this.apiKey = Objects.requireNonNull(apiKey, "apiKey cannot be null");
     }
 
     @Override
     public void applyAuth(HttpRequest.Builder requestBuilder) {
-        requestBuilder.header("Authorization", "Bearer " + token);
+        requestBuilder.header(headerName, apiKey);
     }
 
     @Override
@@ -65,25 +74,29 @@ public class BearerTokenAuth implements Auth {
         return AUTH_TYPE;
     }
 
-    public String getToken() {
-        return token;
+    public String getHeaderName() {
+        return headerName;
+    }
+
+    public String getApiKey() {
+        return apiKey;
     }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        BearerTokenAuth that = (BearerTokenAuth) o;
-        return Objects.equals(token, that.token);
+        ApiKeyAuth that = (ApiKeyAuth) o;
+        return Objects.equals(headerName, that.headerName) && Objects.equals(apiKey, that.apiKey);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(token);
+        return Objects.hash(headerName, apiKey);
     }
 
     @Override
     public String toString() {
-        return "BearerTokenAuth{token=***}";
+        return "ApiKeyAuth{headerName='" + headerName + "', apiKey=***}";
     }
 }

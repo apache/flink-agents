@@ -18,9 +18,6 @@
 
 package org.apache.flink.agents.api.annotation;
 
-import org.apache.flink.agents.api.mcp.MCPPrompt;
-import org.apache.flink.agents.api.mcp.MCPTool;
-
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -62,9 +59,9 @@ import java.lang.annotation.Target;
  *
  * <p>This is the Java equivalent of Python's {@code @mcp_server} decorator.
  *
- * @see org.apache.flink.agents.api.mcp.MCPServer
- * @see MCPTool
- * @see MCPPrompt
+ * @see org.apache.flink.agents.integrations.mcp.MCPServer
+ * @see org.apache.flink.agents.integrations.mcp.MCPTool
+ * @see org.apache.flink.agents.integrations.mcp.MCPPrompt
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
