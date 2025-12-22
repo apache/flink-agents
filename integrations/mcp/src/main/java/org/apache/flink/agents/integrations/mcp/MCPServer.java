@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api.mcp;
+package org.apache.flink.agents.integrations.mcp;
 
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
@@ -24,13 +24,13 @@ import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTranspor
 import io.modelcontextprotocol.spec.McpSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
-import org.apache.flink.agents.api.mcp.auth.ApiKeyAuth;
-import org.apache.flink.agents.api.mcp.auth.Auth;
-import org.apache.flink.agents.api.mcp.auth.BasicAuth;
-import org.apache.flink.agents.api.mcp.auth.BearerTokenAuth;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.integrations.mcp.auth.ApiKeyAuth;
+import org.apache.flink.agents.integrations.mcp.auth.Auth;
+import org.apache.flink.agents.integrations.mcp.auth.BasicAuth;
+import org.apache.flink.agents.integrations.mcp.auth.BearerTokenAuth;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;

@@ -25,7 +25,6 @@ import org.apache.flink.agents.api.agents.ReActAgentConfigOptions;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
-import org.apache.flink.agents.api.prompt.LocalPrompt;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -167,7 +166,7 @@ public class ReActAgentTest {
                         .build();
 
         Prompt prompt =
-                new LocalPrompt(
+                Prompt.fromMessages(
                         List.of(
                                 new ChatMessage(
                                         MessageRole.SYSTEM,
