@@ -14,6 +14,9 @@
 #   See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+
+DEFAULT_FLINK_VERSION="2.2"
+
 function run_test {
   local description="$1"
   local command="$2"
@@ -139,6 +142,9 @@ if [[ ! -d "$python_dir" ]]; then
   printf "\n0/2 bash e2e-tests passed (skipped due to missing python directory)\n"
   exit 1
 fi
+
+cd "$python_dir"
+uv pip install apache-flink~=${DEFAULT_FLINK_VERSION}.0
 
 run_test "Resource Cross-Language end-to-end test in Java" "run_resource_cross_language_test_in_java"
 run_test "Resource Cross-Language end-to-end test in Python" "run_resource_cross_language_test_in_python"

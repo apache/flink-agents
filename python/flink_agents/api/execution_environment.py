@@ -31,6 +31,7 @@ from flink_agents.api.resource import (
     ResourceType,
     SerializableResource,
 )
+from flink_agents.api.version_compatibility import flink_version_manager
 
 
 class AgentBuilder(ABC):
@@ -127,11 +128,30 @@ class AgentsExecutionEnvironment(ABC):
                 "flink_agents.runtime.local_execution_environment"
             ).create_instance(env=env, t_env=t_env, **kwargs)
         else:
-            for path in files("flink_agents.lib").iterdir():
-                env.add_jars(f"file://{path}")
-            return importlib.import_module(
-                "flink_agents.runtime.remote_execution_environment"
-            ).create_instance(env=env, t_env=t_env, **kwargs)
+            major_version = flink_version_manager.major_version
+            if major_version:
+                # Determine the version-specific lib directory
+                version_dir = f"flink-{major_version}"
+                lib_base = files("flink_agents.lib")
+                version_lib = lib_base / version_dir
+
+                # Check if version-specific directory exists
+                if version_lib.is_dir():
+                    for jar_file in version_lib.iterdir():
+                        if jar_file.is_file() and str(jar_file).endswith(".jar"):
+                            env.add_jars(f"file://{jar_file}")
+                else:
+                    err_msg = (
+                        f"Flink Agents dist JAR for Flink {major_version} not found."
+                    )
+                    raise FileNotFoundError(err_msg)
+
+                return importlib.import_module(
+                    "flink_agents.runtime.remote_execution_environment"
+                ).create_instance(env=env, t_env=t_env, **kwargs)
+            else:
+                err_msg = "Apache Flink is not installed."
+                raise ModuleNotFoundError(err_msg)
 
     @abstractmethod
     def get_config(self, path: str | None = None) -> Configuration:
