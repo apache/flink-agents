@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api;
 
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;

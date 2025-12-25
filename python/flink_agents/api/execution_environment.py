@@ -24,7 +24,7 @@ from pyflink.common import TypeInformation
 from pyflink.datastream import DataStream, KeySelector, StreamExecutionEnvironment
 from pyflink.table import Schema, StreamTableEnvironment, Table
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.configuration import Configuration
 from flink_agents.api.resource import (
     ResourceDescriptor,

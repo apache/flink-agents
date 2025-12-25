@@ -19,7 +19,6 @@
 package org.apache.flink.agents.api.agents;
 
 import org.apache.commons.lang3.ClassUtils;
-import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Action;

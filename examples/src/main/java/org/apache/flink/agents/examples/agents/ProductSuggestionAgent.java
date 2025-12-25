@@ -20,7 +20,7 @@ package org.apache.flink.agents.examples.agents;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.agents.api.Agent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Action;

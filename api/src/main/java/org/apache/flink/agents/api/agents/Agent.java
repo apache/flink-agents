@@ -16,8 +16,9 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api;
+package org.apache.flink.agents.api.agents;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;

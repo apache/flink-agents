@@ -18,7 +18,7 @@
 
 package org.apache.flink.agents.integration.test;
 
-import org.apache.flink.agents.api.Agent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.agents.ReActAgent;
 import org.apache.flink.agents.api.agents.ReActAgentConfigOptions;

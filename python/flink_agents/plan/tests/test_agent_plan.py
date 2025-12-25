@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Sequence
 
 import pytest
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import (

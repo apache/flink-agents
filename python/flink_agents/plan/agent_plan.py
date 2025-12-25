@@ -19,7 +19,7 @@ from typing import Any, Dict, List, cast
 
 from pydantic import BaseModel, field_serializer, model_validator
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.tools.mcp import MCPServer
 from flink_agents.plan.actions.action import Action

@@ -30,7 +30,7 @@ from pydantic import (
 from pyflink.common import Row
 from pyflink.common.typeinfo import BasicType, BasicTypeInfo, RowTypeInfo
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.configuration import ConfigOption
 from flink_agents.api.decorators import action
