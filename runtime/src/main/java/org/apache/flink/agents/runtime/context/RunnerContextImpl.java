@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.context;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -29,7 +30,6 @@ import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.util.Preconditions;
 
 import java.util.ArrayList;

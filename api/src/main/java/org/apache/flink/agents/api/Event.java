@@ -18,7 +18,8 @@
 
 package org.apache.flink.agents.api;
 
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -37,7 +38,9 @@ public abstract class Event {
     }
 
     @JsonCreator
-    public Event(UUID id, Map<String, Object> attributes) {
+    public Event(
+            @JsonProperty("id") UUID id,
+            @JsonProperty("attributes") Map<String, Object> attributes) {
         this.id = id;
         this.attributes = attributes;
     }

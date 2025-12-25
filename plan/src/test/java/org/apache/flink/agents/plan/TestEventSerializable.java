@@ -18,10 +18,10 @@
 
 package org.apache.flink.agents.plan;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.utils.JsonUtils;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 

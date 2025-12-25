@@ -44,8 +44,7 @@ under the License.
         <flink.version>1.20.3</flink.version>
         <kafka.version>4.0.0</kafka.version>
         <junit5.version>5.10.1</junit5.version>
-        <flink.shaded.version>17.0</flink.shaded.version>
-        <flink.shaded.jackson.version>2.14.2</flink.shaded.jackson.version>
+        <jackson.version>2.18.2</jackson.version>
         <pemja.version>0.5.5</pemja.version>
         <log4j2.version>2.23.1</log4j2.version>
         <slf4j.version>1.7.36</slf4j.version>
@@ -64,6 +63,19 @@ under the License.
         <module>integrations</module>
         <module>dist</module>
     </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Jackson BOM (Bill of Materials) Unified management of all Jackson module versions -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>

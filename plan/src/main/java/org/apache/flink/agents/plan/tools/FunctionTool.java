@@ -20,6 +20,8 @@
 
 package org.apache.flink.agents.plan.tools;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -30,8 +32,6 @@ import org.apache.flink.agents.plan.Function;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonDeserializer;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonSerializer;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
