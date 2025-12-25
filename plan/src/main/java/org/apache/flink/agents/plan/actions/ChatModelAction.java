@@ -67,12 +67,12 @@ public class ChatModelAction {
                 (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
 
         ChatMessage response = chatModel.chat(messages, Map.of());
-        MemoryObject stm = ctx.getShortTermMemory();
+        MemoryObject sensoryMem = ctx.getSensoryMemory();
 
         if (!response.getToolCalls().isEmpty()) {
             Map<UUID, Object> toolCallContext;
-            if (stm.isExist(TOOL_CALL_CONTEXT)) {
-                toolCallContext = (Map<UUID, Object>) stm.get(TOOL_CALL_CONTEXT).getValue();
+            if (sensoryMem.isExist(TOOL_CALL_CONTEXT)) {
+                toolCallContext = (Map<UUID, Object>) sensoryMem.get(TOOL_CALL_CONTEXT).getValue();
             } else {
                 toolCallContext = new HashMap<>();
             }
@@ -84,32 +84,32 @@ public class ChatModelAction {
 
             messageContext.add(response);
             toolCallContext.put(initialRequestId, messageContext);
-            stm.set(TOOL_CALL_CONTEXT, toolCallContext);
+            sensoryMem.set(TOOL_CALL_CONTEXT, toolCallContext);
 
             ToolRequestEvent toolRequestEvent =
                     new ToolRequestEvent(model, response.getToolCalls());
 
             Map<UUID, Object> toolRequestEventContext;
-            if (stm.isExist(TOOL_REQUEST_EVENT_CONTEXT)) {
+            if (sensoryMem.isExist(TOOL_REQUEST_EVENT_CONTEXT)) {
                 toolRequestEventContext =
-                        (Map<UUID, Object>) stm.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
+                        (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
             } else {
                 toolRequestEventContext = new HashMap<>();
             }
             toolRequestEventContext.put(
                     toolRequestEvent.getId(),
                     Map.of(INITIAL_REQUEST_ID, initialRequestId, MODEL, model));
-            stm.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
+            sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
 
             ctx.sendEvent(toolRequestEvent);
         } else {
             // clean tool call context
-            if (stm.isExist(TOOL_CALL_CONTEXT)) {
+            if (sensoryMem.isExist(TOOL_CALL_CONTEXT)) {
                 Map<UUID, Object> toolCallContext =
-                        (Map<UUID, Object>) stm.get(TOOL_CALL_CONTEXT).getValue();
+                        (Map<UUID, Object>) sensoryMem.get(TOOL_CALL_CONTEXT).getValue();
                 if (toolCallContext.containsKey(initialRequestId)) {
                     toolCallContext.remove(initialRequestId);
-                    stm.set(TOOL_CALL_CONTEXT, toolCallContext);
+                    sensoryMem.set(TOOL_CALL_CONTEXT, toolCallContext);
                 }
             }
 
@@ -131,7 +131,7 @@ public class ChatModelAction {
     @SuppressWarnings("unchecked")
     public static void processChatRequestOrToolResponse(Event event, RunnerContext ctx)
             throws Exception {
-        MemoryObject stm = ctx.getShortTermMemory();
+        MemoryObject sensoryMem = ctx.getSensoryMemory();
         if (event instanceof ChatRequestEvent) {
             ChatRequestEvent chatRequestEvent = (ChatRequestEvent) event;
             chat(
@@ -144,19 +144,19 @@ public class ChatModelAction {
             UUID toolRequestId = toolResponseEvent.getRequestId();
             // get tool request context from memory
             Map<UUID, Object> toolRequestEventContext =
-                    (Map<UUID, Object>) stm.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
+                    (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
             Map<String, Object> context =
                     (Map<String, Object>) toolRequestEventContext.get(toolRequestId);
             UUID initialRequestId = (UUID) context.get(INITIAL_REQUEST_ID);
             String model = (String) context.get(MODEL);
             toolRequestEventContext.remove(toolRequestId);
-            stm.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
+            sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
             Map<String, ToolResponse> responses = toolResponseEvent.getResponses();
             Map<String, Boolean> success = toolResponseEvent.getSuccess();
 
             // get tool call context
             Map<UUID, Object> toolCallContext =
-                    (Map<UUID, Object>) stm.get(TOOL_CALL_CONTEXT).getValue();
+                    (Map<UUID, Object>) sensoryMem.get(TOOL_CALL_CONTEXT).getValue();
             // update tool call context
             List<ChatMessage> messages =
                     new ArrayList<>((List<ChatMessage>) toolCallContext.get(initialRequestId));
@@ -185,7 +185,7 @@ public class ChatModelAction {
             }
             toolCallContext.put(initialRequestId, messages);
             // overwrite tool call context
-            stm.set(TOOL_CALL_CONTEXT, toolCallContext);
+            sensoryMem.set(TOOL_CALL_CONTEXT, toolCallContext);
 
             chat(initialRequestId, model, messages, ctx);
         } else {

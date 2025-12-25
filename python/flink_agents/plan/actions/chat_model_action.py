@@ -53,7 +53,7 @@ def chat(
 
     # TODO: support async execution of chat.
     response = chat_model.chat(messages)
-    short_term_memory = ctx.short_term_memory
+    sensory_memory = ctx.sensory_memory
 
     # generate tool request event according tool calls in response
     if len(response.tool_calls) > 0:
@@ -66,7 +66,7 @@ def chat(
         #  to store and remove the specific tool context directly.
 
         # save tool call context
-        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
+        tool_call_context = sensory_memory.get(_TOOL_CALL_CONTEXT)
         if not tool_call_context:
             tool_call_context = {}
         if initial_request_id not in tool_call_context:
@@ -74,7 +74,7 @@ def chat(
         # append response to tool call context
         tool_call_context[initial_request_id].append(response)
         # update tool call context
-        short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
+        sensory_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
 
         tool_request_event = ToolRequestEvent(
             model=model,
@@ -89,16 +89,16 @@ def chat(
             "initial_request_id": initial_request_id,
             "model": model,
         }
-        short_term_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, tool_request_event_context)
+        sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, tool_request_event_context)
 
         ctx.send_event(tool_request_event)
     # if there is no tool call generated, return chat response directly
     else:
         # clear tool call context related to specific request id
-        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
+        tool_call_context = sensory_memory.get(_TOOL_CALL_CONTEXT)
         if tool_call_context and initial_request_id in tool_call_context:
             tool_call_context.pop(initial_request_id)
-            short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
+            sensory_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
         ctx.send_event(
             ChatResponseEvent(
                 request_id=initial_request_id,
@@ -113,7 +113,7 @@ def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> N
     Internally, this action will use short term memory to save the tool call context,
     which is a dict mapping request id to chat messages.
     """
-    short_term_memory = ctx.short_term_memory
+    sensory_memory = ctx.sensory_memory
     if isinstance(event, ChatRequestEvent):
         chat(
             initial_request_id=event.id,
@@ -126,18 +126,18 @@ def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> N
         request_id = event.request_id
 
         # get correspond tool request event context
-        tool_request_event_context = short_term_memory.get(_TOOL_REQUEST_EVENT_CONTEXT)
+        tool_request_event_context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT)
         initial_request_id = tool_request_event_context[request_id][
             "initial_request_id"
         ]
         model = tool_request_event_context[request_id]["model"]
         # clear tool request event context
         tool_request_event_context.pop(request_id)
-        short_term_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, tool_request_event_context)
+        sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, tool_request_event_context)
 
         responses = event.responses
         # update tool call context
-        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
+        tool_call_context = sensory_memory.get(_TOOL_CALL_CONTEXT)
         for id, response in responses.items():
             tool_call_context[initial_request_id].append(
                 ChatMessage(
@@ -148,7 +148,7 @@ def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> N
                     else {},
                 )
             )
-        short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
+        sensory_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
 
         chat(
             initial_request_id=initial_request_id,
