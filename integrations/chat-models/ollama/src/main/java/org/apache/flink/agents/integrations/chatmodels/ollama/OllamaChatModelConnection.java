@@ -189,10 +189,11 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
                             .map(this::convertToOllamaChatMessages)
                             .collect(Collectors.toList());
 
+            final String modelName = (String) arguments.get("model");
             final OllamaChatRequest chatRequest =
                     OllamaChatRequest.builder()
                             .withMessages(ollamaChatMessages)
-                            .withModel((String) arguments.get("model"))
+                            .withModel(modelName)
                             .withThinking(extractReasoning ? ThinkMode.ENABLED : ThinkMode.DISABLED)
                             .withUseTools(false)
                             .build();
@@ -214,6 +215,16 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
             if (ollamaToolCalls != null) {
                 final List<Map<String, Object>> toolCalls = convertToAgentsTools(ollamaToolCalls);
                 chatMessage.setToolCalls(toolCalls);
+            }
+
+            // Record token metrics if model name is available
+            if (modelName != null && !modelName.isBlank()) {
+                Integer promptTokens = ollamaChatResponse.getPromptEvalCount();
+                Integer completionTokens = ollamaChatResponse.getEvalCount();
+                if (promptTokens != null && completionTokens != null) {
+                    recordTokenMetrics(
+                            modelName, promptTokens.longValue(), completionTokens.longValue());
+                }
             }
 
             return chatMessage;

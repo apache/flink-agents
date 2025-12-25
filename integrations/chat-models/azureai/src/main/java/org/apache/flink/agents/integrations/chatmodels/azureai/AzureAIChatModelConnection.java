@@ -171,9 +171,10 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
                             .map(this::convertToChatRequestMessage)
                             .collect(Collectors.toList());
 
+            final String modelName = (String) arguments.get("model");
             ChatCompletionsOptions options =
                     new ChatCompletionsOptions(chatMessages)
-                            .setModel((String) arguments.get("model"))
+                            .setModel(modelName)
                             .setTools(azureTools);
 
             ChatCompletions completions = client.complete(options);
@@ -186,6 +187,15 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
             if (toolCalls != null && !toolCalls.isEmpty()) {
                 List<Map<String, Object>> convertedToolCalls = convertToAgentsTools(toolCalls);
                 chatMessage.setToolCalls(convertedToolCalls);
+            }
+
+            // Record token metrics if model name is available
+            if (modelName != null && !modelName.isBlank()) {
+                CompletionsUsage usage = completions.getUsage();
+                if (usage != null) {
+                    recordTokenMetrics(
+                            modelName, usage.getPromptTokens(), usage.getCompletionTokens());
+                }
             }
 
             return chatMessage;

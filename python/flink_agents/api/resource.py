@@ -18,9 +18,12 @@
 import importlib
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Callable, Dict, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, Type
 
-from pydantic import BaseModel, Field, model_serializer, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_serializer, model_validator
+
+if TYPE_CHECKING:
+    from flink_agents.api.metric_group import MetricGroup
 
 
 class ResourceType(Enum):
@@ -58,10 +61,34 @@ class Resource(BaseModel, ABC):
         exclude=True, default=None
     )
 
+    # The metric group bound to this resource, injected in RunnerContext#get_resource
+    _metric_group: "MetricGroup | None" = PrivateAttr(default=None)
+
     @classmethod
     @abstractmethod
     def resource_type(cls) -> ResourceType:
         """Return resource type of class."""
+
+    def set_metric_group(self, metric_group: "MetricGroup") -> None:
+        """Set the metric group for this resource.
+
+        Parameters
+        ----------
+        metric_group : MetricGroup
+            The metric group to bind.
+        """
+        self._metric_group = metric_group
+
+    @property
+    def metric_group(self) -> "MetricGroup | None":
+        """Get the bound metric group.
+
+        Returns:
+        -------
+        MetricGroup | None
+            The bound metric group, or None if not set.
+        """
+        return self._metric_group
 
 
 class SerializableResource(Resource, ABC):

@@ -167,6 +167,15 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
+        # Record token metrics if model name and usage are available
+        model_name = kwargs.get("model")
+        if model_name and message.usage:
+            self._record_token_metrics(
+                model_name,
+                message.usage.input_tokens,
+                message.usage.output_tokens,
+            )
+
         if message.stop_reason == "tool_use":
             tool_calls = [
                 {

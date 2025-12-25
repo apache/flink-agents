@@ -128,7 +128,22 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
 
             MessageCreateParams params = buildRequest(messages, tools, arguments);
             Message response = client.messages().create(params);
-            return convertResponse(response, jsonPrefillApplied);
+            ChatMessage result = convertResponse(response, jsonPrefillApplied);
+
+            // Record token metrics
+            String modelName = null;
+            if (arguments != null && arguments.get("model") != null) {
+                modelName = arguments.get("model").toString();
+            }
+            if (modelName == null || modelName.isBlank()) {
+                modelName = this.defaultModel;
+            }
+            if (modelName != null && !modelName.isBlank()) {
+                recordTokenMetrics(
+                        modelName, response.usage().inputTokens(), response.usage().outputTokens());
+            }
+
+            return result;
         } catch (Exception e) {
             throw new RuntimeException("Failed to call Anthropic messages API.", e);
         }

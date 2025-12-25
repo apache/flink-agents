@@ -171,9 +171,18 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
-        response = response.choices[0].message
+        # Record token metrics if model name and usage are available
+        model_name = kwargs.get("model")
+        if model_name and response.usage:
+            self._record_token_metrics(
+                model_name,
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+            )
 
-        return convert_from_openai_message(response)
+        message = response.choices[0].message
+
+        return convert_from_openai_message(message)
 
 
 DEFAULT_TEMPERATURE = 0.1

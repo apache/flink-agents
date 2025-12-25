@@ -154,7 +154,10 @@ public class RunnerContextImpl implements RunnerContext {
         if (agentPlan == null) {
             throw new IllegalStateException("AgentPlan is not available in this context");
         }
-        return agentPlan.getResource(name, type);
+        Resource resource = agentPlan.getResource(name, type);
+        // Set current action's metric group to the resource
+        resource.setMetricGroup(getActionMetricGroup());
+        return resource;
     }
 
     @Override

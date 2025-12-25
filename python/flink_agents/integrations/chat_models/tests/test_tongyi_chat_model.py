@@ -125,6 +125,7 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
                 }
             ]
         },
+        usage=SimpleNamespace(input_tokens=100, output_tokens=50),
     )
 
     mock_call = MagicMock(return_value=mocked_response)

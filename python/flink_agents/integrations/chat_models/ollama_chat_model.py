@@ -95,8 +95,9 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         if tools is not None:
             ollama_tools = [to_openai_tool(metadata=tool.metadata) for tool in tools]
 
+        model_name = kwargs.pop("model")
         response = self.client.chat(
-            model=kwargs.pop("model"),
+            model=model_name,
             messages=ollama_messages,
             stream=False,
             tools=ollama_tools,
@@ -127,6 +128,16 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             content, reasoning = self._extract_reasoning(content)
             if reasoning:
                 extra_args["reasoning"] = reasoning
+
+        # Record token metrics if model name and usage are available
+        if (
+            model_name
+            and response.prompt_eval_count is not None
+            and response.eval_count is not None
+        ):
+            self._record_token_metrics(
+                model_name, response.prompt_eval_count, response.eval_count
+            )
 
         return ChatMessage(
             role=MessageRole(response.message.role),

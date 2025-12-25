@@ -98,7 +98,10 @@ class FlinkRunnerContext(RunnerContext):
 
     @override
     def get_resource(self, name: str, type: ResourceType) -> Resource:
-        return self.__agent_plan.get_resource(name, type)
+        resource = self.__agent_plan.get_resource(name, type)
+        # Bind current action's metric group to the resource
+        resource.set_metric_group(self.action_metric_group)
+        return resource
 
     @property
     @override

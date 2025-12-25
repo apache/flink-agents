@@ -113,8 +113,9 @@ class TongyiChatModelConnection(BaseChatModelConnection):
 
         req_api_key = kwargs.pop("api_key", self.api_key)
 
+        model_name = kwargs.pop("model", DEFAULT_MODEL)
         response = Generation.call(
-            model=kwargs.pop("model", DEFAULT_MODEL),
+            model=model_name,
             messages=tongyi_messages,
             tools=tongyi_tools,
             result_format="message",
@@ -123,9 +124,15 @@ class TongyiChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
-        if getattr(response, "status_code", 200) != 200:
-            msg = f"DashScope call failed: {getattr(response, 'message', 'unknown error')}"
+        if response.status_code != 200:
+            msg = f"DashScope call failed: {response.message}"
             raise RuntimeError(msg)
+
+        # Record token metrics if model name and usage are available
+        if model_name and response.usage:
+            self._record_token_metrics(
+                model_name, response.usage.input_tokens, response.usage.output_tokens
+            )
 
         choice = response.output["choices"][0]
         response_message: Dict[str, Any] = choice["message"]

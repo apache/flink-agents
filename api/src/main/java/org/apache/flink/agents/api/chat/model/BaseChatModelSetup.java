@@ -60,6 +60,9 @@ public abstract class BaseChatModelSetup extends Resource {
                 (BaseChatModelConnection)
                         this.getResource.apply(this.connection, ResourceType.CHAT_MODEL_CONNECTION);
 
+        // Pass metric group to connection for token usage tracking
+        connection.setMetricGroup(getMetricGroup());
+
         // Format input messages if set prompt.
         if (this.prompt != null) {
             if (this.prompt instanceof String) {

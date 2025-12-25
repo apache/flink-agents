@@ -142,7 +142,23 @@ public class OpenAIChatModelConnection extends BaseChatModelConnection {
         try {
             ChatCompletionCreateParams params = buildRequest(messages, tools, arguments);
             ChatCompletion completion = client.chat().completions().create(params);
-            return convertResponse(completion);
+            ChatMessage response = convertResponse(completion);
+
+            // Record token metrics
+            if (completion.usage().isPresent()) {
+                String modelName = arguments != null ? (String) arguments.get("model") : null;
+                if (modelName == null || modelName.isBlank()) {
+                    modelName = this.defaultModel;
+                }
+                if (modelName != null && !modelName.isBlank()) {
+                    recordTokenMetrics(
+                            modelName,
+                            completion.usage().get().promptTokens(),
+                            completion.usage().get().completionTokens());
+                }
+            }
+
+            return response;
         } catch (Exception e) {
             throw new RuntimeException("Failed to call OpenAI chat completions API.", e);
         }

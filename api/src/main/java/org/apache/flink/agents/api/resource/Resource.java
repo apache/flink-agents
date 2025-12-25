@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.api.resource;
 
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+
 import java.util.function.BiFunction;
 
 /**
@@ -27,6 +29,9 @@ import java.util.function.BiFunction;
  */
 public abstract class Resource {
     protected BiFunction<String, ResourceType, Resource> getResource;
+
+    /** The metric group bound to this resource, injected by RunnerContext.getResource(). */
+    private transient FlinkAgentsMetricGroup metricGroup;
 
     protected Resource(
             ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
@@ -41,4 +46,22 @@ public abstract class Resource {
      * @return the resource type
      */
     public abstract ResourceType getResourceType();
+
+    /**
+     * Set the metric group for this resource.
+     *
+     * @param metricGroup the metric group to bind
+     */
+    public void setMetricGroup(FlinkAgentsMetricGroup metricGroup) {
+        this.metricGroup = metricGroup;
+    }
+
+    /**
+     * Get the bound metric group.
+     *
+     * @return the bound metric group, or null if not set
+     */
+    protected FlinkAgentsMetricGroup getMetricGroup() {
+        return metricGroup;
+    }
 }
