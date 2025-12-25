@@ -50,6 +50,93 @@ public class ChatModelAction {
                 List.of(ChatRequestEvent.class.getName(), ToolResponseEvent.class.getName()));
     }
 
+    @SuppressWarnings("unchecked")
+    private static List<ChatMessage> updateToolCallContext(
+            MemoryObject sensoryMem,
+            UUID initialRequestId,
+            List<ChatMessage> initialMessages,
+            List<ChatMessage> addedMessages)
+            throws Exception {
+
+        Map<UUID, Object> toolCallContext;
+        if (sensoryMem.isExist(TOOL_CALL_CONTEXT)) {
+            toolCallContext = (Map<UUID, Object>) sensoryMem.get(TOOL_CALL_CONTEXT).getValue();
+        } else {
+            toolCallContext = new HashMap<>();
+        }
+        if (!toolCallContext.containsKey(initialRequestId)) {
+            toolCallContext.put(initialRequestId, initialMessages);
+        }
+        List<ChatMessage> messageContext =
+                new ArrayList<>((List<ChatMessage>) toolCallContext.get(initialRequestId));
+
+        messageContext.addAll(addedMessages);
+        toolCallContext.put(initialRequestId, messageContext);
+        sensoryMem.set(TOOL_CALL_CONTEXT, toolCallContext);
+        return messageContext;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void clearToolCallContext(MemoryObject sensoryMem, UUID initialRequestId)
+            throws Exception {
+        if (sensoryMem.isExist(TOOL_CALL_CONTEXT)) {
+            Map<UUID, Object> toolCallContext =
+                    (Map<UUID, Object>) sensoryMem.get(TOOL_CALL_CONTEXT).getValue();
+            if (toolCallContext.containsKey(initialRequestId)) {
+                toolCallContext.remove(initialRequestId);
+                sensoryMem.set(TOOL_CALL_CONTEXT, toolCallContext);
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void saveToolRequestEventContext(
+            MemoryObject sensoryMem, UUID toolRequestEventId, UUID initialRequestId, String model)
+            throws Exception {
+        Map<UUID, Object> toolRequestEventContext;
+        if (sensoryMem.isExist(TOOL_REQUEST_EVENT_CONTEXT)) {
+            toolRequestEventContext =
+                    (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
+        } else {
+            toolRequestEventContext = new HashMap<>();
+        }
+        toolRequestEventContext.put(
+                toolRequestEventId, Map.of(INITIAL_REQUEST_ID, initialRequestId, MODEL, model));
+        sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> removeToolRequestEventContext(
+            MemoryObject sensoryMem, UUID requestId) throws Exception {
+        Map<UUID, Object> toolRequestEventContext =
+                (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
+        Map<String, Object> context =
+                (Map<String, Object>) toolRequestEventContext.remove(requestId);
+        sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
+        return context;
+    }
+
+    private static void handleToolCalls(
+            ChatMessage response,
+            UUID initialRequestId,
+            String model,
+            List<ChatMessage> messages,
+            RunnerContext ctx)
+            throws Exception {
+        updateToolCallContext(
+                ctx.getSensoryMemory(),
+                initialRequestId,
+                messages,
+                Collections.singletonList(response));
+
+        ToolRequestEvent toolRequestEvent = new ToolRequestEvent(model, response.getToolCalls());
+
+        saveToolRequestEventContext(
+                ctx.getSensoryMemory(), toolRequestEvent.getId(), initialRequestId, model);
+
+        ctx.sendEvent(toolRequestEvent);
+    }
+
     /**
      * Chat with chat model.
      *
@@ -67,54 +154,65 @@ public class ChatModelAction {
                 (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
 
         ChatMessage response = chatModel.chat(messages, Map.of());
-        MemoryObject sensoryMem = ctx.getSensoryMemory();
 
         if (!response.getToolCalls().isEmpty()) {
-            Map<UUID, Object> toolCallContext;
-            if (sensoryMem.isExist(TOOL_CALL_CONTEXT)) {
-                toolCallContext = (Map<UUID, Object>) sensoryMem.get(TOOL_CALL_CONTEXT).getValue();
-            } else {
-                toolCallContext = new HashMap<>();
-            }
-            if (!toolCallContext.containsKey(initialRequestId)) {
-                toolCallContext.put(initialRequestId, messages);
-            }
-            List<ChatMessage> messageContext =
-                    new ArrayList<>((List<ChatMessage>) toolCallContext.get(initialRequestId));
-
-            messageContext.add(response);
-            toolCallContext.put(initialRequestId, messageContext);
-            sensoryMem.set(TOOL_CALL_CONTEXT, toolCallContext);
-
-            ToolRequestEvent toolRequestEvent =
-                    new ToolRequestEvent(model, response.getToolCalls());
-
-            Map<UUID, Object> toolRequestEventContext;
-            if (sensoryMem.isExist(TOOL_REQUEST_EVENT_CONTEXT)) {
-                toolRequestEventContext =
-                        (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
-            } else {
-                toolRequestEventContext = new HashMap<>();
-            }
-            toolRequestEventContext.put(
-                    toolRequestEvent.getId(),
-                    Map.of(INITIAL_REQUEST_ID, initialRequestId, MODEL, model));
-            sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
-
-            ctx.sendEvent(toolRequestEvent);
+            handleToolCalls(response, initialRequestId, model, messages, ctx);
         } else {
             // clean tool call context
-            if (sensoryMem.isExist(TOOL_CALL_CONTEXT)) {
-                Map<UUID, Object> toolCallContext =
-                        (Map<UUID, Object>) sensoryMem.get(TOOL_CALL_CONTEXT).getValue();
-                if (toolCallContext.containsKey(initialRequestId)) {
-                    toolCallContext.remove(initialRequestId);
-                    sensoryMem.set(TOOL_CALL_CONTEXT, toolCallContext);
-                }
-            }
+            clearToolCallContext(ctx.getSensoryMemory(), initialRequestId);
 
             ctx.sendEvent(new ChatResponseEvent(initialRequestId, response));
         }
+    }
+
+    private static void processChatRequest(ChatRequestEvent event, RunnerContext ctx)
+            throws Exception {
+        chat(event.getId(), event.getModel(), event.getMessages(), ctx);
+    }
+
+    private static void processToolResponse(ToolResponseEvent event, RunnerContext ctx)
+            throws Exception {
+        MemoryObject sensoryMem = ctx.getSensoryMemory();
+
+        // get tool request context from memory
+        Map<String, Object> context =
+                removeToolRequestEventContext(sensoryMem, event.getRequestId());
+
+        UUID initialRequestId = (UUID) context.get(INITIAL_REQUEST_ID);
+        String model = (String) context.get(MODEL);
+
+        Map<String, ToolResponse> responses = event.getResponses();
+        Map<String, Boolean> success = event.getSuccess();
+
+        List<ChatMessage> toolResponseMessages = new ArrayList<>();
+
+        for (Map.Entry<String, ToolResponse> entry : responses.entrySet()) {
+            Map<String, Object> extraArgs = new HashMap<>();
+            String toolCallId = entry.getKey();
+            if (event.getExternalIds().containsKey(toolCallId)) {
+                extraArgs.put("externalId", event.getExternalIds().get(toolCallId));
+            }
+
+            ToolResponse response = entry.getValue();
+            if (success.get(toolCallId) && response.isSuccess()) {
+                toolResponseMessages.add(
+                        new ChatMessage(
+                                MessageRole.TOOL, String.valueOf(response.getResult()), extraArgs));
+            } else {
+                toolResponseMessages.add(
+                        new ChatMessage(
+                                MessageRole.TOOL, String.valueOf(response.getError()), extraArgs));
+            }
+        }
+
+        List<ChatMessage> messages =
+                updateToolCallContext(
+                        ctx.getSensoryMemory(),
+                        initialRequestId,
+                        Collections.emptyList(),
+                        toolResponseMessages);
+
+        chat(initialRequestId, model, messages, ctx);
     }
 
     /**
@@ -128,66 +226,13 @@ public class ChatModelAction {
      *     ToolResponseEvent}
      * @param ctx The runner context this action executed in.
      */
-    @SuppressWarnings("unchecked")
     public static void processChatRequestOrToolResponse(Event event, RunnerContext ctx)
             throws Exception {
         MemoryObject sensoryMem = ctx.getSensoryMemory();
         if (event instanceof ChatRequestEvent) {
-            ChatRequestEvent chatRequestEvent = (ChatRequestEvent) event;
-            chat(
-                    chatRequestEvent.getId(),
-                    chatRequestEvent.getModel(),
-                    chatRequestEvent.getMessages(),
-                    ctx);
+            processChatRequest((ChatRequestEvent) event, ctx);
         } else if (event instanceof ToolResponseEvent) {
-            ToolResponseEvent toolResponseEvent = (ToolResponseEvent) event;
-            UUID toolRequestId = toolResponseEvent.getRequestId();
-            // get tool request context from memory
-            Map<UUID, Object> toolRequestEventContext =
-                    (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
-            Map<String, Object> context =
-                    (Map<String, Object>) toolRequestEventContext.get(toolRequestId);
-            UUID initialRequestId = (UUID) context.get(INITIAL_REQUEST_ID);
-            String model = (String) context.get(MODEL);
-            toolRequestEventContext.remove(toolRequestId);
-            sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
-            Map<String, ToolResponse> responses = toolResponseEvent.getResponses();
-            Map<String, Boolean> success = toolResponseEvent.getSuccess();
-
-            // get tool call context
-            Map<UUID, Object> toolCallContext =
-                    (Map<UUID, Object>) sensoryMem.get(TOOL_CALL_CONTEXT).getValue();
-            // update tool call context
-            List<ChatMessage> messages =
-                    new ArrayList<>((List<ChatMessage>) toolCallContext.get(initialRequestId));
-
-            for (Map.Entry<String, ToolResponse> entry : responses.entrySet()) {
-                Map<String, Object> extraArgs = new HashMap<>();
-                String toolCallId = entry.getKey();
-                if (toolResponseEvent.getExternalIds().containsKey(toolCallId)) {
-                    extraArgs.put("externalId", toolResponseEvent.getExternalIds().get(toolCallId));
-                }
-
-                ToolResponse response = entry.getValue();
-                if (success.get(toolCallId) && response.isSuccess()) {
-                    messages.add(
-                            new ChatMessage(
-                                    MessageRole.TOOL,
-                                    String.valueOf(response.getResult()),
-                                    extraArgs));
-                } else {
-                    messages.add(
-                            new ChatMessage(
-                                    MessageRole.TOOL,
-                                    String.valueOf(response.getError()),
-                                    extraArgs));
-                }
-            }
-            toolCallContext.put(initialRequestId, messages);
-            // overwrite tool call context
-            sensoryMem.set(TOOL_CALL_CONTEXT, toolCallContext);
-
-            chat(initialRequestId, model, messages, ctx);
+            processToolResponse((ToolResponseEvent) event, ctx);
         } else {
             throw new RuntimeException(String.format("Unexpected type event %s", event));
         }
