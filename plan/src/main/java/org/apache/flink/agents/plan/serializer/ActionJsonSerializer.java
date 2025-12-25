@@ -80,21 +80,23 @@ public class ActionJsonSerializer extends StdSerializer<Action> {
             String configType = (String) config.get(CONFIG_TYPE);
             if (configType == null) {
                 configType = "java";
-            } else {
-                config.remove(CONFIG_TYPE);
+                config.put(CONFIG_TYPE, configType);
             }
-            jsonGenerator.writeStringField(CONFIG_TYPE, configType);
             if (configType.equals("java")) {
                 action.getConfig()
                         .forEach(
                                 (name, value) -> {
                                     try {
-                                        jsonGenerator.writeFieldName(name);
-                                        jsonGenerator.writeStartObject();
-                                        jsonGenerator.writeStringField(
-                                                "@class", value.getClass().getName());
-                                        jsonGenerator.writeObjectField("value", value);
-                                        jsonGenerator.writeEndObject();
+                                        if (CONFIG_TYPE.equals(name)) {
+                                            jsonGenerator.writeStringField(name, (String) value);
+                                        } else {
+                                            jsonGenerator.writeFieldName(name);
+                                            jsonGenerator.writeStartObject();
+                                            jsonGenerator.writeStringField(
+                                                    "@class", value.getClass().getName());
+                                            jsonGenerator.writeObjectField("value", value);
+                                            jsonGenerator.writeEndObject();
+                                        }
                                     } catch (IOException e) {
                                         throw new RuntimeException(
                                                 "Error writing action: " + name, e);

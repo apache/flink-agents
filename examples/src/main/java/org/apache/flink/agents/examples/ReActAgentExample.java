@@ -29,7 +29,7 @@ import org.apache.flink.agents.examples.agents.CustomTypesAndResources;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.connector.file.src.FileSource;
-import org.apache.flink.connector.file.src.reader.TextLineFormat;
+import org.apache.flink.connector.file.src.reader.TextLineInputFormat;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -105,7 +105,7 @@ public class ReActAgentExample {
         DataStream<Row> productReviewStream =
                 env.fromSource(
                                 FileSource.forRecordStreamFormat(
-                                                new TextLineFormat(),
+                                                new TextLineInputFormat(),
                                                 new Path(inputDataFile.getAbsolutePath()))
                                         .monitorContinuously(Duration.ofMinutes(1))
                                         .build(),

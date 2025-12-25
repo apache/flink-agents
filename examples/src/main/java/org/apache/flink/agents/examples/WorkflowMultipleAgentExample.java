@@ -37,13 +37,13 @@ import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
 import java.io.File;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.apache.flink.agents.examples.WorkflowSingleAgentExample.copyResource;
 import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.ProductReviewAnalysisRes;
 import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.ProductReviewSummary;
-import static org.apache.flink.streaming.api.windowing.time.Time.minutes;
 
 /**
  * Java example demonstrating multiple workflow agents for product improvement suggestion.
@@ -164,7 +164,7 @@ public class WorkflowMultipleAgentExample {
                 reviewAnalysisResStream
                         .map(element -> (ProductReviewAnalysisRes) element)
                         .keyBy(ProductReviewAnalysisRes::getId)
-                        .window(TumblingProcessingTimeWindows.of(minutes(1)))
+                        .window(TumblingProcessingTimeWindows.of(Duration.ofMinutes(1)))
                         .process(new AggregateScoreDistributionAndDislikeReasons());
 
         // Use the ProductSuggestionAgent (LLM) to generate product improvement

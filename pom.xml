@@ -41,7 +41,20 @@ under the License.
         <maven.compiler.target>${target.java.version}</maven.compiler.target>
         <spotless.version>2.27.1</spotless.version>
         <spotless.skip>false</spotless.skip>
-        <flink.version>1.20.3</flink.version>
+
+        <!-- ============================================ -->
+        <!-- Flink Version Management                     -->
+        <!-- ============================================ -->
+        <!-- Supported Flink versions -->
+        <flink.1.20.version>1.20.3</flink.1.20.version>
+        <flink.2.0.version>2.0.1</flink.2.0.version>
+        <flink.2.1.version>2.1.1</flink.2.1.version>
+        <flink.2.2.version>2.2.0</flink.2.2.version>
+
+        <!-- Default version used in main modules -->
+        <flink.version>${flink.2.2.version}</flink.version>
+        <!-- ============================================ -->
+
         <kafka.version>4.0.0</kafka.version>
         <junit5.version>5.10.1</junit5.version>
         <jackson.version>2.18.2</jackson.version>
