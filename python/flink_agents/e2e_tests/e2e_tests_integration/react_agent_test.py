@@ -48,7 +48,7 @@ current_dir = Path(__file__).parent
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
-OLLAMA_MODEL = os.environ.get("REACT_OLLAMA_MODEL", "qwen3:1.7b")
+OLLAMA_MODEL = os.environ.get("REACT_OLLAMA_MODEL", "qwen3:8b")
 os.environ["OLLAMA_CHAT_MODEL"] = OLLAMA_MODEL
 
 
