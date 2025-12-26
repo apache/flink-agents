@@ -25,7 +25,7 @@ under the License.
 # Vector Stores
 
 {{< hint info >}}
-Vector stores are currently supported in the Python API only. Java API support is planned for future releases.
+Vector stores are supported in both Python and Java APIs.
 {{< /hint >}}
 
 {{< hint info >}}
@@ -145,6 +145,10 @@ class MyAgent(Agent):
 
 [Chroma](https://www.trychroma.com/home) is an open-source vector database that provides efficient storage and querying of embeddings with support for multiple deployment modes.
 
+{{< hint info >}}
+Chroma is currently supported in the Python API only.
+{{< /hint >}}
+
 #### Prerequisites
 
 1. Install ChromaDB: `pip install chromadb`
@@ -152,6 +156,10 @@ class MyAgent(Agent):
 3. For cloud mode, get API key from [ChromaDB Cloud](https://www.trychroma.com/)
 
 #### ChromaVectorStore Parameters
+
+{{< tabs "ChromaVectorStore Parameters" >}}
+
+{{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -167,7 +175,15 @@ class MyAgent(Agent):
 | `collection_metadata` | dict | `{}` | Metadata for the collection |
 | `create_collection_if_not_exists` | bool | `True` | Whether to create the collection if it doesn't exist |
 
+{{< /tab >}}
+
+{{< /tabs >}}
+
 #### Usage Example
+
+{{< tabs "Chroma Usage Example" >}}
+
+{{< tab "Python" >}}
 
 ```python
 class MyAgent(Agent):
@@ -207,6 +223,10 @@ class MyAgent(Agent):
 
     ...
 ```
+
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### Deployment Modes
 
@@ -264,6 +284,105 @@ def chroma_store() -> ResourceDescriptor:
         collection="my_documents"
     )
 ```
+
+### Elasticsearch
+
+[Elasticsearch](https://www.elastic.co/elasticsearch/) is a distributed, RESTful search and analytics engine that supports vector search through dense vector fields and K-Nearest Neighbors (KNN).
+
+{{< hint info >}}
+Elasticsearch is currently supported in the Java API only.
+{{< /hint >}}
+
+#### Prerequisites
+
+1. An Elasticsearch cluster (version 8.0 or later for KNN support).
+2. An index with a `dense_vector` field.
+
+#### ElasticsearchVectorStore Parameters
+
+{{< tabs "ElasticsearchVectorStore Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `embedding_model` | str | Required | Reference to embedding model resource name |
+| `index` | str | Required | Target Elasticsearch index name |
+| `vector_field` | str | Required | Name of the dense vector field used for KNN |
+| `dims` | int | `768` | Vector dimensionality |
+| `k` | int | None | Number of nearest neighbors to return; can be overridden per query |
+| `num_candidates` | int | None | Candidate set size for ANN search; can be overridden per query |
+| `filter_query` | str | None | Raw JSON Elasticsearch filter query (DSL) applied as a post-filter |
+| `host` | str | `"http://localhost:9200"` | Elasticsearch endpoint |
+| `hosts` | str | None | Comma-separated list of Elasticsearch endpoints |
+| `username` | str | None | Username for basic authentication |
+| `password` | str | None | Password for basic authentication |
+| `api_key_base64` | str | None | Base64-encoded API key for authentication |
+| `api_key_id` | str | None | API key ID for authentication |
+| `api_key_secret` | str | None | API key secret for authentication |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Elasticsearch Usage Example" >}}
+
+{{< tab "Java" >}}
+
+Here's how to define an Elasticsearch vector store in your Java agent:
+
+```java
+public class MyAgent extends Agent {
+
+    @EmbeddingModelConnection
+    public static ResourceDescriptor embeddingConnection() {
+        return ResourceDescriptor.Builder.newBuilder(OpenAIEmbeddingModelConnection.class.getName())
+                .addInitialArgument("api_key", "your-api-key-here")
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor embeddingModel() {
+        return ResourceDescriptor.Builder.newBuilder(OpenAIEmbeddingModelSetup.class.getName())
+                .addInitialArgument("connection", "embeddingConnection")
+                .addInitialArgument("model", "text-embedding-3-small")
+                .build();
+    }
+
+    @VectorStore
+    public static ResourceDescriptor vectorStore() {
+        return ResourceDescriptor.Builder.newBuilder(ElasticsearchVectorStore.class.getName())
+                .addInitialArgument("embedding_model", "embeddingModel")
+                .addInitialArgument("host", "http://localhost:9200")
+                .addInitialArgument("index", "my_documents")
+                .addInitialArgument("vector_field", "content_vector")
+                .addInitialArgument("dims", 1536)
+                // Optional authentication
+                // .addInitialArgument("username", "elastic")
+                // .addInitialArgument("password", "secret")
+                .build();
+    }
+
+    @Action(listenEvents = InputEvent.class)
+    public static void searchDocuments(InputEvent event, RunnerContext ctx) {
+        String query = (String) event.getInput();
+        // Request context retrieval via the vector store
+        ctx.sendEvent(new ContextRetrievalRequestEvent(query, "vectorStore"));
+    }
+
+    @Action(listenEvents = ContextRetrievalResponseEvent.class)
+    public static void onSearchResponse(ContextRetrievalResponseEvent event, RunnerContext ctx) {
+        List<Document> documents = event.getDocuments();
+        // Process the retrieved documents...
+    }
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ## Custom Providers
 
