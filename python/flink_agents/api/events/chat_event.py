@@ -18,6 +18,7 @@
 from typing import List
 from uuid import UUID
 
+from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.events.event import Event
 
@@ -31,10 +32,13 @@ class ChatRequestEvent(Event):
         The name of the chat model to be chatted with.
     messages : List[ChatMessage]
         The input to the chat model.
+    output_schema: OutputSchema | None
+        The expected output schema of the chat model final response. Optional.
     """
 
     model: str
     messages: List[ChatMessage]
+    output_schema: OutputSchema | None = None
 
 
 class ChatResponseEvent(Event):

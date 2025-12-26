@@ -26,6 +26,8 @@ from flink_agents.api.resource import (
 )
 from flink_agents.api.tools.mcp import MCPServer
 
+STRUCTURED_OUTPUT = "structured_output"
+
 
 class Agent(ABC):
     """Base class for defining agent logic.

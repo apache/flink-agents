@@ -20,12 +20,13 @@ package org.apache.flink.agents.api.agents;
 
 import org.apache.flink.agents.api.configuration.ConfigOption;
 
-/** Config Options for {@link ReActAgent}. */
-public class ReActAgentConfigOptions {
-    /** The option specifies the error handling strategy for react agent. */
-    public static final ConfigOption<ReActAgent.ErrorHandlingStrategy> ERROR_HANDLING_STRATEGY =
+public class AgentExecutionOptions {
+    public static final ConfigOption<Agent.ErrorHandlingStrategy> ERROR_HANDLING_STRATEGY =
             new ConfigOption<>(
                     "error-handling-strategy",
-                    ReActAgent.ErrorHandlingStrategy.class,
-                    ReActAgent.ErrorHandlingStrategy.FAIL);
+                    Agent.ErrorHandlingStrategy.class,
+                    Agent.ErrorHandlingStrategy.FAIL);
+
+    public static final ConfigOption<Integer> MAX_RETRIES =
+            new ConfigOption<>("max-retries", Integer.class, 0);
 }

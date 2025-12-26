@@ -28,11 +28,10 @@ from pyflink.datastream import KeySelector, StreamExecutionEnvironment
 from pyflink.table import DataTypes, Schema, StreamTableEnvironment, TableDescriptor
 
 from flink_agents.api.agents.react_agent import (
-    ErrorHandlingStrategy,
     ReActAgent,
-    ReActAgentOptions,
 )
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.core_options import AgentConfigOptions, ErrorHandlingStrategy
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor
@@ -79,8 +78,9 @@ client = pull_model(OLLAMA_MODEL)
 def test_react_agent_on_local_runner() -> None:  # noqa: D103
     env = AgentsExecutionEnvironment.get_execution_environment()
     env.get_config().set(
-        ReActAgentOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.IGNORE
+        AgentConfigOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
     )
+    env.get_config().set(AgentConfigOptions.MAX_RETRIES, 3)
 
     # register resource to execution environment
     (
@@ -155,8 +155,10 @@ def test_react_agent_on_remote_runner(tmp_path: Path) -> None:  # noqa: D103
     )
 
     env.get_config().set(
-        ReActAgentOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.IGNORE
+        AgentConfigOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
     )
+
+    env.get_config().set(AgentConfigOptions.MAX_RETRIES, 3)
 
     # register resource to execution environment
     (

@@ -21,7 +21,6 @@ package org.apache.flink.agents.integration.test;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.ReActAgent;
-import org.apache.flink.agents.api.agents.ReActAgentConfigOptions;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -50,6 +49,8 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.util.List;
 
+import static org.apache.flink.agents.api.agents.AgentExecutionOptions.ERROR_HANDLING_STRATEGY;
+import static org.apache.flink.agents.api.agents.AgentExecutionOptions.MAX_RETRIES;
 import static org.apache.flink.agents.integration.test.OllamaPreparationUtils.pullModel;
 
 public class ReActAgentTest {
@@ -110,11 +111,8 @@ public class ReActAgentTest {
                                 ReActAgentTest.class.getMethod(
                                         "multiply", Double.class, Double.class)));
 
-        agentsEnv
-                .getConfig()
-                .set(
-                        ReActAgentConfigOptions.ERROR_HANDLING_STRATEGY,
-                        ReActAgent.ErrorHandlingStrategy.IGNORE);
+        agentsEnv.getConfig().set(ERROR_HANDLING_STRATEGY, ReActAgent.ErrorHandlingStrategy.RETRY);
+        agentsEnv.getConfig().set(MAX_RETRIES, 3);
 
         // Declare the ReAct agent.
         Agent agent = getAgent();

@@ -36,10 +36,9 @@ public class ReActAgentTest {
                             BasicTypeInfo.INT_TYPE_INFO, BasicTypeInfo.STRING_TYPE_INFO
                         },
                         new String[] {"a", "b"});
-        ReActAgent.OutputSchema schema = new ReActAgent.OutputSchema(typeInfo);
+        OutputSchema schema = new OutputSchema(typeInfo);
         String json = mapper.writeValueAsString(schema);
-        ReActAgent.OutputSchema deserialized =
-                mapper.readValue(json, ReActAgent.OutputSchema.class);
+        OutputSchema deserialized = mapper.readValue(json, OutputSchema.class);
         Assertions.assertEquals(typeInfo, deserialized.getSchema());
     }
 }

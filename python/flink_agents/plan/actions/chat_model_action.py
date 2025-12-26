@@ -16,10 +16,19 @@
 # limitations under the License.
 #################################################################################
 import copy
+import json
+import logging
 from typing import TYPE_CHECKING, Dict, List, cast
 from uuid import UUID
 
+from pydantic import BaseModel
+from pyflink.common import Row
+from pyflink.common.typeinfo import RowTypeInfo
+
+from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
+from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.core_options import AgentConfigOptions, ErrorHandlingStrategy
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
@@ -34,6 +43,8 @@ if TYPE_CHECKING:
 
 _TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
 _TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT"
+
+_logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -85,12 +96,14 @@ def _save_tool_request_event_context(
     tool_request_event_id: UUID,
     initial_request_id: UUID,
     model: str,
+    output_schema: OutputSchema | None,
 ) -> None:
     """Save the context for a specific tool request event."""
     context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
     context[tool_request_event_id] = {
         "initial_request_id": initial_request_id,
         "model": model,
+        "output_schema": output_schema,
     }
     sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, context)
 
@@ -110,6 +123,7 @@ def _handle_tool_calls(
     initial_request_id: UUID,
     model: str,
     messages: List[ChatMessage],
+    output_schema: OutputSchema | None,
     ctx: RunnerContext,
 ) -> None:
     """Handle tool calls in chat response."""
@@ -124,16 +138,41 @@ def _handle_tool_calls(
 
     # save tool request event context
     _save_tool_request_event_context(
-        ctx.sensory_memory, tool_request_event.id, initial_request_id, model
+        ctx.sensory_memory,
+        tool_request_event.id,
+        initial_request_id,
+        model,
+        output_schema,
     )
 
     ctx.send_event(tool_request_event)
+
+
+def _generate_structured_output(
+    response: ChatMessage, output_schema: OutputSchema
+) -> ChatMessage:
+    """Deserialize output to expected output schema."""
+    output_schema = output_schema.output_schema
+    output = json.loads(response.content.strip())
+
+    if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
+        output = output_schema.model_validate(output)
+    elif isinstance(output_schema, RowTypeInfo):
+        field_names = output_schema.get_field_names()
+        values = {}
+        for field_name in field_names:
+            values[field_name] = output[field_name]
+        output = Row(**values)
+    response.extra_args[STRUCTURED_OUTPUT] = output
+
+    return response
 
 
 def chat(
     initial_request_id: UUID,
     model: str,
     messages: List[ChatMessage],
+    output_schema: OutputSchema | None,
     ctx: RunnerContext,
 ) -> None:
     """Chat with llm.
@@ -146,13 +185,42 @@ def chat(
         "BaseChatModelSetup", ctx.get_resource(model, ResourceType.CHAT_MODEL)
     )
 
+    error_handling_strategy = ctx.config.get(AgentConfigOptions.ERROR_HANDLING_STRATEGY)
+    num_retries = 0
+    if error_handling_strategy == ErrorHandlingStrategy.RETRY:
+        num_retries = max(0, ctx.config.get(AgentConfigOptions.MAX_RETRIES))
+
     # TODO: support async execution of chat.
-    response = chat_model.chat(messages)
+    response = None
+    for attempt in range(num_retries + 1):
+        try:
+            response = chat_model.chat(messages)
+            if output_schema is not None and len(response.tool_calls) == 0:
+                response = _generate_structured_output(response, output_schema)
+        except Exception as e:  # noqa: PERF203
+            if error_handling_strategy == ErrorHandlingStrategy.IGNORE:
+                _logger.warning(
+                    f"Chat request {initial_request_id} failed with error: {e}, ignored."
+                )
+                return
+            elif error_handling_strategy == ErrorHandlingStrategy.RETRY:
+                if attempt == num_retries:
+                    raise
+                _logger.warning(
+                    f"Chat request {initial_request_id} failed with error: {e}, retrying {attempt} / {num_retries}."
+                )
+            else:
+                _logger.debug(
+                    f"Chat request {initial_request_id} failed, the input chat messages are {messages}."
+                )
+                raise
 
     if (
         len(response.tool_calls) > 0
     ):  # generate tool request event according tool calls in response
-        _handle_tool_calls(response, initial_request_id, model, messages, ctx)
+        _handle_tool_calls(
+            response, initial_request_id, model, messages, output_schema, ctx
+        )
     else:  # if there is no tool call generated, return chat response directly
         _clear_tool_call_context(ctx.sensory_memory, initial_request_id)
 
@@ -170,6 +238,7 @@ def _process_chat_request(event: ChatRequestEvent, ctx: RunnerContext) -> None:
         initial_request_id=event.id,
         model=event.model,
         messages=event.messages,
+        output_schema=event.output_schema,
         ctx=ctx,
     )
 
@@ -206,6 +275,7 @@ def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -> None
         initial_request_id=initial_request_id,
         model=tool_request_event_context["model"],
         messages=messages,
+        output_schema=tool_request_event_context["output_schema"],
         ctx=ctx,
     )
 
