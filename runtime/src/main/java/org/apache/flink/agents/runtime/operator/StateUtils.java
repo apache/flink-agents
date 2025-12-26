@@ -21,7 +21,6 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.runtime.state.StateInitializationContext;
-import org.apache.flink.shaded.guava31.com.google.common.collect.Lists;
 import org.apache.flink.util.Preconditions;
 
 import javax.annotation.Nullable;
@@ -67,7 +66,9 @@ public class StateUtils {
         }
 
         T value = values.get(0);
-        state.update(Lists.newArrayList(value));
+        List<T> newList = new ArrayList<>();
+        newList.add(value);
+        state.update(newList);
 
         return value;
     }

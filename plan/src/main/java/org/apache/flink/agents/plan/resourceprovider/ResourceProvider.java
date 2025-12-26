@@ -18,12 +18,12 @@
 
 package org.apache.flink.agents.plan.resourceprovider;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.serializer.ResourceProviderJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.ResourceProviderJsonSerializer;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.util.function.BiFunction;
 

@@ -18,9 +18,9 @@
 
 package org.apache.flink.agents.plan.resource.python;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolType;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;

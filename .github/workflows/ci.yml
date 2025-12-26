@@ -49,13 +49,14 @@ jobs:
         run: ./tools/lint.sh -c
 
   java_tests:
-    name: ut-java [${{ matrix.os }}] [java-${{ matrix.java-version}}]
+    name: ut-java [${{ matrix.os }}] [java-${{ matrix.java-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ 'macos-latest', 'ubuntu-latest' ]
         java-version: ["11", "17"]
+        flink-version: [ "1.20", "2.0", "2.1", "2.2" ]
     steps:
       - uses: actions/checkout@v4
       - name: Install java
@@ -64,7 +65,7 @@ jobs:
           java-version: ${{ matrix.java-version }}
           distribution: 'adopt'
       - name: Run Java Tests
-        run: tools/ut.sh -j
+        run: tools/ut.sh -j -f ${{ matrix.flink-version }}
 
   python_tests:
     name: ut-python [${{ matrix.os }}] [python-${{ matrix.python-version}}]
@@ -93,13 +94,14 @@ jobs:
         run: tools/ut.sh -p
 
   python_it_tests:
-    name: it-python [${{ matrix.os }}] [python-${{ matrix.python-version}}]
+    name: it-python [${{ matrix.os }}] [python-${{ matrix.python-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ 'ubuntu-latest' ]
         python-version: [ '3.11' ]
+        flink-version: [ "1.20", "2.0", "2.1", "2.2" ]
     steps:
       - uses: actions/checkout@v4
       - name: Install java
@@ -120,16 +122,17 @@ jobs:
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
       - name: Run Python IT
-        run: tools/ut.sh -p -e
+        run: tools/ut.sh -p -e -f ${{ matrix.flink-version }}
 
   java_it_tests:
-    name: it-java [${{ matrix.os }}] [java-${{ matrix.java-version}}]
+    name: it-java [${{ matrix.os }}] [java-${{ matrix.java-version}}]  [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ 'ubuntu-latest' ]
         java-version: [ "17" ]
+        flink-version: [ "1.20", "2.0", "2.1", "2.2" ]
     steps:
       - uses: actions/checkout@v4
       - name: Install java
@@ -142,7 +145,7 @@ jobs:
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
       - name: Run Java IT
-        run: tools/ut.sh -j -e
+        run: tools/ut.sh -j -e -f ${{ matrix.flink-version }}
 
   cross_language_tests:
     name: cross-language [${{ matrix.os }}] [python-${{ matrix.python-version}}] [java-${{ matrix.java-version}}]

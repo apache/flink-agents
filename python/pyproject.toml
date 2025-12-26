@@ -42,7 +42,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "apache-flink==1.20.3",
     "pydantic==2.11.4",
     "docstring-parser==0.16",
     "pyyaml==6.0.2",
@@ -64,7 +63,7 @@ include-package-data = true
 where = [""]
 
 [tool.setuptools.package-data]
-"flink_agents.lib" = ["*.jar"]
+"flink_agents.lib" = ["**/*.jar"]
 
 # Optional dependencies (dependency groups)
 [project.optional-dependencies]

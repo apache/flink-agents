@@ -31,12 +31,7 @@ under the License.
     <dependencies>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-agents-api</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-agents-runtime</artifactId>
+            <artifactId>${flink.agents.dist.artifactId}</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
@@ -90,5 +85,46 @@ under the License.
             <version>${project.version}</version>
         </dependency>
     </dependencies>
+
+    <profiles>
+        <!-- Flink 2.2 Profile（Default） -->
+        <profile>
+            <id>flink-2.2</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <flink.version>${flink.2.2.version}</flink.version>
+                <flink.agents.dist.artifactId>flink-agents-dist-flink-2.2</flink.agents.dist.artifactId>
+            </properties>
+        </profile>
+
+        <!-- Flink 1.20 Profile -->
+        <profile>
+            <id>flink-1.20</id>
+            <properties>
+                <flink.version>${flink.1.20.version}</flink.version>
+                <flink.agents.dist.artifactId>flink-agents-dist-flink-1.20</flink.agents.dist.artifactId>
+            </properties>
+        </profile>
+
+        <!-- Flink 2.0 Profile -->
+        <profile>
+            <id>flink-2.0</id>
+            <properties>
+                <flink.version>${flink.2.0.version}</flink.version>
+                <flink.agents.dist.artifactId>flink-agents-dist-flink-2.0</flink.agents.dist.artifactId>
+            </properties>
+        </profile>
+
+        <!-- Flink 2.1 Profile -->
+        <profile>
+            <id>flink-2.1</id>
+            <properties>
+                <flink.version>${flink.2.1.version}</flink.version>
+                <flink.agents.dist.artifactId>flink-agents-dist-flink-2.1</flink.agents.dist.artifactId>
+            </properties>
+        </profile>
+    </profiles>
 
 </project>

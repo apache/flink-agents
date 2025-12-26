@@ -46,13 +46,33 @@ if $build_java; then
 fi
 
 if $build_python; then
-  # copy flink-agents-dist jar to python lib
+  # copy flink-agents-dist jars to python lib with version subdirectories
   PYTHON_LIB_DIR=${PROJECT_ROOT}/python/flink_agents/lib
   rm -rf ${PYTHON_LIB_DIR}
   mkdir -p ${PYTHON_LIB_DIR}
 
   PROJECT_VERSION=$(sed -n 's/.*<version>\(.*\)<\/version>.*/\1/p' pom.xml | head -n 2 | tail -n 1)
-  cp "${PROJECT_ROOT}/dist/target/flink-agents-dist-${PROJECT_VERSION}.jar" ${PYTHON_LIB_DIR}
+
+  # Automatically detect and copy all Flink version JARs from dist subdirectories
+  DIST_DIR="${PROJECT_ROOT}/dist"
+  for version_dir in "${DIST_DIR}"/flink-*; do
+    if [ -d "$version_dir" ]; then
+      version_name=$(basename "$version_dir")
+      echo "Processing $version_name..."
+
+      # Create corresponding lib subdirectory
+      mkdir -p "${PYTHON_LIB_DIR}/${version_name}"
+
+      # Find and copy the JAR file
+      jar_file="${version_dir}/target/flink-agents-dist-${version_name}-${PROJECT_VERSION}.jar"
+      if [ -f "$jar_file" ]; then
+        cp "$jar_file" "${PYTHON_LIB_DIR}/${version_name}/"
+        echo "  Copied: flink-agents-dist-${version_name}-${PROJECT_VERSION}.jar"
+      else
+        echo "  Warning: JAR file not found at $jar_file"
+      fi
+    fi
+  done
 
   # build python
   cd python
