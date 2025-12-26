@@ -139,7 +139,7 @@ String systemPromptString =
                 + "...";
     
 // Prompt for review analysis react agent.
-Prompt myPrompt = new Prompt(
+Prompt myPrompt = Prompt.fromMessages(
         Arrays.asList(
                 new ChatMessage(MessageRole.SYSTEM, systemPromptString),
                 new ChatMessage(

@@ -111,7 +111,7 @@ class AgentPlanDeclareChatModelTest {
                         agentPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
         assertNotNull(model);
 
-        Prompt prompt = new Prompt("Hello world");
+        Prompt prompt = Prompt.fromText("Hello world");
         ChatMessage reply = model.chat(prompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertEquals(MessageRole.ASSISTANT, reply.getRole());
@@ -128,7 +128,7 @@ class AgentPlanDeclareChatModelTest {
         BaseChatModelSetup model =
                 (BaseChatModelSetup) restored.getResource("testChatModel", ResourceType.CHAT_MODEL);
         ChatMessage reply =
-                model.chat(new Prompt("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
+                model.chat(Prompt.fromText("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
         assertEquals("ok:Hi", reply.getContent());
     }
 

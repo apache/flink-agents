@@ -91,7 +91,7 @@ public class ReActAgent extends Agent {
                         "Output schema must be RowTypeInfo or Pojo class.");
             }
             Prompt schemaPrompt =
-                    new Prompt(
+                    Prompt.fromText(
                             String.format(
                                     "The final response should be json format, and match the schema %s",
                                     jsonSchema));

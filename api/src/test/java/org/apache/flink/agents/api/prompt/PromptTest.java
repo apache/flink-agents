@@ -53,7 +53,7 @@ class PromptTest {
         String textTemplate =
                 "You are a product review analyzer, please generate a score and the dislike reasons "
                         + "(if any) for the review. The product {product_id} is {description}, and user review is '{review}'.";
-        textPrompt = new Prompt(textTemplate);
+        textPrompt = Prompt.fromText(textTemplate);
 
         // Create message-based prompt template
         List<ChatMessage> messageTemplate =
@@ -65,7 +65,7 @@ class PromptTest {
                         new ChatMessage(
                                 MessageRole.USER,
                                 "The product {product_id} is {description}, and user review is '{review}'."));
-        messagesPrompt = new Prompt(messageTemplate);
+        messagesPrompt = Prompt.fromMessages(messageTemplate);
 
         // Set up test variables
         variables = new HashMap<>();
@@ -170,7 +170,7 @@ class PromptTest {
     @Test
     @DisplayName("Test empty prompt")
     void testEmptyPrompt() {
-        Prompt emptyPrompt = new Prompt("");
+        Prompt emptyPrompt = Prompt.fromText("");
         String result = emptyPrompt.formatString(new HashMap<>());
         assertEquals("", result);
 
@@ -183,7 +183,7 @@ class PromptTest {
     @DisplayName("Test prompt with special characters")
     void testPromptWithSpecialCharacters() {
         String specialTemplate = "Handle special chars: {text} with symbols like @#$%^&*()";
-        Prompt specialPrompt = new Prompt(specialTemplate);
+        Prompt specialPrompt = Prompt.fromText(specialTemplate);
 
         Map<String, String> specialVars = new HashMap<>();
         specialVars.put("text", "Hello & Welcome!");
@@ -197,7 +197,7 @@ class PromptTest {
     @DisplayName("Test prompt with nested braces")
     void testPromptWithNestedBraces() {
         String nestedTemplate = "JSON example: {{\"key\": \"{value}\"}}";
-        Prompt nestedPrompt = new Prompt(nestedTemplate);
+        Prompt nestedPrompt = Prompt.fromText(nestedTemplate);
 
         Map<String, String> nestedVars = new HashMap<>();
         nestedVars.put("value", "test");
@@ -220,7 +220,7 @@ class PromptTest {
                                 "I'd be happy to help with {task}. Let me know what specifically you need."),
                         new ChatMessage(MessageRole.USER, "{user_request}"));
 
-        Prompt conversationPrompt = new Prompt(conversationTemplate);
+        Prompt conversationPrompt = Prompt.fromMessages(conversationTemplate);
 
         Map<String, String> conversationVars = new HashMap<>();
         conversationVars.put("assistant_type", "an AI assistant");

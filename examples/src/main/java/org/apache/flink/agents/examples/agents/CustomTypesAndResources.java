@@ -56,14 +56,14 @@ public class CustomTypesAndResources {
                     + "no need to disclose whether the tool was used.";
 
     public static final Prompt REVIEW_ANALYSIS_PROMPT =
-            new Prompt(
+            Prompt.fromMessages(
                     Arrays.asList(
                             new ChatMessage(MessageRole.SYSTEM, REVIEW_ANALYSIS_SYSTEM_PROMPT_STR),
                             new ChatMessage(MessageRole.USER, "\"input\":\n" + "{input}")));
 
     // Prompt for review analysis react agent
     public static final Prompt REVIEW_ANALYSIS_REACT_PROMPT =
-            new Prompt(
+            Prompt.fromMessages(
                     Arrays.asList(
                             new ChatMessage(MessageRole.SYSTEM, REVIEW_ANALYSIS_SYSTEM_PROMPT_STR),
                             new ChatMessage(
@@ -91,7 +91,7 @@ public class CustomTypesAndResources {
                     + "{input}";
 
     public static final Prompt PRODUCT_SUGGESTION_PROMPT =
-            new Prompt(PRODUCT_SUGGESTION_PROMPT_STR);
+            Prompt.fromText(PRODUCT_SUGGESTION_PROMPT_STR);
 
     /**
      * Tool for notifying the shipping manager when product received a negative review due to

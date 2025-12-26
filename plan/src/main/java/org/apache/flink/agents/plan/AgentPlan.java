@@ -59,6 +59,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
+import static org.apache.flink.agents.api.resource.ResourceType.PROMPT;
+import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
+
 /** Agent plan compiled from user defined agent. */
 @JsonSerialize(using = AgentPlanJsonSerializer.class)
 @JsonDeserialize(using = AgentPlanJsonDeserializer.class)
@@ -311,10 +315,50 @@ public class AgentPlan implements Serializable {
 
         FunctionTool tool = new FunctionTool(metadata, javaFunction);
         JavaSerializableResourceProvider provider =
-                JavaSerializableResourceProvider.createResourceProvider(
-                        name, ResourceType.TOOL, tool);
+                JavaSerializableResourceProvider.createResourceProvider(name, TOOL, tool);
 
         addResourceProvider(provider);
+    }
+
+    private void extractMCPServer(Method method) throws Exception {
+        // Use reflection to handle MCP classes to support Java 11 without MCP
+        String name = method.getName();
+        Object mcpServer = method.invoke(null);
+
+        addResourceProvider(
+                JavaSerializableResourceProvider.createResourceProvider(
+                        name, MCP_SERVER, (SerializableResource) mcpServer));
+
+        // Call listTools() via reflection
+        Method listToolsMethod = mcpServer.getClass().getMethod("listTools");
+        @SuppressWarnings("unchecked")
+        Iterable<? extends SerializableResource> tools =
+                (Iterable<? extends SerializableResource>) listToolsMethod.invoke(mcpServer);
+
+        for (SerializableResource tool : tools) {
+            Method getNameMethod = tool.getClass().getMethod("getName");
+            String toolName = (String) getNameMethod.invoke(tool);
+            addResourceProvider(
+                    JavaSerializableResourceProvider.createResourceProvider(toolName, TOOL, tool));
+        }
+
+        // Call listPrompts() via reflection
+        Method listPromptsMethod = mcpServer.getClass().getMethod("listPrompts");
+        @SuppressWarnings("unchecked")
+        Iterable<? extends SerializableResource> prompts =
+                (Iterable<? extends SerializableResource>) listPromptsMethod.invoke(mcpServer);
+
+        for (SerializableResource prompt : prompts) {
+            Method getNameMethod = prompt.getClass().getMethod("getName");
+            String promptName = (String) getNameMethod.invoke(prompt);
+            addResourceProvider(
+                    JavaSerializableResourceProvider.createResourceProvider(
+                            promptName, PROMPT, prompt));
+        }
+
+        // Call close() via reflection
+        Method closeMethod = mcpServer.getClass().getMethod("close");
+        closeMethod.invoke(mcpServer);
     }
 
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
@@ -339,8 +383,7 @@ public class AgentPlan implements Serializable {
                     if (fieldValue instanceof Resource) {
                         Resource resource = (Resource) fieldValue;
                         ResourceProvider provider =
-                                createResourceProvider(
-                                        resourceName, ResourceType.TOOL, resource, agentClass);
+                                createResourceProvider(resourceName, TOOL, resource, agentClass);
                         addResourceProvider(provider);
                     }
                 } catch (IllegalAccessException e) {
@@ -382,7 +425,7 @@ public class AgentPlan implements Serializable {
 
                 JavaSerializableResourceProvider provider =
                         JavaSerializableResourceProvider.createResourceProvider(
-                                promptName, ResourceType.PROMPT, prompt);
+                                promptName, PROMPT, prompt);
 
                 addResourceProvider(provider);
             } else if (method.isAnnotationPresent(ChatModelSetup.class)) {
@@ -395,6 +438,19 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
             } else if (method.isAnnotationPresent(VectorStore.class)) {
                 extractResource(ResourceType.VECTOR_STORE, method);
+            } else if (Modifier.isStatic(method.getModifiers())) {
+                // Check for MCPServer annotation using reflection to support Java 11 without MCP
+                try {
+                    Class<?> mcpServerAnnotation =
+                            Class.forName("org.apache.flink.agents.api.annotation.MCPServer");
+                    if (method.isAnnotationPresent(
+                            (Class<? extends java.lang.annotation.Annotation>)
+                                    mcpServerAnnotation)) {
+                        extractMCPServer(method);
+                    }
+                } catch (ClassNotFoundException e) {
+                    // MCP annotation not available (Java 11 build), skip MCP processing
+                }
             }
         }
 
@@ -415,17 +471,15 @@ public class AgentPlan implements Serializable {
                     }
                     addResourceProvider(provider);
                 }
-            } else if (type == ResourceType.PROMPT) {
+            } else if (type == PROMPT) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     JavaSerializableResourceProvider provider =
                             JavaSerializableResourceProvider.createResourceProvider(
-                                    kv.getKey(),
-                                    ResourceType.PROMPT,
-                                    (SerializableResource) kv.getValue());
+                                    kv.getKey(), PROMPT, (SerializableResource) kv.getValue());
 
                     addResourceProvider(provider);
                 }
-            } else if (type == ResourceType.TOOL) {
+            } else if (type == TOOL) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     extractTool(
                             ((org.apache.flink.agents.api.tools.FunctionTool) kv.getValue())

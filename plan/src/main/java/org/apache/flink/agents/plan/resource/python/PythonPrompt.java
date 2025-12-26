@@ -26,10 +26,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * PythonPrompt is a subclass of Prompt that provides a method to parse a Python prompt from a
- * serialized map.
+ * PythonPrompt is a subclass of Prompt.LocalPrompt that provides a method to parse a Python prompt
+ * from a serialized map.
  */
-public class PythonPrompt extends Prompt {
+public class PythonPrompt extends Prompt.LocalPrompt {
     public PythonPrompt(String template) {
         super(template);
     }

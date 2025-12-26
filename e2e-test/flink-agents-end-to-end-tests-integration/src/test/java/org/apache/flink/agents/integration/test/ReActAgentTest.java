@@ -166,7 +166,7 @@ public class ReActAgentTest {
                         .build();
 
         Prompt prompt =
-                new Prompt(
+                Prompt.fromMessages(
                         List.of(
                                 new ChatMessage(
                                         MessageRole.SYSTEM,
