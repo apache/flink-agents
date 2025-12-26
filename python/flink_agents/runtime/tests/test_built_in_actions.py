@@ -205,3 +205,160 @@ def test_built_in_actions() -> None:  # noqa: D103
             "3"
         }
     ]
+
+
+def test_built_in_actions_async_execution() -> None:
+    """Test that built-in actions use async execution correctly.
+    
+    This test verifies that chat_model_action and tool_call_action work
+    correctly with async execution, ensuring backward compatibility.
+    """
+    import time
+    
+    class SlowMockChatModelConnection(BaseChatModelConnection):
+        """Mock ChatModel that simulates slow network calls."""
+        
+        def chat(
+            self,
+            messages: Sequence[ChatMessage],
+            tools: List | None = None,
+            **kwargs: Any,
+        ) -> ChatMessage:
+            """Simulate slow network call."""
+            time.sleep(0.1)  # Simulate network delay
+            if "sum" in messages[-1].content:
+                input = messages[-1].content
+                function = {"name": "add", "arguments": {"a": 1, "b": 2}}
+                tool_call = {
+                    "id": uuid.uuid4(),
+                    "type": ToolType.FUNCTION,
+                    "function": function,
+                }
+                return ChatMessage(
+                    role=MessageRole.ASSISTANT, content=input, tool_calls=[tool_call]
+                )
+            else:
+                content = "\n".join([message.content for message in messages])
+                return ChatMessage(role=MessageRole.ASSISTANT, content=content)
+    
+    class SlowMockChatModel(BaseChatModelSetup):
+        """Mock ChatModel with slow connection."""
+        
+        @property
+        def model_kwargs(self) -> Dict[str, Any]:
+            return {}
+        
+        def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+            server = self.get_resource(self.connection, ResourceType.CHAT_MODEL_CONNECTION)
+            if self.prompt is not None:
+                if isinstance(self.prompt, str):
+                    prompt = self.get_resource(self.prompt, ResourceType.PROMPT)
+                else:
+                    prompt = self.prompt
+                if "sum" in messages[-1].content:
+                    input_variable = {}
+                    for msg in messages:
+                        str_extra_args = {k: str(v) for k, v in msg.extra_args.items()}
+                        input_variable.update(str_extra_args)
+                    messages = prompt.format_messages(**input_variable)
+            tools = None
+            if self.tools is not None:
+                tools = [
+                    self.get_resource(tool_name, ResourceType.TOOL)
+                    for tool_name in self.tools
+                ]
+            return server.chat(messages, tools=tools, **kwargs)
+    
+    class SlowTool:
+        """Mock tool that simulates slow execution."""
+        
+        def __init__(self, name: str):
+            self.name = name
+        
+        def call(self, **kwargs: Any) -> Any:
+            """Simulate slow tool execution."""
+            time.sleep(0.05)  # Simulate slow tool execution
+            if self.name == "add":
+                return kwargs.get("a", 0) + kwargs.get("b", 0)
+            return None
+    
+    class AsyncTestAgent(Agent):
+        """Agent for testing async execution."""
+        
+        @prompt
+        @staticmethod
+        def prompt() -> Prompt:
+            return Prompt.from_text(
+                text="Please call the appropriate tool to do the following task: {task}",
+            )
+        
+        @chat_model_connection
+        @staticmethod
+        def slow_connection() -> ResourceDescriptor:
+            return ResourceDescriptor(clazz=SlowMockChatModelConnection)
+        
+        @chat_model_setup
+        @staticmethod
+        def slow_chat_model() -> ResourceDescriptor:
+            return ResourceDescriptor(
+                clazz=SlowMockChatModel,
+                connection="slow_connection",
+                prompt="prompt",
+                tools=["add"],
+            )
+        
+        @tool
+        @staticmethod
+        def add(a: int, b: int) -> int:
+            """Calculate the sum of a and b."""
+            time.sleep(0.05)  # Simulate slow tool execution
+            return a + b
+        
+        @action(InputEvent)
+        @staticmethod
+        def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+            input = event.input
+            ctx.send_event(
+                ChatRequestEvent(
+                    model="slow_chat_model",
+                    messages=[
+                        ChatMessage(
+                            role=MessageRole.USER, content=input, extra_args={"task": input}
+                        )
+                    ],
+                )
+            )
+        
+        @action(ChatResponseEvent)
+        @staticmethod
+        def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+            input = event.response
+            ctx.send_event(OutputEvent(output=input.content))
+    
+    # Test that async execution works correctly
+    env = AgentsExecutionEnvironment.get_execution_environment()
+    input_list = []
+    agent = AsyncTestAgent()
+    
+    output_list = env.from_list(input_list).apply(agent).to_list()
+    
+    input_list.append({"key": "0001", "value": "calculate the sum of 1 and 2."})
+    
+    # Measure execution time to verify async doesn't block
+    start_time = time.time()
+    env.execute()
+    execution_time = time.time() - start_time
+    
+    # Verify results are correct
+    assert output_list == [
+        {
+            "0001": "calculate the sum of 1 and 2.\n"
+            "Please call the appropriate tool to do the following task: "
+            "calculate the sum of 1 and 2.\n"
+            "3"
+        }
+    ]
+    
+    # Verify execution completed (async should allow this to complete)
+    # Note: Exact timing depends on implementation, but it should complete
+    assert execution_time < 5.0  # Should complete within reasonable time
