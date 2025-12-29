@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from enum import Enum
 from typing import Any
 
 from pyflink.java_gateway import get_gateway
@@ -69,6 +70,17 @@ class AgentConfigOptionsMeta(type):
         return python_option
 
 
+class ErrorHandlingStrategy(Enum):
+    """Error handling strategy for Agent.
+
+    Currently, only works for chat action.
+    """
+
+    RETRY = "retry"
+    FAIL = "fail"
+    IGNORE = "ignore"
+
+
 class AgentConfigOptions(metaclass=AgentConfigOptionsMeta):
     """CoreOptions to manage core configuration parameters for Flink Agents."""
 
@@ -76,4 +88,16 @@ class AgentConfigOptions(metaclass=AgentConfigOptionsMeta):
         key="job-identifier",
         config_type=str,
         default=None,
+    )
+
+    ERROR_HANDLING_STRATEGY = ConfigOption(
+        key="error-handling-strategy",
+        config_type=ErrorHandlingStrategy,
+        default=ErrorHandlingStrategy.FAIL,
+    )
+
+    MAX_RETRIES = ConfigOption(
+        key="max-retries",
+        config_type=int,
+        default=0,
     )

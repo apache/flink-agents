@@ -19,7 +19,6 @@
 package org.apache.flink.agents.api.agents;
 
 import org.apache.commons.lang3.ClassUtils;
-import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Action;
@@ -31,30 +30,16 @@ import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.annotation.VisibleForTesting;
-import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JacksonException;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonGenerator;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonParser;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.DeserializationContext;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonMappingException;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.SerializerProvider;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.deser.std.StdDeserializer;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
-import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -107,16 +92,14 @@ public class ReActAgent extends Agent {
 
         try {
             Method method =
-                    this.getClass()
-                            .getMethod("stopAction", ChatResponseEvent.class, RunnerContext.class);
-            this.addAction(new Class[] {ChatResponseEvent.class}, method, actionConfig);
+                    this.getClass().getMethod("startAction", InputEvent.class, RunnerContext.class);
+            this.addAction(new Class[] {InputEvent.class}, method, actionConfig);
         } catch (NoSuchMethodException e) {
             throw new IllegalStateException(
                     "Can't find the method stopAction, this must be a bug.");
         }
     }
 
-    @Action(listenEvents = {InputEvent.class})
     public static void startAction(InputEvent event, RunnerContext ctx) {
         Object input = event.getInput();
 
@@ -178,151 +161,22 @@ public class ReActAgent extends Agent {
             inputMessages.addAll(0, instruct);
         }
 
-        ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages));
-    }
-
-    public static void stopAction(ChatResponseEvent event, RunnerContext ctx)
-            throws JsonProcessingException {
-        Object output = String.valueOf(event.getResponse().getContent());
-
         Object outputSchema = ctx.getActionConfigValue("output_schema");
 
-        if (outputSchema != null) {
-            ErrorHandlingStrategy strategy =
-                    ctx.getConfig().get(ReActAgentConfigOptions.ERROR_HANDLING_STRATEGY);
-            try {
-                if (outputSchema instanceof Class) {
-                    output = mapper.readValue(String.valueOf(output), (Class<?>) outputSchema);
-                } else if (outputSchema instanceof OutputSchema) {
-                    RowTypeInfo info = ((OutputSchema) outputSchema).getSchema();
-                    Map<String, Object> fields =
-                            mapper.readValue(String.valueOf(output), Map.class);
-                    output = Row.withNames();
-                    for (String name : info.getFieldNames()) {
-                        ((Row) output).setField(name, fields.get(name));
-                    }
-                }
-            } catch (Exception e) {
-                if (strategy == ErrorHandlingStrategy.FAIL) {
-                    throw e;
-                } else if (strategy == ErrorHandlingStrategy.IGNORE) {
-                    LOG.warn(
-                            "The response of llm {} doesn't match schema constraint, ignoring.",
-                            output);
-                    return;
-                }
-            }
+        ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages, outputSchema));
+    }
+
+    @Action(listenEvents = {ChatResponseEvent.class})
+    public static void stopAction(ChatResponseEvent event, RunnerContext ctx) {
+        ChatMessage response = event.getResponse();
+
+        Object output;
+        if (response.getExtraArgs().containsKey(STRUCTURED_OUTPUT)) {
+            output = response.getExtraArgs().get(STRUCTURED_OUTPUT);
+        } else {
+            output = String.valueOf(response.getContent());
         }
 
         ctx.sendEvent(new OutputEvent(output));
-    }
-
-    /**
-     * Helper class for {@link RowTypeInfo} serialization.
-     *
-     * <p>Currently, only support row contains basic type.
-     */
-    @VisibleForTesting
-    @JsonSerialize(using = OutputSchemaJsonSerializer.class)
-    @JsonDeserialize(using = OutputSchemaJsonDeserializer.class)
-    public static class OutputSchema {
-        private final RowTypeInfo schema;
-
-        public OutputSchema(RowTypeInfo schema) {
-            this.schema = schema;
-            for (TypeInformation<?> info : schema.getFieldTypes()) {
-                if (!info.isBasicType()) {
-                    throw new IllegalArgumentException(
-                            "Currently, output schema only support row contains basic type.");
-                }
-            }
-        }
-
-        public RowTypeInfo getSchema() {
-            return schema;
-        }
-    }
-
-    public static class OutputSchemaJsonSerializer extends StdSerializer<OutputSchema> {
-
-        protected OutputSchemaJsonSerializer() {
-            super(OutputSchema.class);
-        }
-
-        @Override
-        public void serialize(
-                OutputSchema schema,
-                JsonGenerator jsonGenerator,
-                SerializerProvider serializerProvider)
-                throws IOException {
-            RowTypeInfo typeInfo = schema.getSchema();
-            jsonGenerator.writeStartObject();
-
-            jsonGenerator.writeFieldName("fieldNames");
-            jsonGenerator.writeStartArray();
-            for (String name : typeInfo.getFieldNames()) {
-                jsonGenerator.writeString(name);
-            }
-            jsonGenerator.writeEndArray();
-
-            // TODO: support type information which is not basic.
-            jsonGenerator.writeFieldName("types");
-            jsonGenerator.writeStartArray();
-            for (TypeInformation<?> info : typeInfo.getFieldTypes()) {
-                jsonGenerator.writeObject(info.getTypeClass());
-            }
-            jsonGenerator.writeEndArray();
-
-            jsonGenerator.writeEndObject();
-        }
-    }
-
-    public static class OutputSchemaJsonDeserializer extends StdDeserializer<OutputSchema> {
-        private static final ObjectMapper mapper = new ObjectMapper();
-
-        protected OutputSchemaJsonDeserializer() {
-            super(OutputSchema.class);
-        }
-
-        @Override
-        public OutputSchema deserialize(
-                JsonParser jsonParser, DeserializationContext deserializationContext)
-                throws IOException, JacksonException {
-            JsonNode node = jsonParser.getCodec().readTree(jsonParser);
-            List<String> fieldNames = new ArrayList<>();
-            node.get("fieldNames").forEach(fieldNameNode -> fieldNames.add(fieldNameNode.asText()));
-            List<TypeInformation<?>> types = new ArrayList<>();
-            node.get("types")
-                    .forEach(
-                            typeNode -> {
-                                try {
-                                    types.add(
-                                            BasicTypeInfo.getInfoFor(
-                                                    mapper.treeToValue(typeNode, Class.class)));
-                                } catch (JsonProcessingException e) {
-                                    throw new RuntimeException(e);
-                                }
-                            });
-
-            return new OutputSchema(
-                    new RowTypeInfo(
-                            types.toArray(new TypeInformation[0]),
-                            fieldNames.toArray(new String[0])));
-        }
-    }
-
-    public enum ErrorHandlingStrategy {
-        FAIL("fail"),
-        IGNORE("ignore");
-
-        private final String value;
-
-        ErrorHandlingStrategy(String value) {
-            this.value = value;
-        }
-
-        public String getValue() {
-            return value;
-        }
     }
 }

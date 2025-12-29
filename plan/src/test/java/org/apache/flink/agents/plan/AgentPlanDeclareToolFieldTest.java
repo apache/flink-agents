@@ -20,9 +20,9 @@
 
 package org.apache.flink.agents.plan;
 
-import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;

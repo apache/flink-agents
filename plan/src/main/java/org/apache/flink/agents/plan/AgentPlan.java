@@ -18,8 +18,8 @@
 
 package org.apache.flink.agents.plan;
 
-import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.*;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;

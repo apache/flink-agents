@@ -35,7 +35,7 @@ from pyflink.datastream.connectors.file_system import (
     StreamingFileSink,
 )
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.core_options import AgentConfigOptions
 from flink_agents.api.decorators import (
     action,

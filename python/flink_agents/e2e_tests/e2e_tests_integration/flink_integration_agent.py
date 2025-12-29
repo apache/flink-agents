@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from pyflink.common import Row
 from pyflink.datastream import KeySelector
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action, tool
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import ResourceType

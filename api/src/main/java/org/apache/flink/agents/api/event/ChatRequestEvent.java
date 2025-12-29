@@ -21,15 +21,25 @@ package org.apache.flink.agents.api.event;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 
+import javax.annotation.Nullable;
+
 import java.util.List;
 
+/** Event representing a request for chat. */
 public class ChatRequestEvent extends Event {
     private final String model;
     private final List<ChatMessage> messages;
+    private final @Nullable Object outputSchema;
 
-    public ChatRequestEvent(String model, List<ChatMessage> messages) {
+    public ChatRequestEvent(
+            String model, List<ChatMessage> messages, @Nullable Object outputSchema) {
         this.model = model;
         this.messages = messages;
+        this.outputSchema = outputSchema;
+    }
+
+    public ChatRequestEvent(String model, List<ChatMessage> messages) {
+        this(model, messages, null);
     }
 
     public String getModel() {
@@ -38,5 +48,10 @@ public class ChatRequestEvent extends Event {
 
     public List<ChatMessage> getMessages() {
         return messages;
+    }
+
+    @Nullable
+    public Object getOutputSchema() {
+        return outputSchema;
     }
 }

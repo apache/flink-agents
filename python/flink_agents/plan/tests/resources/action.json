@@ -11,7 +11,7 @@
     "config": {
         "__config_type__": "python",
         "output_schema": [
-            "flink_agents.api.agents.react_agent",
+            "flink_agents.api.agents.types",
             "OutputSchema",
             {
                 "output_schema": {

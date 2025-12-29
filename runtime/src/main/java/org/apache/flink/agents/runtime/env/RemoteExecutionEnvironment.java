@@ -18,9 +18,9 @@
 
 package org.apache.flink.agents.runtime.env;
 
-import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.AgentBuilder;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;

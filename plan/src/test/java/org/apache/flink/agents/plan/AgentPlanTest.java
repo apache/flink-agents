@@ -18,10 +18,10 @@
 
 package org.apache.flink.agents.plan;
 
-import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;

@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment

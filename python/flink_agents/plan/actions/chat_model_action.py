@@ -16,13 +16,23 @@
 # limitations under the License.
 #################################################################################
 import copy
-from typing import TYPE_CHECKING, List, cast
+import json
+import logging
+from typing import TYPE_CHECKING, Dict, List, cast
 from uuid import UUID
 
+from pydantic import BaseModel
+from pyflink.common import Row
+from pyflink.common.typeinfo import RowTypeInfo
+
+from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
+from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.core_options import AgentConfigOptions, ErrorHandlingStrategy
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
+from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.actions.action import Action
@@ -34,11 +44,135 @@ if TYPE_CHECKING:
 _TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
 _TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT"
 
+_logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Helper Functions for Tool Call Context Management
+# ============================================================================
+def _update_tool_call_context(
+    sensory_memory: MemoryObject,
+    initial_request_id: UUID,
+    initial_messages: List[ChatMessage] | None,
+    added_messages: List[ChatMessage],
+) -> List[ChatMessage]:
+    """Append messages to tool call context.
+
+    The messages maybe chat model response with tool calls, or tool execute results. May
+    initialize the context for initial_request_id if needed.
+    """
+    # TODO: Because memory doesn't support remove currently, so we use
+    #  dict to store tool context in memory and remove the specific
+    #  tool context from dict after consuming. This will cause write and
+    #  read amplification for we need get the whole dict and overwrite it
+    #  to memory each time we update a specific tool context.
+    #  After memory supports remove, we can use "TOOL_CALL_CONTEXT/request_id"
+    #  to store and remove the specific tool context directly.
+
+    # init if not exists
+    tool_call_context = sensory_memory.get(_TOOL_CALL_CONTEXT) or {}
+    if initial_request_id not in tool_call_context and initial_messages is not None:
+        tool_call_context[initial_request_id] = copy.deepcopy(initial_messages)
+
+    tool_call_context[initial_request_id].extend(added_messages)
+
+    # update tool call context
+    sensory_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
+    return tool_call_context[initial_request_id]
+
+
+def _clear_tool_call_context(
+    sensory_memory: MemoryObject, initial_request_id: UUID
+) -> None:
+    """Clear tool call context for a specific request ID."""
+    context = sensory_memory.get(_TOOL_CALL_CONTEXT) or {}
+    if initial_request_id in context:
+        context.pop(initial_request_id)
+        sensory_memory.set(_TOOL_CALL_CONTEXT, context)
+
+
+def _save_tool_request_event_context(
+    sensory_memory: MemoryObject,
+    tool_request_event_id: UUID,
+    initial_request_id: UUID,
+    model: str,
+    output_schema: OutputSchema | None,
+) -> None:
+    """Save the context for a specific tool request event."""
+    context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
+    context[tool_request_event_id] = {
+        "initial_request_id": initial_request_id,
+        "model": model,
+        "output_schema": output_schema,
+    }
+    sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, context)
+
+
+def _remove_tool_request_event_context(
+    sensory_memory: MemoryObject, request_id: UUID
+) -> Dict:
+    """Get and remove the context for a specific tool request event."""
+    context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
+    removed_context = context.pop(request_id, {})
+    sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, removed_context)
+    return removed_context
+
+
+def _handle_tool_calls(
+    response: ChatMessage,
+    initial_request_id: UUID,
+    model: str,
+    messages: List[ChatMessage],
+    output_schema: OutputSchema | None,
+    ctx: RunnerContext,
+) -> None:
+    """Handle tool calls in chat response."""
+    _update_tool_call_context(
+        ctx.sensory_memory, initial_request_id, messages, [response]
+    )
+
+    tool_request_event = ToolRequestEvent(
+        model=model,
+        tool_calls=response.tool_calls,
+    )
+
+    # save tool request event context
+    _save_tool_request_event_context(
+        ctx.sensory_memory,
+        tool_request_event.id,
+        initial_request_id,
+        model,
+        output_schema,
+    )
+
+    ctx.send_event(tool_request_event)
+
+
+def _generate_structured_output(
+    response: ChatMessage, output_schema: OutputSchema
+) -> ChatMessage:
+    """Deserialize output to expected output schema."""
+    output_schema = output_schema.output_schema
+    output = json.loads(response.content.strip())
+
+    if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
+        output = output_schema.model_validate(output)
+    elif isinstance(output_schema, RowTypeInfo):
+        field_names = output_schema.get_field_names()
+        values = {}
+        for field_name in field_names:
+            values[field_name] = output[field_name]
+        output = Row(**values)
+    response.extra_args[STRUCTURED_OUTPUT] = output
+
+    return response
+
 
 def chat(
     initial_request_id: UUID,
     model: str,
     messages: List[ChatMessage],
+    output_schema: OutputSchema | None,
     ctx: RunnerContext,
 ) -> None:
     """Chat with llm.
@@ -51,54 +185,45 @@ def chat(
         "BaseChatModelSetup", ctx.get_resource(model, ResourceType.CHAT_MODEL)
     )
 
+    error_handling_strategy = ctx.config.get(AgentConfigOptions.ERROR_HANDLING_STRATEGY)
+    num_retries = 0
+    if error_handling_strategy == ErrorHandlingStrategy.RETRY:
+        num_retries = max(0, ctx.config.get(AgentConfigOptions.MAX_RETRIES))
+
     # TODO: support async execution of chat.
-    response = chat_model.chat(messages)
-    short_term_memory = ctx.short_term_memory
+    response = None
+    for attempt in range(num_retries + 1):
+        try:
+            response = chat_model.chat(messages)
+            if output_schema is not None and len(response.tool_calls) == 0:
+                response = _generate_structured_output(response, output_schema)
+        except Exception as e:  # noqa: PERF203
+            if error_handling_strategy == ErrorHandlingStrategy.IGNORE:
+                _logger.warning(
+                    f"Chat request {initial_request_id} failed with error: {e}, ignored."
+                )
+                return
+            elif error_handling_strategy == ErrorHandlingStrategy.RETRY:
+                if attempt == num_retries:
+                    raise
+                _logger.warning(
+                    f"Chat request {initial_request_id} failed with error: {e}, retrying {attempt} / {num_retries}."
+                )
+            else:
+                _logger.debug(
+                    f"Chat request {initial_request_id} failed, the input chat messages are {messages}."
+                )
+                raise
 
-    # generate tool request event according tool calls in response
-    if len(response.tool_calls) > 0:
-        # TODO: Because memory doesn't support remove currently, so we use
-        #  dict to store tool context in memory and remove the specific
-        #  tool context from dict after consuming. This will cause write and
-        #  read amplification for we need get the whole dict and overwrite it
-        #  to memory each time we update a specific tool context.
-        #  After memory supports remove, we can use "TOOL_CALL_CONTEXT/request_id"
-        #  to store and remove the specific tool context directly.
-
-        # save tool call context
-        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
-        if not tool_call_context:
-            tool_call_context = {}
-        if initial_request_id not in tool_call_context:
-            tool_call_context[initial_request_id] = copy.deepcopy(messages)
-        # append response to tool call context
-        tool_call_context[initial_request_id].append(response)
-        # update tool call context
-        short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
-
-        tool_request_event = ToolRequestEvent(
-            model=model,
-            tool_calls=response.tool_calls,
+    if (
+        len(response.tool_calls) > 0
+    ):  # generate tool request event according tool calls in response
+        _handle_tool_calls(
+            response, initial_request_id, model, messages, output_schema, ctx
         )
+    else:  # if there is no tool call generated, return chat response directly
+        _clear_tool_call_context(ctx.sensory_memory, initial_request_id)
 
-        # save tool request event context
-        tool_request_event_context = tool_call_context.get(_TOOL_REQUEST_EVENT_CONTEXT)
-        if not tool_request_event_context:
-            tool_request_event_context = {}
-        tool_request_event_context[tool_request_event.id] = {
-            "initial_request_id": initial_request_id,
-            "model": model,
-        }
-        short_term_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, tool_request_event_context)
-
-        ctx.send_event(tool_request_event)
-    # if there is no tool call generated, return chat response directly
-    else:
-        # clear tool call context related to specific request id
-        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
-        if tool_call_context and initial_request_id in tool_call_context:
-            tool_call_context.pop(initial_request_id)
-            short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
         ctx.send_event(
             ChatResponseEvent(
                 request_id=initial_request_id,
@@ -107,55 +232,65 @@ def chat(
         )
 
 
+def _process_chat_request(event: ChatRequestEvent, ctx: RunnerContext) -> None:
+    """Process chat request event."""
+    chat(
+        initial_request_id=event.id,
+        model=event.model,
+        messages=event.messages,
+        output_schema=event.output_schema,
+        ctx=ctx,
+    )
+
+
+def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -> None:
+    """Organize the tool call context and return it to the LLM."""
+    sensory_memory = ctx.sensory_memory
+    request_id = event.request_id
+
+    # get correspond tool request event context
+    tool_request_event_context = _remove_tool_request_event_context(
+        sensory_memory, request_id
+    )
+    initial_request_id = tool_request_event_context["initial_request_id"]
+
+    # update tool call context, and get the entire chat messages.
+    messages = _update_tool_call_context(
+        sensory_memory,
+        initial_request_id,
+        None,
+        [
+            ChatMessage(
+                role=MessageRole.TOOL,
+                content=str(response),
+                extra_args={"external_id": event.external_ids.get(tool_id)}
+                if event.external_ids and event.external_ids.get(tool_id)
+                else {},
+            )
+            for tool_id, response in event.responses.items()
+        ],
+    )
+
+    chat(
+        initial_request_id=initial_request_id,
+        model=tool_request_event_context["model"],
+        messages=messages,
+        output_schema=tool_request_event_context["output_schema"],
+        ctx=ctx,
+    )
+
+
 def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> None:
     """Built-in action for processing a chat request or tool response.
 
-    Internally, this action will use short term memory to save the tool call context,
-    which is a dict mapping request id to chat messages.
+    This action listens to ChatRequestEvent and ToolResponseEvent, and handles
+    the complete chat flow including tool calls. It uses sensory memory to save
+    the tool call context, which is a dict mapping request id to chat messages.
     """
-    short_term_memory = ctx.short_term_memory
     if isinstance(event, ChatRequestEvent):
-        chat(
-            initial_request_id=event.id,
-            model=event.model,
-            messages=event.messages,
-            ctx=ctx,
-        )
-
+        _process_chat_request(event, ctx)
     elif isinstance(event, ToolResponseEvent):
-        request_id = event.request_id
-
-        # get correspond tool request event context
-        tool_request_event_context = short_term_memory.get(_TOOL_REQUEST_EVENT_CONTEXT)
-        initial_request_id = tool_request_event_context[request_id][
-            "initial_request_id"
-        ]
-        model = tool_request_event_context[request_id]["model"]
-        # clear tool request event context
-        tool_request_event_context.pop(request_id)
-        short_term_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, tool_request_event_context)
-
-        responses = event.responses
-        # update tool call context
-        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
-        for id, response in responses.items():
-            tool_call_context[initial_request_id].append(
-                ChatMessage(
-                    role=MessageRole.TOOL,
-                    content=str(response),
-                    extra_args={"external_id": event.external_ids[id]}
-                    if event.external_ids[id]
-                    else {},
-                )
-            )
-        short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
-
-        chat(
-            initial_request_id=initial_request_id,
-            model=model,
-            messages=tool_call_context[initial_request_id],
-            ctx=ctx,
-        )
+        _process_tool_response(event, ctx)
 
 
 CHAT_MODEL_ACTION = Action(

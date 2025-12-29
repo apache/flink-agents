@@ -22,7 +22,7 @@ from typing import Any, Callable, Dict, Generator, List
 
 from typing_extensions import override
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
 from flink_agents.api.memory_object import MemoryObject, MemoryType

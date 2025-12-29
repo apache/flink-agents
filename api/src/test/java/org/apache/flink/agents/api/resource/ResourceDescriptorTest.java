@@ -18,8 +18,8 @@
 
 package org.apache.flink.agents.api.resource;
 
-import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Assertions;

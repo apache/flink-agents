@@ -31,7 +31,7 @@ from pyflink.datastream.connectors.file_system import (
     StreamFormat,
 )
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment

@@ -19,7 +19,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.decorators import (
     action,

@@ -18,6 +18,9 @@
 package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
@@ -30,15 +33,30 @@ import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.types.Row;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
 
 import java.util.*;
 
+import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
+
 /** Built-in action for processing chat request and tool call result. */
 public class ChatModelAction {
+    private static final Logger LOG = LoggerFactory.getLogger(ChatModelAction.class);
+
     private static final String TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT";
     private static final String TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT";
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
     private static final String MODEL = "model";
+    private static final String OUTPUT_SCHEMA = "outputSchema";
+
+    private static final ObjectMapper mapper = new ObjectMapper();
 
     public static Action getChatModelAction() throws Exception {
         return new Action(
@@ -48,6 +66,130 @@ public class ChatModelAction {
                         "processChatRequestOrToolResponse",
                         new Class[] {Event.class, RunnerContext.class}),
                 List.of(ChatRequestEvent.class.getName(), ToolResponseEvent.class.getName()));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<ChatMessage> updateToolCallContext(
+            MemoryObject sensoryMem,
+            UUID initialRequestId,
+            List<ChatMessage> initialMessages,
+            List<ChatMessage> addedMessages)
+            throws Exception {
+
+        Map<UUID, Object> toolCallContext;
+        if (sensoryMem.isExist(TOOL_CALL_CONTEXT)) {
+            toolCallContext = (Map<UUID, Object>) sensoryMem.get(TOOL_CALL_CONTEXT).getValue();
+        } else {
+            toolCallContext = new HashMap<>();
+        }
+        if (!toolCallContext.containsKey(initialRequestId)) {
+            toolCallContext.put(initialRequestId, initialMessages);
+        }
+        List<ChatMessage> messageContext =
+                new ArrayList<>((List<ChatMessage>) toolCallContext.get(initialRequestId));
+
+        messageContext.addAll(addedMessages);
+        toolCallContext.put(initialRequestId, messageContext);
+        sensoryMem.set(TOOL_CALL_CONTEXT, toolCallContext);
+        return messageContext;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void clearToolCallContext(MemoryObject sensoryMem, UUID initialRequestId)
+            throws Exception {
+        if (sensoryMem.isExist(TOOL_CALL_CONTEXT)) {
+            Map<UUID, Object> toolCallContext =
+                    (Map<UUID, Object>) sensoryMem.get(TOOL_CALL_CONTEXT).getValue();
+            if (toolCallContext.containsKey(initialRequestId)) {
+                toolCallContext.remove(initialRequestId);
+                sensoryMem.set(TOOL_CALL_CONTEXT, toolCallContext);
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void saveToolRequestEventContext(
+            MemoryObject sensoryMem,
+            UUID toolRequestEventId,
+            UUID initialRequestId,
+            String model,
+            Object outputSchema)
+            throws Exception {
+        Map<UUID, Object> toolRequestEventContext;
+        if (sensoryMem.isExist(TOOL_REQUEST_EVENT_CONTEXT)) {
+            toolRequestEventContext =
+                    (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
+        } else {
+            toolRequestEventContext = new HashMap<>();
+        }
+        Map<String, Object> context = new HashMap<>();
+        context.put(INITIAL_REQUEST_ID, initialRequestId);
+        context.put(MODEL, model);
+        if (outputSchema != null) {
+            context.put(OUTPUT_SCHEMA, outputSchema);
+        }
+        toolRequestEventContext.put(toolRequestEventId, context);
+        sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> removeToolRequestEventContext(
+            MemoryObject sensoryMem, UUID requestId) throws Exception {
+        Map<UUID, Object> toolRequestEventContext =
+                (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
+        Map<String, Object> context =
+                (Map<String, Object>) toolRequestEventContext.remove(requestId);
+        sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
+        return context;
+    }
+
+    private static void handleToolCalls(
+            ChatMessage response,
+            UUID initialRequestId,
+            String model,
+            List<ChatMessage> messages,
+            Object outputSchema,
+            RunnerContext ctx)
+            throws Exception {
+        updateToolCallContext(
+                ctx.getSensoryMemory(),
+                initialRequestId,
+                messages,
+                Collections.singletonList(response));
+
+        ToolRequestEvent toolRequestEvent = new ToolRequestEvent(model, response.getToolCalls());
+
+        saveToolRequestEventContext(
+                ctx.getSensoryMemory(),
+                toolRequestEvent.getId(),
+                initialRequestId,
+                model,
+                outputSchema);
+
+        ctx.sendEvent(toolRequestEvent);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ChatMessage generateStructuredOutput(ChatMessage response, Object outputSchema)
+            throws JsonProcessingException {
+        String output = response.getContent();
+        Object structuredOutput;
+        if (outputSchema instanceof Class) {
+            structuredOutput = mapper.readValue(String.valueOf(output), (Class<?>) outputSchema);
+        } else if (outputSchema instanceof OutputSchema) {
+            RowTypeInfo info = ((OutputSchema) outputSchema).getSchema();
+            Map<String, Object> fields = mapper.readValue(String.valueOf(output), Map.class);
+            structuredOutput = Row.withNames();
+            for (String name : info.getFieldNames()) {
+                ((Row) structuredOutput).setField(name, fields.get(name));
+            }
+        } else {
+            throw new RuntimeException(
+                    String.format("Unsupported output schema %s.", outputSchema));
+        }
+        Map<String, Object> extraArgs = new HashMap<>();
+        extraArgs.put(STRUCTURED_OUTPUT, structuredOutput);
+        return new ChatMessage(response.getRole(), output, extraArgs);
     }
 
     /**
@@ -61,60 +203,118 @@ public class ChatModelAction {
      * @param ctx The runner context this function executed in.
      */
     public static void chat(
-            UUID initialRequestId, String model, List<ChatMessage> messages, RunnerContext ctx)
+            UUID initialRequestId,
+            String model,
+            List<ChatMessage> messages,
+            @Nullable Object outputSchema,
+            RunnerContext ctx)
             throws Exception {
         BaseChatModelSetup chatModel =
                 (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
 
-        ChatMessage response = chatModel.chat(messages, Map.of());
-        MemoryObject stm = ctx.getShortTermMemory();
+        Agent.ErrorHandlingStrategy strategy =
+                ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
+        int numRetries = 0;
+        if (strategy == Agent.ErrorHandlingStrategy.RETRY) {
+            numRetries =
+                    ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES) > 0
+                            ? ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES)
+                            : 0;
+        }
 
-        if (!response.getToolCalls().isEmpty()) {
-            Map<UUID, Object> toolCallContext;
-            if (stm.isExist(TOOL_CALL_CONTEXT)) {
-                toolCallContext = (Map<UUID, Object>) stm.get(TOOL_CALL_CONTEXT).getValue();
-            } else {
-                toolCallContext = new HashMap<>();
-            }
-            if (!toolCallContext.containsKey(initialRequestId)) {
-                toolCallContext.put(initialRequestId, messages);
-            }
-            List<ChatMessage> messageContext =
-                    new ArrayList<>((List<ChatMessage>) toolCallContext.get(initialRequestId));
+        ChatMessage response = null;
 
-            messageContext.add(response);
-            toolCallContext.put(initialRequestId, messageContext);
-            stm.set(TOOL_CALL_CONTEXT, toolCallContext);
-
-            ToolRequestEvent toolRequestEvent =
-                    new ToolRequestEvent(model, response.getToolCalls());
-
-            Map<UUID, Object> toolRequestEventContext;
-            if (stm.isExist(TOOL_REQUEST_EVENT_CONTEXT)) {
-                toolRequestEventContext =
-                        (Map<UUID, Object>) stm.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
-            } else {
-                toolRequestEventContext = new HashMap<>();
-            }
-            toolRequestEventContext.put(
-                    toolRequestEvent.getId(),
-                    Map.of(INITIAL_REQUEST_ID, initialRequestId, MODEL, model));
-            stm.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
-
-            ctx.sendEvent(toolRequestEvent);
-        } else {
-            // clean tool call context
-            if (stm.isExist(TOOL_CALL_CONTEXT)) {
-                Map<UUID, Object> toolCallContext =
-                        (Map<UUID, Object>) stm.get(TOOL_CALL_CONTEXT).getValue();
-                if (toolCallContext.containsKey(initialRequestId)) {
-                    toolCallContext.remove(initialRequestId);
-                    stm.set(TOOL_CALL_CONTEXT, toolCallContext);
+        for (int attempt = 0; attempt < numRetries + 1; attempt++) {
+            try {
+                response = chatModel.chat(messages, Map.of());
+                // only generate structured output for final response.
+                if (outputSchema != null && response.getToolCalls().isEmpty()) {
+                    response = generateStructuredOutput(response, outputSchema);
+                }
+            } catch (Exception e) {
+                if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
+                    LOG.warn(
+                            "Chat request {} failed with error: {}, ignored.", initialRequestId, e);
+                    return;
+                } else if (strategy == Agent.ErrorHandlingStrategy.RETRY) {
+                    if (attempt == numRetries) {
+                        throw e;
+                    }
+                    LOG.warn(
+                            "Chat request {} failed with error: {}, retrying {} / {}.",
+                            initialRequestId,
+                            e,
+                            attempt,
+                            numRetries);
+                } else {
+                    LOG.debug(
+                            "Chat request {} failed, the input chat messages are {}.",
+                            initialRequestId,
+                            messages);
+                    throw e;
                 }
             }
+        }
+
+        if (!Objects.requireNonNull(response).getToolCalls().isEmpty()) {
+            handleToolCalls(response, initialRequestId, model, messages, outputSchema, ctx);
+        } else {
+            // clean tool call context
+            clearToolCallContext(ctx.getSensoryMemory(), initialRequestId);
 
             ctx.sendEvent(new ChatResponseEvent(initialRequestId, response));
         }
+    }
+
+    private static void processChatRequest(ChatRequestEvent event, RunnerContext ctx)
+            throws Exception {
+        chat(event.getId(), event.getModel(), event.getMessages(), event.getOutputSchema(), ctx);
+    }
+
+    private static void processToolResponse(ToolResponseEvent event, RunnerContext ctx)
+            throws Exception {
+        MemoryObject sensoryMem = ctx.getSensoryMemory();
+
+        // get tool request context from memory
+        Map<String, Object> context =
+                removeToolRequestEventContext(sensoryMem, event.getRequestId());
+
+        UUID initialRequestId = (UUID) context.get(INITIAL_REQUEST_ID);
+        String model = (String) context.get(MODEL);
+        Object outputSchema = context.get(OUTPUT_SCHEMA);
+
+        Map<String, ToolResponse> responses = event.getResponses();
+        Map<String, Boolean> success = event.getSuccess();
+
+        List<ChatMessage> toolResponseMessages = new ArrayList<>();
+
+        for (Map.Entry<String, ToolResponse> entry : responses.entrySet()) {
+            Map<String, Object> extraArgs = new HashMap<>();
+            String toolCallId = entry.getKey();
+            if (event.getExternalIds().containsKey(toolCallId)) {
+                extraArgs.put("externalId", event.getExternalIds().get(toolCallId));
+            }
+
+            ToolResponse response = entry.getValue();
+            if (success.get(toolCallId) && response.isSuccess()) {
+                toolResponseMessages.add(
+                        new ChatMessage(
+                                MessageRole.TOOL, String.valueOf(response.getResult()), extraArgs));
+            } else {
+                toolResponseMessages.add(
+                        new ChatMessage(
+                                MessageRole.TOOL, String.valueOf(response.getError()), extraArgs));
+            }
+        }
+
+        List<ChatMessage> messages =
+                updateToolCallContext(
+                        ctx.getSensoryMemory(),
+                        initialRequestId,
+                        Collections.emptyList(),
+                        toolResponseMessages);
+
+        chat(initialRequestId, model, messages, outputSchema, ctx);
     }
 
     /**
@@ -128,66 +328,13 @@ public class ChatModelAction {
      *     ToolResponseEvent}
      * @param ctx The runner context this action executed in.
      */
-    @SuppressWarnings("unchecked")
     public static void processChatRequestOrToolResponse(Event event, RunnerContext ctx)
             throws Exception {
-        MemoryObject stm = ctx.getShortTermMemory();
+        MemoryObject sensoryMem = ctx.getSensoryMemory();
         if (event instanceof ChatRequestEvent) {
-            ChatRequestEvent chatRequestEvent = (ChatRequestEvent) event;
-            chat(
-                    chatRequestEvent.getId(),
-                    chatRequestEvent.getModel(),
-                    chatRequestEvent.getMessages(),
-                    ctx);
+            processChatRequest((ChatRequestEvent) event, ctx);
         } else if (event instanceof ToolResponseEvent) {
-            ToolResponseEvent toolResponseEvent = (ToolResponseEvent) event;
-            UUID toolRequestId = toolResponseEvent.getRequestId();
-            // get tool request context from memory
-            Map<UUID, Object> toolRequestEventContext =
-                    (Map<UUID, Object>) stm.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
-            Map<String, Object> context =
-                    (Map<String, Object>) toolRequestEventContext.get(toolRequestId);
-            UUID initialRequestId = (UUID) context.get(INITIAL_REQUEST_ID);
-            String model = (String) context.get(MODEL);
-            toolRequestEventContext.remove(toolRequestId);
-            stm.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
-            Map<String, ToolResponse> responses = toolResponseEvent.getResponses();
-            Map<String, Boolean> success = toolResponseEvent.getSuccess();
-
-            // get tool call context
-            Map<UUID, Object> toolCallContext =
-                    (Map<UUID, Object>) stm.get(TOOL_CALL_CONTEXT).getValue();
-            // update tool call context
-            List<ChatMessage> messages =
-                    new ArrayList<>((List<ChatMessage>) toolCallContext.get(initialRequestId));
-
-            for (Map.Entry<String, ToolResponse> entry : responses.entrySet()) {
-                Map<String, Object> extraArgs = new HashMap<>();
-                String toolCallId = entry.getKey();
-                if (toolResponseEvent.getExternalIds().containsKey(toolCallId)) {
-                    extraArgs.put("externalId", toolResponseEvent.getExternalIds().get(toolCallId));
-                }
-
-                ToolResponse response = entry.getValue();
-                if (success.get(toolCallId) && response.isSuccess()) {
-                    messages.add(
-                            new ChatMessage(
-                                    MessageRole.TOOL,
-                                    String.valueOf(response.getResult()),
-                                    extraArgs));
-                } else {
-                    messages.add(
-                            new ChatMessage(
-                                    MessageRole.TOOL,
-                                    String.valueOf(response.getError()),
-                                    extraArgs));
-                }
-            }
-            toolCallContext.put(initialRequestId, messages);
-            // overwrite tool call context
-            stm.set(TOOL_CALL_CONTEXT, toolCallContext);
-
-            chat(initialRequestId, model, messages, ctx);
+            processToolResponse((ToolResponseEvent) event, ctx);
         } else {
             throw new RuntimeException(String.format("Unexpected type event %s", event));
         }

@@ -17,7 +17,7 @@
 #################################################################################
 import os
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.java_chat_model import (
     JavaChatModelConnection,

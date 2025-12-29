@@ -20,7 +20,7 @@
 
 package org.apache.flink.agents.plan;
 
-import org.apache.flink.agents.api.Agent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.resource.ResourceType;
