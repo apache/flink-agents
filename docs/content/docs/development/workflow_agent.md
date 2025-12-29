@@ -219,7 +219,7 @@ An action is a piece of code that can be executed. Each action listens to at lea
 
 To declare an action in Agent, user can use `@action` to decorate a function of Agent class in python (or annotate a method of Agent class in java), and declare the listened event types as decorator/annotation parameters. 
 
-The decorated/annotated function signature should be `(Event, RunnerContext) -> None`
+The decorated/annotated function signature should be `(Event, RunnerContext) -> None`. In Python, actions can also be defined as `async def` when using async execution (see [Async Execution](#async-execution)).
 
 {{< tabs "Action Function" >}}
 
@@ -276,6 +276,41 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
 {{< /tab >}}
 
 {{< /tabs >}}
+
+### Async Execution
+
+{{< hint warning >}}
+Async Execution is only supported in Python currently.
+{{< /hint >}}
+
+When an action needs to perform time-consuming I/O operations (such as calling external APIs, database queries, or network requests), you can use `ctx.execute_async()` to execute these operations asynchronously. This allows Flink to efficiently manage resources and avoid blocking the main processing thread.
+
+To use async execution, define your action as an `async def` function and use `await` with `ctx.execute_async()`:
+
+```python
+@action(InputEvent)
+@staticmethod
+async def process_with_async(event: InputEvent, ctx: RunnerContext) -> None:
+    def slow_external_call(data: str) -> str:
+        # Simulate a slow external API call
+        time.sleep(2)
+        return f"Processed: {data}"
+    
+    # Execute the slow operation asynchronously
+    result = await ctx.execute_async(slow_external_call, event.input)
+    
+    ctx.send_event(OutputEvent(output=result))
+```
+
+**Key points:**
+- Use `async def` to define the action function
+- Use `await ctx.execute_async(func, *args, **kwargs)` to execute slow operations
+- The function passed to `execute_async` will be submitted to a thread pool
+- Access to memory is prohibited within the function passed to `execute_async`
+
+{{< hint info >}}
+Only `await ctx.execute_async(...)` is supported. Standard asyncio functions like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and `asyncio.sleep` are **NOT** supported because there is no asyncio event loop running.
+{{< /hint >}}
 
 ## Event
 Events are messages passed between actions. Events may carry payloads. A single event may trigger multiple actions if they are all listening to its type.

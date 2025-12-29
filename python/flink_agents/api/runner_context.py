@@ -28,6 +28,51 @@ if TYPE_CHECKING:
     from flink_agents.api.memory_object import MemoryObject
 
 
+class AsyncExecutionResult:
+    """This class wraps an asynchronous task that will be submitted to a thread pool
+    only when awaited. This ensures lazy submission and serial execution semantics.
+
+    Note: Only `await ctx.execute_async(...)` is supported. asyncio functions like
+    `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and `asyncio.sleep`
+    are NOT supported because there is no asyncio event loop.
+    """
+
+    def __init__(self, executor: Any, func: Callable, args: tuple, kwargs: dict) -> None:
+        """Initialize an AsyncExecutionResult.
+
+        Parameters
+        ----------
+        executor : Any
+            The thread pool executor to submit the task to.
+        func : Callable
+            The function to execute asynchronously.
+        args : tuple
+            Positional arguments to pass to the function.
+        kwargs : dict
+            Keyword arguments to pass to the function.
+        """
+        self._executor = executor
+        self._func = func
+        self._args = args
+        self._kwargs = kwargs
+
+    def __await__(self) -> Any:
+        """Make this object awaitable.
+
+        When awaited, submits the task to the thread pool and yields control
+        until the task completes.
+
+        Returns:
+        -------
+        Any
+            The result of the function execution.
+        """
+        future = self._executor.submit(self._func, *self._args, **self._kwargs)
+        while not future.done():
+            yield
+        return future.result()
+
+
 class RunnerContext(ABC):
     """Abstract base class providing context for agent execution.
 
@@ -147,14 +192,24 @@ class RunnerContext(ABC):
         func: Callable[[Any], Any],
         *args: Any,
         **kwargs: Any,
-    ) -> Any:
+    ) -> "AsyncExecutionResult":
         """Asynchronously execute the provided function. Access to memory
-         is prohibited within the function.
+        is prohibited within the function.
+
+        Usage::
+
+            async def my_action(event, ctx):
+                result = await ctx.execute_async(slow_function, arg1, arg2)
+                ctx.send_event(OutputEvent(output=result))
+
+        Note: Only `await ctx.execute_async(...)` is supported. asyncio functions
+        like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and
+        `asyncio.sleep` are NOT supported.
 
         Parameters
         ----------
         func : Callable
-            The function need to be asynchronously processing.
+            The function to be executed asynchronously.
         *args : Any
             Positional arguments to pass to the function.
         **kwargs : Any
@@ -162,8 +217,8 @@ class RunnerContext(ABC):
 
         Returns:
         -------
-        Any
-            The result of the function.
+        AsyncExecutionResult
+            An awaitable object that yields the function result when awaited.
         """
 
     @property

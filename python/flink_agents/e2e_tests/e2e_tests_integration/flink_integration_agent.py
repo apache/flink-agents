@@ -89,7 +89,7 @@ class DataStreamAgent(Agent):
 
     @action(InputEvent)
     @staticmethod
-    def first_action(event: Event, ctx: RunnerContext):  # noqa D102
+    async def first_action(event: Event, ctx: RunnerContext):  # noqa D102
         def log_to_stdout(input: Any, total: int) -> bool:
             # Simulating asynchronous time consumption
             time.sleep(random.random())
@@ -103,7 +103,7 @@ class DataStreamAgent(Agent):
         total = current_total + 1
         stm.set("status.total_reviews", total)
 
-        log_success = yield from ctx.execute_async(log_to_stdout, input_data, total)
+        log_success = await ctx.execute_async(log_to_stdout, input_data, total)
 
         content = copy.deepcopy(input_data)
         content.review += " first action, log success=" + str(log_success) + ","

@@ -15,10 +15,12 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import asyncio
 import logging
 import uuid
 from collections import deque
-from typing import Any, Callable, Dict, Generator, List
+from concurrent.futures import Future
+from typing import Any, Callable, Dict, List
 
 from typing_extensions import override
 
@@ -28,7 +30,7 @@ from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
 from flink_agents.api.memory_object import MemoryObject, MemoryType
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.runner_context import AsyncExecutionResult, RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.agent_runner import AgentRunner
@@ -182,16 +184,33 @@ class LocalRunnerContext(RunnerContext):
         func: Callable[[Any], Any],
         *args: Any,
         **kwargs: Any,
-    ) -> Any:
+    ) -> AsyncExecutionResult:
         """Asynchronously execute the provided function. Access to memory
         is prohibited within the function.
+
+        Note: Local runner executes synchronously but returns an AsyncExecutionResult
+        for API consistency.
         """
         logger.warning(
             "Local runner does not support asynchronous execution; falling back to synchronous execution."
         )
-        func_result = func(*args, **kwargs)
-        yield
-        return func_result
+        # Execute synchronously and wrap the result in a completed Future
+        future: Future = Future()
+        try:
+            result = func(*args, **kwargs)
+            future.set_result(result)
+        except Exception as e:
+            future.set_exception(e)
+
+        # Create a mock executor that returns the pre-completed future
+        class _SyncExecutor:
+            def __init__(self, completed_future: Future) -> None:
+                self._future = completed_future
+
+            def submit(self, fn: Callable, *args: Any, **kwargs: Any) -> Future:
+                return self._future
+
+        return AsyncExecutionResult(_SyncExecutor(future), func, args, kwargs)
 
     @property
     @override
@@ -285,10 +304,14 @@ class LocalRunner(AgentRunner):
                 logger.info("key: %s, performing action: %s", key, action.name)
                 context.action_name = action.name
                 func_result = action.exec(event, context)
-                if isinstance(func_result, Generator):
+                if asyncio.iscoroutine(func_result):
+                    # Drive the coroutine to completion using send()
                     try:
-                        for _ in func_result:
-                            pass
+                        while True:
+                            func_result.send(None)
+                    except StopIteration:
+                        # Coroutine completed normally
+                        pass
                     except Exception:
                         logger.exception("Error in async execution")
                         raise

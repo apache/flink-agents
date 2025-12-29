@@ -51,17 +51,17 @@ public class PythonActionTask extends ActionTask {
                 key);
         runnerContext.checkNoPendingEvents();
 
-        String pythonGeneratorRef =
+        String pythonAwaitableRef =
                 executor.executePythonFunction(
                         (PythonFunction) action.getExec(), (PythonEvent) event, key.hashCode());
         // If a user-defined action uses an interface to submit asynchronous tasks, it will return a
-        // Python generator object instance upon its first execution. Otherwise, it means that no
-        // asynchronous tasks were submitted and the action has already completed.
-        if (pythonGeneratorRef != null) {
-            // The Python action generates a generator. We need to execute it once, which will
+        // Python coroutine (awaitable) object instance upon its first execution. Otherwise, it
+        // means that no asynchronous tasks were submitted and the action has already completed.
+        if (pythonAwaitableRef != null) {
+            // The Python action generates an awaitable. We need to execute it once, which will
             // submit an asynchronous task and return whether the action has been completed.
             ActionTask tempGeneratedActionTask =
-                    new PythonGeneratorActionTask(key, event, action, pythonGeneratorRef);
+                    new PythonGeneratorActionTask(key, event, action, pythonAwaitableRef);
             tempGeneratedActionTask.setRunnerContext(runnerContext);
             return tempGeneratedActionTask.invoke(userCodeClassLoader, executor);
         }

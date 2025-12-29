@@ -31,7 +31,7 @@ from flink_agents.api.memory.long_term_memory import (
 )
 from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.runner_context import AsyncExecutionResult, RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
@@ -191,18 +191,11 @@ class FlinkRunnerContext(RunnerContext):
         func: Callable[[Any], Any],
         *args: Any,
         **kwargs: Any,
-    ) -> Any:
+    ) -> AsyncExecutionResult:
         """Asynchronously execute the provided function. Access to memory
         is prohibited within the function.
         """
-        future = self.executor.submit(func, *args, **kwargs)
-        while not future.done():
-            # TODO: Currently, we are using a polling mechanism to check whether
-            #  the future has completed. This approach should be optimized in the
-            #  future by switching to a notification-based model, where the Flink
-            #  operator is notified directly once the future is completed.
-            yield
-        return future.result()
+        return AsyncExecutionResult(self.executor, func, args, kwargs)
 
     @property
     @override

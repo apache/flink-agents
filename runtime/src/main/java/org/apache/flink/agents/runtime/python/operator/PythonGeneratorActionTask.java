@@ -22,24 +22,24 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 
-/** An {@link ActionTask} wrapper a Python Generator to represent a code block in Python action. */
+/** An {@link ActionTask} wrapper a Python awaitable to represent a code block in Python action. */
 public class PythonGeneratorActionTask extends PythonActionTask {
-    private final String pythonGeneratorRef;
+    private final String pythonAwaitableRef;
 
     public PythonGeneratorActionTask(
-            Object key, Event event, Action action, String pythonGeneratorRef) {
+            Object key, Event event, Action action, String pythonAwaitableRef) {
         super(key, event, action);
-        this.pythonGeneratorRef = pythonGeneratorRef;
+        this.pythonAwaitableRef = pythonAwaitableRef;
     }
 
     @Override
     public ActionTaskResult invoke(ClassLoader userCodeClassLoader, PythonActionExecutor executor) {
         LOG.debug(
-                "Try execute python generator action {} for event {} with key {}.",
+                "Try execute python awaitable action {} for event {} with key {}.",
                 action.getName(),
                 event,
                 key);
-        boolean finished = executor.callPythonGenerator(pythonGeneratorRef);
+        boolean finished = executor.callPythonAwaitable(pythonAwaitableRef);
         ActionTask generatedActionTask = finished ? null : this;
         return new ActionTaskResult(
                 finished,

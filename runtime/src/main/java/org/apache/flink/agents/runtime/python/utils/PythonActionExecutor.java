@@ -49,10 +49,10 @@ public class PythonActionExecutor {
     private static final String CLOSE_ASYNC_THREAD_POOL =
             "flink_runner_context.close_async_thread_pool";
 
-    // =========== PYTHON GENERATOR ===========
-    private static final String CALL_PYTHON_GENERATOR = "function.call_python_generator";
-    private static final String PYTHON_GENERATOR_VAR_NAME_PREFIX = "python_generator_";
-    private static final AtomicLong PYTHON_GENERATOR_VAR_ID = new AtomicLong(0);
+    // =========== PYTHON AWAITABLE ===========
+    private static final String CALL_PYTHON_AWAITABLE = "function.call_python_awaitable";
+    private static final String PYTHON_AWAITABLE_VAR_NAME_PREFIX = "python_awaitable_";
+    private static final AtomicLong PYTHON_AWAITABLE_VAR_ID = new AtomicLong(0);
 
     // =========== PYTHON AND JAVA OBJECT CONVERT ===========
     private static final String CONVERT_TO_PYTHON_OBJECT =
@@ -98,14 +98,14 @@ public class PythonActionExecutor {
     }
 
     /**
-     * Execute the Python function, which may return a Python generator that needs to be processed
-     * in the future. Due to an issue in Pemja regarding incorrect object reference counting, this
-     * may lead to garbage collection of the object. To prevent this, we use the set and get methods
-     * to manually increment the object's reference count, then return the name of the Python
-     * generator variable.
+     * Execute the Python function, which may return a Python coroutine (awaitable) that needs to be
+     * processed in the future. Due to an issue in Pemja regarding incorrect object reference
+     * counting, this may lead to garbage collection of the object. To prevent this, we use the set
+     * and get methods to manually increment the object's reference count, then return the name of
+     * the Python awaitable variable.
      *
-     * @return The name of the Python generator variable. It may be null if the Python function does
-     *     not return a generator.
+     * @return The name of the Python awaitable variable. It may be null if the Python function does
+     *     not return a coroutine.
      */
     public String executePythonFunction(PythonFunction function, PythonEvent event, int hashOfKey)
             throws Exception {
@@ -125,12 +125,12 @@ public class PythonActionExecutor {
             if (calledResult == null) {
                 return null;
             } else {
-                // must be a generator
-                String pythonGeneratorRef =
-                        PYTHON_GENERATOR_VAR_NAME_PREFIX
-                                + PYTHON_GENERATOR_VAR_ID.incrementAndGet();
-                interpreter.set(pythonGeneratorRef, calledResult);
-                return pythonGeneratorRef;
+                // must be a coroutine (awaitable)
+                String pythonAwaitableRef =
+                        PYTHON_AWAITABLE_VAR_NAME_PREFIX
+                                + PYTHON_AWAITABLE_VAR_ID.incrementAndGet();
+                interpreter.set(pythonAwaitableRef, calledResult);
+                return pythonAwaitableRef;
             }
         } catch (Exception e) {
             runnerContext.drainEvents(null);
@@ -154,19 +154,19 @@ public class PythonActionExecutor {
     }
 
     /**
-     * Invokes the next step of a Python generator.
+     * Invokes the next step of a Python awaitable (coroutine or generator).
      *
-     * <p>This method is typically used after initializing or resuming a Python generator that was
+     * <p>This method is typically used after initializing or resuming a Python coroutine that was
      * created via a user-defined action involving asynchronous execution.
      *
-     * @param pythonGeneratorRef the reference name of the Python generator object stored in the
+     * @param pythonAwaitableRef the reference name of the Python awaitable object stored in the
      *     interpreter's context
-     * @return true if the generator has completed; false otherwise
+     * @return true if the awaitable has completed; false otherwise
      */
-    public boolean callPythonGenerator(String pythonGeneratorRef) {
-        // Calling next(generator) in Python returns a tuple of (finished, output).
-        Object pythonGenerator = interpreter.get(pythonGeneratorRef);
-        Object invokeResult = interpreter.invoke(CALL_PYTHON_GENERATOR, pythonGenerator);
+    public boolean callPythonAwaitable(String pythonAwaitableRef) {
+        // Calling awaitable.send(None) in Python returns a tuple of (finished, output).
+        Object pythonAwaitable = interpreter.get(pythonAwaitableRef);
+        Object invokeResult = interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable);
         checkState(invokeResult.getClass().isArray() && ((Object[]) invokeResult).length == 2);
         return (boolean) ((Object[]) invokeResult)[0];
     }

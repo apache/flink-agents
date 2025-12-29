@@ -26,7 +26,6 @@ import pytest
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.plan.function import (
     PythonFunction,
-    PythonGeneratorWrapper,
     _is_function_cacheable,
     call_python_function,
     clear_python_function_cache,
@@ -315,9 +314,10 @@ def test_selective_caching_generator_functions() -> None:
     result = call_python_function(
         "flink_agents.plan.tests.test_function", "generator_function", (3,)
     )
-    assert isinstance(result, PythonGeneratorWrapper)
+    # Result is now a generator directly (no wrapper)
+    assert isinstance(result, Generator)
     # Convert generator to list for testing
-    result_list = list(result.generator)
+    result_list = list(result)
     assert result_list == [0, 1, 2]
 
     # Should not be cached

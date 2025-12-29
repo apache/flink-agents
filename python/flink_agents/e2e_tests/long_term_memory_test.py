@@ -170,7 +170,7 @@ class LongTermMemoryAgent(Agent):
 
     @action(InputEvent)
     @staticmethod
-    def add_items(event: Event, ctx: RunnerContext):  # noqa D102
+    async def add_items(event: Event, ctx: RunnerContext):  # noqa D102
         input_data = event.input
         ltm = ctx.long_term_memory
 
@@ -181,7 +181,7 @@ class LongTermMemoryAgent(Agent):
             capacity=5,
             compaction_strategy=SummarizationStrategy(model="ollama_qwen3"),
         )
-        yield from ctx.execute_async(memory_set.add, items=input_data.review)
+        await ctx.execute_async(memory_set.add, items=input_data.review)
         timestamp_after_add = datetime.now(timezone.utc).isoformat()
 
         stm = ctx.short_term_memory
@@ -201,11 +201,11 @@ class LongTermMemoryAgent(Agent):
 
     @action(MyEvent)
     @staticmethod
-    def retrieve_items(event: Event, ctx: RunnerContext):  # noqa D102
+    async def retrieve_items(event: Event, ctx: RunnerContext):  # noqa D102
         record: Record = event.value
         record.timestamp_second_action = datetime.now(timezone.utc).isoformat()
         memory_set = ctx.long_term_memory.get_memory_set(name="test_ltm")
-        items = yield from ctx.execute_async(memory_set.get)
+        items = await ctx.execute_async(memory_set.get)
         if (
             (record.id == 1 and record.count == 3)
             or (record.id == 2 and record.count == 5)
