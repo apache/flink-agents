@@ -140,6 +140,70 @@ After building:
 - The Python package is installed and ready to use
 - The distribution JAR is located at: `dist/target/flink-agents-dist-*.jar`
 
+## Maven Dependencies (Java Development)
+
+For developing Flink Agents applications in Java, add the following dependencies to your `pom.xml`:
+
+### Basic Dependencies for Agent Development
+
+**Required for developing Agent applications:**
+- `flink-agents-api` - Core API interfaces and classes
+- Integration modules - Add the specific integrations you need (e.g., `flink-agents-integrations-chat-models-openai`)
+
+**Additional dependencies for running in IDE:**
+- `flink-agents-runtime` - Runtime execution engine (required for local execution/testing)
+- Flink artifacts - `flink-streaming-java` and `flink-clients` with `provided` scope
+
+### Example pom.xml
+
+```xml
+<properties>
+    <flink.version>1.20.3</flink.version>
+    <flink-agents.version>0.2-SNAPSHOT</flink-agents.version>
+</properties>
+
+<dependencies>
+    <!-- Flink Agents Core API -->
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-agents-api</artifactId>
+        <version>${flink-agents.version}</version>
+    </dependency>
+
+    <!-- Flink Agents Integration (example: OpenAI) -->
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-agents-integrations-chat-models-openai</artifactId>
+        <version>${flink-agents.version}</version>
+    </dependency>
+
+    <!-- Runtime (required for IDE/local execution) -->
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-agents-runtime</artifactId>
+        <version>${flink-agents.version}</version>
+    </dependency>
+
+    <!-- Flink dependencies (provided scope) -->
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-streaming-java</artifactId>
+        <version>${flink.version}</version>
+        <scope>provided</scope>
+    </dependency>
+
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-clients</artifactId>
+        <version>${flink.version}</version>
+        <scope>provided</scope>
+    </dependency>
+</dependencies>
+```
+
+{{< hint info >}}
+**Note:** Replace `0.2-SNAPSHOT` with the actual release version when available. For SNAPSHOT versions, you may need to add the Apache snapshot repository to your `pom.xml`.
+{{< /hint >}}
 
 ## Deploy to Flink Cluster
 
