@@ -17,7 +17,7 @@
  */
 package org.apache.flink.agents.runtime.message;
 
-import org.apache.flink.api.common.ExecutionConfig;
+import org.apache.flink.api.common.serialization.SerializerConfig;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer;
@@ -60,8 +60,8 @@ public class MessageTypeInformation extends TypeInformation<Message> {
     }
 
     @Override
-    public TypeSerializer<Message> createSerializer(ExecutionConfig executionConfig) {
-        return new KryoSerializer<>(Message.class, executionConfig);
+    public TypeSerializer<Message> createSerializer(SerializerConfig serializerConfig) {
+        return new KryoSerializer<>(Message.class, serializerConfig);
     }
 
     @Override

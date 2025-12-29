@@ -269,14 +269,24 @@ class ReActAgent(Agent):
         """Stop action to output result."""
         output = event.response.content
         # parse llm response to target schema.
-        output_schema = ctx.get_action_config_value(key="output_schema")
+        output_schema_config = ctx.get_action_config_value(key="output_schema")
 
         error_handling_strategy = ctx.config.get(
             ReActAgentOptions.ERROR_HANDLING_STRATEGY
         )
         try:
+            output_schema = None
+            if output_schema_config:
+                # Handle both OutputSchema object and deserialized list/tuple
+                if hasattr(output_schema_config, "output_schema"):
+                    output_schema = output_schema_config.output_schema
+                elif isinstance(output_schema_config, (list, tuple)) and len(output_schema_config) == 3:
+                    # Deserialize from [module, class, dict] format
+                    module = importlib.import_module(output_schema_config[0])
+                    clazz = getattr(module, output_schema_config[1])
+                    output_schema_obj = clazz.model_validate(output_schema_config[2])
+                    output_schema = output_schema_obj.output_schema
             if output_schema:
-                output_schema = output_schema.output_schema
                 output = json.loads(output.strip())
                 if isinstance(output_schema, type) and issubclass(
                     output_schema, BaseModel

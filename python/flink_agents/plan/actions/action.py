@@ -74,9 +74,12 @@ class Action(BaseModel):
             self["config"].pop(_CONFIG_TYPE)
             for name, value in config.items():
                 try:
-                    module = importlib.import_module(value[0])
-                    clazz = getattr(module, value[1])
-                    self["config"][name] = clazz.model_validate(value[2])
+                    if isinstance(value, (list, tuple)) and len(value) == 3:
+                        module = importlib.import_module(value[0])
+                        clazz = getattr(module, value[1])
+                        self["config"][name] = clazz.model_validate(value[2])
+                    else:
+                        self["config"][name] = value
                 except Exception:  # noqa : PERF203
                     self["config"][name] = value
         return self

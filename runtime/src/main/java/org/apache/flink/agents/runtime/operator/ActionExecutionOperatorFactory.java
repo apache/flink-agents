@@ -20,13 +20,14 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.streaming.api.operators.AbstractStreamOperatorFactory;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperatorFactory;
 import org.apache.flink.streaming.api.operators.StreamOperator;
 import org.apache.flink.streaming.api.operators.StreamOperatorParameters;
 
 /** Operator factory for {@link ActionExecutionOperator}. */
-public class ActionExecutionOperatorFactory<IN, OUT>
+public class ActionExecutionOperatorFactory<IN, OUT> extends AbstractStreamOperatorFactory<OUT>
         implements OneInputStreamOperatorFactory<IN, OUT> {
 
     private final AgentPlan agentPlan;
@@ -45,9 +46,11 @@ public class ActionExecutionOperatorFactory<IN, OUT>
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
         this.actionStateStore = actionStateStore;
+        this.chainingStrategy = ChainingStrategy.ALWAYS;
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public <T extends StreamOperator<OUT>> T createStreamOperator(
             StreamOperatorParameters<OUT> parameters) {
         ActionExecutionOperator<IN, OUT> op =
@@ -57,19 +60,11 @@ public class ActionExecutionOperatorFactory<IN, OUT>
                         parameters.getProcessingTimeService(),
                         parameters.getMailboxExecutor(),
                         actionStateStore);
-        op.setup(
+        op.setupOperator(
                 parameters.getContainingTask(),
                 parameters.getStreamConfig(),
                 parameters.getOutput());
         return (T) op;
-    }
-
-    @Override
-    public void setChainingStrategy(ChainingStrategy chainingStrategy) {}
-
-    @Override
-    public ChainingStrategy getChainingStrategy() {
-        return ChainingStrategy.ALWAYS;
     }
 
     @Override
