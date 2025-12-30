@@ -24,3 +24,4 @@ Linked issue: #xxx
 
 - [ ] `doc-needed` <!-- Your PR changes impact docs -->
 - [ ] `doc-not-needed` <!-- Your PR changes do not impact docs -->
+- [ ] `doc-including` <!-- Your PR already contains the necessary documentation updates -->

@@ -40,5 +40,5 @@ jobs:
         uses: apache/pulsar-test-infra/docbot@8ff059e49446fff5bb9baf2de4a12bc05c2d57ab
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LABEL_WATCH_LIST: 'doc-needed,doc-not-needed'
+          LABEL_WATCH_LIST: 'doc-needed,doc-not-needed,doc-including'
           LABEL_MISSING: 'doc-label-missing'
