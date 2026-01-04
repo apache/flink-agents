@@ -40,21 +40,33 @@ def chat(
     model: str,
     messages: List[ChatMessage],
     ctx: RunnerContext,
-) -> None:
+):
     """Chat with llm.
 
     If there is no tool call generated, we return the chat response event directly,
     otherwise, we generate tool request event according to the tool calls in chat model
     response, and save the request and response messages in tool call context.
+    
+    This function uses async execution for the chat model call to avoid blocking.
     """
+    # 1. Get resource BEFORE async execution (resource access must happen before async)
     chat_model = cast(
         "BaseChatModelSetup", ctx.get_resource(model, ResourceType.CHAT_MODEL)
     )
 
-    # TODO: support async execution of chat.
-    response = chat_model.chat(messages)
+    # 2. Read memory BEFORE async execution (memory access must happen before async)
     short_term_memory = ctx.short_term_memory
+    tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
+    if not tool_call_context:
+        tool_call_context = {}
 
+    # 3. Execute chat asynchronously (no memory access inside async function)
+    # The lambda captures chat_model and messages, but cannot access memory
+    response = yield from ctx.execute_async(
+        lambda: chat_model.chat(messages)
+    )
+
+    # 4. Process response and update memory AFTER async execution
     # generate tool request event according tool calls in response
     if len(response.tool_calls) > 0:
         # TODO: Because memory doesn't support remove currently, so we use
@@ -66,9 +78,6 @@ def chat(
         #  to store and remove the specific tool context directly.
 
         # save tool call context
-        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
-        if not tool_call_context:
-            tool_call_context = {}
         if initial_request_id not in tool_call_context:
             tool_call_context[initial_request_id] = copy.deepcopy(messages)
         # append response to tool call context
@@ -95,7 +104,6 @@ def chat(
     # if there is no tool call generated, return chat response directly
     else:
         # clear tool call context related to specific request id
-        tool_call_context = short_term_memory.get(_TOOL_CALL_CONTEXT)
         if tool_call_context and initial_request_id in tool_call_context:
             tool_call_context.pop(initial_request_id)
             short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
@@ -107,15 +115,17 @@ def chat(
         )
 
 
-def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> None:
+def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext):
     """Built-in action for processing a chat request or tool response.
 
     Internally, this action will use short term memory to save the tool call context,
     which is a dict mapping request id to chat messages.
+    
+    This function uses async execution for chat operations.
     """
     short_term_memory = ctx.short_term_memory
     if isinstance(event, ChatRequestEvent):
-        chat(
+        yield from chat(
             initial_request_id=event.id,
             model=event.model,
             messages=event.messages,
@@ -150,7 +160,7 @@ def process_chat_request_or_tool_response(event: Event, ctx: RunnerContext) -> N
             )
         short_term_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
 
-        chat(
+        yield from chat(
             initial_request_id=initial_request_id,
             model=model,
             messages=tool_call_context[initial_request_id],
