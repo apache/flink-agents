@@ -30,7 +30,7 @@ current_dir = Path(__file__).parent
 
 TONGYI_MODEL = os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus")
 os.environ["TONGYI_CHAT_MODEL"] = TONGYI_MODEL
-OLLAMA_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b")
 os.environ["OLLAMA_CHAT_MODEL"] = OLLAMA_MODEL
 OPENAI_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo")
 os.environ["OPENAI_CHAT_MODEL"] = OPENAI_MODEL

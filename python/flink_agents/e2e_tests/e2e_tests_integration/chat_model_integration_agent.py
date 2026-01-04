@@ -84,7 +84,7 @@ class ChatModelTestAgent(Agent):
             return ResourceDescriptor(
                 clazz=OllamaChatModelSetup,
                 connection="ollama_connection",
-                model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b"),
+                model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b"),
                 tools=["add"],
                 extract_reasoning=True,
             )
@@ -114,7 +114,7 @@ class ChatModelTestAgent(Agent):
             return ResourceDescriptor(
                 clazz=TongyiChatModelSetup,
                 connection="ollama_connection",
-                model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b"),
+                model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b"),
                 extract_reasoning=True,
             )
         elif model_provider == "OpenAI":

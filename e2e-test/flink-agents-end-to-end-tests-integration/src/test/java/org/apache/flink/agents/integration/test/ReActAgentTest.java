@@ -53,7 +53,7 @@ import java.util.List;
 import static org.apache.flink.agents.integration.test.OllamaPreparationUtils.pullModel;
 
 public class ReActAgentTest {
-    public static final String OLLAMA_MODEL = "qwen3:1.7b";
+    public static final String OLLAMA_MODEL = "qwen3:8b";
 
     @org.apache.flink.agents.api.annotation.Tool(
             description = "Useful function to add two numbers.")

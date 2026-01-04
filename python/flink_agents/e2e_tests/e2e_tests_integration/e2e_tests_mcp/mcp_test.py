@@ -55,7 +55,7 @@ from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelSetup,
 )
 
-OLLAMA_MODEL = os.environ.get("MCP_OLLAMA_CHAT_MODEL", "qwen3:1.7b")
+OLLAMA_MODEL = os.environ.get("MCP_OLLAMA_CHAT_MODEL", "qwen3:8b")
 MCP_SERVER_ENDPOINT = "http://127.0.0.1:8000/mcp"
 
 
