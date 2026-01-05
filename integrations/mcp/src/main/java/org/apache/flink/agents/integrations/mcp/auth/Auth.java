@@ -18,8 +18,8 @@
 
 package org.apache.flink.agents.integrations.mcp.auth;
 
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonSubTypes;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
 import java.io.Serializable;
 import java.net.http.HttpRequest;
@@ -54,6 +54,6 @@ public interface Auth extends Serializable {
      *
      * @return The authentication type identifier
      */
-    @org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnore
+    @com.fasterxml.jackson.annotation.JsonIgnore
     String getAuthType();
 }
