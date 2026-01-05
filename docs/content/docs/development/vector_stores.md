@@ -392,6 +392,10 @@ If you want to use vector stores not offered by the built-in providers, you can 
 
 The base class handles text-to-vector conversion and provides the high-level query interface. You only need to implement the core vector search functionality.
 
+{{< tabs "Custom Vector Store" >}}
+
+{{< tab "Python" >}}
+
 ```python
 class MyVectorStore(BaseVectorStore):
     # Add your custom configuration fields here
@@ -410,3 +414,41 @@ class MyVectorStore(BaseVectorStore):
         # - Returns: List of Document objects matching the search criteria
         pass
 ```
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+```java
+public class MyVectorStore extends BaseVectorStore {
+
+    public MyVectorStore(
+            ResourceDescriptor descriptor,
+            BiFunction<String, ResourceType, Resource> getResource) {
+        super(descriptor, getResource);
+    }
+
+    @Override
+    public Map<String, Object> getStoreKwargs() {
+        // Return vector store-specific configuration
+        // These parameters are merged with query-specific parameters
+        Map<String, Object> kwargs = new HashMap<>();
+        kwargs.put("index", "my_index");
+        return kwargs;
+    }
+
+    @Override
+    public List<Document> queryEmbedding(float[] embedding, int limit, Map<String, Object> args) {
+        // Core method: perform vector search using pre-computed embedding
+        // - embedding: Pre-computed embedding vector for semantic search
+        // - limit: Maximum number of results to return
+        // - args: Vector store-specific parameters
+        // - Returns: List of Document objects matching the search criteria
+        return null;
+    }
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
