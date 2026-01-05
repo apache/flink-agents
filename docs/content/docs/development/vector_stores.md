@@ -25,10 +25,6 @@ under the License.
 # Vector Stores
 
 {{< hint info >}}
-Vector stores are supported in both Python and Java APIs.
-{{< /hint >}}
-
-{{< hint info >}}
 This page covers semantic search using vector stores. Additional query modes (keyword, hybrid) are planned for future releases.
 {{< /hint >}}
 
