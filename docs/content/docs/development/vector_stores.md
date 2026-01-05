@@ -46,13 +46,33 @@ To use vector stores in your agents, you need to configure both a vector store a
 
 Flink Agents provides decorators to simplify vector store setup within agents:
 
+{{< tabs "Resource Decorators" >}}
+
+{{< tab "Python" >}}
+
 #### @vector_store
 
 The `@vector_store` decorator marks a method that creates a vector store. Vector stores automatically integrate with embedding models for text-based search.
 
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+#### @VectorStore
+
+The `@VectorStore` annotation marks a method that creates a vector store.
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 ### Query Objects
 
 Vector stores use structured query objects for consistent interfaces:
+
+{{< tabs "Query Objects" >}}
+
+{{< tab "Python" >}}
 
 ```python
 # Create a semantic search query
@@ -63,14 +83,26 @@ query = VectorStoreQuery(
 )
 ```
 
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+```java
+// Create a semantic search query
+VectorStoreQuery query = new VectorStoreQuery(
+        VectorStoreQueryMode.SEMANTIC,
+        "What is Apache Flink Agents?",
+        3
+);
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 ### Query Results
 
 When you execute a query, you receive a `VectorStoreQueryResult` object that contains the search results:
-
-```python
-# Execute the query
-result = vector_store.query(query)
-```
 
 The `VectorStoreQueryResult` contains:
 - **documents**: A list of `Document` objects representing the retrieved results
@@ -79,9 +111,35 @@ The `VectorStoreQueryResult` contains:
   - **metadata**: Associated metadata (source, category, timestamp, etc.)
   - **id**: Unique identifier of the document (if available)
 
+{{< tabs "Query Results" >}}
+
+{{< tab "Python" >}}
+
+```python
+# Execute the query
+result = vector_store.query(query)
+```
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+```java
+// Execute the query
+VectorStoreQueryResult result = vectorStore.query(query);
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 ### Usage Example
 
 Here's how to define and use vector stores in your agent:
+
+{{< tabs "Usage Example" >}}
+
+{{< tab "Python" >}}
 
 ```python
 class MyAgent(Agent):
@@ -134,6 +192,63 @@ class MyAgent(Agent):
         # Handle the VectorStoreQueryResult
         # Process the retrieved context as needed for your use case
 ```
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+```java
+public class MyAgent extends Agent {
+
+    @EmbeddingModelConnection
+    public static ResourceDescriptor embeddingConnection() {
+        return ResourceDescriptor.Builder.newBuilder(OpenAIEmbeddingModelConnection.class.getName())
+                .addInitialArgument("api_key", "your-api-key-here")
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor embeddingModel() {
+        return ResourceDescriptor.Builder.newBuilder(OpenAIEmbeddingModelSetup.class.getName())
+                .addInitialArgument("connection", "embeddingConnection")
+                .addInitialArgument("model", "text-embedding-3-small")
+                .build();
+    }
+
+    @VectorStore
+    public static ResourceDescriptor vectorStore() {
+        return ResourceDescriptor.Builder.newBuilder(ElasticsearchVectorStore.class.getName())
+                .addInitialArgument("embedding_model", "embeddingModel")
+                .addInitialArgument("host", "http://localhost:9200")
+                .addInitialArgument("index", "my_documents")
+                .addInitialArgument("vector_field", "content_vector")
+                .addInitialArgument("dims", 1536)
+                .build();
+    }
+
+    @Action(listenEvents = InputEvent.class)
+    public static void searchDocuments(InputEvent event, RunnerContext ctx) {
+        // Option 1: Manual search via the vector store
+        VectorStore vectorStore = (VectorStore) ctx.getResource("vectorStore", ResourceType.VECTOR_STORE);
+        String queryText = (String) event.getInput();
+        VectorStoreQuery query = new VectorStoreQuery(VectorStoreQueryMode.SEMANTIC, queryText, 3);
+        VectorStoreQueryResult result = vectorStore.query(query);
+
+        // Option 2: Request context retrieval via built-in events
+        ctx.sendEvent(new ContextRetrievalRequestEvent(queryText, "vectorStore"));
+    }
+
+    @Action(listenEvents = ContextRetrievalResponseEvent.class)
+    public static void onSearchResponse(ContextRetrievalResponseEvent event, RunnerContext ctx) {
+        List<Document> documents = event.getDocuments();
+        // Process the retrieved documents...
+    }
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ## Built-in Providers
 
@@ -330,49 +445,18 @@ Elasticsearch is currently supported in the Java API only.
 Here's how to define an Elasticsearch vector store in your Java agent:
 
 ```java
-public class MyAgent extends Agent {
-
-    @EmbeddingModelConnection
-    public static ResourceDescriptor embeddingConnection() {
-        return ResourceDescriptor.Builder.newBuilder(OpenAIEmbeddingModelConnection.class.getName())
-                .addInitialArgument("api_key", "your-api-key-here")
-                .build();
-    }
-
-    @EmbeddingModelSetup
-    public static ResourceDescriptor embeddingModel() {
-        return ResourceDescriptor.Builder.newBuilder(OpenAIEmbeddingModelSetup.class.getName())
-                .addInitialArgument("connection", "embeddingConnection")
-                .addInitialArgument("model", "text-embedding-3-small")
-                .build();
-    }
-
-    @VectorStore
-    public static ResourceDescriptor vectorStore() {
-        return ResourceDescriptor.Builder.newBuilder(ElasticsearchVectorStore.class.getName())
-                .addInitialArgument("embedding_model", "embeddingModel")
-                .addInitialArgument("host", "http://localhost:9200")
-                .addInitialArgument("index", "my_documents")
-                .addInitialArgument("vector_field", "content_vector")
-                .addInitialArgument("dims", 1536)
-                // Optional authentication
-                // .addInitialArgument("username", "elastic")
-                // .addInitialArgument("password", "secret")
-                .build();
-    }
-
-    @Action(listenEvents = InputEvent.class)
-    public static void searchDocuments(InputEvent event, RunnerContext ctx) {
-        String query = (String) event.getInput();
-        // Request context retrieval via the vector store
-        ctx.sendEvent(new ContextRetrievalRequestEvent(query, "vectorStore"));
-    }
-
-    @Action(listenEvents = ContextRetrievalResponseEvent.class)
-    public static void onSearchResponse(ContextRetrievalResponseEvent event, RunnerContext ctx) {
-        List<Document> documents = event.getDocuments();
-        // Process the retrieved documents...
-    }
+@VectorStore
+public static ResourceDescriptor vectorStore() {
+    return ResourceDescriptor.Builder.newBuilder(ElasticsearchVectorStore.class.getName())
+            .addInitialArgument("embedding_model", "embeddingModel")
+            .addInitialArgument("host", "http://localhost:9200")
+            .addInitialArgument("index", "my_documents")
+            .addInitialArgument("vector_field", "content_vector")
+            .addInitialArgument("dims", 1536)
+            // Optional authentication
+            // .addInitialArgument("username", "elastic")
+            // .addInitialArgument("password", "secret")
+            .build();
 }
 ```
 
