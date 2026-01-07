@@ -186,7 +186,7 @@ MCP (Model Context Protocol) is a standardized protocol for integrating AI appli
 {{< /hint >}}
 
 {{< hint warning >}}
-MCP Tool is only supported in python currently.
+**JDK Requirement (Java API only):** If you are using the **Java API** to develop Flink Agents jobs with MCP, you need **JDK 17 or higher**. This requirement does not apply to **Python API** users - the Python SDK has its own MCP implementation and works with JDK 11+.
 {{< /hint >}}
 
 MCP tools are managed by external MCP servers and automatically discovered when you define an MCP server connection in your agent.

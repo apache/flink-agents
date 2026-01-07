@@ -138,28 +138,16 @@ under the License.
                 </executions>
             </plugin>
 
-            <!-- Override parent's shade plugin -->
+            <!-- Extend parent's shade plugin with flink-1.20 specific exclusions -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <executions>
                     <execution>
                         <id>shade-flink-agents</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
                         <configuration>
-                            <shadeTestJar>false</shadeTestJar>
-                            <filters>
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>META-INF/*.SF</exclude>
-                                        <exclude>META-INF/*.DSA</exclude>
-                                        <exclude>META-INF/*.RSA</exclude>
-                                    </excludes>
-                                </filter>
+                            <!-- Append flink-1.20 specific filter to parent's filters -->
+                            <filters combine.children="append">
                                 <!-- Exclude the conflict classes of the runtime module, using version flink-1.20. -->
                                 <filter>
                                     <artifact>org.apache.flink:flink-agents-runtime</artifact>

@@ -35,12 +35,41 @@ if [[ `basename $CURR_DIR` != "tools" ]] ; then
   exit 1
 fi
 
+# Check JDK version - must be JDK 17
+JAVA_VERSION=$(java -version 2>&1 | head -1 | cut -d'"' -f2 | cut -d'.' -f1)
+if [[ "$JAVA_VERSION" != "17" ]]; then
+  echo "Error: JDK 17 is required for release. Current version: $(java -version 2>&1 | head -1)"
+  exit 1
+fi
+
 ###########################
 
 cd ..
 
-echo "Deploying to repository.apache.org"
+echo "=== Flink Agents Multi-JDK Release ==="
+echo "Using Java: $(java -version 2>&1 | head -1)"
 
 COMMON_OPTIONS="-Prelease,docs-and-source -DskipTests -DretryFailedDeploymentCount=10 $CUSTOM_OPTIONS"
 
+###########################
+# Phase 1: Build and deploy default version (JDK 17)
+###########################
+
+echo ""
+echo "=== Phase 1: Building and deploying default version (JDK 17 bytecode) ==="
+echo ""
+
 $MVN clean deploy $COMMON_OPTIONS
+
+###########################
+# Phase 2: Build and deploy api module with jdk11 classifier
+###########################
+
+echo ""
+echo "=== Phase 2: Building and deploying flink-agents-api with jdk11 classifier (JDK 11 bytecode) ==="
+echo ""
+
+$MVN deploy -pl api -Pjava-11-target,release,docs-and-source -DskipTests -DretryFailedDeploymentCount=10 $CUSTOM_OPTIONS
+
+echo ""
+echo "=== Release complete: Both default (JDK 17) and jdk11 classifier versions deployed ==="

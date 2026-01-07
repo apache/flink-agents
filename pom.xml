@@ -36,7 +36,7 @@ under the License.
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <target.java.version>17</target.java.version>
+        <target.java.version>11</target.java.version>
         <maven.compiler.source>${target.java.version}</maven.compiler.source>
         <maven.compiler.target>${target.java.version}</maven.compiler.target>
         <spotless.version>2.27.1</spotless.version>
@@ -108,18 +108,6 @@ under the License.
                 <target.java.version>11</target.java.version>
                 <maven.compiler.source>11</maven.compiler.source>
                 <maven.compiler.target>11</maven.compiler.target>
-            </properties>
-        </profile>
-
-        <profile>
-            <id>java-17</id>
-            <activation>
-                <jdk>[17,)</jdk>
-            </activation>
-            <properties>
-                <target.java.version>17</target.java.version>
-                <maven.compiler.source>17</maven.compiler.source>
-                <maven.compiler.target>17</maven.compiler.target>
             </properties>
         </profile>
 

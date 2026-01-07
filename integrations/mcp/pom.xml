@@ -49,6 +49,11 @@ under the License.
             <activation>
                 <jdk>[17,)</jdk>
             </activation>
+            <properties>
+                <target.java.version>17</target.java.version>
+                <maven.compiler.source>17</maven.compiler.source>
+                <maven.compiler.target>17</maven.compiler.target>
+            </properties>
             <dependencies>
                 <dependency>
                     <groupId>io.modelcontextprotocol.sdk</groupId>
