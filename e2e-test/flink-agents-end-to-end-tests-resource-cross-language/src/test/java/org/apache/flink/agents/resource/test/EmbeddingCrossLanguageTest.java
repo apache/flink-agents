@@ -15,7 +15,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.flink.agents.resource.test;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
@@ -26,45 +25,44 @@ import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.List;
+import java.util.Map;
 
-import static org.apache.flink.agents.resource.test.ChatModelCrossLanguageAgent.OLLAMA_MODEL;
 import static org.apache.flink.agents.resource.test.OllamaPreparationUtils.pullModel;
 
-public class ChatModelCrossLanguageTest {
-    private static final Logger LOG = LoggerFactory.getLogger(ChatModelCrossLanguageTest.class);
+/**
+ * Example application that applies {@link EmbeddingCrossLanguageAgent} to a DataStream of prompts.
+ */
+public class EmbeddingCrossLanguageTest {
 
     private final boolean ollamaReady;
 
-    public ChatModelCrossLanguageTest() throws IOException {
-        ollamaReady = pullModel(OLLAMA_MODEL);
+    public EmbeddingCrossLanguageTest() throws IOException {
+        ollamaReady = pullModel(EmbeddingCrossLanguageAgent.OLLAMA_MODEL);
     }
 
     @Test
-    public void testChatModeIntegration() throws Exception {
+    public void testEmbeddingIntegration() throws Exception {
         Assumptions.assumeTrue(ollamaReady, "Ollama Server information is not provided");
 
         // Create the execution environment
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
-        // Use prompts that trigger different tool calls in the agent
+        // Use prompts that exercise embedding generation and similarity checks
         DataStream<String> inputStream =
                 env.fromData(
-                        "Convert 25 degrees Celsius to Fahrenheit",
-                        "Convert 98.6 degrees Fahrenheit to Celsius",
-                        "Change 32 degrees Celsius to Fahrenheit",
-                        "If it's 75 degrees Fahrenheit, what would that be in Celsius?",
-                        "Convert room temperature of 20C to F",
-                        "Calculate BMI for someone who is 1.75 meters tall and weighs 70 kg",
-                        "What's the BMI for a person weighing 85 kg with height 1.80 meters?",
-                        "Can you tell me the BMI if I'm 1.65m tall and weigh 60kg?",
-                        "Find BMI for 75kg weight and 1.78m height",
-                        "Create me a random number please");
+                        "Generate embedding for: 'Machine learning'",
+                        "Generate embedding for: 'Deep learning techniques'",
+                        "Find texts similar to: 'neural networks'",
+                        "Produce embedding and return top-3 similar items for: 'natural language processing'",
+                        "Generate embedding for: 'hello world'",
+                        "Compare similarity between 'cat' and 'dog'",
+                        "Create embedding for: 'space exploration'",
+                        "Find nearest neighbors for: 'artificial intelligence'",
+                        "Generate embedding for: 'data science'",
+                        "Random embedding test");
 
         // Create agents execution environment
         AgentsExecutionEnvironment agentsEnv =
@@ -73,9 +71,8 @@ public class ChatModelCrossLanguageTest {
         // Apply agent to the DataStream and use the prompt itself as the key
         DataStream<Object> outputStream =
                 agentsEnv
-                        .fromDataStream(
-                                inputStream, (KeySelector<String, String>) value -> "orderKey")
-                        .apply(new ChatModelCrossLanguageAgent())
+                        .fromDataStream(inputStream, (KeySelector<String, String>) value -> value)
+                        .apply(new EmbeddingCrossLanguageAgent())
                         .toDataStream();
 
         // Collect the results
@@ -87,21 +84,14 @@ public class ChatModelCrossLanguageTest {
         checkResult(results);
     }
 
-    public void checkResult(CloseableIterator<Object> results) {
-        List<String> expectedWords =
-                List.of("77", "37", "89", "23", "68", "22", "26", "22", "23", "");
-        for (String expected : expectedWords) {
+    @SuppressWarnings("unchecked")
+    private void checkResult(CloseableIterator<Object> results) {
+        for (int i = 1; i <= 10; i++) {
             Assertions.assertTrue(
-                    results.hasNext(), "Output messages count %s is less than expected.");
-            String res = (String) results.next();
-            if (res.contains("error") || res.contains("parameters")) {
-                LOG.warn(res);
-            } else {
-                Assertions.assertTrue(
-                        res.contains(expected),
-                        String.format(
-                                "Groud truth %s is not contained in answer {%s}", expected, res));
-            }
+                    results.hasNext(),
+                    String.format("Output messages count %s is less than expected 10.", i));
+            Map<String, Object> res = (Map<String, Object>) results.next();
+            Assertions.assertEquals("PASSED", res.get("test_status"));
         }
     }
 }

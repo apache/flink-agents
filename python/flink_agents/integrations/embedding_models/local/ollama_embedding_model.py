@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-from typing import Any, Dict
+from typing import Any, Dict, Sequence
 
 from ollama import Client
 from pydantic import Field
@@ -77,7 +77,7 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
             self.__client = Client(host=self.base_url, timeout=self.request_timeout)
         return self.__client
 
-    def embed(self, text: str, **kwargs: Any) -> list[float]:
+    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text query."""
         # Extract specific parameters
         model = kwargs.pop("model")
@@ -92,7 +92,9 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
             keep_alive=keep_alive,
             options=kwargs,
         )
-        return list(response.embeddings[0])
+
+        embeddings = [list(embedding) for embedding in response.embeddings]
+        return embeddings[0] if isinstance(text, str) else embeddings
 
 
 class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):

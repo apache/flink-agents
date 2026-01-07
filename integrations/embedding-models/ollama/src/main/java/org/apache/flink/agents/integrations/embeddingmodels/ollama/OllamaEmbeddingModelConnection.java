@@ -23,6 +23,7 @@ import io.github.ollama4j.exceptions.OllamaException;
 import io.github.ollama4j.models.embed.OllamaEmbedRequest;
 import io.github.ollama4j.models.embed.OllamaEmbedResult;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
+import org.apache.flink.agents.api.embedding.model.EmbeddingModelUtils;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -74,13 +75,7 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
 
             List<Double> embedding = embeddings.get(0);
 
-            // Convert to float array
-            float[] result = new float[embedding.size()];
-            for (int i = 0; i < embedding.size(); i++) {
-                result[i] = embedding.get(i).floatValue();
-            }
-
-            return result;
+            return EmbeddingModelUtils.toFloatArray(embedding);
 
         } catch (OllamaException e) {
             throw new RuntimeException("Error generating embeddings for text: " + text, e);
@@ -110,10 +105,7 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
             // Convert to float arrays
             List<float[]> results = new ArrayList<>();
             for (List<Double> embedding : embeddings) {
-                float[] result = new float[embedding.size()];
-                for (int i = 0; i < embedding.size(); i++) {
-                    result[i] = embedding.get(i).floatValue();
-                }
+                float[] result = EmbeddingModelUtils.toFloatArray(embedding);
                 results.add(result);
             }
 

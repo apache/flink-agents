@@ -110,9 +110,11 @@ class MockChatModelImpl(BaseChatModelSetup):  # noqa: D101
 class MockEmbeddingModelConnection(BaseEmbeddingModelConnection):  # noqa: D101
     api_key: str
 
-    def embed(self, text: str, **kwargs: Any) -> list[float]:
+    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float]:
         """Testing Implementation."""
-        return [0.1234, -0.5678, 0.9012, -0.3456, 0.7890]
+        if isinstance(text, str):
+            return [0.1234, -0.5678, 0.9012, -0.3456, 0.7890]
+        return [[0.1234, -0.5678, 0.9012, -0.3456, 0.7890]]
 
 
 class MockEmbeddingModelSetup(BaseEmbeddingModelSetup):  # noqa: D101

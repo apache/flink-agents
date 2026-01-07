@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, Sequence
 
 from pydantic import Field
 from typing_extensions import override
@@ -45,7 +45,7 @@ class BaseEmbeddingModelConnection(Resource, ABC):
         return ResourceType.EMBEDDING_MODEL_CONNECTION
 
     @abstractmethod
-    def embed(self, text: str, **kwargs: Any) -> list[float]:
+    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text input.
 
         Converts the input text into a high-dimensional vector representation
