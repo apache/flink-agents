@@ -268,10 +268,6 @@ Chroma is currently supported in the Python API only.
 
 #### ChromaVectorStore Parameters
 
-{{< tabs "ChromaVectorStore Parameters" >}}
-
-{{< tab "Python" >}}
-
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `embedding_model` | str | Required | Reference to embedding model method name |
@@ -285,10 +281,6 @@ Chroma is currently supported in the Python API only.
 | `collection` | str | `"flink_agents_chroma_collection"` | Name of the ChromaDB collection to use |
 | `collection_metadata` | dict | `{}` | Metadata for the collection |
 | `create_collection_if_not_exists` | bool | `True` | Whether to create the collection if it doesn't exist |
-
-{{< /tab >}}
-
-{{< /tabs >}}
 
 #### Usage Example
 
@@ -411,10 +403,6 @@ Elasticsearch is currently supported in the Java API only.
 
 #### ElasticsearchVectorStore Parameters
 
-{{< tabs "ElasticsearchVectorStore Parameters" >}}
-
-{{< tab "Java" >}}
-
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `embedding_model` | str | Required | Reference to embedding model resource name |
@@ -431,10 +419,6 @@ Elasticsearch is currently supported in the Java API only.
 | `api_key_base64` | str | None | Base64-encoded API key for authentication |
 | `api_key_id` | str | None | API key ID for authentication |
 | `api_key_secret` | str | None | API key secret for authentication |
-
-{{< /tab >}}
-
-{{< /tabs >}}
 
 #### Usage Example
 
