@@ -53,6 +53,20 @@ public class VectorStoreQuery {
     }
 
     /**
+     * Creates a query with explicit mode but without extra arguments.
+     *
+     * @param mode the query mode
+     * @param queryText the text to search for
+     * @param limit maximum number of results to return
+     */
+    public VectorStoreQuery(VectorStoreQueryMode mode, String queryText, Integer limit) {
+        this.mode = mode;
+        this.queryText = queryText;
+        this.limit = limit;
+        this.extraArgs = new HashMap<>();
+    }
+
+    /**
      * Creates a query with explicit mode and extra arguments.
      *
      * @param mode the query mode
