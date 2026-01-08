@@ -103,7 +103,7 @@ class DataStreamAgent(Agent):
         total = current_total + 1
         stm.set("status.total_reviews", total)
 
-        log_success = await ctx.execute_async(log_to_stdout, input_data, total)
+        log_success = await ctx.durable_execute_async(log_to_stdout, input_data, total)
 
         content = copy.deepcopy(input_data)
         content.review += " first action, log success=" + str(log_success) + ","

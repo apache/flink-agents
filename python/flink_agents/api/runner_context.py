@@ -32,9 +32,9 @@ class AsyncExecutionResult:
     """This class wraps an asynchronous task that will be submitted to a thread pool
     only when awaited. This ensures lazy submission and serial execution semantics.
 
-    Note: Only `await ctx.execute_async(...)` is supported. asyncio functions like
-    `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and `asyncio.sleep`
-    are NOT supported because there is no asyncio event loop.
+    Note: Only `await ctx.durable_execute_async(...)` is supported. asyncio
+    functions like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`,
+    and `asyncio.sleep` are NOT supported because there is no asyncio event loop.
     """
 
     def __init__(self, executor: Any, func: Callable, args: tuple, kwargs: dict) -> None:
@@ -187,24 +187,74 @@ class RunnerContext(ABC):
         """
 
     @abstractmethod
-    def execute_async(
+    def durable_execute(
+        self,
+        func: Callable[[Any], Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Synchronously execute the provided function with durable execution support.
+        Access to memory is prohibited within the function.
+
+        The result of the function will be stored and returned when the same
+        durable_execute call is made again during job recovery. The arguments and the
+        result must be serializable.
+
+        The function is executed synchronously in the current thread, blocking
+        the operator until completion.
+
+        The action that calls this API should be deterministic, meaning that it
+        will always make the durable_execute call with the same arguments and in the
+        same order during job recovery. Otherwise, the behavior is undefined.
+
+        Usage::
+
+            def my_action(event, ctx):
+                result = ctx.durable_execute(slow_function, arg1, arg2)
+                ctx.send_event(OutputEvent(output=result))
+
+        Parameters
+        ----------
+        func : Callable
+            The function to be executed.
+        *args : Any
+            Positional arguments to pass to the function.
+        **kwargs : Any
+            Keyword arguments to pass to the function.
+
+        Returns:
+        -------
+        Any
+            The result of the function.
+        """
+
+    @abstractmethod
+    def durable_execute_async(
         self,
         func: Callable[[Any], Any],
         *args: Any,
         **kwargs: Any,
     ) -> "AsyncExecutionResult":
-        """Asynchronously execute the provided function. Access to memory
-        is prohibited within the function.
+        """Asynchronously execute the provided function with durable execution support.
+        Access to memory is prohibited within the function.
+
+        The result of the function will be stored and returned when the same
+        durable_execute_async call is made again during job recovery. The arguments
+        and the result must be serializable.
+
+        The action that calls this API should be deterministic, meaning that it
+        will always make the durable_execute_async call with the same arguments and in
+        the same order during job recovery. Otherwise, the behavior is undefined.
 
         Usage::
 
             async def my_action(event, ctx):
-                result = await ctx.execute_async(slow_function, arg1, arg2)
+                result = await ctx.durable_execute_async(slow_function, arg1, arg2)
                 ctx.send_event(OutputEvent(output=result))
 
-        Note: Only `await ctx.execute_async(...)` is supported. asyncio functions
-        like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and
-        `asyncio.sleep` are NOT supported.
+        Note: Only `await ctx.durable_execute_async(...)` is supported.
+        asyncio functions like `asyncio.gather`, `asyncio.wait`,
+        `asyncio.create_task`, and `asyncio.sleep` are NOT supported.
 
         Parameters
         ----------

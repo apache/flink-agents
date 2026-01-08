@@ -179,7 +179,26 @@ class LocalRunnerContext(RunnerContext):
         err_msg = "Metric mechanism is not supported for local agent execution yet."
         raise NotImplementedError(err_msg)
 
-    def execute_async(
+    @override
+    def durable_execute(
+        self,
+        func: Callable[[Any], Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Synchronously execute the provided function. Access to memory
+        is prohibited within the function.
+
+        Note: Local runner does not support durable execution, so recovery
+        is not available.
+        """
+        logger.warning(
+            "Local runner does not support durable execution; recovery is not available."
+        )
+        return func(*args, **kwargs)
+
+    @override
+    def durable_execute_async(
         self,
         func: Callable[[Any], Any],
         *args: Any,
@@ -189,10 +208,10 @@ class LocalRunnerContext(RunnerContext):
         is prohibited within the function.
 
         Note: Local runner executes synchronously but returns an AsyncExecutionResult
-        for API consistency.
+        for API consistency. Durable execution is not supported.
         """
         logger.warning(
-            "Local runner does not support asynchronous execution; falling back to synchronous execution."
+            "Local runner does not support durable execution; recovery is not available."
         )
         # Execute synchronously and wrap the result in a completed Future
         future: Future = Future()

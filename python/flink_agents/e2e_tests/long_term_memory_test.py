@@ -181,7 +181,7 @@ class LongTermMemoryAgent(Agent):
             capacity=5,
             compaction_strategy=SummarizationStrategy(model="ollama_qwen3"),
         )
-        await ctx.execute_async(memory_set.add, items=input_data.review)
+        await ctx.durable_execute_async(memory_set.add, items=input_data.review)
         timestamp_after_add = datetime.now(timezone.utc).isoformat()
 
         stm = ctx.short_term_memory
@@ -205,7 +205,7 @@ class LongTermMemoryAgent(Agent):
         record: Record = event.value
         record.timestamp_second_action = datetime.now(timezone.utc).isoformat()
         memory_set = ctx.long_term_memory.get_memory_set(name="test_ltm")
-        items = await ctx.execute_async(memory_set.get)
+        items = await ctx.durable_execute_async(memory_set.get)
         if (
             (record.id == 1 and record.count == 3)
             or (record.id == 2 and record.count == 5)

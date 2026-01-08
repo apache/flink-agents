@@ -1,0 +1,3 @@
+{"id":1,"result":20}
+{"id":2,"result":40}
+{"id":3,"result":30}

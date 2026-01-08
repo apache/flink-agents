@@ -186,6 +186,22 @@ class FlinkRunnerContext(RunnerContext):
         return FlinkMetricGroup(self._j_runner_context.getActionMetricGroup())
 
     @override
+    def execute(
+        self,
+        func: Callable[[Any], Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Synchronously execute the provided function. Access to memory
+        is prohibited within the function.
+
+        The function is executed synchronously in the current thread, blocking
+        the operator until completion.
+        """
+        # TODO: Add durable execution support (persist result for recovery)
+        return func(*args, **kwargs)
+
+    @override
     def execute_async(
         self,
         func: Callable[[Any], Any],
@@ -195,6 +211,7 @@ class FlinkRunnerContext(RunnerContext):
         """Asynchronously execute the provided function. Access to memory
         is prohibited within the function.
         """
+        # TODO: Add durable execution support (persist result for recovery)
         return AsyncExecutionResult(self.executor, func, args, kwargs)
 
     @property

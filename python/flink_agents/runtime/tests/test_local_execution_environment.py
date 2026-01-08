@@ -44,7 +44,7 @@ class Agent1WithAsync(Agent):  # noqa: D101
             return value + 1
 
         input = event.input
-        value = await ctx.execute_async(my_func, input)
+        value = await ctx.durable_execute_async(my_func, input)
         ctx.send_event(OutputEvent(output=value))
 
 
