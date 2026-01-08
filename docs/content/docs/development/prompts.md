@@ -335,10 +335,6 @@ Prompts use `{variable_name}` syntax for template variables. Variables are fille
 MCP (Model Context Protocol) is a standardized protocol for integrating AI applications with external data sources and tools. MCP prompts allow dynamic prompt retrieval from MCP servers.
 {{< /hint >}}
 
-{{< hint warning >}}
-MCP Prompt is only supported in python currently.
-{{< /hint >}}
-
 MCP prompts are managed by external MCP servers and automatically discovered when you define an MCP server connection in your agent.
 
 ### Define MCP Server with Prompts
@@ -373,6 +369,9 @@ mcp.run("streamable-http")
 
 Connect to the MCP server and use its prompts in your agent:
 
+{{< tabs "Use MCP Prompts in Agent" >}}
+
+{{< tab "Python" >}}
 ```python
 class ReviewAnalysisAgent(Agent):
 
@@ -413,9 +412,60 @@ class ReviewAnalysisAgent(Agent):
         )
         ctx.send_event(ChatRequestEvent(model="review_model", messages=[msg]))
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class ReviewAnalysisAgent extends Agent {
+
+    @MCPServer
+    public static org.apache.flink.agents.integrations.mcp.MCPServer reviewMcpServer() {
+        return org.apache.flink.agents.integrations.mcp.MCPServer
+                .builder("http://127.0.0.1:8000/mcp")
+                .timeout(Duration.ofSeconds(30))
+                .build();
+    }
+
+    @ChatModelConnection
+    public static ResourceDescriptor ollamaServer() {
+        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor reviewModel() {
+        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+                .addInitialArgument("connection", "ollamaServer")
+                .addInitialArgument("model", "qwen3:8b")
+                .addInitialArgument("prompt", "reviewAnalysisPrompt") // Reference MCP prompt by name
+                .build();
+    }
+
+    @Action(listenEvents = {InputEvent.class})
+    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+        CustomTypesAndResources.ProductReview inputData =
+                (CustomTypesAndResources.ProductReview) event.getInput();
+
+        // Provide prompt variables via extra_args
+        ChatMessage msg = new ChatMessage(
+                MessageRole.USER,
+                "",
+                Map.of(
+                        "product_id", inputData.getProductId(),
+                        "review", inputData.getReview()
+                )
+        );
+        ctx.sendEvent(new ChatRequestEvent("reviewModel", List.of(msg)));
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 **Key points:**
-- Use `@mcp_server` decorator to define MCP server connection
-- Reference MCP prompts by their function name (e.g., `"review_analysis_prompt"`)
-- Provide prompt parameters using `ChatMessage.extra_args`
+- In Python, use `@mcp_server` decorator to define MCP server connection
+- In Java, use `@MCPServer` annotation to define MCP server connection
+- Reference MCP prompts by their function name (e.g., `"review_analysis_prompt"` in Python, `"reviewAnalysisPrompt"` in Java)
+- Provide prompt parameters using `ChatMessage.extra_args` (Python) or the third parameter of `ChatMessage` constructor (Java)
 - All prompts and tools from the MCP server are automatically registered
