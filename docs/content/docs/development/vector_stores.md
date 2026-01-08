@@ -90,9 +90,9 @@ query = VectorStoreQuery(
 ```java
 // Create a semantic search query
 VectorStoreQuery query = new VectorStoreQuery(
-        VectorStoreQueryMode.SEMANTIC,
-        "What is Apache Flink Agents?",
-        3
+        VectorStoreQueryMode.SEMANTIC, // mode
+        "What is Apache Flink Agents?", // query text
+        3 // limit
 );
 ```
 
