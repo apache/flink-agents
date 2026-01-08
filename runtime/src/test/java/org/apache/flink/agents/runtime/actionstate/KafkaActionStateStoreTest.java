@@ -159,7 +159,12 @@ public class KafkaActionStateStoreTest {
                         3L));
         for (int i = 0; i < 5; i++) {
             mockConsumer.addRecord(
-                    new ConsumerRecord<>(TEST_TOPIC, 0, i++, "key", new ActionState()));
+                    new ConsumerRecord<>(
+                            TEST_TOPIC,
+                            0,
+                            i++,
+                            "key",
+                            new ActionState(null, null, null, null, null, false)));
         }
         // Test getting recovery marker after putting state
         Object secondMarker = actionStateStore.getRecoveryMarker();
