@@ -64,20 +64,18 @@ cp $FLINK_HOME/opt/flink-python-1.20.3.jar $FLINK_HOME/lib/
   - Unix-like environment (Linux, Mac OS X, Cygwin, or WSL)
   - Git
   - Maven 3
-  - Java 11 or 17
+  - Java 17+ (full functionality), or Java 11+ (some features unavailable)
 
-### JDK Version Requirements (for Java API users)
+### Java Versions
 
-If you are developing Flink Agents jobs using the **Java API**, the JDK version requirements are:
+For running an agent built with **Python API**, you can use any Java version 11 or higher.
 
-| Feature | JDK Requirement | Description |
-|---------|-----------------|-------------|
-| Core Features | JDK 11+ | Agent, Tool, Prompt, ChatModel, and other basic features |
-| MCP Support | JDK 17+ | MCP (Model Context Protocol) integration for connecting to MCP servers |
+When using **Java API**, there are some functionality limitations for earlier Java versions, as detailed below:
 
-{{< hint info >}}
-**Note:** If you are using the **Python API** to develop Flink Agents jobs, you can use JDK 11+ regardless of whether you use MCP features. The Python SDK has its own MCP implementation.
-{{< /hint >}}
+| Java Version | Limitations                   |
+|--------------|-------------------------------|
+| Java 17+     | No limitations.               |
+| Java 11-16   | MCP supports are unavailable. |
 
 ### Set Up Python Environment (Recommended)
 

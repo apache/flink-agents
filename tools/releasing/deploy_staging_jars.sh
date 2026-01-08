@@ -69,7 +69,7 @@ echo ""
 echo "=== Phase 2: Building and deploying flink-agents-api with jdk11 classifier (JDK 11 bytecode) ==="
 echo ""
 
-$MVN deploy -pl api -Pjava-11-target,release,docs-and-source -DskipTests -DretryFailedDeploymentCount=10 $CUSTOM_OPTIONS
+$MVN deploy -pl api -Pjava-11-target $COMMON_OPTIONS
 
 echo ""
 echo "=== Release complete: Both default (JDK 17) and jdk11 classifier versions deployed ==="
