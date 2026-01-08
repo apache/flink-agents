@@ -15,6 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import hashlib
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict
@@ -39,11 +41,136 @@ from flink_agents.runtime.memory.vector_store_long_term_memory import (
     VectorStoreLongTermMemory,
 )
 
+logger = logging.getLogger(__name__)
+
+
+class _DurableExecutionResult:
+    """Wrapper that holds result and triggers recording when unwrapped."""
+
+    def __init__(
+        self,
+        func: Callable,
+        args: tuple,
+        kwargs: dict,
+        result: Any,
+        record_callback: Callable,
+    ) -> None:
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+        self.result = result
+        self.record_callback = record_callback
+        self._recorded = False
+
+    def get_result(self) -> Any:
+        """Get the result and record completion if not already recorded."""
+        if not self._recorded:
+            self.record_callback(self.func, self.args, self.kwargs, self.result, None)
+            self._recorded = True
+        return self.result
+
+
+class _DurableExecutionException(Exception):
+    """Wrapper exception that holds exception info and triggers recording."""
+
+    def __init__(
+        self,
+        func: Callable,
+        args: tuple,
+        kwargs: dict,
+        result: Any,
+        exception: BaseException,
+        record_callback: Callable,
+    ) -> None:
+        super().__init__(str(exception))
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+        self.original_exception = exception
+        self.record_callback = record_callback
+        self._recorded = False
+
+    def record_and_raise(self) -> None:
+        """Record completion and raise the original exception."""
+        if not self._recorded:
+            self.record_callback(
+                self.func, self.args, self.kwargs, None, self.original_exception
+            )
+            self._recorded = True
+        raise self.original_exception from None
+
+
+class _CachedAsyncExecutionResult(AsyncExecutionResult):
+    """An AsyncExecutionResult that returns a cached value immediately."""
+
+    def __init__(self, cached_result: Any) -> None:
+        # Don't call super().__init__ as we don't need executor/func/args/kwargs
+        self._cached_result = cached_result
+
+    def __await__(self) -> Any:
+        """Return the cached result immediately.
+
+        This is a generator that yields nothing and returns the cached result.
+        """
+        if False:
+            yield  # Make this a generator function
+        return self._cached_result
+
+
+class _DurableAsyncExecutionResult(AsyncExecutionResult):
+    """An AsyncExecutionResult that records completion after execution."""
+
+    def __init__(
+        self, executor: Any, func: Callable, args: tuple, kwargs: dict
+    ) -> None:
+        super().__init__(executor, func, args, kwargs)
+
+    def __await__(self) -> Any:
+        """Execute and record completion when awaited."""
+        future = self._executor.submit(self._func, *self._args, **self._kwargs)
+        while not future.done():
+            yield
+
+        result = future.result()
+
+        # Handle the wrapped result/exception
+        if isinstance(result, _DurableExecutionResult):
+            return result.get_result()
+        elif isinstance(result, _DurableExecutionException):
+            result.record_and_raise()
+        else:
+            return result
+
+
+def _compute_function_id(func: Callable) -> str:
+    """Compute a stable function identifier from a callable.
+
+    Returns module.qualname for functions/methods.
+    """
+    module = getattr(func, "__module__", "<unknown>")
+    qualname = getattr(func, "__qualname__", getattr(func, "__name__", "<unknown>"))
+    return f"{module}.{qualname}"
+
+
+def _compute_args_digest(args: tuple, kwargs: dict) -> str:
+    """Compute a stable digest of the serialized arguments.
+
+    The digest is used to validate that the same arguments are passed
+    during recovery as during the original execution.
+    """
+    try:
+        serialized = cloudpickle.dumps((args, kwargs))
+        return hashlib.sha256(serialized).hexdigest()[:16]
+    except Exception:
+        # If serialization fails, return a fallback digest
+        return hashlib.sha256(str((args, kwargs)).encode()).hexdigest()[:16]
+
 
 class FlinkRunnerContext(RunnerContext):
     """Providing context for agent execution in Flink Environment.
 
-    This context allows access to event handling.
+    This context allows access to event handling and provides fine-grained
+    durable execution support through execute() and execute_async() methods.
     """
 
     __agent_plan: AgentPlan
@@ -185,34 +312,167 @@ class FlinkRunnerContext(RunnerContext):
         """
         return FlinkMetricGroup(self._j_runner_context.getActionMetricGroup())
 
+    def _try_get_cached_result(
+        self, func: Callable, args: tuple, kwargs: dict
+    ) -> tuple[bool, Any]:
+        """Try to get a cached result from a previous execution.
+
+        Returns:
+        -------
+        tuple[bool, Any]
+            A tuple of (is_hit, result_or_exception). If is_hit is True,
+            the second element is the cached result or an exception to re-raise.
+        """
+        function_id = _compute_function_id(func)
+        args_digest = _compute_args_digest(args, kwargs)
+
+        cached_exception: BaseException | None = None
+        try:
+            cached = self._j_runner_context.matchNextOrClearSubsequentCallResult(
+                function_id, args_digest
+            )
+            if cached is not None:
+                is_hit, result_payload, exception_payload = cached
+                if is_hit:
+                    if exception_payload is not None:
+                        # Store cached exception to re-raise outside try block
+                        cached_exception = cloudpickle.loads(bytes(exception_payload))
+                    elif result_payload is not None:
+                        return True, cloudpickle.loads(bytes(result_payload))
+                    else:
+                        return True, None
+        except Exception as e:
+            # If Java method doesn't exist (not supported), fall through to execute
+            if "matchNextOrClearSubsequentCallResult" in str(e):
+                logger.debug("Durable execution not supported, executing directly")
+            else:
+                raise
+
+        # Re-raise cached exception outside try block
+        if cached_exception is not None:
+            raise cached_exception
+
+        return False, None
+
+    def _record_call_completion(
+        self,
+        func: Callable,
+        args: tuple,
+        kwargs: dict,
+        result: Any,
+        exception: BaseException | None,
+    ) -> None:
+        """Record the completion of a call for durable execution.
+
+        Parameters
+        ----------
+        func : Callable
+            The function that was executed.
+        args : tuple
+            Positional arguments passed to the function.
+        kwargs : dict
+            Keyword arguments passed to the function.
+        result : Any
+            The result of the function (None if exception occurred).
+        exception : BaseException | None
+            The exception raised by the function (None if successful).
+        """
+        function_id = _compute_function_id(func)
+        args_digest = _compute_args_digest(args, kwargs)
+
+        try:
+            result_payload = None if exception else cloudpickle.dumps(result)
+            exception_payload = cloudpickle.dumps(exception) if exception else None
+
+            self._j_runner_context.recordCallCompletion(
+                function_id, args_digest, result_payload, exception_payload
+            )
+        except Exception as e:
+            # If Java method doesn't exist, silently ignore
+            if "recordCallCompletion" not in str(e):
+                logger.warning("Failed to record call completion: %s", e)
+
     @override
-    def execute(
+    def durable_execute(
         self,
         func: Callable[[Any], Any],
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        """Synchronously execute the provided function. Access to memory
-        is prohibited within the function.
+        """Synchronously execute the provided function with durable execution support.
+        Access to memory is prohibited within the function.
+
+        The result of the function will be stored and returned when the same
+        durable_execute call is made again during job recovery. The arguments and the
+        result must be serializable.
 
         The function is executed synchronously in the current thread, blocking
         the operator until completion.
         """
-        # TODO: Add durable execution support (persist result for recovery)
-        return func(*args, **kwargs)
+        # Try to get cached result for recovery
+        is_hit, cached_result = self._try_get_cached_result(func, args, kwargs)
+        if is_hit:
+            return cached_result
+
+        # Execute the function
+        exception = None
+        result = None
+        try:
+            result = func(*args, **kwargs)
+        except BaseException as e:
+            exception = e
+
+        # Record the completion
+        self._record_call_completion(func, args, kwargs, result, exception)
+
+        if exception:
+            raise exception
+        return result
 
     @override
-    def execute_async(
+    def durable_execute_async(
         self,
         func: Callable[[Any], Any],
         *args: Any,
         **kwargs: Any,
     ) -> AsyncExecutionResult:
-        """Asynchronously execute the provided function. Access to memory
-        is prohibited within the function.
+        """Asynchronously execute the provided function with durable execution support.
+        Access to memory is prohibited within the function.
+
+        The result of the function will be stored and returned when the same
+        durable_execute_async call is made again during job recovery. The arguments
+        and the result must be serializable.
+
+        Important: The result is only recorded when the returned AsyncExecutionResult
+        is awaited. Fire-and-forget calls (not awaiting the result) will NOT be
+        recorded and cannot be recovered.
         """
-        # TODO: Add durable execution support (persist result for recovery)
-        return AsyncExecutionResult(self.executor, func, args, kwargs)
+        # Try to get cached result for recovery
+        is_hit, cached_result = self._try_get_cached_result(func, args, kwargs)
+        if is_hit:
+            # Return a pre-completed AsyncExecutionResult
+            return _CachedAsyncExecutionResult(cached_result)
+
+        # Create a wrapper function that records completion
+        def wrapped_func(*a: Any, **kw: Any) -> Any:
+            exception = None
+            result = None
+            try:
+                result = func(*a, **kw)
+            except BaseException as e:
+                exception = e
+
+            # Note: This runs in a thread pool, so we need to be careful
+            # The actual recording will happen when the result is awaited
+            if exception:
+                raise _DurableExecutionException(
+                    func, args, kwargs, result, exception, self._record_call_completion
+                )
+            return _DurableExecutionResult(
+                func, args, kwargs, result, self._record_call_completion
+            )
+
+        return _DurableAsyncExecutionResult(self.executor, wrapped_func, args, kwargs)
 
     @property
     @override

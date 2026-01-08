@@ -28,13 +28,20 @@ import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.utils.JsonUtils;
+import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.VectorStoreLongTermMemory;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.util.Preconditions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.LinkedList;
@@ -77,6 +84,8 @@ public class RunnerContextImpl implements RunnerContext {
         }
     }
 
+    private static final Logger LOG = LoggerFactory.getLogger(RunnerContextImpl.class);
+
     protected final List<Event> pendingEvents = new ArrayList<>();
     protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
     protected final Runnable mailboxThreadChecker;
@@ -85,6 +94,9 @@ public class RunnerContextImpl implements RunnerContext {
     protected MemoryContext memoryContext;
     protected String actionName;
     protected InteranlBaseLongTermMemory ltm;
+
+    /** Context for fine-grained durable execution, may be null if not enabled. */
+    @Nullable protected DurableExecutionContext durableExecutionContext;
 
     public RunnerContextImpl(
             FlinkAgentsMetricGroupImpl agentMetricGroup,
@@ -244,5 +256,181 @@ public class RunnerContextImpl implements RunnerContext {
 
     public void clearSensoryMemory() throws Exception {
         memoryContext.getSensoryMemStore().clear();
+    }
+
+    public void setDurableExecutionContext(
+            @Nullable DurableExecutionContext durableExecutionContext) {
+        this.durableExecutionContext = durableExecutionContext;
+    }
+
+    @Nullable
+    public DurableExecutionContext getDurableExecutionContext() {
+        return durableExecutionContext;
+    }
+
+    public void clearDurableExecutionContext() {
+        this.durableExecutionContext = null;
+    }
+
+    /**
+     * Matches the next call result for recovery, or clears subsequent results if mismatch detected.
+     *
+     * <p>This method delegates to the {@link DurableExecutionContext} if present.
+     *
+     * @param functionId the function identifier
+     * @param argsDigest the digest of serialized arguments
+     * @return array containing [isHit (boolean), resultPayload (byte[]), exceptionPayload
+     *     (byte[])], or null if miss or durable execution is not enabled
+     */
+    public Object[] matchNextOrClearSubsequentCallResult(String functionId, String argsDigest) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            return durableExecutionContext.matchNextOrClearSubsequentCallResult(
+                    functionId, argsDigest);
+        }
+        return null;
+    }
+
+    /**
+     * Records a completed call and persists the ActionState.
+     *
+     * <p>This method delegates to the {@link DurableExecutionContext} if present.
+     *
+     * @param functionId the function identifier
+     * @param argsDigest the digest of serialized arguments
+     * @param resultPayload the serialized result (null if exception)
+     * @param exceptionPayload the serialized exception (null if success)
+     */
+    public void recordCallCompletion(
+            String functionId, String argsDigest, byte[] resultPayload, byte[] exceptionPayload) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            durableExecutionContext.recordCallCompletion(
+                    functionId, argsDigest, resultPayload, exceptionPayload);
+        }
+    }
+
+    /**
+     * Context for fine-grained durable execution within an action.
+     *
+     * <p>This class encapsulates all state needed for {@code durable_execute}/{@code
+     * durable_execute_async} recovery. During normal execution, each call is recorded as a {@link
+     * CallResult}. During recovery, these results are used to skip re-execution of already
+     * completed calls.
+     */
+    public static class DurableExecutionContext {
+        private final Object key;
+        private final long sequenceNumber;
+        private final Action action;
+        private final Event event;
+        private final ActionState actionState;
+        private final ActionStatePersister persister;
+
+        /** Current call index within the action, used for matching CallResults during recovery. */
+        private int currentCallIndex;
+
+        /** Snapshot of CallResults loaded during recovery. */
+        private List<CallResult> recoveryCallResults;
+
+        public DurableExecutionContext(
+                Object key,
+                long sequenceNumber,
+                Action action,
+                Event event,
+                ActionState actionState,
+                ActionStatePersister persister) {
+            this.key = key;
+            this.sequenceNumber = sequenceNumber;
+            this.action = action;
+            this.event = event;
+            this.actionState = actionState;
+            this.persister = persister;
+            this.currentCallIndex = 0;
+            this.recoveryCallResults =
+                    actionState.getCallResults() != null
+                            ? new ArrayList<>(actionState.getCallResults())
+                            : new ArrayList<>();
+        }
+
+        public int getCurrentCallIndex() {
+            return currentCallIndex;
+        }
+
+        public ActionState getActionState() {
+            return actionState;
+        }
+
+        /**
+         * Matches the next call result for recovery, or clears subsequent results if mismatch
+         * detected.
+         *
+         * @param functionId the function identifier
+         * @param argsDigest the digest of serialized arguments
+         * @return array containing [isHit, resultPayload, exceptionPayload], or null if miss
+         */
+        public Object[] matchNextOrClearSubsequentCallResult(String functionId, String argsDigest) {
+            if (currentCallIndex < recoveryCallResults.size()) {
+                CallResult result = recoveryCallResults.get(currentCallIndex);
+
+                if (result.matches(functionId, argsDigest)) {
+                    LOG.debug(
+                            "CallResult hit at index {}: functionId={}, argsDigest={}",
+                            currentCallIndex,
+                            functionId,
+                            argsDigest);
+                    currentCallIndex++;
+                    return new Object[] {
+                        true, result.getResultPayload(), result.getExceptionPayload()
+                    };
+                } else {
+                    LOG.warn(
+                            "Non-deterministic call detected at index {}: expected functionId={}, "
+                                    + "argsDigest={}, but got functionId={}, argsDigest={}. "
+                                    + "Clearing subsequent results.",
+                            currentCallIndex,
+                            result.getFunctionId(),
+                            result.getArgsDigest(),
+                            functionId,
+                            argsDigest);
+                    clearCallResultsFromCurrentIndex();
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Records a completed call and persists the ActionState.
+         *
+         * @param functionId the function identifier
+         * @param argsDigest the digest of serialized arguments
+         * @param resultPayload the serialized result (null if exception)
+         * @param exceptionPayload the serialized exception (null if success)
+         */
+        public void recordCallCompletion(
+                String functionId,
+                String argsDigest,
+                byte[] resultPayload,
+                byte[] exceptionPayload) {
+            CallResult callResult =
+                    new CallResult(functionId, argsDigest, resultPayload, exceptionPayload);
+
+            actionState.addCallResult(callResult);
+            persister.persist(key, sequenceNumber, action, event, actionState);
+
+            LOG.debug(
+                    "Recorded and persisted CallResult at index {}: functionId={}, argsDigest={}",
+                    currentCallIndex,
+                    functionId,
+                    argsDigest);
+
+            currentCallIndex++;
+        }
+
+        private void clearCallResultsFromCurrentIndex() {
+            actionState.clearCallResultsFrom(currentCallIndex);
+            recoveryCallResults =
+                    recoveryCallResults.subList(
+                            0, Math.min(currentCallIndex, recoveryCallResults.size()));
+        }
     }
 }

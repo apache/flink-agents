@@ -38,6 +38,7 @@ import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
+import org.apache.flink.agents.runtime.context.ActionStatePersister;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
@@ -110,7 +111,7 @@ import static org.apache.flink.util.Preconditions.checkState;
  * and the resulting output event is collected for further processing.
  */
 public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT>
-        implements OneInputStreamOperator<IN, OUT>, BoundedOneInput {
+        implements OneInputStreamOperator<IN, OUT>, BoundedOneInput, ActionStatePersister {
 
     private static final long serialVersionUID = 1L;
 
@@ -190,6 +191,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final transient Map<ActionTask, RunnerContextImpl.MemoryContext>
             actionTaskMemoryContexts;
 
+    // This in memory map keeps track of the durable execution context for async action tasks
+    // that have not been finished, allowing recovery of currentCallIndex across invocations
+    private final transient Map<ActionTask, RunnerContextImpl.DurableExecutionContext>
+            actionTaskDurableContexts;
+
     // Each job can only have one identifier and this identifier must be consistent across restarts.
     // We cannot use job id as the identifier here because user may change job id by
     // creating a savepoint, stop the job and then resume from savepoint.
@@ -212,6 +218,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.actionStateStore = actionStateStore;
         this.checkpointIdToSeqNums = new HashMap<>();
         this.actionTaskMemoryContexts = new HashMap<>();
+        this.actionTaskDurableContexts = new HashMap<>();
         OperatorUtils.setChainStrategy(this, ChainingStrategy.ALWAYS);
     }
 
@@ -446,7 +453,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         Optional<ActionTask> generatedActionTaskOpt = Optional.empty();
         ActionState actionState =
                 maybeGetActionState(key, sequenceNumber, actionTask.action, actionTask.event);
-        if (actionState != null) {
+
+        // Check if action is already completed
+        if (actionState != null && actionState.isCompleted()) {
+            // Action has completed, skip execution and replay memory/events
             isFinished = true;
             outputEvents = actionState.getOutputEvents();
             for (MemoryUpdate memoryUpdate : actionState.getShortTermMemoryUpdates()) {
@@ -463,16 +473,27 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .set(memoryUpdate.getPath(), memoryUpdate.getValue());
             }
         } else {
-            maybeInitActionState(key, sequenceNumber, actionTask.action, actionTask.event);
+            // Initialize ActionState if not exists, or use existing one for recovery
+            if (actionState == null) {
+                maybeInitActionState(key, sequenceNumber, actionTask.action, actionTask.event);
+                actionState =
+                        maybeGetActionState(
+                                key, sequenceNumber, actionTask.action, actionTask.event);
+            }
+
+            // Set up durable execution context for fine-grained recovery
+            setupDurableExecutionContext(actionTask, actionState);
+
             ActionTask.ActionTaskResult actionTaskResult =
                     actionTask.invoke(
                             getRuntimeContext().getUserCodeClassLoader(),
                             this.pythonActionExecutor);
 
-            // We remove the RunnerContext of the action task from the map after it is finished. The
-            // RunnerContext will be added later if the action task has a generated action task,
-            // meaning it is not finished.
+            // We remove the contexts from the map after the task is processed. They will be added
+            // back later if the action task has a generated action task, meaning it is not
+            // finished.
             actionTaskMemoryContexts.remove(actionTask);
+            actionTaskDurableContexts.remove(actionTask);
             maybePersistTaskResult(
                     key,
                     sequenceNumber,
@@ -505,10 +526,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // execution.
             ActionTask generatedActionTask = generatedActionTaskOpt.get();
 
-            // If the action task is not finished, we keep the runner context in the memory for the
+            // If the action task is not finished, we keep the contexts in memory for the
             // next generated ActionTask to be invoked.
             actionTaskMemoryContexts.put(
                     generatedActionTask, actionTask.getRunnerContext().getMemoryContext());
+            RunnerContextImpl.DurableExecutionContext durableContext =
+                    actionTask.getRunnerContext().getDurableExecutionContext();
+            if (durableContext != null) {
+                actionTaskDurableContexts.put(generatedActionTask, durableContext);
+            }
 
             actionTasksKState.add(generatedActionTask);
         }
@@ -909,7 +935,68 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         for (Event outputEvent : actionTaskResult.getOutputEvents()) {
             actionState.addEvent(outputEvent);
         }
+
+        // Mark the action as completed and clear call records
+        // This indicates that recovery should skip the entire action
+        actionState.markCompleted();
+
         actionStateStore.put(key, sequenceNum, action, event, actionState);
+
+        // Clear durable execution context
+        context.clearDurableExecutionContext();
+    }
+
+    /**
+     * Sets up the durable execution context for fine-grained recovery.
+     *
+     * <p>This method initializes the runner context with a {@link
+     * RunnerContextImpl.DurableExecutionContext}, which enables execute/execute_async calls to:
+     *
+     * <ul>
+     *   <li>Skip re-execution for already completed calls during recovery
+     *   <li>Persist CallRecords after each code block completion
+     * </ul>
+     */
+    private void setupDurableExecutionContext(ActionTask actionTask, ActionState actionState) {
+        if (actionStateStore == null) {
+            return;
+        }
+
+        RunnerContextImpl.DurableExecutionContext durableContext;
+        if (actionTaskDurableContexts.containsKey(actionTask)) {
+            // Reuse existing context for async action continuation
+            durableContext = actionTaskDurableContexts.get(actionTask);
+        } else {
+            // Create new context for first invocation
+            final long sequenceNumber;
+            try {
+                sequenceNumber = sequenceNumberKState.value();
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to get sequence number from state", e);
+            }
+
+            durableContext =
+                    new RunnerContextImpl.DurableExecutionContext(
+                            actionTask.getKey(),
+                            sequenceNumber,
+                            actionTask.action,
+                            actionTask.event,
+                            actionState,
+                            this);
+        }
+
+        actionTask.getRunnerContext().setDurableExecutionContext(durableContext);
+    }
+
+    @Override
+    public void persist(
+            Object key, long sequenceNumber, Action action, Event event, ActionState actionState) {
+        try {
+            actionStateStore.put(key, sequenceNumber, action, event, actionState);
+        } catch (Exception e) {
+            LOG.error("Failed to persist ActionState", e);
+            throw new RuntimeException("Failed to persist ActionState", e);
+        }
     }
 
     private void maybePruneState(Object key, long sequenceNum) throws Exception {
