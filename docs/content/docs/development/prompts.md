@@ -335,6 +335,10 @@ Prompts use `{variable_name}` syntax for template variables. Variables are fille
 MCP (Model Context Protocol) is a standardized protocol for integrating AI applications with external data sources and tools. MCP prompts allow dynamic prompt retrieval from MCP servers.
 {{< /hint >}}
 
+{{< hint warning >}}
+**JDK Requirement (Java API only):** If you are using the **Java API** to develop Flink Agents jobs with MCP, you need **JDK 17 or higher**. This requirement does not apply to **Python API** users - the Python SDK has its own MCP implementation and works with JDK 11+.
+{{< /hint >}}
+
 MCP prompts are managed by external MCP servers and automatically discovered when you define an MCP server connection in your agent.
 
 ### Define MCP Server with Prompts
@@ -466,6 +470,7 @@ public class ReviewAnalysisAgent extends Agent {
 **Key points:**
 - In Python, use `@mcp_server` decorator to define MCP server connection
 - In Java, use `@MCPServer` annotation to define MCP server connection
+- Use the builder pattern in Java to configure the MCP server with endpoint, timeout, headers, and authentication
 - Reference MCP prompts by their function name (e.g., `"review_analysis_prompt"` in Python, `"reviewAnalysisPrompt"` in Java)
 - Provide prompt parameters using `ChatMessage.extra_args` (Python) or the third parameter of `ChatMessage` constructor (Java)
 - All prompts and tools from the MCP server are automatically registered

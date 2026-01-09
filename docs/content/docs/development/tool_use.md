@@ -185,6 +185,10 @@ ReActAgent reviewAnalysisReactAgent = new ReActAgent(
 MCP (Model Context Protocol) is a standardized protocol for integrating AI applications with external data sources and tools. MCP tools allow dynamic tool retrieval from MCP servers.
 {{< /hint >}}
 
+{{< hint warning >}}
+**JDK Requirement (Java API only):** If you are using the **Java API** to develop Flink Agents jobs with MCP, you need **JDK 17 or higher**. This requirement does not apply to **Python API** users - the Python SDK has its own MCP implementation and works with JDK 11+.
+{{< /hint >}}
+
 MCP tools are managed by external MCP servers and automatically discovered when you define an MCP server connection in your agent.
 
 ### Define MCP Server with Tools
@@ -294,6 +298,12 @@ def authenticated_mcp_server() -> MCPServer:
         endpoint="http://api.example.com/mcp",
         headers={"Authorization": "Bearer your-token"}
     )
+    # Or using Basic Authentication
+    # credentials = base64.b64encode(b"username:password").decode("ascii")
+    # headers={"Authorization": f"Basic {credentials}"}
+
+    # Or using API Key Authentication
+    # headers={"X-API-Key": "your-api-key"}
 ```
 {{< /tab >}}
 
