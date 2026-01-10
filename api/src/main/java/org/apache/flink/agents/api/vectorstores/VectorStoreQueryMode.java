@@ -23,15 +23,13 @@ package org.apache.flink.agents.api.vectorstores;
  *
  * <ul>
  *   <li>{@link #SEMANTIC}: Use dense vector embeddings and similarity search.
- *   <li>{@link #KEYWORD}: Use keyword or lexical search when supported by the store.
- *   <li>{@link #HYBRID}: Combine semantic and keyword search strategies.
  * </ul>
  */
 public enum VectorStoreQueryMode {
     /** Semantic similarity search using embeddings. */
     SEMANTIC,
-    /** Keyword/lexical search (store dependent). */
-    KEYWORD,
-    /** Hybrid search combining semantic and keyword results. */
-    HYBRID;
+    /** Keyword/lexical search (store dependent). TODO: term-based retrieval */
+    //    KEYWORD,
+    /** Hybrid search combining semantic and keyword results. TODO: semantic + keyword retrieval */
+    //    HYBRID;
 }
