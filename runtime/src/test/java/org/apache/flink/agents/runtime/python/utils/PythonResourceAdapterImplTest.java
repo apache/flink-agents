@@ -49,7 +49,7 @@ public class PythonResourceAdapterImplTest {
     @BeforeEach
     void setUp() throws Exception {
         mocks = MockitoAnnotations.openMocks(this);
-        pythonResourceAdapter = new PythonResourceAdapterImpl(getResource, mockInterpreter);
+        pythonResourceAdapter = new PythonResourceAdapterImpl(getResource, mockInterpreter, null);
     }
 
     @AfterEach
@@ -152,10 +152,13 @@ public class PythonResourceAdapterImplTest {
 
         when(getResource.apply(resourceName, ResourceType.CHAT_MODEL)).thenReturn(mockResource);
 
-        Object result = pythonResourceAdapter.getResource(resourceName, resourceType);
+        pythonResourceAdapter.getResource(resourceName, resourceType);
 
-        assertThat(result).isEqualTo(mockResource);
-        verify(getResource).apply(resourceName, ResourceType.CHAT_MODEL);
+        verify(mockInterpreter)
+                .invoke(
+                        eq(PythonResourceAdapterImpl.FROM_JAVA_RESOURCE),
+                        eq(resourceType),
+                        any(Map.class));
     }
 
     @Test

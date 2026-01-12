@@ -23,9 +23,10 @@ from pemja import findClass
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.events.event import InputEvent
-from flink_agents.api.resource import Resource
+from flink_agents.api.resource import Resource, ResourceType, get_resource_class
 from flink_agents.api.tools.tool import ToolMetadata
 from flink_agents.api.tools.utils import create_model_from_java_tool_schema_str
+from flink_agents.plan.resource_provider import JAVA_RESOURCE_MAPPING
 from flink_agents.runtime.java.java_resource_wrapper import (
     JavaGetResourceWrapper,
     JavaPrompt,
@@ -105,6 +106,27 @@ def from_java_prompt(j_prompt: Any) -> JavaPrompt:
         JavaPrompt: Python wrapper for the Java prompt
     """
     return JavaPrompt(j_prompt=j_prompt)
+
+def from_java_resource(type_name: str, kwargs: Dict[str, Any]) -> Resource:
+    """Convert a Java resource object to a Python Resource instance.
+    This function is used to convert a Java resource object to a Python Resource
+    instance.
+
+    Args:
+        type_name: Java resource type name
+        kwargs: Keyword arguments
+    Returns:
+        Resource: Python wrapper for the Java resource
+    """
+    class_path = JAVA_RESOURCE_MAPPING.get(ResourceType(type_name))
+    if not class_path:
+        err_msg = f"No Java resource mapping found for {type_name}"
+        raise ValueError(err_msg)
+
+    module_path, class_name = class_path.rsplit(".", 1)
+    cls = get_resource_class(module_path, class_name)
+
+    return cls(**kwargs)
 
 def normalize_tool_call_id(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize tool call by converting the ID field to string format while preserving

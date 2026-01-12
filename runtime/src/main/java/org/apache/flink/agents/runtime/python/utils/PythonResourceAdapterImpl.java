@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.python.utils;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -27,12 +28,17 @@ import org.apache.flink.agents.api.tools.Tool;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.function.BiFunction;
 
 public class PythonResourceAdapterImpl implements PythonResourceAdapter {
 
     static final String PYTHON_IMPORTS = "from flink_agents.runtime import python_java_utils";
+
+    static final String JAVA_RESOURCE = "j_resource";
+
+    static final String JAVA_RESOURCE_ADAPTER = "j_resource_adapter";
 
     static final String GET_RESOURCE_KEY = "get_resource";
 
@@ -44,22 +50,28 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
 
     static final String CREATE_RESOURCE = PYTHON_MODULE_PREFIX + "create_resource";
 
+    static final String FROM_JAVA_RESOURCE = PYTHON_MODULE_PREFIX + "from_java_resource";
+
     static final String FROM_JAVA_TOOL = PYTHON_MODULE_PREFIX + "from_java_tool";
 
     static final String FROM_JAVA_PROMPT = PYTHON_MODULE_PREFIX + "from_java_prompt";
 
     static final String FROM_JAVA_CHAT_MESSAGE = PYTHON_MODULE_PREFIX + "from_java_chat_message";
 
-    static final String TO_JAVA_CHAT_MESSAGE = PYTHON_MODULE_PREFIX + "to_java_chat_message";
+    static final String TO_JAVA_CHAT_MESSAGE = PYTHON_MODULE_PREFIX + "update_java_chat_message";
 
     private final BiFunction<String, ResourceType, Resource> getResource;
     private final PythonInterpreter interpreter;
+    private final JavaResourceAdapter javaResourceAdapter;
     private Object pythonGetResourceFunction;
 
     public PythonResourceAdapterImpl(
-            BiFunction<String, ResourceType, Resource> getResource, PythonInterpreter interpreter) {
+            BiFunction<String, ResourceType, Resource> getResource,
+            PythonInterpreter interpreter,
+            JavaResourceAdapter javaResourceAdapter) {
         this.getResource = getResource;
         this.interpreter = interpreter;
+        this.javaResourceAdapter = javaResourceAdapter;
     }
 
     public void open() {
@@ -80,7 +92,15 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
         if (resource instanceof Prompt) {
             return convertToPythonPrompt((Prompt) resource);
         }
-        return resource;
+        return toPythonResource(resourceType, resource);
+    }
+
+    private Object toPythonResource(String resourceType, Resource resource) {
+        Map<String, Object> kwargs = new HashMap<>();
+        kwargs.put(JAVA_RESOURCE, resource);
+        kwargs.put(JAVA_RESOURCE_ADAPTER, javaResourceAdapter);
+        kwargs.put(GET_RESOURCE_KEY, pythonGetResourceFunction);
+        return interpreter.invoke(FROM_JAVA_RESOURCE, resourceType, kwargs);
     }
 
     @Override
@@ -96,10 +116,13 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
 
     @Override
     public ChatMessage fromPythonChatMessage(Object pythonChatMessage) {
-        ChatMessage message =
-                (ChatMessage) interpreter.invoke(TO_JAVA_CHAT_MESSAGE, pythonChatMessage);
+        // TODO: Update this method after the pemja findClass method is fixed.
+        ChatMessage chatMessage = new ChatMessage();
 
-        return message;
+        String roleValue =
+                (String) interpreter.invoke(TO_JAVA_CHAT_MESSAGE, pythonChatMessage, chatMessage);
+        chatMessage.setRole(MessageRole.fromValue(roleValue));
+        return chatMessage;
     }
 
     @Override

@@ -620,7 +620,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 throw new RuntimeException(e);
                             }
                         },
-                        pythonInterpreter);
+                        pythonInterpreter,
+                        javaResourceAdapter);
         pythonResourceAdapter.open();
         agentPlan.setPythonResourceAdapter(pythonResourceAdapter);
     }

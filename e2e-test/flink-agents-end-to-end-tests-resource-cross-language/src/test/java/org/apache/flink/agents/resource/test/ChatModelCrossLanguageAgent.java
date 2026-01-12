@@ -35,6 +35,7 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
 
 import java.util.Collections;
 import java.util.List;
@@ -64,11 +65,32 @@ public class ChatModelCrossLanguageAgent extends Agent {
     public static final String OLLAMA_MODEL = "qwen3:0.6b";
 
     @ChatModelConnection
-    public static ResourceDescriptor chatModelConnection() {
+    public static ResourceDescriptor javaChatModelConnection() {
+        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
+                .addInitialArgument("endpoint", "http://localhost:11434")
+                .addInitialArgument("requestTimeout", 240)
+                .build();
+    }
+
+    @ChatModelConnection
+    public static ResourceDescriptor pythonChatModelConnection() {
         return ResourceDescriptor.Builder.newBuilder(PythonChatModelConnection.class.getName())
                 .addInitialArgument(
                         "module", "flink_agents.integrations.chat_models.ollama_chat_model")
                 .addInitialArgument("clazz", "OllamaChatModelConnection")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor temperatureChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(PythonChatModelSetup.class.getName())
+                .addInitialArgument(
+                        "module", "flink_agents.integrations.chat_models.ollama_chat_model")
+                .addInitialArgument("clazz", "OllamaChatModelSetup")
+                .addInitialArgument("connection", "javaChatModelConnection")
+                .addInitialArgument("model", OLLAMA_MODEL)
+                .addInitialArgument("tools", List.of("convertTemperature"))
+                .addInitialArgument("extract_reasoning", "true")
                 .build();
     }
 
@@ -78,11 +100,9 @@ public class ChatModelCrossLanguageAgent extends Agent {
                 .addInitialArgument(
                         "module", "flink_agents.integrations.chat_models.ollama_chat_model")
                 .addInitialArgument("clazz", "OllamaChatModelSetup")
-                .addInitialArgument("connection", "chatModelConnection")
+                .addInitialArgument("connection", "pythonChatModelConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
-                .addInitialArgument(
-                        "tools",
-                        List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+                .addInitialArgument("tools", List.of("calculateBMI", "createRandomNumber"))
                 .addInitialArgument("extract_reasoning", "true")
                 .build();
     }
@@ -133,9 +153,16 @@ public class ChatModelCrossLanguageAgent extends Agent {
 
     @Action(listenEvents = {InputEvent.class})
     public static void process(InputEvent event, RunnerContext ctx) throws Exception {
+        String model;
+        if (event.getInput().toString().contains("temperature")
+                || event.getInput().toString().contains("degree")) {
+            model = "temperatureChatModel";
+        } else {
+            model = "chatModel";
+        }
         ctx.sendEvent(
                 new ChatRequestEvent(
-                        "chatModel",
+                        model,
                         Collections.singletonList(
                                 new ChatMessage(MessageRole.USER, (String) event.getInput()))));
     }
