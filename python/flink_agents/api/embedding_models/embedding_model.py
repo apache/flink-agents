@@ -85,7 +85,7 @@ class BaseEmbeddingModelSetup(Resource, ABC):
     def model_kwargs(self) -> Dict[str, Any]:
         """Return embedding model settings."""
 
-    def embed(self, text: str, **kwargs: Any) -> list[float]:
+    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text query.
 
         Converts the input text into a high-dimensional vector representation

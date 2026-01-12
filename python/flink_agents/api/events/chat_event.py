@@ -18,7 +18,7 @@
 from typing import List
 from uuid import UUID
 
-from flink_agents.api.agents.react_agent import OutputSchema
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.events.event import Event
 
