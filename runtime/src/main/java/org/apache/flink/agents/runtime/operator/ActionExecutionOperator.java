@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerFactory;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -141,6 +142,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     // PythonResourceAdapter for Python resources in Java actions
     private transient PythonResourceAdapterImpl pythonResourceAdapter;
+
+    // PythonResourceAdapter for Java resources in Python actions or Python resources
+    private transient JavaResourceAdapter javaResourceAdapter;
 
     private transient FlinkAgentsMetricGroupImpl metricGroup;
 
@@ -539,6 +543,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
+    private Resource getResource(String name, ResourceType type) {
+        try {
+            return agentPlan.getResource(name, type);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private void initPythonEnvironment() throws Exception {
         boolean containPythonAction =
                 agentPlan.getActions().values().stream()
@@ -576,17 +588,18 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             pythonRunnerContext =
                     new PythonRunnerContextImpl(
                             this.metricGroup, this::checkMailboxThread, this.agentPlan);
+
+            javaResourceAdapter = new JavaResourceAdapter(this::getResource, pythonInterpreter);
+            if (containPythonResource) {
+                initPythonResourceAdapter();
+            }
             if (containPythonAction) {
                 initPythonActionExecutor();
-            } else {
-                initPythonResourceAdapter();
             }
         }
     }
 
     private void initPythonActionExecutor() throws Exception {
-        JavaResourceAdapter javaResourceAdapter =
-                new JavaResourceAdapter(agentPlan, pythonInterpreter);
         pythonActionExecutor =
                 new PythonActionExecutor(
                         pythonInterpreter,

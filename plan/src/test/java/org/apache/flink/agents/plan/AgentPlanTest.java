@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -440,7 +441,7 @@ public class AgentPlanTest {
         Resource pythonChatModel =
                 agentPlan.getResource("pythonChatModel", ResourceType.CHAT_MODEL);
         assertThat(pythonChatModel).isNotNull();
-        assertThat(pythonChatModel).isInstanceOf(TestPythonResource.class);
+        assertThat(pythonChatModel).isInstanceOf(PythonChatModelSetup.class);
         assertThat(pythonChatModel.getResourceType()).isEqualTo(ResourceType.CHAT_MODEL);
 
         // Test that resources are cached (should be the same instance)

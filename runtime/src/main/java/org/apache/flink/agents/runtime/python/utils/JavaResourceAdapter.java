@@ -21,29 +21,20 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.plan.AgentPlan;
-import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
-import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import pemja.core.PythonInterpreter;
 
-import javax.naming.OperationNotSupportedException;
-
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
 
 /** Adapter for managing Java resources and facilitating Python-Java interoperability. */
 public class JavaResourceAdapter {
-    private final Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
+    private final BiFunction<String, ResourceType, Resource> getResource;
 
     private final transient PythonInterpreter interpreter;
 
-    /** Cache for instantiated resources. */
-    private final transient Map<ResourceType, Map<String, Resource>> resourceCache;
-
-    public JavaResourceAdapter(AgentPlan agentPlan, PythonInterpreter interpreter) {
-        this.resourceProviders = agentPlan.getResourceProviders();
+    public JavaResourceAdapter(
+            BiFunction<String, ResourceType, Resource> getResource, PythonInterpreter interpreter) {
+        this.getResource = getResource;
         this.interpreter = interpreter;
-        this.resourceCache = new ConcurrentHashMap<>();
     }
 
     /**
@@ -56,47 +47,7 @@ public class JavaResourceAdapter {
      * @throws Exception if the resource cannot be retrieved
      */
     public Resource getResource(String name, String typeValue) throws Exception {
-        return getResource(name, ResourceType.fromValue(typeValue));
-    }
-
-    /**
-     * Retrieves a Java resource by name and type.
-     *
-     * @param name the name of the resource to retrieve
-     * @param type the type of the resource
-     * @return the resource
-     * @throws Exception if the resource cannot be retrieved
-     */
-    public Resource getResource(String name, ResourceType type) throws Exception {
-        if (resourceCache.containsKey(type) && resourceCache.get(type).containsKey(name)) {
-            return resourceCache.get(type).get(name);
-        }
-
-        if (!resourceProviders.containsKey(type)
-                || !resourceProviders.get(type).containsKey(name)) {
-            throw new IllegalArgumentException("Resource not found: " + name + " of type " + type);
-        }
-
-        ResourceProvider provider = resourceProviders.get(type).get(name);
-        if (provider instanceof PythonResourceProvider) {
-            // TODO: Support getting resources from PythonResourceProvider in JavaResourceAdapter.
-            throw new OperationNotSupportedException("PythonResourceProvider is not supported.");
-        }
-
-        Resource resource =
-                provider.provide(
-                        (String anotherName, ResourceType anotherType) -> {
-                            try {
-                                return this.getResource(anotherName, anotherType);
-                            } catch (Exception e) {
-                                throw new RuntimeException(e);
-                            }
-                        });
-
-        // Cache the resource
-        resourceCache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
-
-        return resource;
+        return getResource.apply(name, ResourceType.fromValue(typeValue));
     }
 
     /**
