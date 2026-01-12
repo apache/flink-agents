@@ -77,7 +77,6 @@ Vector stores use structured query objects for consistent interfaces:
 ```python
 # Create a semantic search query
 query = VectorStoreQuery(
-    mode=VectorStoreQueryMode.SEMANTIC,
     query_text="What is Apache Flink Agents?",
     limit=3
 )
@@ -180,7 +179,6 @@ class MyAgent(Agent):
         # Create a semantic search query
         user_query = str(event.input)
         query = VectorStoreQuery(
-            mode=VectorStoreQueryMode.SEMANTIC,
             query_text=user_query,
             limit=3
         )
@@ -230,7 +228,7 @@ public class MyAgent extends Agent {
         // Option 1: Manual search via the vector store
         VectorStore vectorStore = (VectorStore) ctx.getResource("vectorStore", ResourceType.VECTOR_STORE);
         String queryText = (String) event.getInput();
-        VectorStoreQuery query = new VectorStoreQuery(VectorStoreQueryMode.SEMANTIC, queryText, 3);
+        VectorStoreQuery query = new VectorStoreQuery(queryText, 3);
         VectorStoreQueryResult result = vectorStore.query(query);
 
         // Option 2: Request context retrieval via built-in events
