@@ -79,7 +79,11 @@ class JavaEmbeddingModelSetupImpl(JavaEmbeddingModelSetup):
             j_resource_adapter: The Java resource adapter for method invocation
             **kwargs: Additional keyword arguments
         """
-        super().__init__(**kwargs)
+        # connection,model are required parameters for BaseEmbeddingModelSetup
+        connection = kwargs.pop("connection", "")
+        model = kwargs.pop("model", "")
+        super().__init__(connection = connection, model = model, **kwargs)
+
         self._j_resource=j_resource
         self._j_resource_adapter=j_resource_adapter
 
