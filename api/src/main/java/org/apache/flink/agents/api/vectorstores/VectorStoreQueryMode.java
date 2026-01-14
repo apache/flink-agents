@@ -27,9 +27,35 @@ package org.apache.flink.agents.api.vectorstores;
  */
 public enum VectorStoreQueryMode {
     /** Semantic similarity search using embeddings. */
-    SEMANTIC,
+    SEMANTIC("semantic");
     /** Keyword/lexical search (store dependent). TODO: term-based retrieval */
-    //    KEYWORD,
+    //    KEYWORD("keyword"),
     /** Hybrid search combining semantic and keyword results. TODO: semantic + keyword retrieval */
-    //    HYBRID;
+    //    HYBRID("hybrid");
+
+    private final String value;
+
+    VectorStoreQueryMode(String value) {
+        this.value = value;
+    }
+
+    public String getValue() {
+        return value;
+    }
+
+    /**
+     * Get VectorStoreQueryMode from string value.
+     *
+     * @param value the string value
+     * @return the corresponding ResourceType
+     * @throws IllegalArgumentException if no matching ResourceType is found
+     */
+    public static VectorStoreQueryMode fromValue(String value) {
+        for (VectorStoreQueryMode type : VectorStoreQueryMode.values()) {
+            if (type.value.equals(value)) {
+                return type;
+            }
+        }
+        throw new IllegalArgumentException("Unknown VectorStoreQueryMode value: " + value);
+    }
 }

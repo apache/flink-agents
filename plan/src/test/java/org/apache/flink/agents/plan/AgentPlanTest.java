@@ -33,6 +33,10 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
+import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
+import org.apache.flink.agents.api.vectorstores.Document;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
@@ -195,6 +199,33 @@ public class AgentPlanTest {
 
         @Override
         public ChatMessage fromPythonChatMessage(Object pythonChatMessage) {
+            return null;
+        }
+
+        @Override
+        public Object toPythonDocuments(List<Document> documents) {
+            return null;
+        }
+
+        @Override
+        public List<Document> fromPythonDocuments(List<PyObject> pythonDocuments) {
+            return List.of();
+        }
+
+        @Override
+        public Object toPythonVectorStoreQuery(VectorStoreQuery query) {
+            return null;
+        }
+
+        @Override
+        public VectorStoreQueryResult fromPythonVectorStoreQueryResult(
+                PyObject pythonVectorStoreQueryResult) {
+            return null;
+        }
+
+        @Override
+        public CollectionManageableVectorStore.Collection fromPythonCollection(
+                PyObject pythonCollection) {
             return null;
         }
 

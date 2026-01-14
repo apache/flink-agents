@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
+import org.apache.flink.agents.api.vectorstores.python.PythonCollectionManageableVectorStore;
 import pemja.core.object.PyObject;
 
 import java.lang.reflect.Constructor;
@@ -50,7 +51,8 @@ public class PythonResourceProvider extends ResourceProvider {
                     ResourceType.CHAT_MODEL, PythonChatModelSetup.class,
                     ResourceType.CHAT_MODEL_CONNECTION, PythonChatModelConnection.class,
                     ResourceType.EMBEDDING_MODEL, PythonEmbeddingModelSetup.class,
-                    ResourceType.EMBEDDING_MODEL_CONNECTION, PythonEmbeddingModelConnection.class);
+                    ResourceType.EMBEDDING_MODEL_CONNECTION, PythonEmbeddingModelConnection.class,
+                    ResourceType.VECTOR_STORE, PythonCollectionManageableVectorStore.class);
 
     protected PythonResourceAdapter pythonResourceAdapter;
 

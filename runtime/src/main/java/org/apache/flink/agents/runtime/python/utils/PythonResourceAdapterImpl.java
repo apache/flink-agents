@@ -25,10 +25,16 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
+import org.apache.flink.agents.api.vectorstores.Document;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 
@@ -59,6 +65,13 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     static final String FROM_JAVA_CHAT_MESSAGE = PYTHON_MODULE_PREFIX + "from_java_chat_message";
 
     static final String TO_JAVA_CHAT_MESSAGE = PYTHON_MODULE_PREFIX + "update_java_chat_message";
+
+    static final String FROM_JAVA_DOCUMENT = PYTHON_MODULE_PREFIX + "from_java_document";
+
+    static final String UPDATE_JAVA_DOCUMENT = PYTHON_MODULE_PREFIX + "update_java_document";
+
+    static final String FROM_JAVA_VECTOR_STORE_QUERY =
+            PYTHON_MODULE_PREFIX + "from_java_vector_store_query";
 
     private final BiFunction<String, ResourceType, Resource> getResource;
     private final PythonInterpreter interpreter;
@@ -123,6 +136,50 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
                 (String) interpreter.invoke(TO_JAVA_CHAT_MESSAGE, pythonChatMessage, chatMessage);
         chatMessage.setRole(MessageRole.fromValue(roleValue));
         return chatMessage;
+    }
+
+    @Override
+    public Object toPythonDocuments(List<Document> documents) {
+        List<Object> pythonDocuments = new ArrayList<>();
+        for (Document document : documents) {
+            pythonDocuments.add(interpreter.invoke(FROM_JAVA_DOCUMENT, document));
+        }
+        return pythonDocuments;
+    }
+
+    @Override
+    public List<Document> fromPythonDocuments(List<PyObject> pythonDocuments) {
+        List<Document> documents = new ArrayList<>();
+        for (PyObject pythonDocument : pythonDocuments) {
+            Document document =
+                    new Document(
+                            pythonDocument.getAttr("content").toString(),
+                            (Map<String, Object>) pythonDocument.getAttr("metadata", Map.class),
+                            pythonDocument.getAttr("id").toString());
+            documents.add(document);
+        }
+        return documents;
+    }
+
+    @Override
+    public Object toPythonVectorStoreQuery(VectorStoreQuery query) {
+        return interpreter.invoke(FROM_JAVA_VECTOR_STORE_QUERY, query);
+    }
+
+    @Override
+    public VectorStoreQueryResult fromPythonVectorStoreQueryResult(
+            PyObject pythonVectorStoreQueryResult) {
+        List<PyObject> pythonDocuments =
+                (List<PyObject>) pythonVectorStoreQueryResult.getAttr("documents", List.class);
+        return new VectorStoreQueryResult(fromPythonDocuments(pythonDocuments));
+    }
+
+    @Override
+    public CollectionManageableVectorStore.Collection fromPythonCollection(
+            PyObject pythonCollection) {
+        return new CollectionManageableVectorStore.Collection(
+                pythonCollection.getAttr("name").toString(),
+                (Map<String, Object>) pythonCollection.getAttr("metadata", Map.class));
     }
 
     @Override

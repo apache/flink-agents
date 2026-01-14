@@ -26,6 +26,11 @@ from flink_agents.api.events.event import InputEvent
 from flink_agents.api.resource import Resource, ResourceType, get_resource_class
 from flink_agents.api.tools.tool import ToolMetadata
 from flink_agents.api.tools.utils import create_model_from_java_tool_schema_str
+from flink_agents.api.vector_stores.vector_store import (
+    Document,
+    VectorStoreQuery,
+    VectorStoreQueryMode,
+)
 from flink_agents.plan.resource_provider import JAVA_RESOURCE_MAPPING
 from flink_agents.runtime.java.java_resource_wrapper import (
     JavaGetResourceWrapper,
@@ -182,6 +187,36 @@ def update_java_chat_message(chat_message: ChatMessage, j_chat_message: Any) -> 
         j_chat_message.setToolCalls(tool_calls)
 
     return chat_message.role.value
+
+def from_java_document(j_document: Any) -> Document:
+    """Convert a Java documents to a Python document."""
+    document = Document(
+        content=j_document.getContent(),
+        id=j_document.getId(),
+        metadata=j_document.getMetadata(),
+    )
+    if j_document.getEmbedding():
+        document.embedding = list(j_document.getEmbedding())
+    return document
+
+def update_java_document(document: Document, j_document: Any) -> None:
+    """Update a Java document using Python document."""
+    j_document.setContent(document.content)
+    j_document.setId(document.id)
+    j_document.setMetadata(document.metadata)
+    if document.embedding:
+        j_document.setEmbedding(tuple(document.embedding))
+
+
+def from_java_vector_store_query(j_query: Any) -> VectorStoreQuery:
+    """Convert a Java vector store query to a Python query."""
+    return VectorStoreQuery(
+        mode=VectorStoreQueryMode(j_query.getMode().getValue()),
+        query_text=j_query.getQueryText(),
+        limit=j_query.getLimit(),
+        collection_name=j_query.getCollection(),
+        extra_args=j_query.getExtraArgs()
+    )
 
 def call_method(obj: Any, method_name: str, kwargs: Dict[str, Any]) -> Any:
     """Calls a method on `obj` by name and passes in positional and keyword arguments.
