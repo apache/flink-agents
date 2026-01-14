@@ -32,7 +32,9 @@ under the License.
         <flink.1.20.version>1.20.3</flink.1.20.version>
         <flink.2.0.version>2.0.1</flink.2.0.version>
         <flink.2.1.version>2.1.1</flink.2.1.version>
-        <flink.2.2.version>2.2.0</flink.2.2.version>
+
+        <flink.version>2.2.0</flink.version>
+        <flink.agents.dist.artifactId>flink-agents-dist-flink-2.2</flink.agents.dist.artifactId>
     </properties>
 
     <dependencies>
@@ -109,16 +111,24 @@ under the License.
     </dependencies>
 
     <profiles>
-        <!-- Flink 2.2 Profile（Default） -->
+        <!-- JDK 21+ Profile for Continuation API -->
         <profile>
-            <id>flink-2.2</id>
+            <id>java-21</id>
             <activation>
-                <activeByDefault>true</activeByDefault>
+                <jdk>[21,)</jdk>
             </activation>
-            <properties>
-                <flink.version>${flink.2.2.version}</flink.version>
-                <flink.agents.dist.artifactId>flink-agents-dist-flink-2.2</flink.agents.dist.artifactId>
-            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <!-- Add JVM args for JDK 21+ Continuation API access -->
+                            <argLine>--add-exports java.base/jdk.internal.vm=ALL-UNNAMED</argLine>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
 
         <!-- Flink 1.20 Profile -->

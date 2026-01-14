@@ -38,7 +38,10 @@ import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
+import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.ActionStatePersister;
+import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
@@ -196,12 +199,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final transient Map<ActionTask, RunnerContextImpl.DurableExecutionContext>
             actionTaskDurableContexts;
 
+    private final transient Map<ActionTask, ContinuationContext> continuationContexts;
+
     // Each job can only have one identifier and this identifier must be consistent across restarts.
     // We cannot use job id as the identifier here because user may change job id by
     // creating a savepoint, stop the job and then resume from savepoint.
     // We use this identifier to control the visibility for long-term memory.
     // Inspired by Apache Paimon.
     private transient String jobIdentifier;
+
+    private transient ContinuationActionExecutor continuationActionExecutor;
 
     public ActionExecutionOperator(
             AgentPlan agentPlan,
@@ -219,6 +226,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.checkpointIdToSeqNums = new HashMap<>();
         this.actionTaskMemoryContexts = new HashMap<>();
         this.actionTaskDurableContexts = new HashMap<>();
+        this.continuationContexts = new HashMap<>();
         OperatorUtils.setChainStrategy(this, ChainingStrategy.ALWAYS);
     }
 
@@ -303,6 +311,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         // init PythonActionExecutor and PythonResourceAdapter
         initPythonEnvironment();
+
+        // init executor for Java async execution
+        continuationActionExecutor = new ContinuationActionExecutor();
 
         mailboxProcessor = getMailboxProcessor();
 
@@ -494,6 +505,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // finished.
             actionTaskMemoryContexts.remove(actionTask);
             actionTaskDurableContexts.remove(actionTask);
+            continuationContexts.remove(actionTask);
             maybePersistTaskResult(
                     key,
                     sequenceNumber,
@@ -534,6 +546,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     actionTask.getRunnerContext().getDurableExecutionContext();
             if (durableContext != null) {
                 actionTaskDurableContexts.put(generatedActionTask, durableContext);
+            }
+            if (actionTask.getRunnerContext() instanceof JavaRunnerContextImpl) {
+                continuationContexts.put(
+                        generatedActionTask,
+                        ((JavaRunnerContextImpl) actionTask.getRunnerContext())
+                                .getContinuationContext());
             }
 
             actionTasksKState.add(generatedActionTask);
@@ -694,6 +712,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (runnerContext != null) {
             runnerContext.close();
         }
+        if (continuationActionExecutor != null) {
+            continuationActionExecutor.close();
+        }
 
         super.close();
     }
@@ -825,10 +846,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void createAndSetRunnerContext(ActionTask actionTask, Object key) {
-        if (actionTask.getRunnerContext() != null) {
-            return;
-        }
-
         RunnerContextImpl runnerContext;
         if (actionTask.action.getExec() instanceof JavaFunction) {
             runnerContext = createOrGetRunnerContext(true);
@@ -853,6 +870,18 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         runnerContext.switchActionContext(
                 actionTask.action.getName(), memoryContext, String.valueOf(key.hashCode()));
+
+        if (runnerContext instanceof JavaRunnerContextImpl) {
+            ContinuationContext continuationContext;
+            if (continuationContexts.containsKey(actionTask)) {
+                // action task for async execution action, should retrieve intermediate results from
+                // map.
+                continuationContext = continuationContexts.get(actionTask);
+            } else {
+                continuationContext = new ContinuationContext();
+            }
+            ((JavaRunnerContextImpl) runnerContext).setContinuationContext(continuationContext);
+        }
         actionTask.setRunnerContext(runnerContext);
     }
 
@@ -1023,12 +1052,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private RunnerContextImpl createOrGetRunnerContext(Boolean isJava) {
         if (isJava) {
             if (runnerContext == null) {
+                if (continuationActionExecutor == null) {
+                    continuationActionExecutor = new ContinuationActionExecutor();
+                }
                 runnerContext =
-                        new RunnerContextImpl(
+                        new JavaRunnerContextImpl(
                                 this.metricGroup,
                                 this::checkMailboxThread,
                                 this.agentPlan,
-                                this.jobIdentifier);
+                                this.jobIdentifier,
+                                continuationActionExecutor);
             }
             return runnerContext;
         } else {

@@ -109,6 +109,29 @@ public interface RunnerContext {
      */
     Object getActionConfigValue(String key);
 
+    /**
+     * Synchronously executes the provided callable with durable execution support.
+     *
+     * <p>The result will be stored and returned from cache during job recovery. The callable is
+     * executed synchronously, blocking the operator until completion.
+     *
+     * <p>Access to memory and sendEvent are prohibited within the callable.
+     */
+    <T> T durableExecute(DurableCallable<T> callable) throws Exception;
+
+    /**
+     * Asynchronously executes the provided callable with durable execution support.
+     *
+     * <p>On JDK 21+, this method uses Continuation to yield the current action execution, submits
+     * the callable to a thread pool, and resumes when complete. On JDK &lt; 21, this falls back to
+     * synchronous execution.
+     *
+     * <p>The result will be stored and returned from cache during job recovery.
+     *
+     * <p>Access to memory and sendEvent are prohibited within the callable.
+     */
+    <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception;
+
     /** Clean up the resource. */
     void close() throws Exception;
 }

@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -44,6 +45,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -489,7 +491,269 @@ public class ActionExecutionOperatorTest {
         }
     }
 
+    /** Tests that executeAsync works correctly. */
+    @Test
+    void testExecuteAsyncJavaAction() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getAsyncAgentPlan(false), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Input value 5: asyncAction1 computes 5 * 10 = 50, action2 computes 50 * 2 = 100
+            testHarness.processElement(new StreamRecord<>(5L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(100L);
+        }
+    }
+
+    /**
+     * Tests that multiple executeAsync calls can be chained together. Each async operation should
+     * complete before the next one starts (serial execution).
+     */
+    @Test
+    void testMultipleExecuteAsyncCalls() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(TestAgent.getAsyncAgentPlan(true), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Input value 7:
+            // First async: 7 + 100 = 107
+            // Second async: 107 * 2 = 214
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(214L);
+        }
+    }
+
+    /**
+     * Tests that executeAsync works correctly with multiple keys processed concurrently. Each key
+     * should complete its async operations independently.
+     */
+    @Test
+    void testExecuteAsyncWithMultipleKeys() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getAsyncAgentPlan(false), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Process two elements with different keys
+            // Key 3: asyncAction1 computes 3 * 10 = 30, action2 computes 30 * 2 = 60
+            // Key 4: asyncAction1 computes 4 * 10 = 40, action2 computes 40 * 2 = 80
+            testHarness.processElement(new StreamRecord<>(3L));
+            testHarness.processElement(new StreamRecord<>(4L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(2);
+
+            // Check both outputs exist (order may vary due to concurrent processing)
+            List<Object> outputValues =
+                    recordOutput.stream().map(StreamRecord::getValue).collect(Collectors.toList());
+            assertThat(outputValues).containsExactlyInAnyOrder(60L, 80L);
+        }
+    }
+
+    /** Tests that durableExecute (sync) works correctly. */
+    @Test
+    void testDurableExecuteSyncAction() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getDurableSyncAgentPlan(), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Input value 5: durableSyncAction computes 5 * 3 = 15
+            testHarness.processElement(new StreamRecord<>(5L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(15L);
+        }
+    }
+
+    /**
+     * Tests that durableExecute with ActionStateStore can recover from cached results. This
+     * verifies that on recovery, the durable execution returns cached results without re-executing
+     * the supplier.
+     */
+    @Test
+    void testDurableExecuteRecoveryFromCachedResult() throws Exception {
+        AgentPlan agentPlan = TestAgent.getDurableSyncAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+
+        // Reset the counter before the test
+        TestAgent.DURABLE_CALL_COUNTER.set(0);
+
+        // First execution - will execute the supplier and store the result
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(1);
+            // 7 * 3 = 21
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(21L);
+
+            // Verify action state was stored
+            assertThat(actionStateStore.getKeyedActionStates()).isNotEmpty();
+
+            // Verify supplier was called exactly once during first execution
+            assertThat(TestAgent.DURABLE_CALL_COUNTER.get()).isEqualTo(1);
+        }
+
+        // Second execution with same action state store - should recover from cached result
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Process the same key - should recover from cached state
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(1);
+            // Should get the same result (21) from recovery
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(21L);
+
+            // CRITICAL: Verify supplier was NOT called during recovery - counter should still be 1
+            assertThat(TestAgent.DURABLE_CALL_COUNTER.get())
+                    .as("Supplier should NOT be called during recovery")
+                    .isEqualTo(1);
+        }
+    }
+
+    /** Tests that durableExecute properly handles exceptions thrown by the supplier. */
+    @Test
+    void testDurableExecuteExceptionHandling() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getDurableExceptionAgentPlan(), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Reset counter
+            TestAgent.EXCEPTION_CALL_COUNTER.set(0);
+
+            testHarness.processElement(new StreamRecord<>(1L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput.size()).isEqualTo(1);
+            // Verify the error was caught and handled
+            assertThat(recordOutput.get(0).getValue().toString()).contains("ERROR:");
+
+            // Verify the supplier was called
+            assertThat(TestAgent.EXCEPTION_CALL_COUNTER.get()).isEqualTo(1);
+        }
+    }
+
+    /**
+     * Tests that exception recovery works correctly - on recovery, the cached exception should be
+     * re-thrown without calling the supplier again.
+     */
+    @Test
+    void testDurableExecuteExceptionRecovery() throws Exception {
+        AgentPlan agentPlan = TestAgent.getDurableExceptionAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+
+        // Reset counter
+        TestAgent.EXCEPTION_CALL_COUNTER.set(0);
+
+        // First execution - will execute the supplier, throw exception, and store it
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(2L));
+            operator.waitInFlightEventsFinished();
+
+            // Verify supplier was called once
+            assertThat(TestAgent.EXCEPTION_CALL_COUNTER.get()).isEqualTo(1);
+
+            // Verify action state was stored
+            assertThat(actionStateStore.getKeyedActionStates()).isNotEmpty();
+        }
+
+        // Second execution - should recover cached exception without calling supplier
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(2L));
+            operator.waitInFlightEventsFinished();
+
+            // CRITICAL: Verify supplier was NOT called during recovery
+            assertThat(TestAgent.EXCEPTION_CALL_COUNTER.get())
+                    .as("Supplier should NOT be called during exception recovery")
+                    .isEqualTo(1);
+        }
+    }
+
     public static class TestAgent {
+
+        /** Counter to track how many times the durable supplier is executed. */
+        public static final java.util.concurrent.atomic.AtomicInteger DURABLE_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
 
         public static class MiddleEvent extends Event {
             public Long num;
@@ -539,6 +803,157 @@ public class ActionExecutionOperatorTest {
             }
         }
 
+        public static void asyncAction1(InputEvent event, RunnerContext context) {
+            Long inputData = (Long) event.getInput();
+            try {
+                Long result =
+                        context.durableExecuteAsync(
+                                new DurableCallable<Long>() {
+                                    @Override
+                                    public String getId() {
+                                        return "async-multiply";
+                                    }
+
+                                    @Override
+                                    public Class<Long> getResultClass() {
+                                        return Long.class;
+                                    }
+
+                                    @Override
+                                    public Long call() {
+                                        try {
+                                            Thread.sleep(50);
+                                        } catch (InterruptedException e) {
+                                            Thread.currentThread().interrupt();
+                                        }
+                                        return inputData * 10;
+                                    }
+                                });
+
+                MemoryObject mem = context.getShortTermMemory();
+                mem.set("tmp", result);
+                context.sendEvent(new MiddleEvent(result));
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+        }
+
+        public static void multiAsyncAction(InputEvent event, RunnerContext context) {
+            Long inputData = (Long) event.getInput();
+            try {
+                Long result1 =
+                        context.durableExecuteAsync(
+                                new DurableCallable<Long>() {
+                                    @Override
+                                    public String getId() {
+                                        return "async-add";
+                                    }
+
+                                    @Override
+                                    public Class<Long> getResultClass() {
+                                        return Long.class;
+                                    }
+
+                                    @Override
+                                    public Long call() {
+                                        try {
+                                            Thread.sleep(30);
+                                        } catch (InterruptedException e) {
+                                            Thread.currentThread().interrupt();
+                                        }
+                                        return inputData + 100;
+                                    }
+                                });
+
+                Long result2 =
+                        context.durableExecuteAsync(
+                                new DurableCallable<Long>() {
+                                    @Override
+                                    public String getId() {
+                                        return "async-multiply";
+                                    }
+
+                                    @Override
+                                    public Class<Long> getResultClass() {
+                                        return Long.class;
+                                    }
+
+                                    @Override
+                                    public Long call() {
+                                        try {
+                                            Thread.sleep(30);
+                                        } catch (InterruptedException e) {
+                                            Thread.currentThread().interrupt();
+                                        }
+                                        return result1 * 2;
+                                    }
+                                });
+
+                MemoryObject mem = context.getShortTermMemory();
+                mem.set("multiAsyncResult", result2);
+                context.sendEvent(new OutputEvent(result2));
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+        }
+
+        public static void durableSyncAction(InputEvent event, RunnerContext context) {
+            Long inputData = (Long) event.getInput();
+            try {
+                Long result =
+                        context.durableExecute(
+                                new DurableCallable<Long>() {
+                                    @Override
+                                    public String getId() {
+                                        return "sync-compute";
+                                    }
+
+                                    @Override
+                                    public Class<Long> getResultClass() {
+                                        return Long.class;
+                                    }
+
+                                    @Override
+                                    public Long call() {
+                                        DURABLE_CALL_COUNTER.incrementAndGet();
+                                        return inputData * 3;
+                                    }
+                                });
+
+                context.sendEvent(new OutputEvent(result));
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+        }
+
+        public static final java.util.concurrent.atomic.AtomicInteger EXCEPTION_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+
+        public static void durableExceptionAction(InputEvent event, RunnerContext context) {
+            try {
+                context.durableExecute(
+                        new DurableCallable<String>() {
+                            @Override
+                            public String getId() {
+                                return "exception-action";
+                            }
+
+                            @Override
+                            public Class<String> getResultClass() {
+                                return String.class;
+                            }
+
+                            @Override
+                            public String call() {
+                                EXCEPTION_CALL_COUNTER.incrementAndGet();
+                                throw new RuntimeException("Test exception from durableExecute");
+                            }
+                        });
+            } catch (Exception e) {
+                context.sendEvent(new OutputEvent("ERROR:" + e.getMessage()));
+            }
+        }
+
         public static AgentPlan getAgentPlan(boolean testMemoryAccessOutOfMailbox) {
             try {
                 Map<String, List<Action>> actionsByEvent = new HashMap<>();
@@ -579,6 +994,114 @@ public class ActionExecutionOperatorTest {
                             MiddleEvent.class.getName(), Collections.singletonList(action3));
                     actions.put(action3.getName(), action3);
                 }
+
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        /**
+         * Creates an AgentPlan for testing async execution.
+         *
+         * @param useMultiAsync if true, uses multiAsyncAction which chains multiple async calls
+         * @return AgentPlan configured with async actions
+         */
+        public static AgentPlan getAsyncAgentPlan(boolean useMultiAsync) {
+            try {
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                Map<String, Action> actions = new HashMap<>();
+
+                if (useMultiAsync) {
+                    // Use multiAsyncAction that chains multiple executeAsync calls
+                    Action multiAsyncAction =
+                            new Action(
+                                    "multiAsyncAction",
+                                    new JavaFunction(
+                                            TestAgent.class,
+                                            "multiAsyncAction",
+                                            new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                    Collections.singletonList(InputEvent.class.getName()));
+                    actionsByEvent.put(
+                            InputEvent.class.getName(),
+                            Collections.singletonList(multiAsyncAction));
+                    actions.put(multiAsyncAction.getName(), multiAsyncAction);
+                } else {
+                    // Use asyncAction1 -> action2 chain
+                    Action asyncAction1 =
+                            new Action(
+                                    "asyncAction1",
+                                    new JavaFunction(
+                                            TestAgent.class,
+                                            "asyncAction1",
+                                            new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                    Collections.singletonList(InputEvent.class.getName()));
+                    Action action2 =
+                            new Action(
+                                    "action2",
+                                    new JavaFunction(
+                                            TestAgent.class,
+                                            "action2",
+                                            new Class<?>[] {
+                                                MiddleEvent.class, RunnerContext.class
+                                            }),
+                                    Collections.singletonList(MiddleEvent.class.getName()));
+                    actionsByEvent.put(
+                            InputEvent.class.getName(), Collections.singletonList(asyncAction1));
+                    actionsByEvent.put(
+                            MiddleEvent.class.getName(), Collections.singletonList(action2));
+                    actions.put(asyncAction1.getName(), asyncAction1);
+                    actions.put(action2.getName(), action2);
+                }
+
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getDurableSyncAgentPlan() {
+            try {
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                Map<String, Action> actions = new HashMap<>();
+
+                Action durableSyncAction =
+                        new Action(
+                                "durableSyncAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "durableSyncAction",
+                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.class.getName()));
+                actionsByEvent.put(
+                        InputEvent.class.getName(), Collections.singletonList(durableSyncAction));
+                actions.put(durableSyncAction.getName(), durableSyncAction);
+
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getDurableExceptionAgentPlan() {
+            try {
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                Map<String, Action> actions = new HashMap<>();
+
+                Action exceptionAction =
+                        new Action(
+                                "durableExceptionAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "durableExceptionAction",
+                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.class.getName()));
+                actionsByEvent.put(
+                        InputEvent.class.getName(), Collections.singletonList(exceptionAction));
+                actions.put(exceptionAction.getName(), exceptionAction);
 
                 return new AgentPlan(actions, actionsByEvent, new HashMap<>());
             } catch (Exception e) {

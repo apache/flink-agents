@@ -20,17 +20,26 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+
+import java.util.Collections;
 
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
  * A special {@link ActionTask} designed to execute a Java action task.
  *
- * <p>Note that Java action currently do not support asynchronous execution. As a result, a Java
- * action task will be invoked only once.
+ * <p>On JDK 21+, this task supports asynchronous execution via {@code executeAsync} in the action
+ * code. When the action yields for async execution, this task returns with {@code finished=false}
+ * and generates itself as the next task to continue execution.
+ *
+ * <p>On JDK &lt; 21, async execution falls back to synchronous mode.
  */
 public class JavaActionTask extends ActionTask {
+
+    private boolean executionStarted = false;
+
     public JavaActionTask(Object key, Event event, Action action) {
         super(key, event, action);
         checkState(action.getExec() instanceof JavaFunction);
@@ -44,15 +53,39 @@ public class JavaActionTask extends ActionTask {
                 action.getName(),
                 event,
                 key);
-        runnerContext.checkNoPendingEvents();
+
+        if (!executionStarted) {
+            runnerContext.checkNoPendingEvents();
+            executionStarted = true;
+        }
+
+        JavaRunnerContextImpl javaRunnerContext = (JavaRunnerContextImpl) runnerContext;
+
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        boolean finished;
         try {
             Thread.currentThread().setContextClassLoader(userCodeClassLoader);
-            action.getExec().call(event, runnerContext);
+            finished =
+                    javaRunnerContext
+                            .getContinuationExecutor()
+                            .executeAction(
+                                    javaRunnerContext.getContinuationContext(),
+                                    () -> {
+                                        try {
+                                            action.getExec().call(event, runnerContext);
+                                        } catch (Exception e) {
+                                            throw new RuntimeException(e);
+                                        }
+                                    });
         } finally {
             Thread.currentThread().setContextClassLoader(cl);
         }
-        return new ActionTaskResult(
-                true, runnerContext.drainEvents(event.getSourceTimestamp()), null);
+
+        if (finished) {
+            return new ActionTaskResult(
+                    true, runnerContext.drainEvents(event.getSourceTimestamp()), null);
+        } else {
+            return new ActionTaskResult(false, Collections.emptyList(), this);
+        }
     }
 }

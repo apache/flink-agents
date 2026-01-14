@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -115,6 +116,16 @@ public class MemoryRefTest {
         @Override
         public Object getActionConfigValue(String key) {
             return null;
+        }
+
+        @Override
+        public <T> T durableExecute(DurableCallable<T> callable) throws Exception {
+            return callable.call();
+        }
+
+        @Override
+        public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+            return callable.call();
         }
 
         @Override

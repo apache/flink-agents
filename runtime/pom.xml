@@ -142,4 +142,66 @@ under the License.
             <scope>provided</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Configure jar plugin for Multi-Release JAR -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Multi-Release>true</Multi-Release>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- Profile for building JDK 21 specific classes when running on JDK 21+ -->
+        <profile>
+            <id>java-21</id>
+            <activation>
+                <jdk>[21,)</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <!-- Compile JDK 21 specific sources -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <version>3.11.0</version>
+                        <executions>
+                            <execution>
+                                <id>compile-java21</id>
+                                <phase>compile</phase>
+                                <goals>
+                                    <goal>compile</goal>
+                                </goals>
+                                <configuration>
+                                    <!-- Must not use release with add-exports, use source/target instead -->
+                                    <release combine.self="override"/>
+                                    <source>21</source>
+                                    <target>21</target>
+                                    <fork>true</fork>
+                                    <compileSourceRoots>
+                                        <compileSourceRoot>${project.basedir}/src/main/java21</compileSourceRoot>
+                                    </compileSourceRoots>
+                                    <outputDirectory>${project.build.outputDirectory}/META-INF/versions/21</outputDirectory>
+                                    <compilerArgs>
+                                        <arg>--add-exports</arg>
+                                        <arg>java.base/jdk.internal.vm=ALL-UNNAMED</arg>
+                                    </compilerArgs>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

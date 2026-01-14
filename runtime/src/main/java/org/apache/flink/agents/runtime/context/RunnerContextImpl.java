@@ -18,8 +18,10 @@
 package org.apache.flink.agents.runtime.context;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -47,12 +49,17 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * The implementation class of {@link RunnerContext}, which serves as the execution context for
  * actions.
  */
 public class RunnerContextImpl implements RunnerContext {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     public static class MemoryContext {
         private final CachedMemoryStore sensoryMemStore;
         private final CachedMemoryStore shortTermMemStore;
@@ -235,6 +242,143 @@ public class RunnerContextImpl implements RunnerContext {
     @Override
     public Object getActionConfigValue(String key) {
         return agentPlan.getActionConfigValue(actionName, key);
+    }
+
+    protected <T> Optional<T> tryGetCachedResult(
+            String functionId, String argsDigest, Class<T> resultClass) throws Exception {
+        Object[] cached = matchNextOrClearSubsequentCallResult(functionId, argsDigest);
+        if (cached != null && (Boolean) cached[0]) {
+            byte[] resultPayload = (byte[]) cached[1];
+            byte[] exceptionPayload = (byte[]) cached[2];
+
+            if (exceptionPayload != null) {
+                DurableExecutionException cachedException =
+                        OBJECT_MAPPER.readValue(exceptionPayload, DurableExecutionException.class);
+                throw cachedException.toException();
+            } else if (resultPayload != null) {
+                return Optional.of(OBJECT_MAPPER.readValue(resultPayload, resultClass));
+            } else {
+                return Optional.of(null);
+            }
+        }
+        return Optional.empty();
+    }
+
+    protected void recordDurableCompletion(
+            String functionId, String argsDigest, Object result, Exception exception)
+            throws Exception {
+        byte[] resultPayload = null;
+        byte[] exceptionPayload = null;
+        if (exception != null) {
+            exceptionPayload =
+                    OBJECT_MAPPER.writeValueAsBytes(
+                            DurableExecutionException.fromException(exception));
+        } else if (result != null) {
+            resultPayload = OBJECT_MAPPER.writeValueAsBytes(result);
+        }
+        recordCallCompletion(functionId, argsDigest, resultPayload, exceptionPayload);
+    }
+
+    @Override
+    public <T> T durableExecute(DurableCallable<T> callable) throws Exception {
+        String functionId = callable.getId();
+        // argsDigest is empty because DurableCallable encapsulates all arguments internally
+        String argsDigest = "";
+
+        Optional<T> cachedResult =
+                tryGetCachedResult(functionId, argsDigest, callable.getResultClass());
+        if (cachedResult.isPresent()) {
+            return cachedResult.get();
+        }
+
+        T result = null;
+        Exception exception = null;
+        try {
+            result = callable.call();
+        } catch (Exception e) {
+            exception = e;
+        }
+
+        recordDurableCompletion(functionId, argsDigest, result, exception);
+
+        if (exception != null) {
+            throw exception;
+        }
+        return result;
+    }
+
+    @Override
+    public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+        String functionId = callable.getId();
+        // argsDigest is empty because DurableCallable encapsulates all arguments internally
+        String argsDigest = "";
+
+        Optional<T> cachedResult =
+                tryGetCachedResult(functionId, argsDigest, callable.getResultClass());
+        if (cachedResult.isPresent()) {
+            return cachedResult.get();
+        }
+
+        Supplier<T> wrappedSupplier =
+                () -> {
+                    T innerResult = null;
+                    Exception innerException = null;
+                    try {
+                        innerResult = callable.call();
+                    } catch (Exception e) {
+                        innerException = e;
+                    }
+
+                    if (innerException != null) {
+                        throw new DurableExecutionRuntimeException(innerException);
+                    }
+                    return innerResult;
+                };
+
+        T result = null;
+        Exception originalException = null;
+        try {
+            result = wrappedSupplier.get();
+        } catch (DurableExecutionRuntimeException e) {
+            originalException = (Exception) e.getCause();
+        }
+
+        recordDurableCompletion(functionId, argsDigest, result, originalException);
+
+        if (originalException != null) {
+            throw originalException;
+        }
+        return result;
+    }
+
+    protected static class DurableExecutionRuntimeException extends RuntimeException {
+        DurableExecutionRuntimeException(Throwable cause) {
+            super(cause);
+        }
+    }
+
+    /** Serializable exception info for durable execution persistence. */
+    public static class DurableExecutionException {
+        private final String exceptionClass;
+        private final String message;
+
+        public DurableExecutionException() {
+            this.exceptionClass = null;
+            this.message = null;
+        }
+
+        public DurableExecutionException(String exceptionClass, String message) {
+            this.exceptionClass = exceptionClass;
+            this.message = message;
+        }
+
+        public static DurableExecutionException fromException(Exception e) {
+            return new DurableExecutionException(e.getClass().getName(), e.getMessage());
+        }
+
+        public Exception toException() {
+            return new RuntimeException(exceptionClass + ": " + message);
+        }
     }
 
     @Override
