@@ -62,7 +62,7 @@ import java.util.List;
  * the model is allowed to call.
  */
 public class ChatModelCrossLanguageAgent extends Agent {
-    public static final String OLLAMA_MODEL = "qwen3:0.6b";
+    public static final String OLLAMA_MODEL = "qwen3:1.7b";
 
     @ChatModelConnection
     public static ResourceDescriptor javaChatModelConnection() {
