@@ -69,7 +69,7 @@ class VectorStoreQuery(BaseModel):
         description="Text query to be converted to embedding for semantic search."
     )
     limit: int = Field(default=10, description="Maximum number of results to return.")
-    collection_name: str = Field(
+    collection_name: str | None = Field(
         default=None, description="The collection to apply the query."
     )
     extra_args: Dict[str, Any] = Field(
@@ -323,7 +323,7 @@ class CollectionManageableVectorStore(BaseVectorStore, ABC):
 
     @abstractmethod
     def get_or_create_collection(
-        self, name: str, metadata: Dict[str, Any]
+        self, name: str, metadata: Dict[str, Any] | None = None
     ) -> Collection:
         """Get a collection, or create it if it doesn't exist.
 

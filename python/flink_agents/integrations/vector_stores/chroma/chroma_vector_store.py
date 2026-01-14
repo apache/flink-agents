@@ -302,6 +302,25 @@ class ChromaVectorStore(CollectionManageableVectorStore):
         collection_name: str | None = None,
         **kwargs: Any,
     ) -> List[str]:
+        collection_name = collection_name or self.collection
+        collection_metadata = kwargs.get(
+            "collection_metadata", self.collection_metadata
+        )
+        create_collection_if_not_exists = kwargs.get(
+            "create_collection_if_not_exists", self.create_collection_if_not_exists
+        )
+
+        # Get or create collection based on configuration
+        if create_collection_if_not_exists:
+            # ChromaDB doesn't accept empty metadata, pass None instead
+            metadata = collection_metadata if collection_metadata else None
+            collection = self.client.get_or_create_collection(
+                name=collection_name,
+                metadata=metadata,
+            )
+        else:
+            collection = self.client.get_collection(name=collection_name)
+
         documents_chunks = chunk_list(documents, MAX_CHUNK_SIZE)
 
         all_ids = []
@@ -311,7 +330,7 @@ class ChromaVectorStore(CollectionManageableVectorStore):
             embeddings = [doc.embedding for doc in chunk]
             metadatas = [doc.metadata for doc in chunk]
 
-            self.client.get_collection(name=collection_name or self.collection).add(
+            collection.add(
                 ids=ids, documents=docs, embeddings=embeddings, metadatas=metadatas
             )
             all_ids.extend(ids)
