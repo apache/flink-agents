@@ -55,7 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ 'macos-latest', 'ubuntu-latest' ]
-        java-version: ["11", "17"]
+        java-version: ["11", "17", "21"]
     steps:
       - uses: actions/checkout@v4
       - name: Install java
@@ -145,9 +145,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ 'ubuntu-latest' ]
-        java-version: [ "17" ]
-        flink-version: [ "1.20", "2.0", "2.1", "2.2" ]
+        include:
+          - os: 'ubuntu-latest'
+            java-version: "17"
+            flink-version: "1.20"
+          - os: 'ubuntu-latest'
+            java-version: "21"
+            flink-version: "2.0"
+          - os: 'ubuntu-latest'
+            java-version: "21"
+            flink-version: "2.1"
+          - os: 'ubuntu-latest'
+            java-version: "21"
+            flink-version: "2.2"
     steps:
       - uses: actions/checkout@v4
       - name: Install java
@@ -170,7 +180,7 @@ jobs:
       matrix:
         os: [ 'ubuntu-latest' ]
         python-version: [ '3.11' ]
-        java-version: [ '17' ]
+        java-version: [ '21' ]
     steps:
       - uses: actions/checkout@v4
       - name: Install java
