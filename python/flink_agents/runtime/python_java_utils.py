@@ -27,9 +27,11 @@ from flink_agents.api.resource import Resource, ResourceType, get_resource_class
 from flink_agents.api.tools.tool import ToolMetadata
 from flink_agents.api.tools.utils import create_model_from_java_tool_schema_str
 from flink_agents.api.vector_stores.vector_store import (
+    Collection,
     Document,
     VectorStoreQuery,
     VectorStoreQueryMode,
+    VectorStoreQueryResult,
 )
 from flink_agents.plan.resource_provider import JAVA_RESOURCE_MAPPING
 from flink_agents.runtime.java.java_resource_wrapper import (
@@ -217,6 +219,23 @@ def from_java_vector_store_query(j_query: Any) -> VectorStoreQuery:
         collection_name=j_query.getCollection(),
         extra_args=j_query.getExtraArgs()
     )
+
+def from_java_vector_store_query_result(j_query: Any) -> VectorStoreQueryResult:
+    """Convert a Java vector store query result to a Python query result."""
+    return VectorStoreQueryResult(
+        documents=[from_java_document(j_document) for j_document in j_query.getDocuments()],
+    )
+
+def from_java_collection(j_collection: Any) -> Collection:
+    """Convert a Java collection to a Python collection."""
+    return Collection(
+        name=j_collection.getName(),
+        metadata=j_collection.getMetadata(),
+    )
+
+def get_mode_value(query: VectorStoreQuery) -> str:
+    """Get the mode value of a VectorStoreQuery."""
+    return query.mode.value
 
 def call_method(obj: Any, method_name: str, kwargs: Dict[str, Any]) -> Any:
     """Calls a method on `obj` by name and passes in positional and keyword arguments.

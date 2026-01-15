@@ -21,8 +21,13 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.vectorstores.Document;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQueryMode;
 import pemja.core.PythonInterpreter;
+import pemja.core.object.PyObject;
 
+import java.util.Map;
 import java.util.function.BiFunction;
 
 /** Adapter for managing Java resources and facilitating Python-Java interoperability. */
@@ -71,5 +76,29 @@ public class JavaResourceAdapter {
                                 chatMessage);
         chatMessage.setRole(MessageRole.fromValue(roleValue));
         return chatMessage;
+    }
+
+    @SuppressWarnings("unchecked")
+    public Document fromPythonDocument(PyObject pythonDocument) {
+        // TODO: Delete this method after the pemja findClass method is fixed.
+        return new Document(
+                pythonDocument.getAttr("content").toString(),
+                (Map<String, Object>) pythonDocument.getAttr("metadata", Map.class),
+                pythonDocument.getAttr("id").toString());
+    }
+
+    @SuppressWarnings("unchecked")
+    public VectorStoreQuery fromPythonVectorStoreQuery(PyObject pythonVectorStoreQuery) {
+        // TODO: Delete this method after the pemja findClass method is fixed.
+        String modeValue =
+                (String)
+                        interpreter.invoke(
+                                "python_java_utils.get_mode_value", pythonVectorStoreQuery);
+        return new VectorStoreQuery(
+                VectorStoreQueryMode.fromValue(modeValue),
+                (String) pythonVectorStoreQuery.getAttr("query_text"),
+                pythonVectorStoreQuery.getAttr("limit", Integer.class),
+                (String) pythonVectorStoreQuery.getAttr("collection_name"),
+                (Map<String, Object>) pythonVectorStoreQuery.getAttr("extra_args", Map.class));
     }
 }

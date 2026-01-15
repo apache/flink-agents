@@ -159,6 +159,7 @@ JAVA_RESOURCE_MAPPING: dict[ResourceType, str] = {
     ResourceType.CHAT_MODEL_CONNECTION: "flink_agents.runtime.java.java_chat_model.JavaChatModelConnectionImpl",
     ResourceType.EMBEDDING_MODEL: "flink_agents.runtime.java.java_embedding_model.JavaEmbeddingModelSetupImpl",
     ResourceType.EMBEDDING_MODEL_CONNECTION: "flink_agents.runtime.java.java_embedding_model.JavaEmbeddingModelConnectionImpl",
+    ResourceType.VECTOR_STORE: "flink_agents.runtime.java.java_vector_store.JavaVectorStoreImpl",
 }
 
 class JavaResourceProvider(ResourceProvider):
