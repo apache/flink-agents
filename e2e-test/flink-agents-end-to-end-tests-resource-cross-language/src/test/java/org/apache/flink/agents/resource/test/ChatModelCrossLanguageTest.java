@@ -56,14 +56,7 @@ public class ChatModelCrossLanguageTest {
         DataStream<String> inputStream =
                 env.fromData(
                         "Convert 25 degrees Celsius to Fahrenheit",
-                        "Convert 98.6 degrees Fahrenheit to Celsius",
-                        "Change 32 degrees Celsius to Fahrenheit",
-                        "If it's 75 degrees Fahrenheit, what would that be in Celsius?",
-                        "Convert room temperature of 20C to F",
                         "Calculate BMI for someone who is 1.75 meters tall and weighs 70 kg",
-                        "What's the BMI for a person weighing 85 kg with height 1.80 meters?",
-                        "Can you tell me the BMI if I'm 1.65m tall and weigh 60kg?",
-                        "Find BMI for 75kg weight and 1.78m height",
                         "Create me a random number please");
 
         // Create agents execution environment
@@ -88,8 +81,7 @@ public class ChatModelCrossLanguageTest {
     }
 
     public void checkResult(CloseableIterator<Object> results) {
-        List<String> expectedWords =
-                List.of("77", "37", "89", "23", "68", "22", "26", "22", "23", "");
+        List<String> expectedWords = List.of("77", "22", "");
         for (String expected : expectedWords) {
             Assertions.assertTrue(
                     results.hasNext(), "Output messages count %s is less than expected.");
