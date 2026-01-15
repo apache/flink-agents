@@ -57,7 +57,7 @@ public class VectorStoreQuery {
      */
     public VectorStoreQuery(
             String queryText, Integer limit, String collection, Map<String, Object> extraArgs) {
-        this(VectorStoreQueryMode.SEMANTIC, queryText, limit, collection, new HashMap<>());
+        this(VectorStoreQueryMode.SEMANTIC, queryText, limit, collection, extraArgs);
     }
 
     /**
