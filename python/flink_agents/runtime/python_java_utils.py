@@ -16,13 +16,13 @@
 # limitations under the License.
 #################################################################################
 import importlib
+import json
 from typing import Any, Callable, Dict
 
 import cloudpickle
-from pemja import findClass
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.events.event import InputEvent
+from flink_agents.api.events.event import Event, InputEvent
 from flink_agents.api.resource import Resource, ResourceType, get_resource_class
 from flink_agents.api.tools.tool import ToolMetadata
 from flink_agents.api.tools.utils import create_model_from_java_tool_schema_str
@@ -46,14 +46,25 @@ def convert_to_python_object(bytesObject: bytes) -> Any:
     return cloudpickle.loads(bytesObject)
 
 
+def _build_event_log_string(event: InputEvent | Event, event_type: str) -> str:
+    try:
+        payload = json.loads(event.model_dump_json())
+        payload["eventType"] = event_type
+        payload.setdefault("attributes", {})
+        return json.dumps(payload)
+    except Exception:
+        return str(event)
+
+
 def wrap_to_input_event(bytesObject: bytes) -> tuple[bytes, str]:
     """Wrap data to python input event and serialize.
 
     Returns:
-        A tuple of (serialized_event_bytes, event_string_representation)
+        A tuple of (serialized_event_bytes, event_json_str)
     """
     event = InputEvent(input=cloudpickle.loads(bytesObject))
-    return (cloudpickle.dumps(event), str(event))
+    event_type = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
+    return (cloudpickle.dumps(event), _build_event_log_string(event, event_type))
 
 
 def get_output_from_output_event(bytesObject: bytes) -> Any:
@@ -166,6 +177,7 @@ def from_java_chat_message(j_chat_message: Any) -> ChatMessage:
 
 def to_java_chat_message(chat_message: ChatMessage) -> Any:
     """Convert a chat message to a java chat message."""
+    from pemja import findClass
     j_ChatMessage = findClass("org.apache.flink.agents.api.chat.messages.ChatMessage")
     j_chat_message = j_ChatMessage()
 

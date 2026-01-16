@@ -16,7 +16,9 @@
 # limitations under the License.
 #################################################################################
 import json
+import os
 import shutil
+import sysconfig
 import tempfile
 from pathlib import Path
 
@@ -36,6 +38,8 @@ from flink_agents.api.decorators import action
 from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
+
+os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
 
 class InputKeySelector(KeySelector):
@@ -60,9 +64,9 @@ class PythonEventLoggingAgent(Agent):
         )
 
 
-def test_python_event_logging() -> None:
-    """Test that PythonEvent can be logged with readable content."""
-    # Check that log files were created in the default location
+def test_python_event_logging(tmp_path: Path) -> None:
+    """Test event logs are written to configured directory with expected content."""
+    event_log_dir = tmp_path / "event_log"
     default_log_dir = Path(tempfile.gettempdir()) / "flink-agents"
     shutil.rmtree(default_log_dir, ignore_errors=True)
 
@@ -73,6 +77,7 @@ def test_python_event_logging() -> None:
 
     # Create agent environment
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    agents_env.get_config().set_str("baseLogDir", str(event_log_dir))
 
     # Set up input source
     current_dir = Path(__file__).parent
@@ -96,28 +101,42 @@ def test_python_event_logging() -> None:
     # Execute the job
     agents_env.execute()
 
-    # Also check our custom log directory
-    log_files = []
-    if default_log_dir.exists():
-        log_files.extend(default_log_dir.glob("events-*.log"))
+    # Check that log files were created in configured directory
+    log_files = list(event_log_dir.glob("events-*.log"))
 
     # At least one log file should exist
     assert len(log_files) > 0, (
-        f"Event log files should be created in {default_log_dir}"
+        f"Event log files should be created in {event_log_dir}"
     )
 
-    # Check that log files contain readable PythonEvent content
-    log_content = ""
+    # Check that log files contain structured event content
+    record = None
+    record_line = None
+    has_processed_review = False
     for log_file in log_files:
-        with log_file.open() as f:
-            log_content += f.read()
+        with log_file.open(encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    record = json.loads(line)
+                    record_line = line
+                    event_payload = record.get("event", {})
+                    if "processed_review" in json.dumps(event_payload):
+                        has_processed_review = True
+                        break
+        if record is not None and has_processed_review:
+            break
 
-    print(log_content)
+    assert record is not None, "Event log file is empty."
+    assert record_line is not None, "Event log file is empty."
+    assert "timestamp" in record
+    assert "event" in record
+    assert "eventType" in record["event"]
+    assert has_processed_review, "Log should contain processed review content"
 
-    # Verify log contains expected content - should have readable event data via
-    # eventString
-    assert "processed_review" in log_content, (
-        "Log should contain processed event content from eventString"
-    )
-    assert "eventString" in log_content, "Log should contain eventString field"
-    assert "eventType" in log_content, "Log should contain event type information"
+    event_type_idx = record_line.find('"eventType"')
+    id_idx = record_line.find('"id"')
+    attributes_idx = record_line.find('"attributes"')
+    assert event_type_idx != -1
+    assert id_idx != -1
+    assert attributes_idx != -1
+    assert event_type_idx < id_idx < attributes_idx

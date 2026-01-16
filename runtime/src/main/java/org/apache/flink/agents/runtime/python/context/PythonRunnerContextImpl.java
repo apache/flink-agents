@@ -46,8 +46,8 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
         super.sendEvent(event);
     }
 
-    public void sendEvent(String type, byte[] event, String eventString) {
+    public void sendEvent(String type, byte[] event, String eventJsonStr) {
         // this method will be invoked by PythonActionExecutor's python interpreter.
-        sendEvent(new PythonEvent(event, type, eventString));
+        sendEvent(new PythonEvent(event, type, eventJsonStr));
     }
 }

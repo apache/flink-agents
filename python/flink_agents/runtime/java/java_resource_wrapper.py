@@ -17,7 +17,6 @@
 #################################################################################
 from typing import Any, List
 
-from pemja import findClass
 from pydantic import Field
 from typing_extensions import override
 
@@ -54,6 +53,7 @@ class JavaPrompt(Prompt):
     def format_messages(
         self, role: MessageRole = MessageRole.SYSTEM, **kwargs: str
     ) -> List[ChatMessage]:
+        from pemja import findClass
         j_MessageRole = findClass("org.apache.flink.agents.api.chat.messages.MessageRole")
         j_chat_messages = self.j_prompt.formatMessages(j_MessageRole.fromValue(role.value), kwargs)
         chatMessages = [ChatMessage(role=MessageRole(j_chat_message.getRole().getValue()),

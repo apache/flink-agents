@@ -40,6 +40,7 @@ from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
 from flink_agents.runtime.memory.vector_store_long_term_memory import (
     VectorStoreLongTermMemory,
 )
+from flink_agents.runtime.python_java_utils import _build_event_log_string
 
 logger = logging.getLogger(__name__)
 
@@ -216,9 +217,9 @@ class FlinkRunnerContext(RunnerContext):
         """
         class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
         event_bytes = cloudpickle.dumps(event)
-        event_string = str(event)
+        event_json_str = _build_event_log_string(event, class_path)
         try:
-            self._j_runner_context.sendEvent(class_path, event_bytes, event_string)
+            self._j_runner_context.sendEvent(class_path, event_bytes, event_json_str)
         except Exception as e:
             err_msg = "Failed to send event " + class_path + " to runner context"
             raise RuntimeError(err_msg) from e

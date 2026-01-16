@@ -148,8 +148,8 @@ public class PythonActionExecutor {
         checkState(result.getClass().isArray() && ((Object[]) result).length == 2);
         Object[] resultArray = (Object[]) result;
         byte[] eventBytes = (byte[]) resultArray[0];
-        String eventString = (String) resultArray[1];
-        return new PythonEvent(eventBytes, EventUtil.PYTHON_INPUT_EVENT_NAME, eventString);
+        String eventJsonStr = (String) resultArray[1];
+        return new PythonEvent(eventBytes, EventUtil.PYTHON_INPUT_EVENT_NAME, eventJsonStr);
     }
 
     public Object getOutputFromOutputEvent(byte[] pythonOutputEvent) {

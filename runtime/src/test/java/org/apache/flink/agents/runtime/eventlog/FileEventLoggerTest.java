@@ -178,7 +178,7 @@ class FileEventLoggerTest {
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
         assertEquals(
                 "org.apache.flink.agents.runtime.eventlog.FileEventLoggerTest$TestCustomEvent",
-                jsonNode.get("context").get("eventType").asText());
+                jsonNode.get("event").get("eventType").asText());
 
         JsonNode eventNode = jsonNode.get("event");
         assertEquals("custom data", eventNode.get("customData").asText());
