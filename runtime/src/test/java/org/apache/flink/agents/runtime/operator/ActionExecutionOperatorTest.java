@@ -20,14 +20,17 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
+import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.watermark.Watermark;
@@ -223,6 +226,39 @@ public class ActionExecutionOperatorTest {
 
             // Test checkpoint complete triggers cleanup
             testHarness.notifyOfCompletedCheckpoint(1L);
+        }
+    }
+
+    @Test
+    void testEventLogBaseDirFromAgentConfig() throws Exception {
+        String baseLogDir = "/tmp/flink-agents-test";
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.BASE_LOG_DIR, baseLogDir);
+        AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            Field eventLoggerField = ActionExecutionOperator.class.getDeclaredField("eventLogger");
+            eventLoggerField.setAccessible(true);
+            Object eventLogger = eventLoggerField.get(operator);
+            assertThat(eventLogger).isInstanceOf(FileEventLogger.class);
+
+            Field configField = FileEventLogger.class.getDeclaredField("config");
+            configField.setAccessible(true);
+            Object loggerConfig = configField.get(eventLogger);
+            Field propertiesField = loggerConfig.getClass().getDeclaredField("properties");
+            propertiesField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> properties =
+                    (Map<String, Object>) propertiesField.get(loggerConfig);
+            assertThat(properties.get(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY))
+                    .isEqualTo(baseLogDir);
         }
     }
 
@@ -955,6 +991,15 @@ public class ActionExecutionOperatorTest {
         }
 
         public static AgentPlan getAgentPlan(boolean testMemoryAccessOutOfMailbox) {
+            return getAgentPlanWithConfig(new AgentConfiguration(), testMemoryAccessOutOfMailbox);
+        }
+
+        public static AgentPlan getAgentPlanWithConfig(AgentConfiguration config) {
+            return getAgentPlanWithConfig(config, false);
+        }
+
+        private static AgentPlan getAgentPlanWithConfig(
+                AgentConfiguration config, boolean testMemoryAccessOutOfMailbox) {
             try {
                 Map<String, List<Action>> actionsByEvent = new HashMap<>();
                 Action action1 =
@@ -995,7 +1040,7 @@ public class ActionExecutionOperatorTest {
                     actions.put(action3.getName(), action3);
                 }
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>(), config);
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }

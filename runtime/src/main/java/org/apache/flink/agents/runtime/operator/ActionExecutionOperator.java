@@ -45,6 +45,7 @@ import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
+import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
@@ -98,6 +99,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
@@ -220,7 +222,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.inputIsJava = inputIsJava;
         this.processingTimeService = processingTimeService;
         this.mailboxExecutor = mailboxExecutor;
-        this.eventLogger = EventLoggerFactory.createLogger(EventLoggerConfig.builder().build());
+        this.eventLogger = createEventLogger(agentPlan);
         this.eventListeners = new ArrayList<>();
         this.actionStateStore = actionStateStore;
         this.checkpointIdToSeqNums = new HashMap<>();
@@ -1075,6 +1077,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
             return pythonRunnerContext;
         }
+    }
+
+    private EventLogger createEventLogger(AgentPlan agentPlan) {
+        EventLoggerConfig.Builder loggerConfigBuilder = EventLoggerConfig.builder();
+        String baseLogDir = agentPlan.getConfig().get(BASE_LOG_DIR);
+        if (baseLogDir != null && !baseLogDir.trim().isEmpty()) {
+            loggerConfigBuilder.property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, baseLogDir);
+        }
+        return EventLoggerFactory.createLogger(loggerConfigBuilder.build());
     }
 
     /** Failed to execute Action task. */
