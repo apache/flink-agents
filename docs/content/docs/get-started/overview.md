@@ -41,7 +41,8 @@ The key features of Apache Flink Agents include:
 
 ## Getting Started
 
-To get started with Apache Flink Agents, you can checkout the following quickstarts:
+To get started with Apache Flink Agents, you can checkout the following resources:
 
+- **[Choosing Between Java API and Python API]({{< ref "docs/get-started/choosing-api" >}})** – Understand the strengths and tradeoffs of each API to choose the right one for your project.
 - [Workflow Agent Quickstart]({{< ref "docs/get-started/quickstart/workflow_agent" >}})
 - [ReAct Agent Quickstart]({{< ref "docs/get-started/quickstart/react_agent" >}})
