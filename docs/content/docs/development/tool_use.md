@@ -281,7 +281,7 @@ public class ReviewAnalysisAgent extends Agent {
 - Use the builder pattern in Java to configure the MCP server with endpoint, timeout, headers, and authentication
 - Reference MCP tools by their function name (e.g., `"notify_shipping_manager"` in Python, `"notifyShippingManager"` in Java)
 - All tools from the MCP server are automatically registered
-
+- For MCP servers that do not support the list_prompts interface, the list_prompts method will return an empty list. In such cases, you need to define a LocalPrompt to call the tools.
 ### MCP Server Authentication
 
 MCP servers can be configured with authentication in both Python and Java:
