@@ -144,8 +144,8 @@ class MCPServer(Resource, ABC):
     # HTTP connection parameters
     endpoint: str
     headers: Dict[str, Any] | None = None
-    timeout: timedelta = timedelta(seconds=30)
-    sse_read_timeout: timedelta = timedelta(seconds=60 * 5)
+    timeout: int = 30
+    sse_read_timeout: int = 60*5
     auth: httpx.Auth | None = None
 
     session: ClientSession = Field(default=None, exclude=True)
@@ -190,8 +190,8 @@ class MCPServer(Resource, ABC):
         async with streamablehttp_client(
                 url=self.endpoint,
                 headers=self.headers,
-                timeout=self.timeout,
-                sse_read_timeout=self.sse_read_timeout,
+                timeout=timedelta(seconds=self.timeout),
+                sse_read_timeout=timedelta(seconds=self.sse_read_timeout),
                 auth=self.auth,
             ) as (read, write, _), ClientSession(
             read,
@@ -218,7 +218,7 @@ class MCPServer(Resource, ABC):
             arguments = kwargs if kwargs else (args[0] if args else {})
 
             result = await session.call_tool(
-                tool_name, arguments, read_timeout_seconds=self.timeout
+                tool_name, arguments, read_timeout_seconds=timedelta(seconds=self.timeout),
             )
 
             content = [extract_mcp_content_item(item) for item in result.content]
