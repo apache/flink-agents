@@ -34,7 +34,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.apache.flink.agents.resource.test.ChatModelCrossLanguageAgent.OLLAMA_MODEL;
-import static org.apache.flink.agents.resource.test.OllamaPreparationUtils.pullModel;
+import static org.apache.flink.agents.resource.test.CrossLanguageTestPreparationUtils.pullModel;
 
 public class ChatModelCrossLanguageTest {
     private static final Logger LOG = LoggerFactory.getLogger(ChatModelCrossLanguageTest.class);

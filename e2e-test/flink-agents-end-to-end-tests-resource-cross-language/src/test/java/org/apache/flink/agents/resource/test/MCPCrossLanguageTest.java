@@ -26,43 +26,28 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
 import java.util.Map;
 
-import static org.apache.flink.agents.resource.test.CrossLanguageTestPreparationUtils.pullModel;
+import static org.apache.flink.agents.resource.test.CrossLanguageTestPreparationUtils.startMCPServer;
 
-/**
- * Example application that applies {@link EmbeddingCrossLanguageAgent} to a DataStream of prompts.
- */
-public class EmbeddingCrossLanguageTest {
+/** Example application that applies {@link MCPCrossLanguageAgent} to a DataStream. */
+public class MCPCrossLanguageTest {
+    private final Process mcpServerProcess;
 
-    private final boolean ollamaReady;
-
-    public EmbeddingCrossLanguageTest() throws IOException {
-        ollamaReady = pullModel(EmbeddingCrossLanguageAgent.OLLAMA_MODEL);
+    public MCPCrossLanguageTest() {
+        this.mcpServerProcess = startMCPServer();
     }
 
     @Test
-    public void testEmbeddingIntegration() throws Exception {
-        Assumptions.assumeTrue(ollamaReady, "Ollama Server information is not provided");
+    public void testMCPIntegration() throws Exception {
+        Assumptions.assumeTrue(mcpServerProcess != null, "MCP Server is not running");
 
         // Create the execution environment
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
-        // Use prompts that exercise embedding generation and similarity checks
-        DataStream<String> inputStream =
-                env.fromData(
-                        "Generate embedding for: 'Machine learning'",
-                        "Generate embedding for: 'Deep learning techniques'",
-                        "Find texts similar to: 'neural networks'",
-                        "Produce embedding and return top-3 similar items for: 'natural language processing'",
-                        "Generate embedding for: 'hello world'",
-                        "Compare similarity between 'cat' and 'dog'",
-                        "Create embedding for: 'space exploration'",
-                        "Find nearest neighbors for: 'artificial intelligence'",
-                        "Generate embedding for: 'data science'",
-                        "Random embedding test");
+        // Use prompts that utilize the MCP tool and perform prompt checks.
+        DataStream<String> inputStream = env.fromData("An input message to invoke the Test Action");
 
         // Create agents execution environment
         AgentsExecutionEnvironment agentsEnv =
@@ -72,7 +57,7 @@ public class EmbeddingCrossLanguageTest {
         DataStream<Object> outputStream =
                 agentsEnv
                         .fromDataStream(inputStream, (KeySelector<String, String>) value -> value)
-                        .apply(new EmbeddingCrossLanguageAgent())
+                        .apply(new MCPCrossLanguageAgent())
                         .toDataStream();
 
         // Collect the results
@@ -82,16 +67,19 @@ public class EmbeddingCrossLanguageTest {
         agentsEnv.execute();
 
         checkResult(results);
+
+        mcpServerProcess.destroy();
     }
 
     @SuppressWarnings("unchecked")
     private void checkResult(CloseableIterator<Object> results) {
-        for (int i = 1; i <= 10; i++) {
-            Assertions.assertTrue(
-                    results.hasNext(),
-                    String.format("Output messages count %s is less than expected 10.", i));
-            Map<String, Object> res = (Map<String, Object>) results.next();
-            Assertions.assertEquals("PASSED", res.get("test_status"));
-        }
+        Assertions.assertTrue(
+                results.hasNext(), "No output received from VectorStoreIntegrationAgent");
+
+        Object obj = results.next();
+        Assertions.assertInstanceOf(Map.class, obj, "Output must be a Map");
+
+        java.util.Map<String, Object> res = (java.util.Map<String, Object>) obj;
+        Assertions.assertEquals("PASSED", res.get("test_status"));
     }
 }
