@@ -188,3 +188,4 @@ public class ReviewAnalysisAgent extends Agent {
 **Key points:**
 - All tools and prompts from the MCP server are automatically registered.
 - Reference MCP prompts and tools by their names, like reference [local prompt]({{< ref "docs/development/prompts/#using-prompts-in-agents" >}}) and [function tool]({{< ref "docs/development/tool_use/#define-tool-as-static-method-in-agent-class" >}}) .
+- For MCP servers that do not support the list_prompts interface, the list_prompts method will return an empty list. In such cases, you need to define a LocalPrompt to call the tools.
