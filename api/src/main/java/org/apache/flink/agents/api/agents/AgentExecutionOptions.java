@@ -29,4 +29,14 @@ public class AgentExecutionOptions {
 
     public static final ConfigOption<Integer> MAX_RETRIES =
             new ConfigOption<>("max-retries", Integer.class, 3);
+
+    // Async execution is supported on jdk >= 21, so set default false here.
+    public static final ConfigOption<Boolean> CHAT_ASYNC =
+            new ConfigOption<>("chat.async", Boolean.class, true);
+
+    public static final ConfigOption<Boolean> TOOL_CALL_ASYNC =
+            new ConfigOption<>("tool-call.async", Boolean.class, true);
+
+    public static final ConfigOption<Boolean> RAG_ASYNC =
+            new ConfigOption<>("rag.async", Boolean.class, true);
 }

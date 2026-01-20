@@ -119,7 +119,7 @@ class LocalRunnerContext(RunnerContext):
         self.events.append(event)
 
     @override
-    def get_resource(self, name: str, type: ResourceType) -> Resource:
+    def get_resource(self, name: str, type: ResourceType, metric_group: MetricGroup = None) -> Resource:
         return self.__agent_plan.get_resource(name, type)
 
     @property

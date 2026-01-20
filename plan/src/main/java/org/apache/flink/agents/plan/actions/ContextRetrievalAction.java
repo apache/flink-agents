@@ -19,6 +19,8 @@
 package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
@@ -26,6 +28,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
+import org.apache.flink.agents.api.vectorstores.python.PythonVectorStore;
 import org.apache.flink.agents.plan.JavaFunction;
 
 import java.util.List;
@@ -46,6 +49,8 @@ public class ContextRetrievalAction {
     public static void processContextRetrievalRequest(Event event, RunnerContext ctx)
             throws Exception {
         if (event instanceof ContextRetrievalRequestEvent) {
+            boolean ragAsync = ctx.getConfig().get(AgentExecutionOptions.RAG_ASYNC);
+
             final ContextRetrievalRequestEvent contextRetrievalRequestEvent =
                     (ContextRetrievalRequestEvent) event;
 
@@ -55,12 +60,35 @@ public class ContextRetrievalAction {
                                     contextRetrievalRequestEvent.getVectorStore(),
                                     ResourceType.VECTOR_STORE);
 
+            // TODO: python vector store doesn't support async execution yet, see
+            // https://github.com/apache/flink-agents/issues/448 for details.
+            ragAsync = ragAsync && !(vectorStore instanceof PythonVectorStore);
+
             final VectorStoreQuery vectorStoreQuery =
                     new VectorStoreQuery(
                             contextRetrievalRequestEvent.getQuery(),
                             contextRetrievalRequestEvent.getMaxResults());
 
-            final VectorStoreQueryResult result = vectorStore.query(vectorStoreQuery);
+            DurableCallable<VectorStoreQueryResult> callable =
+                    new DurableCallable<VectorStoreQueryResult>() {
+                        @Override
+                        public String getId() {
+                            return "rag-async";
+                        }
+
+                        @Override
+                        public Class<VectorStoreQueryResult> getResultClass() {
+                            return VectorStoreQueryResult.class;
+                        }
+
+                        @Override
+                        public VectorStoreQueryResult call() throws Exception {
+                            return vectorStore.query(vectorStoreQuery);
+                        }
+                    };
+
+            VectorStoreQueryResult result =
+                    ragAsync ? ctx.durableExecuteAsync(callable) : ctx.durableExecute(callable);
 
             ctx.sendEvent(
                     new ContextRetrievalResponseEvent(

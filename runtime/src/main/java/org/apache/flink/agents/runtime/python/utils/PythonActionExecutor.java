@@ -97,7 +97,8 @@ public class PythonActionExecutor {
                                 runnerContext,
                                 agentPlanJson,
                                 pythonAsyncThreadPool,
-                                javaResourceAdapter);
+                                javaResourceAdapter,
+                                jobIdentifier);
     }
 
     /**
@@ -116,10 +117,7 @@ public class PythonActionExecutor {
         function.setInterpreter(interpreter);
 
         interpreter.invoke(
-                FLINK_RUNNER_CONTEXT_SWITCH_ACTION_CONTEXT,
-                pythonRunnerContext,
-                jobIdentifier,
-                hashOfKey);
+                FLINK_RUNNER_CONTEXT_SWITCH_ACTION_CONTEXT, pythonRunnerContext, hashOfKey);
 
         Object pythonEventObject = interpreter.invoke(CONVERT_TO_PYTHON_OBJECT, event.getEvent());
 
@@ -148,8 +146,8 @@ public class PythonActionExecutor {
         checkState(result.getClass().isArray() && ((Object[]) result).length == 2);
         Object[] resultArray = (Object[]) result;
         byte[] eventBytes = (byte[]) resultArray[0];
-        String eventString = (String) resultArray[1];
-        return new PythonEvent(eventBytes, EventUtil.PYTHON_INPUT_EVENT_NAME, eventString);
+        String eventJsonStr = (String) resultArray[1];
+        return new PythonEvent(eventBytes, EventUtil.PYTHON_INPUT_EVENT_NAME, eventJsonStr);
     }
 
     public Object getOutputFromOutputEvent(byte[] pythonOutputEvent) {

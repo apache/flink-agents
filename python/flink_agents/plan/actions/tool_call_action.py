@@ -48,7 +48,7 @@ async def process_tool_request(event: ToolRequestEvent, ctx: RunnerContext) -> N
             if tool_call_async:
                 response = await ctx.durable_execute_async(tool.call, **kwargs)
             else:
-                response = tool.call(**kwargs)
+                response = ctx.durable_execute(tool.call, **kwargs)
         responses[id] = response
         external_ids[id] = external_id
     ctx.send_event(

@@ -52,7 +52,6 @@ from flink_agents.api.resource import (
 )
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.e2e_tests.test_utils import pull_model
-from flink_agents.integrations.mcp.mcp import MCPServer
 
 OLLAMA_MODEL = os.environ.get("MCP_OLLAMA_CHAT_MODEL", "qwen3:1.7b")
 MCP_SERVER_ENDPOINT = "http://127.0.0.1:8000/mcp"
@@ -70,9 +69,9 @@ class MyMCPAgent(Agent):
 
     @mcp_server
     @staticmethod
-    def my_mcp_server() -> MCPServer:
+    def my_mcp_server() -> ResourceDescriptor:
         """Define MCP server connection."""
-        return MCPServer(endpoint=MCP_SERVER_ENDPOINT)
+        return ResourceDescriptor(clazz=Constant.MCP_SERVER, endpoint=MCP_SERVER_ENDPOINT)
 
     @chat_model_connection
     @staticmethod

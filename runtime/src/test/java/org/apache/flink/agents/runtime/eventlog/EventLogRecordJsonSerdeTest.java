@@ -56,20 +56,16 @@ class EventLogRecordJsonSerdeTest {
         JsonNode jsonNode = objectMapper.readTree(json);
 
         // Verify structure
-        assertTrue(jsonNode.has("context"));
+        assertTrue(jsonNode.has("timestamp"));
         assertTrue(jsonNode.has("event"));
-
-        // Verify context
-        JsonNode contextNode = jsonNode.get("context");
-        assertTrue(contextNode.has("eventType"));
-        assertTrue(contextNode.has("timestamp"));
-        assertEquals(
-                "org.apache.flink.agents.api.InputEvent", contextNode.get("eventType").asText());
 
         // Verify event
         JsonNode eventNode = jsonNode.get("event");
+        assertTrue(eventNode.has("eventType"));
         assertTrue(eventNode.has("input"));
         assertEquals("test input data", eventNode.get("input").asText());
+        assertEquals("org.apache.flink.agents.api.InputEvent", eventNode.get("eventType").asText());
+        assertFalse(eventNode.has("sourceTimestamp"));
     }
 
     @Test
@@ -86,7 +82,7 @@ class EventLogRecordJsonSerdeTest {
         JsonNode jsonNode = objectMapper.readTree(json);
         assertEquals(
                 "org.apache.flink.agents.api.OutputEvent",
-                jsonNode.get("context").get("eventType").asText());
+                jsonNode.get("event").get("eventType").asText());
         assertEquals("test output data", jsonNode.get("event").get("output").asText());
     }
 
@@ -104,7 +100,7 @@ class EventLogRecordJsonSerdeTest {
         JsonNode jsonNode = objectMapper.readTree(json);
         assertEquals(
                 "org.apache.flink.agents.runtime.eventlog.EventLogRecordJsonSerdeTest$CustomTestEvent",
-                jsonNode.get("context").get("eventType").asText());
+                jsonNode.get("event").get("eventType").asText());
 
         JsonNode eventNode = jsonNode.get("event");
         assertEquals("custom data", eventNode.get("customData").asText());

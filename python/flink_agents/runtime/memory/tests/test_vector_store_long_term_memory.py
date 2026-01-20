@@ -33,6 +33,7 @@ from flink_agents.api.memory.long_term_memory import (
     MemorySet,
     SummarizationStrategy,
 )
+from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.integrations.chat_models.ollama_chat_model import (
@@ -118,6 +119,9 @@ def long_term_memory() -> VectorStoreLongTermMemory:  # noqa: D103
 
     mock_runner_context = create_autospec(RunnerContext, instance=True)
     mock_runner_context.get_resource = get_resource
+    mock_runner_context.agent_metric_group.get_sub_group.return_value = create_autospec(
+        MetricGroup, instance=True
+    )
 
     return VectorStoreLongTermMemory(
         ctx=mock_runner_context,

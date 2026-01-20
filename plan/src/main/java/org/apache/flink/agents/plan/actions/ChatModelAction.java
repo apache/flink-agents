@@ -26,6 +26,8 @@ import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
+import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
+import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
@@ -196,6 +198,11 @@ public class ChatModelAction {
         BaseChatModelSetup chatModel =
                 (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
 
+        boolean chatAsync = ctx.getConfig().get(AgentExecutionOptions.CHAT_ASYNC);
+        // TODO: python chat model doesn't support async execution yet, see
+        // https://github.com/apache/flink-agents/issues/448 for details.
+        chatAsync = chatAsync && !(chatModel instanceof PythonChatModelSetup);
+
         Agent.ErrorHandlingStrategy strategy =
                 ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
         int numRetries = 0;
@@ -208,9 +215,30 @@ public class ChatModelAction {
 
         ChatMessage response = null;
 
+        DurableCallable<ChatMessage> callable =
+                new DurableCallable<>() {
+                    @Override
+                    public String getId() {
+                        return "chat";
+                    }
+
+                    @Override
+                    public Class<ChatMessage> getResultClass() {
+                        return ChatMessage.class;
+                    }
+
+                    @Override
+                    public ChatMessage call() throws Exception {
+                        return chatModel.chat(messages, Map.of());
+                    }
+                };
+
         for (int attempt = 0; attempt < numRetries + 1; attempt++) {
             try {
-                response = chatModel.chat(messages, Map.of());
+                response =
+                        chatAsync
+                                ? ctx.durableExecuteAsync(callable)
+                                : ctx.durableExecute(callable);
                 // only generate structured output for final response.
                 if (outputSchema != null && response.getToolCalls().isEmpty()) {
                     response = generateStructuredOutput(response, outputSchema);

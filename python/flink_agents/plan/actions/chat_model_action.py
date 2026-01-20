@@ -180,7 +180,8 @@ async def chat(
     )
 
     chat_async = ctx.config.get(AgentExecutionOptions.CHAT_ASYNC)
-    # java chat model doesn't support async execution.
+    # java chat model doesn't support async execution,
+    # see https://github.com/apache/flink-agents/issues/448 for details.
     chat_async = chat_async and not isinstance(chat_model, JavaChatModelSetup)
 
     error_handling_strategy = ctx.config.get(AgentConfigOptions.ERROR_HANDLING_STRATEGY)
@@ -194,7 +195,7 @@ async def chat(
             if chat_async:
                 response = await ctx.durable_execute_async(chat_model.chat, messages)
             else:
-                response = chat_model.chat(messages)
+                response = ctx.durable_execute(chat_model.chat, messages)
 
             if response.extra_args.get("model_name") and response.extra_args.get("promptTokens") and response.extra_args.get("completionTokens"):
                 chat_model._record_token_metrics(response.extra_args["model_name"], response.extra_args["promptTokens"], response.extra_args["completionTokens"])

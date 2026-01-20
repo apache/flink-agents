@@ -260,3 +260,6 @@ class Constant:
     JAVA_COLLECTION_MANAGEABLE_VECTOR_STORE = "flink_agents.api.vector_stores.java_vector_store.JavaCollectionManageableVectorStore"
     # chroma
     CHROMA_VECTOR_STORE = "flink_agents.integrations.vector_stores.chroma.chroma_vector_store.ChromaVectorStore"
+
+    # MCP
+    MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"

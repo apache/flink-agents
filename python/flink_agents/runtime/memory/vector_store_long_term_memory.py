@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import functools
+import queue
 import uuid
 from concurrent.futures import Future
 from datetime import datetime, timezone
@@ -26,7 +27,6 @@ from typing_extensions import override
 
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.memory.long_term_memory import (
-    BaseLongTermMemory,
     CompactionStrategy,
     CompactionStrategyType,
     DatetimeRange,
@@ -35,6 +35,7 @@ from flink_agents.api.memory.long_term_memory import (
     MemorySet,
     MemorySetItem,
 )
+from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.vector_stores.vector_store import (
@@ -44,10 +45,13 @@ from flink_agents.api.vector_stores.vector_store import (
     _maybe_cast_to_list,
 )
 from flink_agents.runtime.memory.compaction_functions import summarize
+from flink_agents.runtime.memory.internal_base_long_term_memory import (
+    InternalBaseLongTermMemory,
+)
 
 
 # TODO: support async execution for operations and compaction
-class VectorStoreLongTermMemory(BaseLongTermMemory):
+class VectorStoreLongTermMemory(InternalBaseLongTermMemory):
     """Long-Term Memory based on ChromaDB."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -62,10 +66,19 @@ class VectorStoreLongTermMemory(BaseLongTermMemory):
 
     job_id: str = Field(description="Unique identifier for the job.")
 
-    key: str = Field(description="Unique identifier for the keyed partition.")
+    key: str = Field(
+        default=None, description="Unique identifier for the keyed partition."
+    )
 
     async_compaction: bool = Field(
         default=False, description="Whether to execute compact asynchronously."
+    )
+
+    metric_group: MetricGroup = Field(
+        default=None, description="Metric group for reporting long-term memory metrics."
+    )
+    metric_records: queue.Queue = Field(
+        default=queue.Queue(), description="A thread safe queue for record metrics."
     )
 
     def __init__(
@@ -74,7 +87,6 @@ class VectorStoreLongTermMemory(BaseLongTermMemory):
         ctx: RunnerContext,
         vector_store: str,
         job_id: str,
-        key: str,
         **kwargs: Any,
     ) -> None:
         """Init method."""
@@ -82,10 +94,14 @@ class VectorStoreLongTermMemory(BaseLongTermMemory):
             ctx=ctx,
             vector_store=vector_store,
             job_id=job_id,
-            key=key,
             async_compaction=ctx.config.get(LongTermMemoryOptions.ASYNC_COMPACTION),
+            metric_group=ctx.agent_metric_group.get_sub_group("long-term-memory"),
             **kwargs,
         )
+
+    @override
+    def switch_context(self, key: str) -> None:
+        self.key = key
 
     @property
     def store(self) -> CollectionManageableVectorStore:
@@ -186,15 +202,23 @@ class VectorStoreLongTermMemory(BaseLongTermMemory):
         if memory_set.size >= memory_set.capacity:
             # trigger compaction
             if self.async_compaction:
-                future = self.ctx.executor.submit(self._compact, memory_set=memory_set)
+                future = self.ctx.executor.submit(
+                    self._compact,
+                    memory_set=memory_set,
+                    metric_group=self.metric_group,
+                )
                 future.add_done_callback(
                     functools.partial(
                         self._handle_exception, self.job_id, self.key, memory_set
                     )
                 )
             else:
-                self._compact(memory_set=memory_set)
+                self._compact(
+                    memory_set=memory_set,
+                    metric_group=self.metric_group,
+                )
 
+        self._report_token_metrics()
         return ids
 
     @override
@@ -224,16 +248,42 @@ class VectorStoreLongTermMemory(BaseLongTermMemory):
 
         return self._convert_to_items(memory_set=memory_set, documents=result.documents)
 
+    @override
+    def close(self) -> None:
+        # report possible token usage metrics
+        self._report_token_metrics()
+
+    def _report_token_metrics(self) -> None:
+        """Report token usage metrics."""
+        if not self.metric_records.empty():
+            if self.metric_group is None:
+                return
+            while not self.metric_records.empty():
+                metric = self.metric_records.get()
+                if (
+                    metric.get("model_name")
+                    and metric.get("promptTokens")
+                    and metric.get("completionTokens")
+                ):
+                    model_group = self.metric_group.get_sub_group(metric["model_name"])
+                    model_group.get_counter("promptTokens").inc(metric["promptTokens"])
+                    model_group.get_counter("completionTokens").inc(
+                        metric["completionTokens"]
+                    )
+
     def _name_mangling(self, name: str) -> str:
         """Mangle memory set name to actually name in vector store."""
         return f"{self.job_id}-{self.key}-{name}"
 
-    def _compact(self, memory_set: MemorySet) -> None:
+    def _compact(self, memory_set: MemorySet, metric_group: MetricGroup) -> Any | None:
         """Compact memory set to manage storge."""
         compaction_strategy: CompactionStrategy = memory_set.compaction_strategy
         if compaction_strategy.type == CompactionStrategyType.SUMMARIZATION:
             # currently, only support summarize all the items.
-            summarize(ltm=self, memory_set=memory_set, ctx=self.ctx)
+            extra_args = summarize(
+                ltm=self, memory_set=memory_set, ctx=self.ctx, metric_group=metric_group
+            )
+            self.metric_records.put(extra_args)
         else:
             msg = f"Unknown compaction strategy: {compaction_strategy.type}"
             raise RuntimeError(msg)

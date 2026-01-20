@@ -19,6 +19,7 @@ import os
 import sysconfig
 import tempfile
 from datetime import datetime, timezone
+from importlib import resources
 from pathlib import Path
 from typing import Any, List
 
@@ -69,7 +70,7 @@ os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
 chromadb_path = tempfile.mkdtemp()
 
-OLLAMA_CHAT_MODEL = "qwen3:8b"
+OLLAMA_CHAT_MODEL = "qwen3:4b"
 OLLAMA_EMBEDDING_MODEL = "nomic-embed-text"
 pull_model(OLLAMA_CHAT_MODEL)
 pull_model(OLLAMA_EMBEDDING_MODEL)
@@ -123,7 +124,7 @@ class LongTermMemoryAgent(Agent):
     def ollama_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for ollama model service connection."""
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=240.0
+            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=480.0
         )
 
     @chat_model_setup
@@ -219,7 +220,7 @@ def test_long_term_memory_async_execution_in_action(tmp_path: Path) -> None:  # 
     # we use continuous file source here.
     input_datastream = env.from_source(
         source=FileSource.for_record_stream_format(
-            StreamFormat.text_line_format(), f"file:///{current_dir}/resources/input"
+            StreamFormat.text_line_format(), f"file:///{current_dir}/../resources/input"
         ).build(),
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
@@ -292,6 +293,12 @@ def check_result(*, result_dir: Path) -> None:  # noqa: D103
     )
     doc = store.get(collection_name="LTM_TEST_JOB--89360337-test_ltm")
     print(f"Retrieved items: {doc}")
-    assert len(doc) == 1
+    log_dir = resources.files("pyflink").joinpath("log")
+
+    log = ""
+    for item in log_dir.iterdir():
+        if item.is_file() and item.name.endswith(".log"):
+            log = item.read_text()
+    assert len(doc) == 1, log
     doc = doc[0]
     assert doc.metadata.get("compacted")

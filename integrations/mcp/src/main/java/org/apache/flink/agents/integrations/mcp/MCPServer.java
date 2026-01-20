@@ -28,8 +28,9 @@ import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTranspor
 import io.modelcontextprotocol.spec.McpSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.integrations.mcp.auth.ApiKeyAuth;
 import org.apache.flink.agents.integrations.mcp.auth.Auth;
@@ -44,6 +45,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.BiFunction;
 
 /**
  * Resource representing an MCP server and exposing its tools/prompts.
@@ -73,7 +75,7 @@ import java.util.Objects;
  *
  * <p>Reference: <a href="https://modelcontextprotocol.io/sdk/java/mcp-client">MCP Java Client</a>
  */
-public class MCPServer extends SerializableResource {
+public class MCPServer extends Resource {
 
     private static final String FIELD_ENDPOINT = "endpoint";
     private static final String FIELD_HEADERS = "headers";
@@ -129,6 +131,18 @@ public class MCPServer extends SerializableResource {
         public MCPServer build() {
             return new MCPServer(endpoint, headers, timeoutSeconds, auth);
         }
+    }
+
+    public MCPServer(
+            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
+        super(descriptor, getResource);
+        this.endpoint =
+                Objects.requireNonNull(
+                        descriptor.getArgument("endpoint"), "endpoint cannot be null");
+        Map<String, String> headers = descriptor.getArgument("headers");
+        this.headers = headers != null ? new HashMap<>(headers) : new HashMap<>();
+        this.timeoutSeconds = (int) descriptor.getArgument("timeout");
+        this.auth = descriptor.getArgument("auth");
     }
 
     /**

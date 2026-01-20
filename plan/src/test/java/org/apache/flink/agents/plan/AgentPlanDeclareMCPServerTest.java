@@ -25,11 +25,11 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.integrations.mcp.MCPPrompt;
-import org.apache.flink.agents.integrations.mcp.MCPServer;
 import org.apache.flink.agents.integrations.mcp.MCPTool;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.*;
@@ -39,10 +39,10 @@ import org.junit.jupiter.api.condition.JRE;
 import java.io.File;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import static org.apache.flink.agents.api.resource.Constant.MCP_SERVER;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -62,7 +62,7 @@ class AgentPlanDeclareMCPServerTest {
 
     private static Process pythonMcpServerProcess;
     private static final String MCP_SERVER_SCRIPT =
-            "python/flink_agents/api/tests/mcp/mcp_server.py";
+            "python/flink_agents/integrations/mcp/tests/mcp_server.py";
     private static final String MCP_ENDPOINT = "http://127.0.0.1:8000/mcp";
 
     private AgentPlan agentPlan;
@@ -71,8 +71,11 @@ class AgentPlanDeclareMCPServerTest {
     static class TestMCPAgent extends Agent {
 
         @org.apache.flink.agents.api.annotation.MCPServer
-        public static MCPServer testMcpServer() {
-            return MCPServer.builder(MCP_ENDPOINT).timeout(Duration.ofSeconds(30)).build();
+        public static ResourceDescriptor testMcpServer() {
+            return ResourceDescriptor.Builder.newBuilder(MCP_SERVER)
+                    .addInitialArgument("endpoint", MCP_ENDPOINT)
+                    .addInitialArgument("timeout", 30)
+                    .build();
         }
 
         @Action(listenEvents = {InputEvent.class})
@@ -162,6 +165,7 @@ class AgentPlanDeclareMCPServerTest {
     private static boolean isServerReady(String endpoint) {
         try {
             URL url = new URL(endpoint);
+            // noinspection StartSSRFNetHookCheckingInspection
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("GET");
             connection.setConnectTimeout(1000);

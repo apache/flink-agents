@@ -30,6 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.apache.flink.agents.resource.test.ChatModelCrossLanguageAgent.OLLAMA_MODEL;
@@ -82,18 +83,23 @@ public class ChatModelCrossLanguageTest {
 
     public void checkResult(CloseableIterator<Object> results) {
         List<String> expectedWords = List.of("77", "22", "");
+        List<String> responses = new ArrayList<>();
+        while (results.hasNext()) {
+            responses.add((String) results.next());
+        }
+
+        Assertions.assertEquals(
+                expectedWords.size(),
+                responses.size(),
+                String.format(
+                        "LLM response count is mismatch," + "the responses are %s", responses));
+
+        String text = String.join("\n", responses);
         for (String expected : expectedWords) {
             Assertions.assertTrue(
-                    results.hasNext(), "Output messages count %s is less than expected.");
-            String res = (String) results.next();
-            if (res.contains("error") || res.contains("parameters")) {
-                LOG.warn(res);
-            } else {
-                Assertions.assertTrue(
-                        res.contains(expected),
-                        String.format(
-                                "Groud truth %s is not contained in answer {%s}", expected, res));
-            }
+                    text.contains(expected),
+                    String.format(
+                            "Groud truth %s is not contained in answer {%s}", expected, text));
         }
     }
 }

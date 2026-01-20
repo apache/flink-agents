@@ -158,4 +158,4 @@ The log files follow a naming convention consistent with Flink's logging standar
 └── events-{jobId}-{taskName}-{subtaskId}.log
 ```
 
-By default, all File-based Event Logs are stored in the `flink-agents` subdirectory under the system temporary directory (`java.io.tmpdir`). In future versions, we plan to add a configurable parameter to allow users to customize the base log directory, providing greater control over log storage paths and lifecycle management.
+By default, all File-based Event Logs are stored in the `flink-agents` subdirectory under the system temporary directory (`java.io.tmpdir`). You can override the base log directory with the `agent.baseLogDir` setting in Flink `config.yaml`.

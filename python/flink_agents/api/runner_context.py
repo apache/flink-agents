@@ -90,7 +90,7 @@ class RunnerContext(ABC):
         """
 
     @abstractmethod
-    def get_resource(self, name: str, type: ResourceType) -> Resource:
+    def get_resource(self, name: str, type: ResourceType, metric_group: MetricGroup = None) -> Resource:
         """Get resource from context.
 
         Parameters
@@ -99,6 +99,9 @@ class RunnerContext(ABC):
             The name of the resource.
         type : ResourceType
             The type of the resource.
+        metric_group: MetricGroup
+            The metric group used for reporting the metric. If not provided,
+            will use the action metric group.
         """
 
     @property

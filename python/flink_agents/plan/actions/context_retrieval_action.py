@@ -40,7 +40,8 @@ async def process_context_retrieval_request(event: Event, ctx: RunnerContext) ->
         query = VectorStoreQuery(query_text=event.query, limit=event.max_results)
 
         rag_async = ctx.config.get(AgentExecutionOptions.RAG_ASYNC)
-        # java vector store doesn't support async execution.
+        # java vector store doesn't support async execution
+        # see https://github.com/apache/flink-agents/issues/448 for details.
         rag_async = rag_async and not isinstance(vector_store, JavaVectorStore)
         if rag_async:
             # To avoid https://github.com/alibaba/pemja/issues/88,
@@ -48,7 +49,7 @@ async def process_context_retrieval_request(event: Event, ctx: RunnerContext) ->
             _logger.debug("Processing context retrieval asynchronously.")
             result = await ctx.durable_execute_async(vector_store.query, query)
         else:
-            result = vector_store.query(query)
+            result = ctx.durable_execute(vector_store.query, query)
 
         ctx.send_event(
             ContextRetrievalResponseEvent(

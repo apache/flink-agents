@@ -17,7 +17,7 @@
 #################################################################################
 import json
 import logging
-from typing import TYPE_CHECKING, List, Type, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Type, cast
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.memory.long_term_memory import (
@@ -26,6 +26,7 @@ from flink_agents.api.memory.long_term_memory import (
     MemorySetItem,
     SummarizationStrategy,
 )
+from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -62,8 +63,9 @@ def summarize(
     ltm: BaseLongTermMemory,
     memory_set: MemorySet,
     ctx: RunnerContext,
+    metric_group: MetricGroup,
     ids: List[str] | None = None,
-) -> None:
+) -> Dict[str, Any]:
     """Generate summarization of the items in the memory set.
 
     Will add the summarization to memory set, and delete original items involved
@@ -73,6 +75,7 @@ def summarize(
         ltm: The long term memory the memory set belongs to.
         memory_set: The memory set to be summarized.
         ctx: The runner context used to retrieve needed resources.
+        metric_group: Metric group used to report metrics.
         ids: The ids of items to be summarized. If not provided, all items will be
         involved in summarization. Optional
     """
@@ -84,7 +87,7 @@ def summarize(
     items: List[MemorySetItem] = ltm.get(memory_set=memory_set, ids=ids)
 
     response: ChatMessage = _generate_summarization(
-        items, memory_set.item_type, strategy, ctx
+        items, memory_set.item_type, strategy, ctx, metric_group
     )
 
     logging.debug(f"Items to be summarized: {items}\nSummarization: {response.content}")
@@ -104,10 +107,10 @@ def summarize(
         create_time_list = []
         for index in indices:
             if items[index].compacted:
-                create_time_list.append(items[index].create_time.start)
-                create_time_list.append(items[index].create_time.end)
+                create_time_list.append(items[index].created_time.start)
+                create_time_list.append(items[index].created_time.end)
             else:
-                create_time_list.append(items[index].create_time)
+                create_time_list.append(items[index].created_time)
 
         start = min(create_time_list).isoformat()
         end = max(create_time_list).isoformat()
@@ -131,6 +134,8 @@ def summarize(
             },
         )
 
+    return response.extra_args
+
 
 # TODO: Currently, we feed all items to the LLM at once, which may exceed the LLM's
 # context window. We need to support batched summary generation.
@@ -139,6 +144,7 @@ def _generate_summarization(
     item_type: Type,
     strategy: SummarizationStrategy,
     ctx: RunnerContext,
+    metric_group: MetricGroup
 ) -> ChatMessage:
     """Generate summarization of the items by llm."""
     # get arguments
@@ -157,7 +163,7 @@ def _generate_summarization(
     # generate summary
     model: BaseChatModelSetup = cast(
         "BaseChatModelSetup",
-        ctx.get_resource(name=model_name, type=ResourceType.CHAT_MODEL),
+        ctx.get_resource(name=model_name, type=ResourceType.CHAT_MODEL, metric_group=metric_group),
     )
     input_variable = {}
     for msg in msgs:
@@ -167,7 +173,7 @@ def _generate_summarization(
         if isinstance(prompt, str):
             prompt: Prompt = cast(
                 "Prompt",
-                ctx.get_resource(prompt, ResourceType.PROMPT),
+                ctx.get_resource(prompt, ResourceType.PROMPT, metric_group=metric_group),
             )
         prompt_messages = prompt.format_messages(
             role=MessageRole.USER, **input_variable

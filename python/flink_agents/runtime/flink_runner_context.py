@@ -32,14 +32,19 @@ from flink_agents.api.memory.long_term_memory import (
     LongTermMemoryOptions,
 )
 from flink_agents.api.memory_object import MemoryType
+from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import AsyncExecutionResult, RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
+from flink_agents.runtime.memory.internal_base_long_term_memory import (
+    InternalBaseLongTermMemory,
+)
 from flink_agents.runtime.memory.vector_store_long_term_memory import (
     VectorStoreLongTermMemory,
 )
+from flink_agents.runtime.python_java_utils import _build_event_log_string
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +179,7 @@ class FlinkRunnerContext(RunnerContext):
     """
 
     __agent_plan: AgentPlan | None
-    __ltm: BaseLongTermMemory = None
+    __ltm: InternalBaseLongTermMemory = None
 
     def __init__(
         self,
@@ -195,7 +200,7 @@ class FlinkRunnerContext(RunnerContext):
         self.__agent_plan.set_java_resource_adapter(j_resource_adapter)
         self.executor = executor
 
-    def set_long_term_memory(self, ltm: BaseLongTermMemory) -> None:
+    def set_long_term_memory(self, ltm: InternalBaseLongTermMemory) -> None:
         """Set long term memory instance to this context.
 
         Parameters
@@ -216,18 +221,18 @@ class FlinkRunnerContext(RunnerContext):
         """
         class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
         event_bytes = cloudpickle.dumps(event)
-        event_string = str(event)
+        event_json_str = _build_event_log_string(event, class_path)
         try:
-            self._j_runner_context.sendEvent(class_path, event_bytes, event_string)
+            self._j_runner_context.sendEvent(class_path, event_bytes, event_json_str)
         except Exception as e:
             err_msg = "Failed to send event " + class_path + " to runner context"
             raise RuntimeError(err_msg) from e
 
     @override
-    def get_resource(self, name: str, type: ResourceType) -> Resource:
+    def get_resource(self, name: str, type: ResourceType, metric_group: MetricGroup = None) -> Resource:
         resource = self.__agent_plan.get_resource(name, type)
-        # Bind current action's metric group to the resource
-        resource.set_metric_group(self.action_metric_group)
+        # Bind metric group to the resource
+        resource.set_metric_group(metric_group or self.action_metric_group)
         return resource
 
     @property
@@ -488,6 +493,9 @@ class FlinkRunnerContext(RunnerContext):
 
     @override
     def close(self) -> None:
+        if self.long_term_memory is not None:
+            self.long_term_memory.close()
+
         if self.__agent_plan is not None:
             try:
                 self.__agent_plan.close()
@@ -500,23 +508,13 @@ def create_flink_runner_context(
     agent_plan_json: str,
     executor: ThreadPoolExecutor,
     j_resource_adapter: Any,
+    job_identifier: str,
 ) -> FlinkRunnerContext:
     """Used to create a FlinkRunnerContext Python object in Pemja environment."""
-    return FlinkRunnerContext(
+    ctx = FlinkRunnerContext(
         j_runner_context, agent_plan_json, executor, j_resource_adapter
     )
 
-
-def flink_runner_context_switch_action_context(
-    ctx: FlinkRunnerContext,
-    job_identifier: str,
-    key: int,
-) -> None:
-    """Switch the context of the flink runner context.
-
-    The ctx is reused across keyed partitions, the context related to
-    specific key should be switched when process new action.
-    """
     backend = ctx.config.get(LongTermMemoryOptions.BACKEND)
     # use external vector store based long term memory
     if backend == LongTermMemoryBackend.EXTERNAL_VECTOR_STORE:
@@ -528,9 +526,23 @@ def flink_runner_context_switch_action_context(
                 ctx=ctx,
                 vector_store=vector_store_name,
                 job_id=job_identifier,
-                key=str(key),
             )
         )
+
+    return ctx
+
+
+def flink_runner_context_switch_action_context(
+    ctx: FlinkRunnerContext,
+    key: int,
+) -> None:
+    """Switch the context of the flink runner context.
+
+    The ctx is reused across keyed partitions, the context related to
+    specific key should be switched when process new action.
+    """
+    if ctx.long_term_memory is not None:
+        ctx.long_term_memory.switch_context(str(key))
 
 def close_flink_runner_context(
     ctx: FlinkRunnerContext,

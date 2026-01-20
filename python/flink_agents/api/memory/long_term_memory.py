@@ -340,3 +340,7 @@ class BaseLongTermMemory(ABC, BaseModel):
         Returns:
             Related memory items retrieved.
         """
+
+    @abstractmethod
+    def close(self) -> None:
+        """Logic executed when job close."""

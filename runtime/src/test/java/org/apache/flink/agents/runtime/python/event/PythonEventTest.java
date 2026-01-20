@@ -43,33 +43,36 @@ class PythonEventTest {
     }
 
     @Test
-    void testCreatePythonEventWithEventString() {
+    void testCreatePythonEventWithEventJsonStr() {
         // Given
         byte[] eventBytes = new byte[] {1, 2, 3, 4, 5};
         String eventType = "flink_agents.api.events.event.InputEvent";
-        String eventString = "InputEvent(input='test data')";
+        String eventJsonStr =
+                "{\"eventType\":\"flink_agents.api.events.event.InputEvent\",\"input\":\"test data\"}";
 
         // When
-        PythonEvent event = new PythonEvent(eventBytes, eventType, eventString);
+        PythonEvent event = new PythonEvent(eventBytes, eventType, eventJsonStr);
 
         // Then
         assertThat(event.getEvent()).isEqualTo(eventBytes);
         assertThat(event.getEventType()).isEqualTo(eventType);
-        assertThat(event.getEventString()).isEqualTo(eventString);
+        assertThat(event.getEventJsonStr()).isEqualTo(eventJsonStr);
     }
 
     @Test
-    void testJsonSerializationWithEventString() throws Exception {
+    void testJsonSerializationWithEventJsonStr() throws Exception {
         // Given
         UUID expectedId = UUID.randomUUID();
         Map<String, Object> expectedAttributes = new HashMap<>();
         expectedAttributes.put("testKey", "testValue");
         byte[] eventBytes = "test_bytes".getBytes();
         String eventType = "flink_agents.api.events.event.OutputEvent";
-        String eventString = "OutputEvent(output={'key': 'value'})";
+        String eventJsonStr =
+                "{\"eventType\":\"flink_agents.api.events.event.OutputEvent\",\"output\":{\"key\":\"value\"}}";
 
         PythonEvent event =
-                new PythonEvent(expectedId, expectedAttributes, eventBytes, eventType, eventString);
+                new PythonEvent(
+                        expectedId, expectedAttributes, eventBytes, eventType, eventJsonStr);
 
         // When
         String json = objectMapper.writeValueAsString(event);
@@ -78,27 +81,28 @@ class PythonEventTest {
         JsonNode jsonNode = objectMapper.readTree(json);
         assertThat(jsonNode.has("id")).isTrue();
         assertThat(jsonNode.has("eventType")).isTrue();
-        assertThat(jsonNode.has("eventString")).isTrue();
+        assertThat(jsonNode.has("eventJsonStr")).isTrue();
         assertThat(jsonNode.has("attributes")).isTrue();
         // event bytes should not be serialized
         assertThat(jsonNode.has("event")).isFalse();
         assertThat(jsonNode.get("eventType").asText()).isEqualTo(eventType);
-        assertThat(jsonNode.get("eventString").asText()).isEqualTo(eventString);
+        assertThat(jsonNode.get("eventJsonStr").asText()).isEqualTo(eventJsonStr);
         assertThat(jsonNode.get("attributes").get("testKey").asText()).isEqualTo("testValue");
     }
 
     @Test
-    void testEventLogRecordSerializationWithEventString() throws Exception {
+    void testEventLogRecordSerializationWithEventJsonStr() throws Exception {
         // Given - simulate how PythonEvent is used in EventLogger
         UUID eventId = UUID.randomUUID();
         Map<String, Object> attributes = new HashMap<>();
         attributes.put("source", "python");
         byte[] eventBytes = "serialized_event".getBytes();
         String eventType = "flink_agents.api.events.event.InputEvent";
-        String eventString = "InputEvent(input={'key': 'value', 'count': 42})";
+        String eventJsonStr =
+                "{\"eventType\":\"flink_agents.api.events.event.InputEvent\",\"input\":{\"key\":\"value\",\"count\":42}}";
 
         PythonEvent pythonEvent =
-                new PythonEvent(eventId, attributes, eventBytes, eventType, eventString);
+                new PythonEvent(eventId, attributes, eventBytes, eventType, eventJsonStr);
         pythonEvent.setSourceTimestamp(1234567890L);
 
         EventContext context = new EventContext(pythonEvent);
@@ -110,13 +114,7 @@ class PythonEventTest {
         // Then
         JsonNode jsonNode = objectMapper.readTree(json);
 
-        // Verify context contains PythonEvent type
-        assertThat(jsonNode.get("context").get("eventType").asText())
-                .isEqualTo("org.apache.flink.agents.runtime.python.event.PythonEvent");
-
-        // Verify event contains human-readable eventString
         JsonNode eventNode = jsonNode.get("event");
-        assertThat(eventNode.get("eventString").asText()).isEqualTo(eventString);
         assertThat(eventNode.get("eventType").asText()).isEqualTo(eventType);
         assertThat(eventNode.get("id").asText()).isEqualTo(eventId.toString());
         // Byte array should not be in the log

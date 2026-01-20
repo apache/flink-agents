@@ -79,4 +79,7 @@ public class Constant {
     // elasticsearch
     public static String ELASTICSEARCH_VECTOR_STORE =
             "org.apache.flink.agents.integrations.vectorstores.elasticsearch.ElasticsearchVectorStore";
+
+    // MCP
+    public static String MCP_SERVER = "org.apache.flink.agents.integrations.mcp.MCPServer";
 }

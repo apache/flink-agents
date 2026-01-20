@@ -332,11 +332,12 @@ public class AgentPlan implements Serializable {
     private void extractMCPServer(Method method) throws Exception {
         // Use reflection to handle MCP classes to support Java 11 without MCP
         String name = method.getName();
-        Object mcpServer = method.invoke(null);
 
-        addResourceProvider(
-                JavaSerializableResourceProvider.createResourceProvider(
-                        name, MCP_SERVER, (SerializableResource) mcpServer));
+        ResourceDescriptor descriptor = (ResourceDescriptor) method.invoke(null);
+        JavaResourceProvider provider = new JavaResourceProvider(name, MCP_SERVER, descriptor);
+
+        addResourceProvider(provider);
+        Object mcpServer = provider.provide(null);
 
         // Call listTools() via reflection
         Method listToolsMethod = mcpServer.getClass().getMethod("listTools");
