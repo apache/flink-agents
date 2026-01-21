@@ -26,10 +26,6 @@ under the License.
 
 MCP (Model Context Protocol) is a standardized protocol for integrating AI applications with external data sources and tools. Flink Agents provides the support for using prompts and tools from MCP server.
 
-{{< hint warning >}}
-**JDK Requirement (Java API Only):** If you are using the **Java API** to develop Flink Agents jobs with MCP, you need **JDK 17 or higher**. This requirement does not apply to **Python API** users - the Python SDK has its own MCP implementation and works with JDK 11+.
-{{< /hint >}}
-
 ## Declare MCP Server in Agent
 
 Developer can declare a mcp server by decorator/annotation when creating an Agent.
@@ -188,3 +184,24 @@ public class ReviewAnalysisAgent extends Agent {
 **Key points:**
 - All tools and prompts from the MCP server are automatically registered.
 - Reference MCP prompts and tools by their names, like reference [local prompt]({{< ref "docs/development/prompts#using-prompts-in-agents" >}}) and [function tool]({{< ref "docs/development/tool_use#define-tool-as-static-method-in-agent-class" >}}) .
+
+## Appendix
+
+### MCP SDK
+
+Flink Agents offers two implementations of MCP support, based on MCP SDKs in different languages (Python and Java). Typically, users do not need to be aware of this, as the framework automatically determines the appropriate implementation based on the language and version. The default behavior is described as follows:
+
+| Agent Language | JDK Version      | Default Implementation |
+|----------------|------------------|------------------------|
+| Python         | Any              | Python SDK  |
+| Java           | JDK 17+          | Java SDK    |
+| Java           | JDK 16 and below | Python SDK  |
+
+
+As shown in the table above, for Java agents running on JDK 17+, the framework automatically uses the Java SDK implementation. If you need to use the Python SDK instead (not recommended), you can set the `lang` parameter to `"python"` in the `@MCPServer` annotation:
+```java
+@MCPServer(lang = "python")
+public static ResourceDescriptor myMcp() {
+    // ...
+}
+```

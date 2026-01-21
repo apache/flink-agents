@@ -254,7 +254,7 @@ public class MyAgent extends Agent {
 [Chroma](https://www.trychroma.com/home) is an open-source vector database that provides efficient storage and querying of embeddings with support for multiple deployment modes.
 
 {{< hint info >}}
-Chroma is currently supported in the Python API only.
+Chroma is currently supported in the Python API only. To use Chroma from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
 
 #### Prerequisites
@@ -390,7 +390,7 @@ def chroma_store() -> ResourceDescriptor:
 [Elasticsearch](https://www.elastic.co/elasticsearch/) is a distributed, RESTful search and analytics engine that supports vector search through dense vector fields and K-Nearest Neighbors (KNN).
 
 {{< hint info >}}
-Elasticsearch is currently supported in the Java API only.
+Elasticsearch is currently supported in the Java API only. To use Elasticsearch from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
 
 #### Prerequisites
@@ -438,6 +438,134 @@ public static ResourceDescriptor vectorStore() {
             // .addInitialArgument("username", "elastic")
             // .addInitialArgument("password", "secret")
             .build();
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+## Using Cross-Language Providers
+
+Flink Agents supports cross-language vector store integration, allowing you to use vector stores implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a vector store provider is only available in one language (e.g., Elasticsearch is currently Java-only, Chroma is currently Python-only).
+
+{{< hint warning >}}
+**Limitations:**
+- Cross-language resources are currently supported only when [running in Flink]({{< ref "docs/operations/deployment#run-in-flink" >}}), not in local development mode
+- Complex object serialization between languages may have limitations
+{{< /hint >}}
+
+### How To Use
+
+To leverage vector store supports provided in a different language, you need to declare the resource within a built-in cross-language wrapper, and specify the target provider as an argument:
+
+- **Using Java vector stores in Python**: Use `Constant.JAVA_COLLECTION_MANAGEABLE_VECTOR_STORE`, specifying the Java provider class via the `java_clazz` parameter
+- **Using Python vector stores in Java**: Use `Constant.PYTHON_COLLECTION_MANAGEABLE_VECTOR_STORE`, specifying the Python provider via `module` and `clazz` parameters
+
+### Usage Example
+
+{{< tabs "Cross-Language Vector Store Usage Example" >}}
+
+{{< tab "Using Java Vector Store in Python" >}}
+
+```python
+class MyAgent(Agent):
+
+    # Define embedding model (can be Java or Python implementation)
+    @embedding_model_connection
+    @staticmethod
+    def my_embedding_connection() -> ResourceDescriptor:
+        # Configure embedding model connection as needed
+        pass
+
+    @embedding_model_setup
+    @staticmethod
+    def my_embedding_model() -> ResourceDescriptor:
+        # Configure embedding model setup as needed
+        pass
+
+    # Use Java vector store with embedding model
+    @vector_store
+    @staticmethod
+    def java_vector_store() -> ResourceDescriptor:
+        # In pure Java, the equivalent ResourceDescriptor would be:
+        # ResourceDescriptor.Builder
+        #     .newBuilder(Constant.ElasticsearchVectorStore)
+        #     .addInitialArgument("embedding_model", "my_embedding_model")
+        #     .addInitialArgument("host", "http://localhost:9200")
+        #     .addInitialArgument("index", "my_documents")
+        #     .addInitialArgument("dims", 768)
+        #     .build();
+        return ResourceDescriptor(
+            clazz=Constant.JAVA_COLLECTION_MANAGEABLE_VECTOR_STORE,
+            java_clazz="org.apache.flink.agents.integrations.vectorstores.elasticsearch.ElasticsearchVectorStore",
+            embedding_model="my_embedding_model",
+            host="http://localhost:9200",
+            index="my_documents",
+            dims=768
+        )
+
+    @action(InputEvent)
+    @staticmethod
+    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+        # Use Java vector store from Python
+        vector_store = ctx.get_resource("java_vector_store", ResourceType.VECTOR_STORE)
+        
+        # Perform semantic search
+        query = VectorStoreQuery(query_text=str(event.input), limit=3)
+        result = vector_store.query(query)
+        
+        # Process the retrieved documents
+```
+
+{{< /tab >}}
+
+{{< tab "Using Python Vector Store in Java" >}}
+
+```java
+public class MyAgent extends Agent {
+
+    // Define embedding model (can be Java or Python implementation)
+    @EmbeddingModelConnection
+    public static ResourceDescriptor myEmbeddingConnection() {
+        // Configure embedding model connection as needed
+        return null;
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor myEmbeddingModel() {
+        // Configure embedding model setup as needed
+        return null;
+    }
+    
+    @VectorStore
+    public static ResourceDescriptor pythonVectorStore() {
+        // In pure Python, the equivalent ResourceDescriptor would be:
+        // ResourceDescriptor(
+        //     clazz=Constant.CHROMA_VECTOR_STORE,
+        //     embedding_model="my_embedding_model",
+        // )
+        return ResourceDescriptor.Builder.newBuilder(PYTHON_COLLECTION_MANAGEABLE_VECTOR_STORE)
+                .addInitialArgument(
+                        "module", 
+                        "flink_agents.integrations.vector_stores.chroma.chroma_vector_store")
+                .addInitialArgument("clazz", "ChromaVectorStore")
+                .addInitialArgument("embedding_model", "myEmbeddingModel")
+                .build();
+    }
+
+    @Action(listenEvents = {InputEvent.class})
+    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+        // Use Python vector store from Java
+        VectorStore vectorStore = 
+            (VectorStore) ctx.getResource("pythonVectorStore", ResourceType.VECTOR_STORE);
+        
+        // Perform semantic search
+        VectorStoreQuery query = new VectorStoreQuery((String) event.getInput(), 3);
+        VectorStoreQueryResult result = vectorStore.query(query);
+        
+        // Process the retrieved documents
+    }
 }
 ```
 

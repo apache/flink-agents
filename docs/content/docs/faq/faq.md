@@ -50,3 +50,11 @@ To ensure stability and compatibility when running Flink Agents jobs, please be 
     ```
 
   If you see an error like this, switch immediately to one of the officially recommended installation methods and confirm that you're using a supported Python version.
+
+## Q2: Why do cross-language resources not work in local development mode?
+
+Cross-language resources, such as using Java resources from Python or vice versa, are currently supported only when running in Flink. Local development mode does not support cross-language resources.
+
+This limitation exists because cross-language communication requires the Flink runtime environment to effectively bridge Java and Python processes. In local development mode, this bridge is unavailable.
+
+To use cross-language resources, please test the functionality by deploying to a Flink standalone cluster.

@@ -25,10 +25,6 @@ under the License.
 # Embedding Models
 
 {{< hint info >}}
-Embedding models are currently supported in the Python API only. Java API support is planned for future releases.
-{{< /hint >}}
-
-{{< hint info >}}
 This page covers text-based embedding models. Flink agents does not currently support multimodal embeddings.
 {{< /hint >}}
 
@@ -172,6 +168,10 @@ Model availability and specifications may change. Always check the official Olla
 
 OpenAI provides cloud-based embedding models with state-of-the-art performance.
 
+{{< hint info >}}
+OpenAI embedding models are currently supported in the Python API only. To use OpenAI from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
 #### Prerequisites
 
 1. Get an API key from [OpenAI Platform](https://platform.openai.com/)
@@ -237,6 +237,129 @@ Current popular models include:
 {{< hint warning >}}
 Model availability and specifications may change. Always check the official OpenAI documentation for the latest information before implementing in production.
 {{< /hint >}}
+
+## Using Cross-Language Providers
+
+Flink Agents supports cross-language embedding model integration, allowing you to use embedding models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when an embedding model provider is only available in one language (e.g., OpenAI embedding is currently Python-only).
+
+{{< hint warning >}}
+**Limitations:**
+- Cross-language resources are currently supported only when [running in Flink]({{< ref "docs/operations/deployment#run-in-flink" >}}), not in local development mode
+- Complex object serialization between languages may have limitations
+{{< /hint >}}
+
+### How To Use
+
+To leverage embedding model supports provided in a different language, you need to declare the resource within a built-in cross-language wrapper, and specify the target provider as an argument:
+
+- **Using Java embedding models in Python**: Use `Constant.JAVA_EMBEDDING_MODEL_CONNECTION` and `Constant.JAVA_EMBEDDING_MODEL_SETUP`, specifying the Java provider class via the `java_clazz` parameter
+- **Using Python embedding models in Java**: Use `Constant.PYTHON_EMBEDDING_MODEL_CONNECTION` and `Constant.PYTHON_EMBEDDING_MODEL_SETUP`, specifying the Python provider via `module` and `clazz` parameters
+
+### Usage Example
+
+{{< tabs "Cross-Language Embedding Model Usage Example" >}}
+
+{{< tab "Using Java Embedding Model in Python" >}}
+
+```python
+class MyAgent(Agent):
+
+    @embedding_model_connection
+    @staticmethod
+    def java_embedding_connection() -> ResourceDescriptor:
+        # In pure Java, the equivalent ResourceDescriptor would be:
+        # ResourceDescriptor.Builder
+        #     .newBuilder(Constant.OllamaEmbeddingModelConnection)
+        #     .addInitialArgument("host", "http://localhost:11434")
+        #     .build();
+        return ResourceDescriptor(
+            clazz=Constant.JAVA_EMBEDDING_MODEL_CONNECTION,
+            java_clazz="org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelConnection",
+            host="http://localhost:11434"
+        )
+
+    @embedding_model_setup
+    @staticmethod
+    def java_embedding_model() -> ResourceDescriptor:
+        # In pure Java, the equivalent ResourceDescriptor would be:
+        # ResourceDescriptor.Builder
+        #     .newBuilder(Constant.OllamaEmbeddingModelSetup)
+        #     .addInitialArgument("connection", "java_embedding_connection")
+        #     .addInitialArgument("model", "nomic-embed-text")
+        #     .build();
+        return ResourceDescriptor(
+            clazz=Constant.JAVA_EMBEDDING_MODEL_SETUP,
+            java_clazz="org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelSetup",
+            connection="java_embedding_connection",
+            model="nomic-embed-text"
+        )
+
+    @action(InputEvent)
+    @staticmethod
+    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+        # Use the Java embedding model from Python
+        embedding_model = ctx.get_resource("java_embedding_model", ResourceType.EMBEDDING_MODEL)
+        embedding = embedding_model.embed(str(event.input))
+        # Process the embedding vector as needed
+```
+
+{{< /tab >}}
+
+{{< tab "Using Python Embedding Model in Java" >}}
+
+```java
+public class MyAgent extends Agent {
+
+    @EmbeddingModelConnection
+    public static ResourceDescriptor pythonEmbeddingConnection() {
+        // In pure Python, the equivalent ResourceDescriptor would be:
+        // ResourceDescriptor(
+        //     clazz=Constant.OLLAMA_EMBEDDING_MODEL_CONNECTION,
+        //     base_url="http://localhost:11434"
+        // )
+        return ResourceDescriptor.Builder.newBuilder(Constant.PYTHON_EMBEDDING_MODEL_CONNECTION)
+                .addInitialArgument(
+                        "module", 
+                        "flink_agents.integrations.embedding_models.local.ollama_embedding_model")
+                .addInitialArgument("clazz", "OllamaEmbeddingModelConnection")
+                .addInitialArgument("base_url", "http://localhost:11434")
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor pythonEmbeddingModel() {
+        // In pure Python, the equivalent ResourceDescriptor would be:
+        // ResourceDescriptor(
+        //     clazz=Constant.OLLAMA_EMBEDDING_MODEL_SETUP,
+        //     connection="ollama_connection",
+        //     model="nomic-embed-text"
+        // )
+        return ResourceDescriptor.Builder.newBuilder(Constant.PYTHON_EMBEDDING_MODEL_SETUP)
+                .addInitialArgument(
+                        "module", 
+                        "flink_agents.integrations.embedding_models.local.ollama_embedding_model")
+                .addInitialArgument("clazz", "OllamaEmbeddingModelSetup")
+                .addInitialArgument("connection", "pythonEmbeddingConnection")
+                .addInitialArgument("model", "nomic-embed-text")
+                .build();
+    }
+
+    @Action(listenEvents = {InputEvent.class})
+    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+        // Use the Python embedding model from Java
+        BaseEmbeddingModelSetup embeddingModel = 
+            (BaseEmbeddingModelSetup) ctx.getResource(
+                "pythonEmbeddingModel", 
+                ResourceType.EMBEDDING_MODEL);
+        float[] embedding = embeddingModel.embed((String) event.getInput());
+        // Process the embedding vector as needed
+    }
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ## Custom Providers
 

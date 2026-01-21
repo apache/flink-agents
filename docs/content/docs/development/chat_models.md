@@ -146,8 +146,8 @@ public class MyAgent extends Agent {
 
 Azure AI provides cloud-based chat models through Azure AI Inference API, supporting various models including GPT-4, GPT-4o, and other Azure-hosted models.
 
-{{< hint warning >}}
-Azure AI is only supported in Java currently.
+{{< hint info >}}
+Azure AI is only supported in Java currently. To use Azure AI from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
 
 #### Prerequisites
@@ -235,8 +235,8 @@ Model availability and specifications may change. Always check the official Azur
 
 Anthropic provides cloud-based chat models featuring the Claude family, known for their strong reasoning, coding, and safety capabilities.
 
-{{< hint warning >}}
-Anthropic is only supported in python currently.
+{{< hint info >}}
+Anthropic is only supported in Python currently. To use Anthropic from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
 
 #### Prerequisites
@@ -611,8 +611,8 @@ Model availability and specifications may change. Always check the official Open
 
 Tongyi provides cloud-based chat models from Alibaba Cloud, offering powerful Chinese and English language capabilities.
 
-{{< hint warning >}}
-Tongyi is only supported in python currently.
+{{< hint info >}}
+Tongyi is only supported in Python currently. To use Tongyi from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
 
 #### Prerequisites
@@ -679,6 +679,153 @@ Some popular options include:
 {{< hint warning >}}
 Model availability and specifications may change. Always check the official DashScope documentation for the latest information before implementing in production.
 {{< /hint >}}
+
+## Using Cross-Language Providers
+
+Flink Agents supports cross-language chat model integration, allowing you to use chat models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a chat model provider is only available in one language (e.g., Tongyi is currently Python-only).
+
+{{< hint warning >}}
+**Limitations:**
+- Cross-language resources are currently supported only when [running in Flink]({{< ref "docs/operations/deployment#run-in-flink" >}}), not in local development mode
+- Complex object serialization between languages may have limitations
+{{< /hint >}}
+
+### How To Use
+
+To leverage chat model supports provided in a different language, you need to declare the resource within a built-in cross-language wrapper, and specify the target provider as an argument:
+
+- **Using Java chat models in Python**: Use `Constant.JAVA_CHAT_MODEL_CONNECTION` and `Constant.JAVA_CHAT_MODEL_SETUP`, specifying the Java provider class via the `java_clazz` parameter
+- **Using Python chat models in Java**: Use `Constant.PYTHON_CHAT_MODEL_CONNECTION` and `Constant.PYTHON_CHAT_MODEL_SETUP`, specifying the Python provider via `module` and `clazz` parameters
+
+
+
+### Usage Example
+
+{{< tabs "Cross-Language Chat Model Usage Example" >}}
+
+{{< tab "Using Java Chat Model in Python" >}}
+```python
+class MyAgent(Agent):
+
+    @chat_model_connection
+    @staticmethod
+    def java_chat_model_connection() -> ResourceDescriptor:
+        # In pure Java, the equivalent ResourceDescriptor would be:
+        # ResourceDescriptor.Builder
+        #     .newBuilder(Constant.OllamaChatModelConnection)
+        #     .addInitialArgument("endpoint", "http://localhost:11434")
+        #     .addInitialArgument("requestTimeout", 120)
+        #     .build();
+        return ResourceDescriptor(
+            clazz=Constant.JAVA_CHAT_MODEL_CONNECTION,
+            java_clazz="org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection",
+            endpoint="http://localhost:11434",
+            requestTimeout=120,
+        )
+    
+    
+    @chat_model_setup
+    @staticmethod
+    def java_chat_model() -> ResourceDescriptor:
+        # In pure Java, the equivalent ResourceDescriptor would be:
+        # ResourceDescriptor.Builder
+        #     .newBuilder(Constant.OllamaChatModelSetup)
+        #     .addInitialArgument("connection", "java_chat_model_connection")
+        #     .addInitialArgument("model", "qwen3:8b")
+        #     .addInitialArgument("prompt", "my_prompt")
+        #     .addInitialArgument("tools", List.of("my_tool1", "my_tool2"))
+        #     .addInitialArgument("extractReasoning", true)
+        #     .build();
+        return ResourceDescriptor(
+            clazz=Constant.JAVA_CHAT_MODEL_SETUP,
+          	java_clazz="org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup",
+            connection="java_chat_model_connection",
+            model="qwen3:8b",
+            prompt="my_prompt",
+            tools=["my_tool1", "my_tool2"],
+            extract_reasoning=True,
+        )
+
+    @action(InputEvent)
+    @staticmethod
+    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+        # Create a chat request with user message
+        user_message = ChatMessage(
+            role=MessageRole.USER,
+            content=f"input: {event.input}"
+        )
+        ctx.send_event(
+            ChatRequestEvent(model="java_chat_model", messages=[user_message])
+        )
+
+    @action(ChatResponseEvent)
+    @staticmethod
+    def process_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+        response_content = event.response.content
+        # Handle the LLM's response
+        # Process the response as needed for your use case
+```
+{{< /tab >}}
+
+{{< tab "Using Python Chat Model in Java" >}}
+```java
+public class MyAgent extends Agent {
+
+    @ChatModelConnection
+    public static ResourceDescriptor pythonChatModelConnection() {
+        // In pure Python, the equivalent ResourceDescriptor would be:
+        // ResourceDescriptor(
+        //     clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION,
+        //     request_timeout=120.0
+        // )
+        return ResourceDescriptor.Builder.newBuilder(Constant.PYTHON_CHAT_MODEL_CONNECTION)
+                .addInitialArgument(
+                        "module", "flink_agents.integrations.chat_models.ollama_chat_model")
+                .addInitialArgument("clazz", "OllamaChatModelConnection")
+                .addInitialArgument("request_timeout", 120.0)
+                .build();
+    }
+  
+  	@ChatModelSetup
+    public static ResourceDescriptor pythonChatModel() {
+        // In pure Python, the equivalent ResourceDescriptor would be:
+        // ResourceDescriptor(
+        //     clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+        //     connection="pythonChatModelConnection",
+        //     model="qwen3:8b",
+        //     tools=["tool1", "tool2"],
+        //     extract_reasoning=True
+        // )
+        return ResourceDescriptor.Builder.newBuilder(Constant.PYTHON_CHAT_MODEL_SETUP)
+                .addInitialArgument(
+                        "module", "flink_agents.integrations.chat_models.ollama_chat_model")
+                .addInitialArgument("clazz", "OllamaChatModelSetup")
+                .addInitialArgument("connection", "pythonChatModelConnection")
+                .addInitialArgument("model", "qwen3:8b")
+                .addInitialArgument("tools", List.of("tool1", "tool2"))
+                .addInitialArgument("extract_reasoning", true)
+                .build();
+    }
+
+    @Action(listenEvents = {InputEvent.class})
+    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+        ChatMessage userMessage =
+                new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
+        ctx.sendEvent(new ChatRequestEvent("pythonChatModel", List.of(userMessage)));
+    }
+
+    @Action(listenEvents = {ChatResponseEvent.class})
+    public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
+            throws Exception {
+        String response = event.getResponse().getContent();
+        // Handle the LLM's response
+        // Process the response as needed for your use case
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ## Custom Providers
 
