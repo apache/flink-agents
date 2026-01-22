@@ -451,16 +451,16 @@ Model availability and specifications may change. Always check the official Olla
 
 OpenAI provides cloud-based chat models with state-of-the-art performance for a wide range of natural language tasks.
 
-{{< hint warning >}}
-OpenAI is only supported in python currently.
-{{< /hint >}}
-
 #### Prerequisites
 
 1. Get an API key from [OpenAI Platform](https://platform.openai.com/)
 2. Set the API key as an environment variable: `export OPENAI_API_KEY=your-api-key`
 
 #### OpenAIChatModelConnection Parameters
+
+{{< tabs "OpenAIChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -471,7 +471,28 @@ OpenAI is only supported in python currently.
 | `default_headers` | dict | None | Default headers for API requests |
 | `reuse_client` | bool | `True` | Whether to reuse the OpenAI client between requests |
 
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | OpenAI API key for authentication |
+| `api_base_url` | String | `"https://api.openai.com/v1"` | Base URL for OpenAI API |
+| `max_retries` | int | `2` | Maximum number of API retry attempts |
+| `timeout` | int | None | Timeout in seconds for API requests |
+| `default_headers` | Map<String, String> | None | Default headers for API requests |
+| `model` | String | None | Default model to use if not specified in setup |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 #### OpenAIChatModelSetup Parameters
+
+{{< tabs "OpenAIChatModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -487,8 +508,33 @@ OpenAI is only supported in python currently.
 | `reasoning_effort` | str | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
 | `additional_kwargs` | dict | `{}` | Additional OpenAI API parameters |
 
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"gpt-3.5-turbo"` | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `logprobs` | boolean | None | Whether to return log probabilities per token |
+| `top_logprobs` | int | `0` | Number of top token log probabilities to return (0-20) |
+| `strict` | boolean | `false` | Enable strict mode for tool calling and schemas |
+| `reasoning_effort` | String | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional OpenAI API parameters |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 #### Usage Example
 
+{{< tabs "OpenAI Usage Example" >}}
+
+{{< tab "Python" >}}
 ```python
 class MyAgent(Agent):
 
@@ -516,6 +562,37 @@ class MyAgent(Agent):
 
     ...
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor openaiConnection() {
+        return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelConnection.class.getName())
+                .addInitialArgument("api_key", System.getenv("OPENAI_API_KEY"))
+                .addInitialArgument("api_base_url", "https://api.openai.com/v1")
+                .addInitialArgument("timeout", 60)
+                .addInitialArgument("max_retries", 3)
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor openaiChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelSetup.class.getName())
+                .addInitialArgument("connection", "openaiConnection")
+                .addInitialArgument("model", "gpt-4")
+                .addInitialArgument("temperature", 0.7d)
+                .addInitialArgument("max_tokens", 1000)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### Available Models
 
