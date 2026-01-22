@@ -24,7 +24,7 @@ from flink_agents.api.decorators import (
     chat_model_setup,
     embedding_model_setup,
     prompt,
-    vector_store,
+    vector_store, embedding_model_connection,
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.context_retrieval_event import (
@@ -78,7 +78,7 @@ Please provide a helpful answer based on the context provided."""
     def text_embedder() -> ResourceDescriptor:
         """Embedding model setup for generating text embeddings."""
         return ResourceDescriptor(
-            clazz=Constant.OllamaEmbeddingModelSetup,
+            clazz=Constant.OLLAMA_EMBEDDING_MODEL_SETUP,
             connection="ollama_embedding_connection",
             model=OLLAMA_EMBEDDING_MODEL,
         )
@@ -175,7 +175,7 @@ if __name__ == "__main__":
 
     # Setup Ollama embedding and chat model connections
     agents_env.add_resource("ollama_embedding_connection", ResourceType.EMBEDDING_MODEL_CONNECTION, ResourceDescriptor(clazz=Constant.OLLAMA_EMBEDDING_MODEL_CONNECTION))
-    agents_env.add_resource("ollama_chat_connection", ResourceType.EMBEDDING_MODEL, ResourceDescriptor(clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION))
+    agents_env.add_resource("ollama_chat_connection", ResourceType.CHAT_MODEL_CONNECTION, ResourceDescriptor(clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=300))
 
     output_list = agents_env.from_list(input_list).apply(agent).to_list()
 
