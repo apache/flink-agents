@@ -135,14 +135,21 @@ class _DurableAsyncExecutionResult(AsyncExecutionResult):
         future = self._executor.submit(self._func, *self._args, **self._kwargs)
         while not future.done():
             yield
-
-        result = future.result()
+        try:
+            result = future.result()
+        except _DurableExecutionException as exc:
+            # Record and re-raise the original exception for better diagnostics.
+            exc.record_and_raise()
 
         # Handle the wrapped result/exception
         if isinstance(result, _DurableExecutionResult):
             return result.get_result()
         elif isinstance(result, _DurableExecutionException):
-            result.record_and_raise()
+            error_message = (
+                "Unexpected _DurableExecutionException returned from executor; "
+                "it should have been raised via future.result()."
+            )
+            raise TypeError(error_message) from result.original_exception
         else:
             return result
 
