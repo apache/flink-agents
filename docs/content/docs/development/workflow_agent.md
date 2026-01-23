@@ -30,6 +30,10 @@ In Flink-Agents, a workflow agent is defined as a class that inherits from the `
 
 A workflow agent is well-suited for scenarios where the solution requires explicit orchestration, branching, or multi-step reasoning, such as data enrichment, multi-tool pipelines, or complex business logic.
 
+{{< hint info >}}
+For guidance on choosing Java or Python, see [Should I choose Java or Python?]({{< ref "docs/faq/faq#q3-should-i-choose-java-or-python" >}}).
+{{< /hint >}}
+
 ## Workflow Agent Example
 
 {{< tabs "Workflow Agent Example" >}}

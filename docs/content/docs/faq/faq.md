@@ -58,3 +58,45 @@ Cross-language resources, such as using Java resources from Python or vice versa
 This limitation exists because cross-language communication requires the Flink runtime environment to effectively bridge Java and Python processes. In local development mode, this bridge is unavailable.
 
 To use cross-language resources, please test the functionality by deploying to a Flink standalone cluster.
+
+## Q3: Should I choose Java or Python?
+
+If your team already has a strong ecosystem or runtime constraints, prefer the matching API
+(Python or Java). Otherwise, choose based on the built-in provider support you need.
+
+Cross-language resources are supported, but cross-language calls do **not** support async
+execution yet. Built-in actions support async execution in both APIs.
+
+**Built-in resource support matrix**
+
+**Chat Models**
+
+| provider | Python | Java |
+|---|---|---|
+| [OpenAI]({{< ref "docs/development/chat_models#openai" >}}) | ✅ | ✅ |
+| [Anthropic]({{< ref "docs/development/chat_models#anthropic" >}}) | ✅ | ❌ |
+| [Ollama]({{< ref "docs/development/chat_models#ollama" >}}) | ✅ | ✅ |
+| [Tongyi (DashScope)]({{< ref "docs/development/chat_models#tongyi-dashscope" >}}) | ✅ | ❌ |
+| [Azure AI]({{< ref "docs/development/chat_models#azure-ai" >}}) | ❌ | ✅ |
+
+**Embedding Models**
+
+| provider | Python | Java |
+|---|---|---|
+| [OpenAI]({{< ref "docs/development/embedding_models#openai" >}}) | ✅ | ❌ |
+| [Ollama]({{< ref "docs/development/embedding_models#ollama" >}}) | ✅ | ✅ |
+
+**Vector Stores**
+
+| provider | Python | Java |
+|---|---|---|
+| [Chroma]({{< ref "docs/development/vector_stores#chroma" >}}) | ✅ | ❌ |
+| [Elasticsearch]({{< ref "docs/development/vector_stores#elasticsearch" >}}) | ❌ | ✅ |
+
+**MCP Server**
+
+| provider | Python | Java |
+|---|---|---|
+| [MCP Server]({{< ref "docs/development/mcp" >}}) | ✅ | ✅ |
+
+Java MCP requires **JDK 17+**. See [MCP]({{< ref "docs/development/mcp" >}}) for details.

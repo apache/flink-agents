@@ -26,6 +26,10 @@ under the License.
 
 ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. Leveraging this paradigm, the user only needs to specify the goal with prompt and provide available tools, and the LLM will decide how to achieve the goal and take actions autonomously
 
+{{< hint info >}}
+For guidance on choosing Java or Python, see [Should I choose Java or Python?]({{< ref "docs/faq/faq#q3-should-i-choose-java-or-python" >}}).
+{{< /hint >}}
+
 ## ReAct Agent Example
 
 {{< tabs "ReAct Agent Example" >}}
