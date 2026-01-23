@@ -34,14 +34,11 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.Collections;
 import java.util.List;
-
-import static org.apache.flink.agents.api.resource.Constant.OLLAMA_CHAT_MODEL_CONNECTION;
-import static org.apache.flink.agents.api.resource.Constant.PYTHON_CHAT_MODEL_CONNECTION;
-import static org.apache.flink.agents.api.resource.Constant.PYTHON_CHAT_MODEL_SETUP;
 
 /**
  * Agent example that integrates an external Ollama chat model into Flink Agents.
@@ -69,7 +66,7 @@ public class ChatModelCrossLanguageAgent extends Agent {
 
     @ChatModelConnection
     public static ResourceDescriptor javaChatModelConnection() {
-        return ResourceDescriptor.Builder.newBuilder(OLLAMA_CHAT_MODEL_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_CONNECTION)
                 .addInitialArgument("endpoint", "http://localhost:11434")
                 .addInitialArgument("requestTimeout", 240)
                 .build();
@@ -77,19 +74,16 @@ public class ChatModelCrossLanguageAgent extends Agent {
 
     @ChatModelConnection
     public static ResourceDescriptor pythonChatModelConnection() {
-        return ResourceDescriptor.Builder.newBuilder(PYTHON_CHAT_MODEL_CONNECTION)
-                .addInitialArgument(
-                        "pythonClazz",
-                        "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelConnection")
+        return ResourceDescriptor.Builder.newBuilder(
+                        ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION)
+                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_CONNECTION)
                 .build();
     }
 
     @ChatModelSetup
     public static ResourceDescriptor temperatureChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(PYTHON_CHAT_MODEL_SETUP)
-                .addInitialArgument(
-                        "pythonClazz",
-                        "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup")
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_SETUP)
+                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "javaChatModelConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
                 .addInitialArgument("tools", List.of("convertTemperature"))
@@ -99,10 +93,8 @@ public class ChatModelCrossLanguageAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor chatModel() {
-        return ResourceDescriptor.Builder.newBuilder(PYTHON_CHAT_MODEL_SETUP)
-                .addInitialArgument(
-                        "pythonClazz",
-                        "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup")
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_SETUP)
+                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "pythonChatModelConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
                 .addInitialArgument("tools", List.of("calculateBMI", "createRandomNumber"))

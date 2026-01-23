@@ -28,13 +28,11 @@ import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import static org.apache.flink.agents.api.resource.Constant.PYTHON_EMBEDDING_MODEL_CONNECTION;
-import static org.apache.flink.agents.api.resource.Constant.PYTHON_EMBEDDING_MODEL_SETUP;
 
 /**
  * Integration test agent for verifying embedding functionality with Python embedding model.
@@ -51,19 +49,18 @@ public class EmbeddingCrossLanguageAgent extends Agent {
 
     @EmbeddingModelConnection
     public static ResourceDescriptor embeddingConnection() {
-        return ResourceDescriptor.Builder.newBuilder(PYTHON_EMBEDDING_MODEL_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(
+                        ResourceName.EmbeddingModel.PYTHON_WRAPPER_CONNECTION)
                 .addInitialArgument(
-                        "pythonClazz",
-                        "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelConnection")
+                        "pythonClazz", ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION)
                 .build();
     }
 
     @EmbeddingModelSetup
     public static ResourceDescriptor embeddingModel() {
-        return ResourceDescriptor.Builder.newBuilder(PYTHON_EMBEDDING_MODEL_SETUP)
-                .addInitialArgument(
-                        "pythonClazz",
-                        "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelSetup")
+        return ResourceDescriptor.Builder.newBuilder(
+                        ResourceName.EmbeddingModel.PYTHON_WRAPPER_SETUP)
+                .addInitialArgument("pythonClazz", ResourceName.EmbeddingModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "embeddingConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
                 .build();

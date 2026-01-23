@@ -34,19 +34,11 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.Collections;
 import java.util.List;
-
-import static org.apache.flink.agents.api.resource.Constant.ANTHROPIC_CHAT_MODEL_CONNECTION;
-import static org.apache.flink.agents.api.resource.Constant.ANTHROPIC_CHAT_MODEL_SETUP;
-import static org.apache.flink.agents.api.resource.Constant.AZURE_CHAT_MODEL_CONNECTION;
-import static org.apache.flink.agents.api.resource.Constant.AZURE_CHAT_MODEL_SETUP;
-import static org.apache.flink.agents.api.resource.Constant.OLLAMA_CHAT_MODEL_CONNECTION;
-import static org.apache.flink.agents.api.resource.Constant.OLLAMA_CHAT_MODEL_SETUP;
-import static org.apache.flink.agents.api.resource.Constant.OPENAI_CHAT_MODEL_CONNECTION;
-import static org.apache.flink.agents.api.resource.Constant.OPENAI_CHAT_MODEL_SETUP;
 
 /**
  * Agent example that integrates an external Ollama chat model into Flink Agents.
@@ -76,25 +68,26 @@ public class ChatModelIntegrationAgent extends Agent {
     public static ResourceDescriptor chatModelConnection() {
         String provider = System.getProperty("MODEL_PROVIDER", "OLLAMA");
         if (provider.equals("OLLAMA")) {
-            return ResourceDescriptor.Builder.newBuilder(OLLAMA_CHAT_MODEL_CONNECTION)
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_CONNECTION)
                     .addInitialArgument("endpoint", "http://localhost:11434")
                     .addInitialArgument("requestTimeout", 240)
                     .build();
         } else if (provider.equals("AZURE")) {
             String endpoint = System.getenv().get("AZURE_ENDPOINT");
             String apiKey = System.getenv().get("AZURE_API_KEY");
-            return ResourceDescriptor.Builder.newBuilder(AZURE_CHAT_MODEL_CONNECTION)
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_CONNECTION)
                     .addInitialArgument("endpoint", endpoint)
                     .addInitialArgument("apiKey", apiKey)
                     .build();
         } else if (provider.equals("OPENAI")) {
             String apiKey = System.getenv().get("OPENAI_API_KEY");
-            return ResourceDescriptor.Builder.newBuilder(OPENAI_CHAT_MODEL_CONNECTION)
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_CONNECTION)
                     .addInitialArgument("api_key", apiKey)
                     .build();
         } else if (provider.equals("ANTHROPIC")) {
             String apiKey = System.getenv().get("ANTHROPIC_API_KEY");
-            return ResourceDescriptor.Builder.newBuilder(ANTHROPIC_CHAT_MODEL_CONNECTION)
+            return ResourceDescriptor.Builder.newBuilder(
+                            ResourceName.ChatModel.ANTHROPIC_CONNECTION)
                     .addInitialArgument("api_key", apiKey)
                     .addInitialArgument("timeout", 240)
                     .build();
@@ -108,7 +101,7 @@ public class ChatModelIntegrationAgent extends Agent {
         String provider = System.getProperty("MODEL_PROVIDER", "OLLAMA");
 
         if (provider.equals("OLLAMA")) {
-            return ResourceDescriptor.Builder.newBuilder(OLLAMA_CHAT_MODEL_SETUP)
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                     .addInitialArgument("connection", "chatModelConnection")
                     .addInitialArgument("model", OLLAMA_MODEL)
                     .addInitialArgument(
@@ -116,7 +109,7 @@ public class ChatModelIntegrationAgent extends Agent {
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
                     .build();
         } else if (provider.equals("AZURE")) {
-            return ResourceDescriptor.Builder.newBuilder(AZURE_CHAT_MODEL_SETUP)
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_SETUP)
                     .addInitialArgument("connection", "chatModelConnection")
                     .addInitialArgument("model", "gpt-4o")
                     .addInitialArgument(
@@ -124,7 +117,7 @@ public class ChatModelIntegrationAgent extends Agent {
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
                     .build();
         } else if (provider.equals("ANTHROPIC")) {
-            return ResourceDescriptor.Builder.newBuilder(ANTHROPIC_CHAT_MODEL_SETUP)
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.ANTHROPIC_SETUP)
                     .addInitialArgument("connection", "chatModelConnection")
                     .addInitialArgument("model", "claude-sonnet-4-20250514")
                     .addInitialArgument(
@@ -132,7 +125,7 @@ public class ChatModelIntegrationAgent extends Agent {
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
                     .build();
         } else if (provider.equals("OPENAI")) {
-            return ResourceDescriptor.Builder.newBuilder(OPENAI_CHAT_MODEL_SETUP)
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_SETUP)
                     .addInitialArgument("connection", "chatModelConnection")
                     .addInitialArgument("model", "gpt-4o-mini")
                     .addInitialArgument(
