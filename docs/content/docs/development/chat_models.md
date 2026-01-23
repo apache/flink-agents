@@ -235,15 +235,16 @@ Model availability and specifications may change. Always check the official Azur
 
 Anthropic provides cloud-based chat models featuring the Claude family, known for their strong reasoning, coding, and safety capabilities.
 
-{{< hint info >}}
-Anthropic is only supported in Python currently. To use Anthropic from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
-{{< /hint >}}
-
 #### Prerequisites
 
-1. Get an API key from [Anthropic Console](https://console.anthropic.com/)
+1. Create an account at [Anthropic Console](https://console.anthropic.com/)
+2. Navigate to [API Keys](https://console.anthropic.com/settings/keys) and create a new secret key
 
 #### AnthropicChatModelConnection Parameters
+
+{{< tabs "AnthropicChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -251,7 +252,25 @@ Anthropic is only supported in Python currently. To use Anthropic from Java agen
 | `max_retries` | int | `3` | Maximum number of API retry attempts |
 | `timeout` | float | `60.0` | API request timeout in seconds |
 
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | Anthropic API key for authentication |
+| `timeout` | int | None | Timeout in seconds for API requests |
+| `max_retries` | int | `2` | Maximum number of API retry attempts |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 #### AnthropicChatModelSetup Parameters
+
+{{< tabs "AnthropicChatModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -263,8 +282,31 @@ Anthropic is only supported in Python currently. To use Anthropic from Java agen
 | `temperature` | float | `0.1` | Sampling temperature (0.0 to 1.0) |
 | `additional_kwargs` | dict | `{}` | Additional Anthropic API parameters |
 
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"claude-sonnet-4-20250514"` | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `max_tokens` | long | `1024` | Maximum number of tokens to generate |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 1.0) |
+| `json_prefill` | boolean | `true` | Prefill assistant response with "{" to enforce JSON output (disabled when tools are used) |
+| `strict_tools` | boolean | `false` | Enable strict mode for tool calling schemas |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Anthropic API parameters (top_k, top_p, stop_sequences) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 #### Usage Example
 
+{{< tabs "Anthropic Usage Example" >}}
+
+{{< tab "Python" >}}
 ```python
 class MyAgent(Agent):
 
@@ -273,7 +315,7 @@ class MyAgent(Agent):
     def anthropic_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
             clazz=Constant.ANTHROPIC_CHAT_MODEL_CONNECTION,
-            api_key="your-api-key-here",  # Or set ANTHROPIC_API_KEY env var
+            api_key="<your-api-key>",
             max_retries=3,
             timeout=60.0
         )
@@ -291,6 +333,36 @@ class MyAgent(Agent):
 
     ...
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor anthropicConnection() {
+        return ResourceDescriptor.Builder.newBuilder(AnthropicChatModelConnection.class.getName())
+                .addInitialArgument("api_key", "<your-api-key>")
+                .addInitialArgument("timeout", 120)
+                .addInitialArgument("max_retries", 3)
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor anthropicChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(AnthropicChatModelSetup.class.getName())
+                .addInitialArgument("connection", "anthropicConnection")
+                .addInitialArgument("model", "claude-sonnet-4-20250514")
+                .addInitialArgument("temperature", 0.7d)
+                .addInitialArgument("max_tokens", 2048)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### Available Models
 
@@ -453,8 +525,8 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 #### Prerequisites
 
-1. Get an API key from [OpenAI Platform](https://platform.openai.com/)
-2. Set the API key as an environment variable: `export OPENAI_API_KEY=your-api-key`
+1. Create an account at [OpenAI Platform](https://platform.openai.com/)
+2. Navigate to [API Keys](https://platform.openai.com/api-keys) and create a new secret key
 
 #### OpenAIChatModelConnection Parameters
 
@@ -464,7 +536,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `api_key` | str | `$OPENAI_API_KEY` | OpenAI API key for authentication |
+| `api_key` | str | Required | OpenAI API key for authentication |
 | `api_base_url` | str | `"https://api.openai.com/v1"` | Base URL for OpenAI API |
 | `max_retries` | int | `3` | Maximum number of API retry attempts |
 | `timeout` | float | `60.0` | API request timeout in seconds |
@@ -543,7 +615,7 @@ class MyAgent(Agent):
     def openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
             clazz=Constant.OPENAI_CHAT_MODEL_CONNECTION,
-            api_key="your-api-key-here",  # Or set OPENAI_API_KEY env var
+            api_key="<your-api-key>",
             api_base_url="https://api.openai.com/v1",
             max_retries=3,
             timeout=60.0
@@ -570,7 +642,7 @@ public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor openaiConnection() {
         return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelConnection.class.getName())
-                .addInitialArgument("api_key", System.getenv("OPENAI_API_KEY"))
+                .addInitialArgument("api_key", "<your-api-key>")
                 .addInitialArgument("api_base_url", "https://api.openai.com/v1")
                 .addInitialArgument("timeout", 60)
                 .addInitialArgument("max_retries", 3)
