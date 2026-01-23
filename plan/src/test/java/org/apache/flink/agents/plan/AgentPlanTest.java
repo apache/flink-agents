@@ -157,8 +157,7 @@ public class AgentPlanTest {
         @ChatModelSetup
         public static ResourceDescriptor pythonChatModel() {
             return ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
-                    .addInitialArgument("module", "test.module")
-                    .addInitialArgument("clazz", "TestClazz")
+                    .addInitialArgument("pythonClazz", "test.module.TestClazz")
                     .build();
         }
 

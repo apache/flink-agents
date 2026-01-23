@@ -79,8 +79,8 @@ public class ChatModelCrossLanguageAgent extends Agent {
     public static ResourceDescriptor pythonChatModelConnection() {
         return ResourceDescriptor.Builder.newBuilder(PYTHON_CHAT_MODEL_CONNECTION)
                 .addInitialArgument(
-                        "module", "flink_agents.integrations.chat_models.ollama_chat_model")
-                .addInitialArgument("clazz", "OllamaChatModelConnection")
+                        "pythonClazz",
+                        "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelConnection")
                 .build();
     }
 
@@ -88,8 +88,8 @@ public class ChatModelCrossLanguageAgent extends Agent {
     public static ResourceDescriptor temperatureChatModel() {
         return ResourceDescriptor.Builder.newBuilder(PYTHON_CHAT_MODEL_SETUP)
                 .addInitialArgument(
-                        "module", "flink_agents.integrations.chat_models.ollama_chat_model")
-                .addInitialArgument("clazz", "OllamaChatModelSetup")
+                        "pythonClazz",
+                        "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup")
                 .addInitialArgument("connection", "javaChatModelConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
                 .addInitialArgument("tools", List.of("convertTemperature"))
@@ -101,8 +101,8 @@ public class ChatModelCrossLanguageAgent extends Agent {
     public static ResourceDescriptor chatModel() {
         return ResourceDescriptor.Builder.newBuilder(PYTHON_CHAT_MODEL_SETUP)
                 .addInitialArgument(
-                        "module", "flink_agents.integrations.chat_models.ollama_chat_model")
-                .addInitialArgument("clazz", "OllamaChatModelSetup")
+                        "pythonClazz",
+                        "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup")
                 .addInitialArgument("connection", "pythonChatModelConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
                 .addInitialArgument("tools", List.of("calculateBMI", "createRandomNumber"))

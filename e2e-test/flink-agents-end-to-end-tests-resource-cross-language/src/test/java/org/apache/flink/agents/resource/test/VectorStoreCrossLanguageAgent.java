@@ -67,9 +67,8 @@ public class VectorStoreCrossLanguageAgent extends Agent {
         if (System.getProperty("EMBEDDING_TYPE", "PYTHON").equals("PYTHON")) {
             return ResourceDescriptor.Builder.newBuilder(PYTHON_EMBEDDING_MODEL_CONNECTION)
                     .addInitialArgument(
-                            "module",
-                            "flink_agents.integrations.embedding_models.local.ollama_embedding_model")
-                    .addInitialArgument("clazz", "OllamaEmbeddingModelConnection")
+                            "pythonClazz",
+                            "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelConnection")
                     .build();
         } else {
             return ResourceDescriptor.Builder.newBuilder(OLLAMA_EMBEDDING_MODEL_CONNECTION)
@@ -84,9 +83,8 @@ public class VectorStoreCrossLanguageAgent extends Agent {
         if (System.getProperty("EMBEDDING_TYPE", "PYTHON").equals("PYTHON")) {
             return ResourceDescriptor.Builder.newBuilder(PYTHON_EMBEDDING_MODEL_SETUP)
                     .addInitialArgument(
-                            "module",
-                            "flink_agents.integrations.embedding_models.local.ollama_embedding_model")
-                    .addInitialArgument("clazz", "OllamaEmbeddingModelSetup")
+                            "pythonClazz",
+                            "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelSetup")
                     .addInitialArgument("connection", "embeddingConnection")
                     .addInitialArgument("model", OLLAMA_MODEL)
                     .build();
@@ -102,9 +100,8 @@ public class VectorStoreCrossLanguageAgent extends Agent {
     public static ResourceDescriptor vectorStore() {
         return ResourceDescriptor.Builder.newBuilder(PYTHON_COLLECTION_MANAGEABLE_VECTOR_STORE)
                 .addInitialArgument(
-                        "module",
-                        "flink_agents.integrations.vector_stores.chroma.chroma_vector_store")
-                .addInitialArgument("clazz", "ChromaVectorStore")
+                        "pythonClazz",
+                        "flink_agents.integrations.vector_stores.chroma.chroma_vector_store.ChromaVectorStore")
                 .addInitialArgument("embedding_model", "embeddingModel")
                 .build();
     }

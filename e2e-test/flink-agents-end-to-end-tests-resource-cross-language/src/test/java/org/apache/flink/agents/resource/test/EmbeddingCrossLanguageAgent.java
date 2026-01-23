@@ -53,9 +53,8 @@ public class EmbeddingCrossLanguageAgent extends Agent {
     public static ResourceDescriptor embeddingConnection() {
         return ResourceDescriptor.Builder.newBuilder(PYTHON_EMBEDDING_MODEL_CONNECTION)
                 .addInitialArgument(
-                        "module",
-                        "flink_agents.integrations.embedding_models.local.ollama_embedding_model")
-                .addInitialArgument("clazz", "OllamaEmbeddingModelConnection")
+                        "pythonClazz",
+                        "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelConnection")
                 .build();
     }
 
@@ -63,9 +62,8 @@ public class EmbeddingCrossLanguageAgent extends Agent {
     public static ResourceDescriptor embeddingModel() {
         return ResourceDescriptor.Builder.newBuilder(PYTHON_EMBEDDING_MODEL_SETUP)
                 .addInitialArgument(
-                        "module",
-                        "flink_agents.integrations.embedding_models.local.ollama_embedding_model")
-                .addInitialArgument("clazz", "OllamaEmbeddingModelSetup")
+                        "pythonClazz",
+                        "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelSetup")
                 .addInitialArgument("connection", "embeddingConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
                 .build();
