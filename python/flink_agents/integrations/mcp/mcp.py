@@ -271,7 +271,10 @@ class MCPServer(Resource, ABC):
 
     def list_prompts(self) -> List[MCPPrompt]:
         """List available prompts from the MCP server."""
-        return asyncio.run(self._list_prompts_async())
+        try:
+            asyncio.run(self._list_prompts_async())
+        except Exception:
+            return []
 
     async def _list_prompts_async(self) -> List[MCPPrompt]:
         """Async implementation of list_prompts."""
