@@ -81,5 +81,5 @@ public class Constant {
             "org.apache.flink.agents.integrations.vectorstores.elasticsearch.ElasticsearchVectorStore";
 
     // MCP
-    public static String MCP_SERVER = "org.apache.flink.agents.integrations.mcp.MCPServer";
+    public static String MCP_SERVER = "DECIDE_IN_RUNTIME_MCPServer";
 }

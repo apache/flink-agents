@@ -35,11 +35,11 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
 
 import java.util.Collections;
 import java.util.List;
 
+import static org.apache.flink.agents.api.resource.Constant.OLLAMA_CHAT_MODEL_CONNECTION;
 import static org.apache.flink.agents.api.resource.Constant.PYTHON_CHAT_MODEL_CONNECTION;
 import static org.apache.flink.agents.api.resource.Constant.PYTHON_CHAT_MODEL_SETUP;
 
@@ -69,7 +69,7 @@ public class ChatModelCrossLanguageAgent extends Agent {
 
     @ChatModelConnection
     public static ResourceDescriptor javaChatModelConnection() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(OLLAMA_CHAT_MODEL_CONNECTION)
                 .addInitialArgument("endpoint", "http://localhost:11434")
                 .addInitialArgument("requestTimeout", 240)
                 .build();

@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 import uuid
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Literal, Sequence
 
 from ollama import Client, Message
 from pydantic import Field
@@ -103,6 +103,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             tools=ollama_tools,
             options=kwargs,
             keep_alive=kwargs.get("keep_alive", False),
+            think=kwargs.get("think", True),
         )
 
         ollama_tool_calls = response.message.tool_calls
@@ -224,6 +225,10 @@ class OllamaChatModelSetup(BaseChatModelSetup):
         "stores it in additional_kwargs.",
     )
 
+    think: bool | Literal["low", "medium", "high"] = Field(
+        default=True, description="Whether or not enable thinking for think model. "
+    )
+
     def __init__(
         self,
         connection: str,
@@ -233,6 +238,7 @@ class OllamaChatModelSetup(BaseChatModelSetup):
         request_timeout: float | None = DEFAULT_REQUEST_TIMEOUT,
         additional_kwargs: Dict[str, Any] | None = None,
         keep_alive: float | str | None = None,
+        think: bool | Literal["low", "medium", "high"] = True,
         extract_reasoning: bool | None = True,
         **kwargs: Any,
     ) -> None:
@@ -247,6 +253,7 @@ class OllamaChatModelSetup(BaseChatModelSetup):
             request_timeout=request_timeout,
             additional_kwargs=additional_kwargs,
             keep_alive=keep_alive,
+            think=think,
             extract_reasoning=extract_reasoning,
             **kwargs,
         )
@@ -259,6 +266,7 @@ class OllamaChatModelSetup(BaseChatModelSetup):
             "temperature": self.temperature,
             "num_ctx": self.num_ctx,
             "keep_alive": self.keep_alive,
+            "think": self.think,
             "extract_reasoning": self.extract_reasoning,
         }
         return {

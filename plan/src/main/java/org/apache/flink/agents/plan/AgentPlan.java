@@ -35,6 +35,7 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ContextRetrievalAction;
 import org.apache.flink.agents.plan.actions.ToolCallAction;
+import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
@@ -44,6 +45,8 @@ import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.plan.tools.ToolMetadataFactory;
 import org.apache.flink.api.java.tuple.Tuple3;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -58,6 +61,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
 import static org.apache.flink.agents.api.resource.ResourceType.PROMPT;
@@ -67,6 +71,9 @@ import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
 @JsonSerialize(using = AgentPlanJsonSerializer.class)
 @JsonDeserialize(using = AgentPlanJsonDeserializer.class)
 public class AgentPlan implements Serializable {
+    private static final Logger LOG = LoggerFactory.getLogger(AgentPlan.class);
+    private static final String JAVA_MCP_SERVER_CLASS_NAME =
+            "org.apache.flink.agents.integrations.mcp.MCPServer";
 
     /** Mapping from action name to action itself. */
     private Map<String, Action> actions;
@@ -133,8 +140,60 @@ public class AgentPlan implements Serializable {
         this.config = config;
     }
 
-    public void setPythonResourceAdapter(PythonResourceAdapter adapter) {
+    public void setPythonResourceAdapter(PythonResourceAdapter adapter) throws Exception {
         this.pythonResourceAdapter = adapter;
+        Map<String, ResourceProvider> servers = resourceProviders.get(MCP_SERVER);
+        if (servers == null) {
+            return;
+        }
+        servers.values().stream()
+                .filter(PythonResourceProvider.class::isInstance)
+                .map(PythonResourceProvider.class::cast)
+                .forEach(
+                        provider -> {
+                            provider.setPythonResourceAdapter(adapter);
+
+                            // Get tools and prompts from server
+                            try {
+                                PythonMCPServer server =
+                                        (PythonMCPServer)
+                                                provider.provide(
+                                                        (String anotherName,
+                                                                ResourceType anotherType) -> {
+                                                            try {
+                                                                return this.getResource(
+                                                                        anotherName, anotherType);
+                                                            } catch (Exception e) {
+                                                                throw new RuntimeException(e);
+                                                            }
+                                                        });
+
+                                // Add tools to cache
+                                server.listTools()
+                                        .forEach(
+                                                tool ->
+                                                        resourceCache
+                                                                .computeIfAbsent(
+                                                                        TOOL,
+                                                                        k ->
+                                                                                new ConcurrentHashMap<>())
+                                                                .put(tool.getName(), tool));
+
+                                // Add prompts to cache
+                                server.listPrompts()
+                                        .forEach(
+                                                prompt ->
+                                                        resourceCache
+                                                                .computeIfAbsent(
+                                                                        PROMPT,
+                                                                        k ->
+                                                                                new ConcurrentHashMap<>())
+                                                                .put(prompt.getName(), prompt));
+                            } catch (Exception e) {
+                                throw new RuntimeException(
+                                        "Failed to process Python MCP server in Java", e);
+                            }
+                        });
     }
 
     public Map<String, Action> getActions() {
@@ -301,9 +360,21 @@ public class AgentPlan implements Serializable {
     }
 
     private void extractResource(ResourceType type, Method method) throws Exception {
+        extractResource(type, method, null);
+    }
+
+    private void extractResource(
+            ResourceType type,
+            Method method,
+            Function<ResourceDescriptor, ResourceDescriptor> descriptorDecorator)
+            throws Exception {
         String name = method.getName();
         ResourceProvider provider;
         ResourceDescriptor descriptor = (ResourceDescriptor) method.invoke(null);
+
+        descriptor =
+                descriptorDecorator != null ? descriptorDecorator.apply(descriptor) : descriptor;
+
         if (PythonResourceWrapper.class.isAssignableFrom(Class.forName(descriptor.getClazz()))) {
             provider = new PythonResourceProvider(name, type, descriptor);
         } else {
@@ -329,11 +400,16 @@ public class AgentPlan implements Serializable {
         addResourceProvider(provider);
     }
 
-    private void extractMCPServer(Method method) throws Exception {
+    private void extractJavaMCPServer(Method method) throws Exception {
         // Use reflection to handle MCP classes to support Java 11 without MCP
         String name = method.getName();
 
         ResourceDescriptor descriptor = (ResourceDescriptor) method.invoke(null);
+        descriptor =
+                new ResourceDescriptor(
+                        descriptor.getModule(),
+                        JAVA_MCP_SERVER_CLASS_NAME,
+                        new HashMap<>(descriptor.getInitialArguments()));
         JavaResourceProvider provider = new JavaResourceProvider(name, MCP_SERVER, descriptor);
 
         addResourceProvider(provider);
@@ -448,18 +524,33 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
             } else if (method.isAnnotationPresent(VectorStore.class)) {
                 extractResource(ResourceType.VECTOR_STORE, method);
-            } else if (Modifier.isStatic(method.getModifiers())) {
-                // Check for MCPServer annotation using reflection to support Java 11 without MCP
-                try {
-                    Class<?> mcpServerAnnotation =
-                            Class.forName("org.apache.flink.agents.api.annotation.MCPServer");
-                    if (method.isAnnotationPresent(
-                            (Class<? extends java.lang.annotation.Annotation>)
-                                    mcpServerAnnotation)) {
-                        extractMCPServer(method);
-                    }
-                } catch (ClassNotFoundException e) {
-                    // MCP annotation not available (Java 11 build), skip MCP processing
+            } else if (method.isAnnotationPresent(MCPServer.class)) {
+                // Check the MCPServer annotation version to determine which version to use.
+                MCPServer MCPServerAnnotation = method.getAnnotation(MCPServer.class);
+                String lang = MCPServerAnnotation.lang();
+                int javaVersion = Runtime.version().feature();
+
+                if (lang.equalsIgnoreCase("auto")) {
+                    lang = javaVersion >= 17 ? "java" : "python";
+                } else if (lang.equalsIgnoreCase("java") && javaVersion < 17) {
+                    throw new UnsupportedOperationException(
+                            "Java version is less than 17, please use python MCP server.");
+                }
+
+                if (lang.equalsIgnoreCase("java")) {
+                    extractJavaMCPServer(method);
+                } else {
+                    LOG.warn(
+                            "Using the Python MCP server with cross-language support. The Java version is "
+                                    + javaVersion);
+                    extractResource(
+                            ResourceType.MCP_SERVER,
+                            method,
+                            desc ->
+                                    new ResourceDescriptor(
+                                            desc.getModule(),
+                                            PythonMCPServer.class.getName(),
+                                            new HashMap<>(desc.getInitialArguments())));
                 }
             }
         }

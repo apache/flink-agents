@@ -191,3 +191,40 @@ def create_model_from_java_tool_schema_str(name: str, schema_str: str) -> type[B
         type = TYPE_MAPPING.get(properties[param_name]["type"])
         fields[param_name] = (type, FieldInfo(description=description))
     return create_model(name, **fields)
+
+def create_java_tool_schema_str_from_model(model: type[BaseModel]) -> str:
+    """Create a java tool input schema string from a Pydantic model.
+
+    This is the inverse function of create_model_from_java_tool_schema_str.
+
+    Args:
+        model: A Pydantic BaseModel class
+
+    Returns:
+        A JSON schema string compatible with Java tool input schema format
+    """
+    REVERSE_TYPE_MAPPING = {v: k for k, v in TYPE_MAPPING.items()}
+
+    properties = {}
+    for field_name, field_info in model.model_fields.items():
+        field_type = field_info.annotation
+
+        origin = typing.get_origin(field_type)
+        if origin is not None:
+            if origin is typing.Union:
+                args = typing.get_args(field_type)
+                non_none_types = [arg for arg in args if arg is not type(None)]
+                if non_none_types:
+                    field_type = non_none_types[0]
+
+        json_type = REVERSE_TYPE_MAPPING.get(field_type, "string")
+
+        description = field_info.description
+        if description is None:
+            description = f"Parameter: {field_name}"
+
+        properties[field_name] = {"type": json_type, "description": description}
+
+    json_schema = {"properties": properties}
+
+    return json.dumps(json_schema, ensure_ascii=False, indent=2)

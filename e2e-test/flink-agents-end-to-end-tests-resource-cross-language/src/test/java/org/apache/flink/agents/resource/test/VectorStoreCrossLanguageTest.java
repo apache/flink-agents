@@ -32,7 +32,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.io.IOException;
 import java.util.Map;
 
-import static org.apache.flink.agents.resource.test.OllamaPreparationUtils.pullModel;
+import static org.apache.flink.agents.resource.test.CrossLanguageTestPreparationUtils.pullModel;
 import static org.apache.flink.agents.resource.test.VectorStoreCrossLanguageAgent.OLLAMA_MODEL;
 
 public class VectorStoreCrossLanguageTest {

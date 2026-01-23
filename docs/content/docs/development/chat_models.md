@@ -346,17 +346,18 @@ Ollama provides local chat models that run on your machine, offering privacy, co
 
 {{< tab "Python" >}}
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `connection` | str | Required | Reference to connection method name |
-| `model` | str | Required | Name of the chat model to use |
-| `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
-| `tools` | List[str] | None | List of tool names available to the model |
-| `temperature` | float | `0.75` | Sampling temperature (0.0 to 1.0) |
-| `num_ctx` | int | `2048` | Maximum number of context tokens |
-| `keep_alive` | str \| float | `"5m"` | How long to keep model loaded in memory |
-| `extract_reasoning` | bool | `True` | Extract reasoning content from response |
-| `additional_kwargs` | dict | `{}` | Additional Ollama API parameters |
+| Parameter           | Type                                     | Default  | Description                                     |
+|---------------------|------------------------------------------|----------|-------------------------------------------------|
+| `connection`        | str                                      | Required | Reference to connection method name             |
+| `model`             | str                                      | Required | Name of the chat model to use                   |
+| `prompt`            | Prompt \| str                            | None     | Prompt template or reference to prompt resource |
+| `tools`             | List[str]                                | None     | List of tool names available to the model       |
+| `temperature`       | float                                    | `0.75`   | Sampling temperature (0.0 to 1.0)               |
+| `num_ctx`           | int                                      | `2048`   | Maximum number of context tokens                |
+| `keep_alive`        | str \| float                             | `"5m"`   | How long to keep model loaded in memory         |
+| `extract_reasoning` | bool                                     | `True`   | Extract reasoning content from response         |
+| `additional_kwargs` | dict                                     | `{}`     | Additional Ollama API parameters                |
+| `think`             | bool \| Literal["low", "medium", "high"] | True     | Whether enable model think                      |
 {{< /tab >}}
 
 {{< tab "Java" >}}

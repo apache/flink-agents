@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.vectorstores.python.PythonCollectionManageableVectorStore;
+import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
 import pemja.core.object.PyObject;
 
 import java.lang.reflect.Constructor;
@@ -44,6 +45,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  * class, and initialization arguments.
  */
 public class PythonResourceProvider extends ResourceProvider {
+    private static final String MCP_MODULE = "flink_agents.integrations.mcp.mcp";
+    private static final String MCP_CLASS = "MCPServer";
     private final ResourceDescriptor descriptor;
 
     private static final Map<ResourceType, Class<?>> RESOURCE_TYPE_TO_CLASS =
@@ -52,7 +55,8 @@ public class PythonResourceProvider extends ResourceProvider {
                     ResourceType.CHAT_MODEL_CONNECTION, PythonChatModelConnection.class,
                     ResourceType.EMBEDDING_MODEL, PythonEmbeddingModelSetup.class,
                     ResourceType.EMBEDDING_MODEL_CONNECTION, PythonEmbeddingModelConnection.class,
-                    ResourceType.VECTOR_STORE, PythonCollectionManageableVectorStore.class);
+                    ResourceType.VECTOR_STORE, PythonCollectionManageableVectorStore.class,
+                    ResourceType.MCP_SERVER, PythonMCPServer.class);
 
     protected PythonResourceAdapter pythonResourceAdapter;
 
@@ -83,6 +87,11 @@ public class PythonResourceProvider extends ResourceProvider {
         HashMap<String, Object> kwargs = new HashMap<>(descriptor.getInitialArguments());
         String pyModule = descriptor.getModule();
         String pyClazz = descriptor.getClazz();
+
+        if (getType() == ResourceType.MCP_SERVER) {
+            pyModule = MCP_MODULE;
+            pyClazz = MCP_CLASS;
+        }
 
         // Extract module and class from kwargs if not provided in descriptor
         if (pyModule == null || pyModule.isEmpty()) {
