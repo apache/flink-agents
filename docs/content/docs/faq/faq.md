@@ -61,13 +61,9 @@ To use cross-language resources, please test the functionality by deploying to a
 
 ## Q3: Should I choose Java or Python?
 
-If your team already has a strong ecosystem or runtime constraints, prefer the matching API
-(Python or Java). Otherwise, choose based on the built-in provider support you need.
+When choosing between Flink Agents' Java API and Python API, besides the team's experience and preferences, there's another thing needs to be considered. Flink Agents provides built-in integration supports for many echosystem providers. Some of these supports are in only one language. While you can still use them when building agents in another language, leveraging Flink Agents' cross-language supports, this comes with a limitation of not supporting async execution, which may bring performance concerns. 
 
-Cross-language resources are supported, but cross-language calls do **not** support async
-execution yet. Built-in actions support async execution in both APIs.
-
-**Built-in resource support matrix**
+The following matrix shows the native integration support status of providers over languages. For those marked as ❌, cross-langauge is needed thus async execution is not supported.
 
 **Chat Models**
 
@@ -95,8 +91,8 @@ execution yet. Built-in actions support async execution in both APIs.
 
 **MCP Server**
 
-| provider | Python | Java |
-|---|---|---|
-| [MCP Server]({{< ref "docs/development/mcp" >}}) | ✅ | ✅ |
+| provider | Python | Java 17+ | Java 11-16 |
+|---|---|---|---|
+| [MCP Server]({{< ref "docs/development/mcp" >}}) | ✅ | ✅ | ❌ |
 
-Java MCP requires **JDK 17+**. See [MCP]({{< ref "docs/development/mcp" >}}) for details.
+Java native MCP support requires **JDK 17+**. See [MCP]({{< ref "docs/development/mcp" >}}) for details.
