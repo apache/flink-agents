@@ -144,17 +144,16 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
+        extra_args = {}
         # Record token metrics only if model name is provided
         if model_name and response.usage:
-            self._record_token_metrics(
-                model_name,
-                response.usage.prompt_tokens,
-                response.usage.completion_tokens,
-            )
+            extra_args["model_name"] = model_name
+            extra_args["promptTokens"] = response.usage.prompt_tokens
+            extra_args["completionTokens"] = response.usage.completion_tokens
 
         message = response.choices[0].message
 
-        return convert_from_openai_message(message)
+        return convert_from_openai_message(message, extra_args)
 
 
 class AzureOpenAIChatModelSetup(BaseChatModelSetup):

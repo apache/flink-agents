@@ -120,14 +120,14 @@ class ResourceDescriptor(BaseModel):
     arguments: Dict[str, Any]
 
     def __init__(
-        self,
-        /,
-        *,
-        clazz: str | None = None,
-        target_module: str | None = None,
-        target_clazz: str | None = None,
-        arguments: Dict[str, Any] | None = None,
-        **kwargs: Any,
+            self,
+            /,
+            *,
+            clazz: str | None = None,
+            target_module: str | None = None,
+            target_clazz: str | None = None,
+            arguments: Dict[str, Any] | None = None,
+            **kwargs: Any,
     ) -> None:
         """Initialize ResourceDescriptor.
 
@@ -182,9 +182,9 @@ class ResourceDescriptor(BaseModel):
         if not isinstance(other, ResourceDescriptor):
             return False
         return (
-            self.target_module == other.target_module
-            and self.target_clazz == other.target_clazz
-            and self.arguments == other.arguments
+                self.target_module == other.target_module
+                and self.target_clazz == other.target_clazz
+                and self.arguments == other.arguments
         )
 
     def __hash__(self) -> int:
@@ -211,6 +211,7 @@ def get_resource_class(module_path: str, class_name: str) -> Type[Resource]:
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
 
+
 class ResourceName:
     """Hierarchical resource class names for pointing a resource implementation in
     ResourceDescriptor.
@@ -234,6 +235,10 @@ class ResourceName:
         # Anthropic
         ANTHROPIC_CONNECTION = "flink_agents.integrations.chat_models.anthropic.anthropic_chat_model.AnthropicChatModelConnection"
         ANTHROPIC_SETUP = "flink_agents.integrations.chat_models.anthropic.anthropic_chat_model.AnthropicChatModelSetup"
+
+        # Azure OpenAI
+        AZURE_OPENAI_CONNECTION = "flink_agents.integrations.chat_models.azure.azure_openai_chat_model.AzureOpenAIChatModelConnection"
+        AZURE_OPENAI_SETUP = "flink_agents.integrations.chat_models.azure.azure_openai_chat_model.AzureOpenAIChatModelSetup"
 
         # Ollama
         OLLAMA_CONNECTION = "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelConnection"
