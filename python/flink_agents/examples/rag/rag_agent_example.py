@@ -78,7 +78,7 @@ Please provide a helpful answer based on the context provided."""
     def text_embedder() -> ResourceDescriptor:
         """Embedding model setup for generating text embeddings."""
         return ResourceDescriptor(
-            clazz=Constant.OllamaEmbeddingModelSetup,
+            clazz=Constant.OLLAMA_EMBEDDING_MODEL_SETUP,
             connection="ollama_embedding_connection",
             model=OLLAMA_EMBEDDING_MODEL,
         )
