@@ -174,15 +174,18 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
         The underlying model name (e.g., 'gpt-4', 'gpt-35-turbo'). Used for
         token counting and cost calculation. Required for token metrics tracking.
     temperature : Optional[float]
-        What sampling temperature to use, between 0 and 2. Higher values like 0.8 will make the output more random,
-        while lower values like 0.2 will make it more focused and deterministic.
+        What sampling temperature to use, between 0 and 2. Higher values like 0.8
+        will make the output more random, while lower values like 0.2 will make it
+        more focused and deterministic.
         Not supported by reasoning models (e.g. gpt-5, o-series).
     max_tokens : Optional[int]
-        The maximum number of tokens that can be generated in the chat completion. The total length of input tokens
-        and generated tokens is limited by the model's context length.
+        The maximum number of tokens that can be generated in the chat completion.
+        The total length of input tokens and generated tokens is limited by the
+        model's context length.
     logprobs : Optional[bool]
-        Whether to return log probabilities of the output tokens or not. If true, returns the log probabilities of
-        each output token returned in the content of message.
+        Whether to return log probabilities of the output tokens or not. If true,
+        returns the log probabilities of each output token returned in the content
+        of message.
     additional_kwargs : Dict[str, Any]
         Additional kwargs for the Azure OpenAI API.
     """
