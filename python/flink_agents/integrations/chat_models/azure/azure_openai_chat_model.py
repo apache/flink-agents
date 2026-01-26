@@ -169,8 +169,8 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
     model : str
         Name of OpenAI model deployment on Azure.
     model_of_azure_deployment : Optional[str]
-        The underlying model name of the Azure deployment (e.g., 'gpt-4', 'gpt-35-turbo').
-        Used for token counting and cost calculation. Required for token metrics tracking.
+        The underlying model name of the Azure deployment (e.g., 'gpt-4').
+        Used for token counting and cost calculation.
     temperature : Optional[float]
         What sampling temperature to use, between 0 and 2. Higher values like 0.8
         will make the output more random, while lower values like 0.2 will make it
