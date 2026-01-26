@@ -96,15 +96,14 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
     @property
     def client(self) -> AzureOpenAI:
         """Get Azure OpenAI client."""
-        self._client = AzureOpenAI(
-            azure_endpoint=self.azure_endpoint,
-            api_key=self.api_key,
-            api_version=self.api_version,
-            timeout=self.timeout,
-            max_retries=self.max_retries,
-        )
         if self._client is None:
-            pass
+            self._client = AzureOpenAI(
+                azure_endpoint=self.azure_endpoint,
+                api_key=self.api_key,
+                api_version=self.api_version,
+                timeout=self.timeout,
+                max_retries=self.max_retries,
+            )
         return self._client
 
     def chat(self, messages: Sequence[ChatMessage], tools: List[Tool] | None = None, **kwargs: Any,) -> ChatMessage:

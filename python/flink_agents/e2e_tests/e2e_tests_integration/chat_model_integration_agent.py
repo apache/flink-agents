@@ -50,7 +50,7 @@ class ChatModelTestAgent(Agent):
     def azure_openai_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for openai model service connection."""
         return ResourceDescriptor(
-            clazz=Constant.AZURE_OPENAI_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.AZURE_OPENAI_CONNECTION,
             api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
             api_version=os.environ.get("AZURE_OPENAI_API_VERSION"),
             azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
@@ -99,7 +99,7 @@ class ChatModelTestAgent(Agent):
             )
         elif model_provider == "AzureOpenAI":
             return ResourceDescriptor(
-                clazz=Constant.AZURE_OPENAI_CHAT_MODEL_SETUP,
+                clazz=ResourceName.ChatModel.AZURE_OPENAI_SETUP,
                 connection="azure_openai_connection",
                 azure_deployment=os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5"),
                 tools=["add"],
@@ -134,7 +134,7 @@ class ChatModelTestAgent(Agent):
             )
         elif model_provider == "AzureOpenAI":
             return ResourceDescriptor(
-                clazz=Constant.AZURE_OPENAI_CHAT_MODEL_SETUP,
+                clazz=ResourceName.ChatModel.AZURE_OPENAI_SETUP,
                 connection="azure_openai_connection",
                 azure_deployment=os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5"),
             )
