@@ -48,7 +48,7 @@ under the License.
         <pemja.version>0.5.5</pemja.version>
         <log4j2.version>2.23.1</log4j2.version>
         <slf4j.version>1.7.36</slf4j.version>
-        <assertj.version>3.23.1</assertj.version>
+        <assertj.version>3.27.7</assertj.version>
         <mockito.version>5.14.2</mockito.version>
         <bytebuddy.version>1.15.4</bytebuddy.version>
         <gpg.useagent>true</gpg.useagent>
