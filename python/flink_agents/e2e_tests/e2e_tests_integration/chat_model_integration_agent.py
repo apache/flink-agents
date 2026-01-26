@@ -101,7 +101,7 @@ class ChatModelTestAgent(Agent):
             return ResourceDescriptor(
                 clazz=ResourceName.ChatModel.AZURE_OPENAI_SETUP,
                 connection="azure_openai_connection",
-                azure_deployment=os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5"),
+                model=os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5"),
                 tools=["add"],
             )
         else:
@@ -136,7 +136,7 @@ class ChatModelTestAgent(Agent):
             return ResourceDescriptor(
                 clazz=ResourceName.ChatModel.AZURE_OPENAI_SETUP,
                 connection="azure_openai_connection",
-                azure_deployment=os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5"),
+                model=os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5"),
             )
         else:
             err_msg = f"Unknown model_provider {model_provider}"

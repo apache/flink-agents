@@ -50,7 +50,7 @@ def test_azure_openai_chat_model() -> None:  # noqa: D103
 
     chat_model = AzureOpenAIChatModelSetup(
         name="azure_openai",
-        azure_deployment=test_deployment,
+        model=test_deployment,
         connection="azure_openai",
         get_resource=get_resource,
     )
@@ -94,7 +94,7 @@ def test_azure_openai_chat_with_tools() -> None:  # noqa : D103
 
     chat_model = AzureOpenAIChatModelSetup(
         name="azure_openai",
-        azure_deployment=test_deployment,
+        model=test_deployment,
         connection="azure_openai",
         tools=["add"],
         get_resource=get_resource,

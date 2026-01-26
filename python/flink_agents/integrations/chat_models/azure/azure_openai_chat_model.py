@@ -128,12 +128,12 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         if tools is not None:
             tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]
 
-        # Extract azure_deployment and model from kwargs for special handling
-        azure_deployment = kwargs.pop("azure_deployment", "")
+        # Extract model (azure_deployment) and model_of_azure_deployment from kwargs
+        azure_deployment = kwargs.pop("model", "")
         if not azure_deployment:
-            msg = "azure_deployment is required for Azure OpenAI API calls"
+            msg = "model is required for Azure OpenAI API calls"
             raise ValueError(msg)
-        model_name = kwargs.pop("model", None)
+        model_of_azure_deployment = kwargs.pop("model_of_azure_deployment", None)
 
         response = self.client.chat.completions.create(
             # Azure OpenAI APIs use Azure deployment name as the model parameter
@@ -144,9 +144,9 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         )
 
         extra_args = {}
-        # Record token metrics only if model name is provided
-        if model_name and response.usage:
-            extra_args["model_name"] = model_name
+        # Record token metrics only if model_of_azure_deployment is provided
+        if model_of_azure_deployment and response.usage:
+            extra_args["model_name"] = model_of_azure_deployment
             extra_args["promptTokens"] = response.usage.prompt_tokens
             extra_args["completionTokens"] = response.usage.completion_tokens
 
@@ -166,11 +166,11 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
         Prompt template or string for the model. (Inherited from BaseChatModelSetup)
     tools : Optional[List[str]]
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
-    azure_deployment : str
-        Name of Azure OpenAI deployment to use.
-    model : Optional[str]
-        The underlying model name (e.g., 'gpt-4', 'gpt-35-turbo'). Used for
-        token counting and cost calculation. Required for token metrics tracking.
+    model : str
+        Name of OpenAI model deployment on Azure.
+    model_of_azure_deployment : Optional[str]
+        The underlying model name of the Azure deployment (e.g., 'gpt-4', 'gpt-35-turbo').
+        Used for token counting and cost calculation. Required for token metrics tracking.
     temperature : Optional[float]
         What sampling temperature to use, between 0 and 2. Higher values like 0.8
         will make the output more random, while lower values like 0.2 will make it
@@ -188,13 +188,14 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
         Additional kwargs for the Azure OpenAI API.
     """
 
-    azure_deployment: str = Field(
-        description="Name of Azure OpenAI deployment to use.",
+    model: str = Field(
+        description="Name of OpenAI model deployment on Azure.",
     )
-    model: str | None = Field(
+    model_of_azure_deployment: str | None = Field(
         default=None,
-        description="The underlying model name (e.g., 'gpt-5', 'gpt-4o', 'gpt-oss-120b'). "
-                    "Used for token counting and cost calculation. Required for token metrics tracking.",
+        description="The underlying model name of the Azure deployment (e.g., 'gpt-4', "
+                    "'gpt-35-turbo'). Used for token counting and cost calculation. "
+                    "Required for token metrics tracking.",
     )
     temperature: float | None = Field(
         default=None,
@@ -222,8 +223,8 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
     def __init__(
             self,
             *,
-            azure_deployment: str,
-            model: str | None = None,
+            model: str,
+            model_of_azure_deployment: str | None = None,
             temperature: float | None = None,
             max_tokens: int | None = None,
             logprobs: bool | None = False,
@@ -233,8 +234,8 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
         """Init method."""
         additional_kwargs = additional_kwargs or {}
         super().__init__(
-            azure_deployment=azure_deployment,
             model=model,
+            model_of_azure_deployment=model_of_azure_deployment,
             temperature=temperature,
             max_tokens=max_tokens,
             logprobs=logprobs,
@@ -246,8 +247,8 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
     def model_kwargs(self) -> Dict[str, Any]:
         """Return chat model settings."""
         base_kwargs = {
-            "azure_deployment": self.azure_deployment,
             "model": self.model,
+            "model_of_azure_deployment": self.model_of_azure_deployment,
             "logprobs": self.logprobs,
         }
         if self.temperature is not None:
