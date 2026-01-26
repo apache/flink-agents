@@ -15,12 +15,3 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from flink_agents.integrations.chat_models.azure.azure_openai_chat_model import (
-    AzureOpenAIChatModelConnection,
-    AzureOpenAIChatModelSetup,
-)
-
-__all__ = [
-    "AzureOpenAIChatModelConnection",
-    "AzureOpenAIChatModelSetup",
-]

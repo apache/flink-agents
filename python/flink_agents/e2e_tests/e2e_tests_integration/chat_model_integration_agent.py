@@ -47,6 +47,17 @@ class ChatModelTestAgent(Agent):
 
     @chat_model_connection
     @staticmethod
+    def azure_openai_connection() -> ResourceDescriptor:
+        """ChatModelConnection responsible for openai model service connection."""
+        return ResourceDescriptor(
+            clazz=Constant.AZURE_OPENAI_CHAT_MODEL_CONNECTION,
+            api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
+            api_version=os.environ.get("AZURE_OPENAI_API_VERSION"),
+            azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+        )
+
+    @chat_model_connection
+    @staticmethod
     def tongyi_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for tongyi model service connection."""
         return ResourceDescriptor(clazz=ResourceName.ChatModel.TONGYI_CONNECTION)
@@ -86,6 +97,13 @@ class ChatModelTestAgent(Agent):
                 model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo"),
                 tools=["add"],
             )
+        elif model_provider == "AzureOpenAI":
+            return ResourceDescriptor(
+                clazz=Constant.AZURE_OPENAI_CHAT_MODEL_SETUP,
+                connection="azure_openai_connection",
+                azure_deployment=os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5"),
+                tools=["add"],
+            )
         else:
             err_msg = f"Unknown model_provider {model_provider}"
             raise RuntimeError(err_msg)
@@ -113,6 +131,12 @@ class ChatModelTestAgent(Agent):
                 clazz=ResourceName.ChatModel.OPENAI_SETUP,
                 connection="openai_connection",
                 model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo"),
+            )
+        elif model_provider == "AzureOpenAI":
+            return ResourceDescriptor(
+                clazz=Constant.AZURE_OPENAI_CHAT_MODEL_SETUP,
+                connection="azure_openai_connection",
+                azure_deployment=os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5"),
             )
         else:
             err_msg = f"Unknown model_provider {model_provider}"

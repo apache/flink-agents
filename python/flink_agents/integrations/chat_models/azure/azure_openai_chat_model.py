@@ -194,14 +194,14 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
     )
     model: str | None = Field(
         default=None,
-        description="The underlying model name (e.g., 'gpt-4', 'gpt-35-turbo', 'gpt-4o'). "
+        description="The underlying model name (e.g., 'gpt-5', 'gpt-4o', 'gpt-oss-120b'). "
                     "Used for token counting and cost calculation. Required for token metrics tracking.",
     )
     temperature: float | None = Field(
         default=None,
         description="What sampling temperature to use, between 0 and 2. Higher values like 0.8 will make the output "
                     "more random, while lower values like 0.2 will make it more focused and deterministic. "
-                    "Not supported by reasoning models (gpt-5, o-series).",
+                    "Not supported by reasoning models (e.g. gpt-5, o-series).",
         ge=0.0,
         le=2.0,
     )
