@@ -64,7 +64,7 @@ class ReviewAnalysisAgent(Agent):
     def review_analysis_model() -> ResourceDescriptor:
         """ChatModel which focus on review analysis."""
         return ResourceDescriptor(
-            clazz=OllamaChatModelSetup,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             ...,
             tools=["notify_shipping_manager"], # reference the tool by its name
         )
@@ -85,7 +85,7 @@ public class ReviewAnalysisAgent extends Agent {
     
     @ChatModelSetup
     public static ResourceDescriptor reviewAnalysisModel() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
                 ...
                 .addInitialArgument("tools", Collections.singletonList("notifyShippingManager")) // reference the tool by its name
@@ -129,7 +129,7 @@ def notify_shipping_manager(id: str, review: str) -> None:
 
 # Add notify shipping manager tool to the execution environment.
 agents_env.add_resource(
-    "notify_shipping_manager", Tool.from_callable(notify_shipping_manager)
+    "notify_shipping_manager", ResourceType.TOOL, Tool.from_callable(notify_shipping_manager)
 )
 
 ...
@@ -137,7 +137,7 @@ agents_env.add_resource(
 # Create react agent with notify shipping manager tool.
 review_analysis_react_agent = ReActAgent(
     chat_model=ResourceDescriptor(
-        clazz=OllamaChatModelSetup,
+        clazz=ResourceName.ChatModel.OLLAMA_SETUP,
         tools=["notify_shipping_manager"], # reference the tool by its name
     ),
     ...
@@ -164,7 +164,7 @@ agentsEnv
 
 // Create react agent with notify shipping manager tool.
 ReActAgent reviewAnalysisReactAgent = new ReActAgent(
-        ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+        ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument(
                         "tools", Collections.singletonList("notifyShippingManager")) // reference the tool by its name
                 ...
