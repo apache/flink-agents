@@ -211,55 +211,102 @@ def get_resource_class(module_path: str, class_name: str) -> Type[Resource]:
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
 
+class ResourceName:
+    """Hierarchical resource class names for pointing a resource implementation in
+    ResourceDescriptor.
 
-class Constant:
-    """Constant strings for pointing a built-in resource implementation."""
+    Structure:
+        - Python implementation: ResourceType.PROVIDER_RESOURCEKIND
+        - Java implementation: ResourceType.Java.PROVIDER_RESOURCEKIND
 
-    # Built-in ChatModel
-    # java wrapper
-    JAVA_CHAT_MODEL_CONNECTION = (
-        "flink_agents.api.chat_models.java_chat_model.JavaChatModelConnection"
-    )
-    JAVA_CHAT_MODEL_SETUP = (
-        "flink_agents.api.chat_models.java_chat_model.JavaChatModelSetup"
-    )
-    # ollama
-    OLLAMA_CHAT_MODEL_CONNECTION = "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelConnection"
-    OLLAMA_CHAT_MODEL_SETUP = (
-        "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup"
-    )
-    # anthropic
-    ANTHROPIC_CHAT_MODEL_CONNECTION = "flink_agents.integrations.chat_models.anthropic.anthropic_chat_model.AnthropicChatModelConnection"
-    ANTHROPIC_CHAT_MODEL_SETUP = "flink_agents.integrations.chat_models.anthropic.anthropic_chat_model.AnthropicChatModelSetup"
-    # Azure
-    TONGYI_CHAT_MODEL_CONNECTION = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelConnection"
-    TONGYI_CHAT_MODEL_SETUP = (
-        "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelSetup"
-    )
-    # OpenAI
-    OPENAI_CHAT_MODEL_CONNECTION = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelConnection"
-    OPENAI_CHAT_MODEL_SETUP = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup"
+    Example usage:
+        # Python implementation
+        ResourceName.ChatModel.OLLAMA_CONNECTION
+        ResourceName.ChatModel.OPENAI_SETUP
 
-    # Built-in EmbeddingModel
-    # java wrapper
-    JAVA_EMBEDDING_MODEL_CONNECTION = "flink_agents.api.embedding_models.java_embedding_model.JavaEmbeddingModelConnection"
-    JAVA_EMBEDDING_MODEL_SETUP = (
-        "flink_agents.api.embedding_models.java_embedding_model.JavaEmbeddingModelSetup"
-    )
-    # ollama
-    OLLAMA_EMBEDDING_MODEL_CONNECTION = "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelConnection"
-    OLLAMA_EMBEDDING_MODEL_SETUP = "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelSetup"
+        # Java implementation
+        ResourceName.ChatModel.Java.OLLAMA_CONNECTION
+    """
 
-    # OpenAI
-    OPENAI_EMBEDDING_MODEL_CONNECTION = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelConnection"
-    OPENAI_EMBEDDING_MODEL_SETUP = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup"
+    class ChatModel:
+        """ChatModel resource names."""
 
-    # Built-in VectorStore
-    # java wrapper
-    JAVA_VECTOR_STORE = "flink_agents.api.vector_stores.java_vector_store.JavaVectorStore"
-    JAVA_COLLECTION_MANAGEABLE_VECTOR_STORE = "flink_agents.api.vector_stores.java_vector_store.JavaCollectionManageableVectorStore"
-    # chroma
-    CHROMA_VECTOR_STORE = "flink_agents.integrations.vector_stores.chroma.chroma_vector_store.ChromaVectorStore"
+        # Anthropic
+        ANTHROPIC_CONNECTION = "flink_agents.integrations.chat_models.anthropic.anthropic_chat_model.AnthropicChatModelConnection"
+        ANTHROPIC_SETUP = "flink_agents.integrations.chat_models.anthropic.anthropic_chat_model.AnthropicChatModelSetup"
 
-    # MCP
+        # Ollama
+        OLLAMA_CONNECTION = "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelConnection"
+        OLLAMA_SETUP = "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup"
+
+        # OpenAI
+        OPENAI_CONNECTION = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelConnection"
+        OPENAI_SETUP = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup"
+
+        # Tongyi
+        TONGYI_CONNECTION = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelConnection"
+        TONGYI_SETUP = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelSetup"
+
+        # Java Wrapper
+        JAVA_WRAPPER_CONNECTION = "flink_agents.api.chat_models.java_chat_model.JavaChatModelConnection"
+        JAVA_WRAPPER_SETUP = "flink_agents.api.chat_models.java_chat_model.JavaChatModelSetup"
+
+        class Java:
+            """Java implementations of ChatModel."""
+
+            # Anthropic
+            ANTHROPIC_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelConnection"
+            ANTHROPIC_SETUP = "org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelSetup"
+
+            # Azure
+            AZURE_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.anthropic.AzureAIChatModelConnection"
+            AZURE_SETUP = "org.apache.flink.agents.integrations.chatmodels.anthropic.AzureAIChatModelSetup"
+
+            # Ollama
+            OLLAMA_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection"
+            OLLAMA_SETUP = "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup"
+
+            # OpenAI
+            OPENAI_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelConnection"
+            OPENAI_SETUP = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelSetup"
+
+    class EmbeddingModel:
+        """EmbeddingModel resource names."""
+
+        # Ollama
+        OLLAMA_CONNECTION = "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelConnection"
+        OLLAMA_SETUP = "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelSetup"
+
+        # OpenAI
+        OPENAI_CONNECTION = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelConnection"
+        OPENAI_SETUP = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup"
+
+        # Java Wrapper
+        JAVA_WRAPPER_CONNECTION = "flink_agents.api.embedding_models.java_embedding_model.JavaEmbeddingModelConnection"
+        JAVA_WRAPPER_SETUP = "flink_agents.api.embedding_models.java_embedding_model.JavaEmbeddingModelSetup"
+
+        class Java:
+            """Java implementations of EmbeddingModel."""
+
+            # Ollama
+            OLLAMA_CONNECTION = "org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelConnection"
+            OLLAMA_SETUP = "org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelSetup"
+
+    class VectorStore:
+        """VectorStore resource names."""
+
+        # Chroma
+        CHROMA_VECTOR_STORE = "flink_agents.integrations.vector_stores.chroma.chroma_vector_store.ChromaVectorStore"
+
+        # Java Wrapper
+        JAVA_WRAPPER_VECTOR_STORE = "flink_agents.api.vector_stores.java_vector_store.JavaVectorStore"
+        JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE = "flink_agents.api.vector_stores.java_vector_store.JavaCollectionManageableVectorStore"
+
+        class Java:
+            """Java implementations of VectorStore."""
+
+            # Elasticsearch
+            ELASTICSEARCH_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.elasticsearch.ElasticsearchVectorStore"
+
+    # MCP resource names
     MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"

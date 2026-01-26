@@ -55,8 +55,8 @@ from flink_agents.api.memory.long_term_memory import (
     MemorySetItem,
 )
 from flink_agents.api.resource import (
-    Constant,
     ResourceDescriptor,
+    ResourceName,
 )
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.e2e_tests.test_utils import pull_model
@@ -124,7 +124,7 @@ class LongTermMemoryAgent(Agent):
     def ollama_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for ollama model service connection."""
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=480.0
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=480.0
         )
 
     @chat_model_setup
@@ -132,7 +132,7 @@ class LongTermMemoryAgent(Agent):
     def ollama_qwen3() -> ResourceDescriptor:
         """ChatModel which focus on math, and reuse ChatModelConnection."""
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_connection",
             model=OLLAMA_CHAT_MODEL,
             extract_reasoning=True,
@@ -143,14 +143,14 @@ class LongTermMemoryAgent(Agent):
     @staticmethod
     def ollama_embedding_connection() -> ResourceDescriptor:  # noqa D102
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_EMBEDDING_MODEL_CONNECTION, request_timeout=240.0
+            clazz=ResourceName.EmbeddingModel.OLLAMA_CONNECTION, request_timeout=240.0
         )
 
     @embedding_model_setup
     @staticmethod
     def ollama_nomic_embed_text() -> ResourceDescriptor:  # noqa D102
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_EMBEDDING_MODEL_SETUP,
+            clazz=ResourceName.EmbeddingModel.OLLAMA_SETUP,
             connection="ollama_embedding_connection",
             model=OLLAMA_EMBEDDING_MODEL,
         )
@@ -160,7 +160,7 @@ class LongTermMemoryAgent(Agent):
     def chroma_vector_store() -> ResourceDescriptor:
         """Vector store setup for knowledge base."""
         return ResourceDescriptor(
-            clazz=Constant.CHROMA_VECTOR_STORE,
+            clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
             embedding_model="ollama_nomic_embed_text",
             persist_directory=chromadb_path,
         )

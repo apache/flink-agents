@@ -28,8 +28,8 @@ from flink_agents.api.decorators import (
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.resource import (
-    Constant,
     ResourceDescriptor,
+    ResourceName,
 )
 from flink_agents.api.runner_context import RunnerContext
 
@@ -42,21 +42,21 @@ class ChatModelTestAgent(Agent):
     def openai_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for openai model service connection."""
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_CHAT_MODEL_CONNECTION, api_key=os.environ.get("OPENAI_API_KEY")
+            clazz=ResourceName.ChatModel.OPENAI_CONNECTION, api_key=os.environ.get("OPENAI_API_KEY")
         )
 
     @chat_model_connection
     @staticmethod
     def tongyi_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for tongyi model service connection."""
-        return ResourceDescriptor(clazz=Constant.TONGYI_CHAT_MODEL_CONNECTION)
+        return ResourceDescriptor(clazz=ResourceName.ChatModel.TONGYI_CONNECTION)
 
     @chat_model_connection
     @staticmethod
     def ollama_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for ollama model service connection."""
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=240.0
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0
         )
 
     @chat_model_setup
@@ -66,14 +66,14 @@ class ChatModelTestAgent(Agent):
         model_provider = os.environ.get("MODEL_PROVIDER")
         if model_provider == "Tongyi":
             return ResourceDescriptor(
-                clazz=Constant.TONGYI_CHAT_MODEL_SETUP,
+                clazz=ResourceName.ChatModel.TONGYI_SETUP,
                 connection="tongyi_connection",
                 model=os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus"),
                 tools=["add"],
             )
         elif model_provider == "Ollama":
             return ResourceDescriptor(
-                clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+                clazz=ResourceName.ChatModel.OLLAMA_SETUP,
                 connection="ollama_connection",
                 model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b"),
                 tools=["add"],
@@ -81,7 +81,7 @@ class ChatModelTestAgent(Agent):
             )
         elif model_provider == "OpenAI":
             return ResourceDescriptor(
-                clazz=Constant.OPENAI_CHAT_MODEL_SETUP,
+                clazz=ResourceName.ChatModel.OPENAI_SETUP,
                 connection="openai_connection",
                 model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo"),
                 tools=["add"],
@@ -97,20 +97,20 @@ class ChatModelTestAgent(Agent):
         model_provider = os.environ.get("MODEL_PROVIDER")
         if model_provider == "Tongyi":
             return ResourceDescriptor(
-                clazz=Constant.TONGYI_CHAT_MODEL_SETUP,
+                clazz=ResourceName.ChatModel.TONGYI_SETUP,
                 connection="tongyi_connection",
                 model=os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus"),
             )
         elif model_provider == "Ollama":
             return ResourceDescriptor(
-                clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+                clazz=ResourceName.ChatModel.OLLAMA_SETUP,
                 connection="ollama_connection",
                 model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b"),
                 extract_reasoning=True,
             )
         elif model_provider == "OpenAI":
             return ResourceDescriptor(
-                clazz=Constant.OPENAI_CHAT_MODEL_SETUP,
+                clazz=ResourceName.ChatModel.OPENAI_SETUP,
                 connection="openai_connection",
                 model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo"),
             )
