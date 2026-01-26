@@ -65,7 +65,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_EMBEDDING_MODEL_CONNECTION,
+            clazz=ResourceName.EmbeddingModel.OPENAI_CONNECTION,
             api_key="your-api-key-here",
             base_url="https://api.openai.com/v1",
             request_timeout=30.0
@@ -75,7 +75,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_embedding() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_EMBEDDING_MODEL_SETUP,
+            clazz=ResourceName.EmbeddingModel.OPENAI_SETUP,
             connection="openai_connection",
             model="your-embedding-model-here"
         )
@@ -132,7 +132,7 @@ class MyAgent(Agent):
     @staticmethod
     def ollama_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_EMBEDDING_MODEL_CONNECTION,
+            clazz=ResourceName.EmbeddingModel.OLLAMA_CONNECTION,
             base_url="http://localhost:11434",
             request_timeout=30.0
         )
@@ -141,7 +141,7 @@ class MyAgent(Agent):
     @staticmethod
     def ollama_embedding() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_EMBEDDING_MODEL_SETUP,
+            clazz=ResourceName.EmbeddingModel.OLLAMA_SETUP,
             connection="ollama_connection",
             model="nomic-embed-text",
             truncate=True,
@@ -185,7 +185,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_EMBEDDING_MODEL_CONNECTION,
+            clazz=ResourceName.EmbeddingModel.OPENAI_CONNECTION,
             api_key="your-api-key-here",
             base_url="https://api.openai.com/v1",
             request_timeout=30.0,
@@ -196,7 +196,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_embedding() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_CHAT_MODEL_SETUP,
+            clazz=ResourceName.EmbeddingModel.OPENAI_SETUP,
             connection="openai_connection",
             model="your-embedding-model-here",
             encoding_format="float"
@@ -252,8 +252,8 @@ Flink Agents supports cross-language embedding model integration, allowing you t
 
 To leverage embedding model supports provided in a different language, you need to declare the resource within a built-in cross-language wrapper, and specify the target provider as an argument:
 
-- **Using Java embedding models in Python**: Use `Constant.JAVA_EMBEDDING_MODEL_CONNECTION` and `Constant.JAVA_EMBEDDING_MODEL_SETUP`, specifying the Java provider class via the `java_clazz` parameter
-- **Using Python embedding models in Java**: Use `Constant.PYTHON_EMBEDDING_MODEL_CONNECTION` and `Constant.PYTHON_EMBEDDING_MODEL_SETUP`, specifying the Python provider via `module` and `clazz` parameters
+- **Using Java embedding models in Python**: Use `ResourceName.EmbeddingModel.JAVA_WRAPPER_CONNECTION` and `ResourceName.EmbeddingModel.JAVA_WRAPPER_SETUP`, specifying the Java provider class via the `java_clazz` parameter
+- **Using Python embedding models in Java**: Use `ResourceName.EmbeddingModel.PYTHON_WRAPPER_CONNECTION` and `ResourceName.EmbeddingModel.PYTHON_WRAPPER_SETUP`, specifying the Python provider via the `pythonClazz` parameter
 
 ### Usage Example
 
@@ -269,12 +269,12 @@ class MyAgent(Agent):
     def java_embedding_connection() -> ResourceDescriptor:
         # In pure Java, the equivalent ResourceDescriptor would be:
         # ResourceDescriptor.Builder
-        #     .newBuilder(Constant.OllamaEmbeddingModelConnection)
+        #     .newBuilder(ResourceName.EmbeddingModel.OLLAMA_CONNECTION)
         #     .addInitialArgument("host", "http://localhost:11434")
         #     .build();
         return ResourceDescriptor(
-            clazz=Constant.JAVA_EMBEDDING_MODEL_CONNECTION,
-            java_clazz="org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelConnection",
+            clazz=ResourceName.EmbeddingModel.JAVA_WRAPPER_CONNECTION,
+            java_clazz=ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
             host="http://localhost:11434"
         )
 
@@ -283,13 +283,13 @@ class MyAgent(Agent):
     def java_embedding_model() -> ResourceDescriptor:
         # In pure Java, the equivalent ResourceDescriptor would be:
         # ResourceDescriptor.Builder
-        #     .newBuilder(Constant.OllamaEmbeddingModelSetup)
+        #     .newBuilder(ResourceName.EmbeddingModel.OLLAMA_SETUP)
         #     .addInitialArgument("connection", "java_embedding_connection")
         #     .addInitialArgument("model", "nomic-embed-text")
         #     .build();
         return ResourceDescriptor(
-            clazz=Constant.JAVA_EMBEDDING_MODEL_SETUP,
-            java_clazz="org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelSetup",
+            clazz=ResourceName.EmbeddingModel.JAVA_WRAPPER_SETUP,
+            java_clazz=ResourceName.EmbeddingModel.Java.OLLAMA_Setup,
             connection="java_embedding_connection",
             model="nomic-embed-text"
         )
@@ -314,14 +314,11 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor pythonEmbeddingConnection() {
         // In pure Python, the equivalent ResourceDescriptor would be:
         // ResourceDescriptor(
-        //     clazz=Constant.OLLAMA_EMBEDDING_MODEL_CONNECTION,
+        //     clazz=ResourceName.EmbeddingModel.OLLAMA_CONNECTION,
         //     base_url="http://localhost:11434"
         // )
-        return ResourceDescriptor.Builder.newBuilder(Constant.PYTHON_EMBEDDING_MODEL_CONNECTION)
-                .addInitialArgument(
-                        "module", 
-                        "flink_agents.integrations.embedding_models.local.ollama_embedding_model")
-                .addInitialArgument("clazz", "OllamaEmbeddingModelConnection")
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.PYTHON_WRAPPER_CONNECTION)
+                .addInitialArgument("pythonClazz", ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION)
                 .addInitialArgument("base_url", "http://localhost:11434")
                 .build();
     }
@@ -330,15 +327,12 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor pythonEmbeddingModel() {
         // In pure Python, the equivalent ResourceDescriptor would be:
         // ResourceDescriptor(
-        //     clazz=Constant.OLLAMA_EMBEDDING_MODEL_SETUP,
+        //     clazz=ResourceName.EmbeddingModel.OLLAMA_SETUP,
         //     connection="ollama_connection",
         //     model="nomic-embed-text"
         // )
-        return ResourceDescriptor.Builder.newBuilder(Constant.PYTHON_EMBEDDING_MODEL_SETUP)
-                .addInitialArgument(
-                        "module", 
-                        "flink_agents.integrations.embedding_models.local.ollama_embedding_model")
-                .addInitialArgument("clazz", "OllamaEmbeddingModelSetup")
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.PYTHON_WRAPPER_SETUP)
+                .addInitialArgument("pythonClazz", ResourceName.EmbeddingModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "pythonEmbeddingConnection")
                 .addInitialArgument("model", "nomic-embed-text")
                 .build();

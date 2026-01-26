@@ -49,7 +49,7 @@ agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 agents_env.add_resource(
   "ollama_server",
   ResourceType.CHAT_MODEL_CONNECTION,
-  ResourceDescriptor(clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=120),
+  ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=120),
 ).add_resource(
   "notify_shipping_manager", ResourceType.TOOL, Tool.from_callable(notify_shipping_manager)
 )
@@ -90,7 +90,7 @@ Create the ReAct Agent instance, configure the chat model, prompt and the output
 ```python
 review_analysis_react_agent = ReActAgent(
   chat_model=ResourceDescriptor(
-      clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+      clazz=ResourceName.ChatModel.OLLAMA_SETUP,
       connection="ollama_server",
       model="qwen3:8b",
       tools=["notify_shipping_manager"],
@@ -108,7 +108,7 @@ ReActAgent reviewAnalysisReactAgent = getReActAgent();
 
  private static ReActAgent getReActAgent() {
      return new ReActAgent(
-             ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_SETUP)
+             ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                      .addInitialArgument("connection", "ollamaChatModelConnection")
                      .addInitialArgument("model", "qwen3:8b")
                      .addInitialArgument(

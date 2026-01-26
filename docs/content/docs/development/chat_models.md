@@ -65,7 +65,7 @@ class MyAgent(Agent):
     @staticmethod
     def ollama_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION,
             base_url="http://localhost:11434",
             request_timeout=30.0
         )
@@ -74,7 +74,7 @@ class MyAgent(Agent):
     @staticmethod
     def ollama_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_connection",
             model="qwen3:8b",
             temperature=0.7
@@ -106,14 +106,14 @@ class MyAgent(Agent):
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor ollamaConnection() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_CONNECTION)
                 .addInitialArgument("endpoint", "http://localhost:11434")
                 .build();
     }
 
     @ChatModelSetup
     public static ResourceDescriptor ollamaChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaConnection")
                 .addInitialArgument("model", "qwen3:8b")
                 .build();
@@ -196,7 +196,7 @@ Azure AI is only supported in Java currently. To use Azure AI from Python agents
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor azureAIConnection() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.AZURE_CHAT_MODEL_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_CONNECTION)
                 .addInitialArgument("endpoint", "https://your-resource.inference.ai.azure.com")
                 .addInitialArgument("apiKey", "your-api-key-here")
                 .build();
@@ -204,7 +204,7 @@ public class MyAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor azureAIChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.AZURE_CHAT_MODEL_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_SETUP)
                 .addInitialArgument("connection", "azureAIConnection")
                 .addInitialArgument("model", "gpt-4o")
                 .build();
@@ -314,7 +314,7 @@ class MyAgent(Agent):
     @staticmethod
     def anthropic_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.ANTHROPIC_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.ANTHROPIC_CONNECTION,
             api_key="<your-api-key>",
             max_retries=3,
             timeout=60.0
@@ -324,7 +324,7 @@ class MyAgent(Agent):
     @staticmethod
     def anthropic_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.ANTHROPIC_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.ANTHROPIC_SETUP,
             connection="anthropic_connection",
             model="claude-sonnet-4-20250514",
             max_tokens=2048,
@@ -340,7 +340,7 @@ class MyAgent(Agent):
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor anthropicConnection() {
-        return ResourceDescriptor.Builder.newBuilder(AnthropicChatModelConnection.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.ANTHROPIC_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
                 .addInitialArgument("timeout", 120)
                 .addInitialArgument("max_retries", 3)
@@ -349,7 +349,7 @@ public class MyAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor anthropicChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(AnthropicChatModelSetup.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.ANTHROPIC_SETUP)
                 .addInitialArgument("connection", "anthropicConnection")
                 .addInitialArgument("model", "claude-sonnet-4-20250514")
                 .addInitialArgument("temperature", 0.7d)
@@ -456,7 +456,7 @@ class MyAgent(Agent):
     @staticmethod
     def ollama_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION,
             base_url="http://localhost:11434",
             request_timeout=120.0
         )
@@ -465,7 +465,7 @@ class MyAgent(Agent):
     @staticmethod
     def my_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION,
             connection="ollama_connection",
             model="qwen3:8b",
             temperature=0.7,
@@ -483,7 +483,7 @@ class MyAgent(Agent):
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor ollamaConnection() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_CONNECTION)
                 .addInitialArgument("endpoint", "http://localhost:11434")
                 .addInitialArgument("requestTimeout", 120)
                 .build();
@@ -491,7 +491,7 @@ public class MyAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor ollamaChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaConnection")
                 .addInitialArgument("model", "qwen3:8b")
                 .build();
@@ -614,7 +614,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.OPENAI_CONNECTION,
             api_key="<your-api-key>",
             api_base_url="https://api.openai.com/v1",
             max_retries=3,
@@ -625,7 +625,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.OPENAI_SETUP,
             connection="openai_connection",
             model="gpt-4",
             temperature=0.7,
@@ -641,7 +641,7 @@ class MyAgent(Agent):
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor openaiConnection() {
-        return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelConnection.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
                 .addInitialArgument("api_base_url", "https://api.openai.com/v1")
                 .addInitialArgument("timeout", 60)
@@ -651,7 +651,7 @@ public class MyAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor openaiChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelSetup.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_SETUP)
                 .addInitialArgument("connection", "openaiConnection")
                 .addInitialArgument("model", "gpt-4")
                 .addInitialArgument("temperature", 0.7d)
@@ -719,7 +719,7 @@ class MyAgent(Agent):
     @staticmethod
     def tongyi_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.TONGYI_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.TONGYI_CONNECTION,
             api_key="your-api-key-here",  # Or set DASHSCOPE_API_KEY env var
             request_timeout=60.0
         )
@@ -728,7 +728,7 @@ class MyAgent(Agent):
     @staticmethod
     def tongyi_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.TONGYI_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.Python.TONGYI_SETUP,
             connection="tongyi_connection",
             model="qwen-plus",
             temperature=0.7,
@@ -758,6 +758,7 @@ Flink Agents supports cross-language chat model integration, allowing you to use
 
 {{< hint warning >}}
 **Limitations:**
+
 - Cross-language resources are currently supported only when [running in Flink]({{< ref "docs/operations/deployment#run-in-flink" >}}), not in local development mode
 - Complex object serialization between languages may have limitations
 {{< /hint >}}
@@ -766,8 +767,8 @@ Flink Agents supports cross-language chat model integration, allowing you to use
 
 To leverage chat model supports provided in a different language, you need to declare the resource within a built-in cross-language wrapper, and specify the target provider as an argument:
 
-- **Using Java chat models in Python**: Use `Constant.JAVA_CHAT_MODEL_CONNECTION` and `Constant.JAVA_CHAT_MODEL_SETUP`, specifying the Java provider class via the `java_clazz` parameter
-- **Using Python chat models in Java**: Use `Constant.PYTHON_CHAT_MODEL_CONNECTION` and `Constant.PYTHON_CHAT_MODEL_SETUP`, specifying the Python provider via `module` and `clazz` parameters
+- **Using Java chat models in Python**: Use `ResourceName.ChatModel.JAVA_WRAPPER_CONNECTION` and `ResourceName.ChatModel.JAVA_WRAPPER_SETUP`, specifying the Java provider class via the `java_clazz` parameter
+- **Using Python chat models in Java**: Use `ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION` and `ResourceName.ChatModel.PYTHON_WRAPPER_SETUP`, specifying the Python provider via the `pythonClazz` parameter
 
 
 
@@ -784,13 +785,13 @@ class MyAgent(Agent):
     def java_chat_model_connection() -> ResourceDescriptor:
         # In pure Java, the equivalent ResourceDescriptor would be:
         # ResourceDescriptor.Builder
-        #     .newBuilder(Constant.OllamaChatModelConnection)
+        #     .newBuilder(ResourceName.ChatModel.OLLAMA_CONNECTION)
         #     .addInitialArgument("endpoint", "http://localhost:11434")
         #     .addInitialArgument("requestTimeout", 120)
         #     .build();
         return ResourceDescriptor(
-            clazz=Constant.JAVA_CHAT_MODEL_CONNECTION,
-            java_clazz="org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection",
+            clazz=ResourceName.ChatModel.JAVA_WRAPPER_CONNECTION,
+            java_clazz=ResourceName.ChatModel.Java.OLLAMA_CONNECTION,
             endpoint="http://localhost:11434",
             requestTimeout=120,
         )
@@ -801,7 +802,7 @@ class MyAgent(Agent):
     def java_chat_model() -> ResourceDescriptor:
         # In pure Java, the equivalent ResourceDescriptor would be:
         # ResourceDescriptor.Builder
-        #     .newBuilder(Constant.OllamaChatModelSetup)
+        #     .newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
         #     .addInitialArgument("connection", "java_chat_model_connection")
         #     .addInitialArgument("model", "qwen3:8b")
         #     .addInitialArgument("prompt", "my_prompt")
@@ -809,8 +810,8 @@ class MyAgent(Agent):
         #     .addInitialArgument("extractReasoning", true)
         #     .build();
         return ResourceDescriptor(
-            clazz=Constant.JAVA_CHAT_MODEL_SETUP,
-          	java_clazz="org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup",
+            clazz=ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
+          	java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
             connection="java_chat_model_connection",
             model="qwen3:8b",
             prompt="my_prompt",
@@ -847,13 +848,11 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor pythonChatModelConnection() {
         // In pure Python, the equivalent ResourceDescriptor would be:
         // ResourceDescriptor(
-        //     clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION,
+        //     clazz=ResourceName.ChatModel.OLLAMA_CONNECTION,
         //     request_timeout=120.0
         // )
-        return ResourceDescriptor.Builder.newBuilder(Constant.PYTHON_CHAT_MODEL_CONNECTION)
-                .addInitialArgument(
-                        "module", "flink_agents.integrations.chat_models.ollama_chat_model")
-                .addInitialArgument("clazz", "OllamaChatModelConnection")
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION)
+                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_CONNECTION)
                 .addInitialArgument("request_timeout", 120.0)
                 .build();
     }
@@ -862,16 +861,14 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor pythonChatModel() {
         // In pure Python, the equivalent ResourceDescriptor would be:
         // ResourceDescriptor(
-        //     clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+        //     clazz=ResourceName.ChatModel.OLLAMA_SETUP,
         //     connection="pythonChatModelConnection",
         //     model="qwen3:8b",
         //     tools=["tool1", "tool2"],
         //     extract_reasoning=True
         // )
-        return ResourceDescriptor.Builder.newBuilder(Constant.PYTHON_CHAT_MODEL_SETUP)
-                .addInitialArgument(
-                        "module", "flink_agents.integrations.chat_models.ollama_chat_model")
-                .addInitialArgument("clazz", "OllamaChatModelSetup")
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_SETUP)
+                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "pythonChatModelConnection")
                 .addInitialArgument("model", "qwen3:8b")
                 .addInitialArgument("tools", List.of("tool1", "tool2"))

@@ -1,4 +1,4 @@
----
+from python.flink_agents.api.resource import ResourceName---
 title: MCP
 weight: 9
 type: docs
@@ -40,7 +40,7 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def my_mcp_server() -> ResourceDescriptor:
         """Define MCP server connection."""
-        return ResourceDescriptor(clazz=Constant.MCP_SERVER, 
+        return ResourceDescriptor(clazz=ResourceName.MCP_SERVER, 
                                   endpoint="http://127.0.0.1:8000/mcp")
 ```
 {{< /tab >}}
@@ -51,7 +51,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @MCPServer
     public static ResourceDescriptor myMcp() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.MCP_SERVER)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", MCP_ENDPOINT)
                     .addInitialArgument("timeout", 30)
                     .build();
@@ -80,7 +80,7 @@ MCP servers can be configured with authentication:
 @staticmethod
 def authenticated_mcp_server() -> MCPServer:
     """Connect to MCP server with authentication."""
-    return ResourceDescriptor(clazz=Constant.MCP_SERVER, 
+    return ResourceDescriptor(clazz=ResourceName.MCP_SERVER, 
                               endpoint="http://api.example.com/mcp",
                               headers={"Authorization": "Bearer your-token"})
     # Or using Basic Authentication
@@ -97,7 +97,7 @@ def authenticated_mcp_server() -> MCPServer:
 @MCPServer
 public static org.apache.flink.agents.integrations.mcp.MCPServer authenticatedMcpServer() {
     // Using Bearer Token Authentication
-    return ResourceDescriptor.Builder.newBuilder(Constant.MCP_SERVER)
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", "http://api.example.com/mcp")
                     .addInitialArgument("timeout", 30)
                     .addInitialArgument("auth", new BearerTokenAuth("your-oauth-token"))
@@ -134,14 +134,14 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def review_mcp_server() -> ResourceDescriptor:
         """Connect to MCP server."""
-        return ResourceDescriptor(clazz=Constant.MCP_SERVER, 
+        return ResourceDescriptor(clazz=ResourceName.MCP_SERVER, 
                                   endpoint="http://127.0.0.1:8000/mcp")
 
     @chat_model_setup
     @staticmethod
     def review_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=OllamaChatModelSetup,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_server",
             model="qwen3:8b",
             # Reference MCP prompt by name like local prompt
@@ -158,7 +158,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @MCPServer
     public static ResourceDescriptor myMcp() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.MCP_SERVER)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", "http://127.0.0.1:8000/mcp")
                     .addInitialArgument("timeout", 30)
                     .build();
@@ -166,7 +166,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor reviewModel() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
                 .addInitialArgument("model", "qwen3:8b")
                 // Reference MCP prompt by name like local prompt

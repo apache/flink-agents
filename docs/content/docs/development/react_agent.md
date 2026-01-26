@@ -69,7 +69,7 @@ We use `ResourceDescriptor` to describe the chat model, includes chat model type
 {{< tab "Python" >}}
 ```python
 chat_model_descriptor = ResourceDescriptor(
-    clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+    clazz=ResourceName.ChatModel.OLLAMA_SETUP,
     connection="my_ollama_connection",
     model="qwen3:8b",
     tools=["my_tool1, my_tool2"],
@@ -80,7 +80,7 @@ chat_model_descriptor = ResourceDescriptor(
 {{< tab "Java" >}}
 ```java
 ResourceDescriptor chatModelDescriptor =
-                ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_SETUP)
+                ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                         .addInitialArgument("connection", "myOllamaConnection")
                         .addInitialArgument("model", "qwen3:8b")
                         .addInitialArgument(

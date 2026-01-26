@@ -59,7 +59,7 @@ Flink Agents provides decorators/annotations to simplify vector store setup with
 @staticmethod
 def my_vector_store() -> ResourceDescriptor:
     return ResourceDescriptor(
-        clazz=Constant.CHROMA_VECTOR_STORE,
+        clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
         embedding_model="embedding_model",
         collection="my_chroma_store"
     )
@@ -70,7 +70,7 @@ def my_vector_store() -> ResourceDescriptor:
 ```java
 @VectorStore
 public static ResourceDescriptor vectorStore() {
-    return ResourceDescriptor.Builder.newBuilder(Constant.ELASTICSEARCH_VECTOR_STORE)
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.ELASTICSEARCH_VECTOR_STORE)
             .addInitialArgument("embedding_model", "embeddingModel")
             .addInitialArgument("host", "http://localhost:9200")
             .addInitialArgument("index", "my_documents")
@@ -300,7 +300,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_EMBEDDING_MODEL_CONNECTION,
+            clazz=ResourceName.EmbeddingModel.OPENAI_CONNECTION,
             api_key="your-api-key-here"
         )
 
@@ -308,7 +308,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_embedding() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_EMBEDDING_MODEL_SETUP,
+            clazz=ResourceName.EmbeddingModel.OPENAI_SETUP,
             connection="openai_connection",
             model="your-embedding-model-here"
         )
@@ -318,7 +318,7 @@ class MyAgent(Agent):
     @staticmethod
     def chroma_store() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.CHROMA_VECTOR_STORE,
+            clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
             embedding_model="openai_embedding",
             collection="my_chroma_store"
         )
@@ -352,14 +352,14 @@ public class MyAgent extends Agent {
 
     @EmbeddingModelConnection
     public static ResourceDescriptor embeddingConnection() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_EMBEDDING_MODEL_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OLLAMA_CONNECTION)
                 .addInitialArgument("host", "http://localhost:11434")
                 .build();
     }
 
     @EmbeddingModelSetup
     public static ResourceDescriptor embeddingModel() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_EMBEDDING_MODEL_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "embeddingConnection")
                 .addInitialArgument("model", "nomic-embed-text")
                 .build();
@@ -367,7 +367,7 @@ public class MyAgent extends Agent {
 
     @VectorStore
     public static ResourceDescriptor vectorStore() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.ELASTICSEARCH_VECTOR_STORE)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.ELASTICSEARCH_VECTOR_STORE)
                 .addInitialArgument("embedding_model", "embeddingModel")
                 .addInitialArgument("host", "http://localhost:9200")
                 .addInitialArgument("index", "my_documents")
@@ -446,7 +446,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_EMBEDDING_MODEL_CONNECTION,
+            clazz=ResourceName.EmbeddingModel.OPENAI_CONNECTION,
             api_key="your-api-key-here"
         )
 
@@ -454,7 +454,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_embedding() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_EMBEDDING_MODEL_SETUP,
+            clazz=ResourceName.EmbeddingModel.OPENAI_SETUP,
             connection="openai_connection",
           model="your-embedding-model-here"
         )
@@ -464,7 +464,7 @@ class MyAgent(Agent):
     @staticmethod
     def chroma_store() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.CHROMA_VECTOR_STORE,
+            clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
             embedding_model="openai_embedding",
             persist_directory="/path/to/chroma/data",  # For persistent storage
             collection="my_documents",
@@ -491,7 +491,7 @@ ChromaDB supports multiple deployment modes:
 @staticmethod
 def chroma_store() -> ResourceDescriptor:
     return ResourceDescriptor(
-        clazz=Constant.CHROMA_VECTOR_STORE,
+        clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
         embedding_model="your_embedding_model",
         collection="my_documents"
         # No connection configuration needed for in-memory mode
@@ -504,7 +504,7 @@ def chroma_store() -> ResourceDescriptor:
 @staticmethod
 def chroma_store() -> ResourceDescriptor:
     return ResourceDescriptor(
-        clazz=Constant.CHROMA_VECTOR_STORE,
+        clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
         embedding_model="your_embedding_model",
         persist_directory="/path/to/chroma/data",
         collection="my_documents"
@@ -517,7 +517,7 @@ def chroma_store() -> ResourceDescriptor:
 @staticmethod
 def chroma_store() -> ResourceDescriptor:
     return ResourceDescriptor(
-        clazz=Constant.CHROMA_VECTOR_STORE,
+        clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
         embedding_model="your_embedding_model",
         host="your-chroma-server.com",
         port=8000,
@@ -531,7 +531,7 @@ def chroma_store() -> ResourceDescriptor:
 @staticmethod
 def chroma_store() -> ResourceDescriptor:
     return ResourceDescriptor(
-        clazz=Constant.CHROMA_VECTOR_STORE,
+        clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
         embedding_model="your_embedding_model",
         api_key="your-chroma-cloud-api-key",
         collection="my_documents"
@@ -585,7 +585,7 @@ Here's how to define an Elasticsearch vector store in your Java agent:
 ```java
 @VectorStore
 public static ResourceDescriptor vectorStore() {
-    return ResourceDescriptor.Builder.newBuilder(Constant.ELASTICSEARCH_VECTOR_STORE)
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.ELASTICSEARCH_VECTOR_STORE)
             .addInitialArgument("embedding_model", "embeddingModel")
             .addInitialArgument("host", "http://localhost:9200")
             .addInitialArgument("index", "my_documents")
@@ -616,8 +616,8 @@ Flink Agents supports cross-language vector store integration, allowing you to u
 
 To leverage vector store supports provided in a different language, you need to declare the resource within a built-in cross-language wrapper, and specify the target provider as an argument:
 
-- **Using Java vector stores in Python**: Use `Constant.JAVA_COLLECTION_MANAGEABLE_VECTOR_STORE`, specifying the Java provider class via the `java_clazz` parameter
-- **Using Python vector stores in Java**: Use `Constant.PYTHON_COLLECTION_MANAGEABLE_VECTOR_STORE`, specifying the Python provider via `module` and `clazz` parameters
+- **Using Java vector stores in Python**: Use `ResourceName.VectorStore.JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE`, specifying the Java provider class via the `java_clazz` parameter
+- **Using Python vector stores in Java**: Use `ResourceName.VectorStore.PYTHON_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE`, specifying the Python provider via the `pythonClazz` parameter
 
 ### Usage Example
 
@@ -647,15 +647,15 @@ class MyAgent(Agent):
     def java_vector_store() -> ResourceDescriptor:
         # In pure Java, the equivalent ResourceDescriptor would be:
         # ResourceDescriptor.Builder
-        #     .newBuilder(Constant.ElasticsearchVectorStore)
+        #     .newBuilder(ResourceName.VectorStore.ELASTICSEARCH_VECTOR_STORE)
         #     .addInitialArgument("embedding_model", "my_embedding_model")
         #     .addInitialArgument("host", "http://localhost:9200")
         #     .addInitialArgument("index", "my_documents")
         #     .addInitialArgument("dims", 768)
         #     .build();
         return ResourceDescriptor(
-            clazz=Constant.JAVA_COLLECTION_MANAGEABLE_VECTOR_STORE,
-            java_clazz="org.apache.flink.agents.integrations.vectorstores.elasticsearch.ElasticsearchVectorStore",
+            clazz=ResourceName.VectorStore.Java_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE,
+            java_clazz=ResourceName.VectorStore.Java.ELASTICSEARCH_VECTOR_STORE,
             embedding_model="my_embedding_model",
             host="http://localhost:9200",
             index="my_documents",
@@ -699,14 +699,11 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor pythonVectorStore() {
         // In pure Python, the equivalent ResourceDescriptor would be:
         // ResourceDescriptor(
-        //     clazz=Constant.CHROMA_VECTOR_STORE,
+        //     clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
         //     embedding_model="my_embedding_model",
         // )
-        return ResourceDescriptor.Builder.newBuilder(PYTHON_COLLECTION_MANAGEABLE_VECTOR_STORE)
-                .addInitialArgument(
-                        "module", 
-                        "flink_agents.integrations.vector_stores.chroma.chroma_vector_store")
-                .addInitialArgument("clazz", "ChromaVectorStore")
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.PYTHON_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE)
+                .addInitialArgument("pythonClazz", ResourceName.VectorStore.Python.CHROMA_VECTOR_STORE)
                 .addInitialArgument("embedding_model", "myEmbeddingModel")
                 .build();
     }
