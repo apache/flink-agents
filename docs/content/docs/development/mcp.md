@@ -1,4 +1,4 @@
-from python.flink_agents.api.resource import ResourceName---
+---
 title: MCP
 weight: 9
 type: docs
