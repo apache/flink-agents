@@ -86,6 +86,12 @@ public final class ResourceName {
             public static final String ANTHROPIC_SETUP =
                     "flink_agents.integrations.chat_models.anthropic.anthropic_chat_model.AnthropicChatModelSetup";
 
+            // Azure OpenAI
+            public static final String AZURE_OPENAI_CONNECTION =
+                    "flink_agents.integrations.chat_models.azure.azure_openai_chat_model.AzureOpenAIChatModelConnection";
+            public static final String AZURE_OPENAI_SETUP =
+                    "flink_agents.integrations.chat_models.azure.azure_openai_chat_model.AzureOpenAIChatModelSetup";
+
             // Ollama
             public static final String OLLAMA_CONNECTION =
                     "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelConnection";
