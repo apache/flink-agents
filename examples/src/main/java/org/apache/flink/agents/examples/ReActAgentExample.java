@@ -147,6 +147,7 @@ public class ReActAgentExample {
                 ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                         .addInitialArgument("connection", "ollamaChatModelConnection")
                         .addInitialArgument("model", "qwen3:8b")
+                        .addInitialArgument("think", false)
                         .addInitialArgument(
                                 "tools", Collections.singletonList("notifyShippingManager"))
                         .build(),

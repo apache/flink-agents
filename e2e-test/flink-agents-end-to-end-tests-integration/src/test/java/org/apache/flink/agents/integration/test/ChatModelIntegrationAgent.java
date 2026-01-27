@@ -104,6 +104,7 @@ public class ChatModelIntegrationAgent extends Agent {
             return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                     .addInitialArgument("connection", "chatModelConnection")
                     .addInitialArgument("model", OLLAMA_MODEL)
+                    .addInitialArgument("think", false)
                     .addInitialArgument(
                             "tools",
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
