@@ -167,15 +167,9 @@ review_analysis_res_stream.print()
 // Each element represents a ProductReview.
 DataStream<Row> productReviewStream =
         env.fromSource(
-                        FileSource.forRecordStreamFormat(
-                                        new TextLineFormat(),
-                                        new Path(
-                                                Objects.requireNonNull(
-                                                                ReActAgentExample.class
-                                                                        .getClassLoader()
-                                                                        .getResource(
-                                                                                "input_data.txt"))
-                                                        .getPath()))
+                FileSource.forRecordStreamFormat(
+                                new TextLineInputFormat(),
+                                new Path(inputDataFile.getAbsolutePath()))
                                 .monitorContinuously(Duration.ofMinutes(1))
                                 .build(),
                         WatermarkStrategy.noWatermarks(),
@@ -214,7 +208,7 @@ reviewAnalysisResStream.print();
 
 * Unix-like environment (we use Linux, Mac OS X, Cygwin, WSL)
 * Git
-* Java 11
+* Java 11+
 * Python 3.10 or 3.11
 
 ### Preparation
@@ -239,7 +233,7 @@ You can deploy a standalone Flink cluster in your local environment with the fol
 {{< tab "Python" >}}
 ```bash
 export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-./flink-1.20.3/bin/start-cluster.sh
+$FLINK_HOME/bin/start-cluster.sh
 ```
 {{< /tab >}}
 
@@ -247,7 +241,7 @@ export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["pu
 1. Build Flink Agents from source to generate example jar. See [installation]({{< ref "docs/get-started/installation" >}}) for more details.
 2. Start the Flink cluster
     ```bash
-    ./flink-1.20.3/bin/start-cluster.sh
+    $FLINK_HOME/bin/start-cluster.sh
     ```
 {{< /tab >}}
 
@@ -256,7 +250,7 @@ You can refer to the [local cluster](https://nightlies.apache.org/flink/flink-do
 
 
 {{< hint info >}}
-If you can't navigate to the web UI at [localhost:8081](localhost:8081), you can find the reason in `./flink-1.20.3/log`. If the reason is port conflict, you can change the port in `./flink-1.20.3/conf/config.yaml`.
+If you can't navigate to the web UI at [localhost:8081](localhost:8081), you can find the reason in `$FLINK_HOME/log`. If the reason is port conflict, you can change the port in `$FLINK_HOME/conf/config.yaml`.
 {{< /hint >}}
 
 #### Prepare Ollama
@@ -280,13 +274,13 @@ ollama run qwen3:8b
 export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
 
 # Run review analysis example
-./flink-1.20.3/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/react_agent_example.py
+$FLINK_HOME/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/react_agent_example.py
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```bash
-./flink-1.20.3/bin/flink run -c org.apache.flink.agents.examples.ReActAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
+$FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.ReActAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
 ```
 {{< /tab >}}
 
