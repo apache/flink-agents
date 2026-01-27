@@ -27,6 +27,11 @@ if [ -z "${RELEASE_VERSION:-}" ]; then
     exit 1
 fi
 
+if [ -z "${SHORT_NEXT_SNAPSHOT_VERSION:-}" ]; then
+    echo "SHORT_NEXT_SNAPSHOT_VERSION was not set."
+    exit 1
+fi
+
 CURR_DIR=`pwd`
 if [[ `basename $CURR_DIR` != "tools" ]] ; then
   echo "You have to call the script from the tools/ dir"
@@ -37,6 +42,7 @@ fi
 set -o errexit
 set -o nounset
 
+ci_file=../.github/workflows/docs.yml
 config_file=../docs/config.toml
 url_base="//nightlies.apache.org/flink/flink-agents-docs-release-"
 
@@ -58,7 +64,13 @@ git checkout main
 
 perl -pi -e "s#^  PreviousDocs = \[#  PreviousDocs = \[\n    \[\"${SHORT_RELEASE_VERSION}\", \"http:${url_base}${SHORT_RELEASE_VERSION}\"\],#" ${config_file}
 
-git commit -am "[release] Add ${SHORT_RELEASE_VERSION} to PreviousDocs"
+# Add new release branch to docs CI workflow
+perl -pi -e "s#^(        branch:\n(?:          - .+\n)*)#\${1}          - release-${SHORT_RELEASE_VERSION}\n#" ${ci_file}
+
+# Update flink_alias for main branch to next release version
+perl -pi -e "s#flink_alias=release-[0-9.]+#flink_alias=release-${SHORT_NEXT_SNAPSHOT_VERSION}#" ${ci_file}
+
+git commit -am "Update docs config for release-${SHORT_RELEASE_VERSION}"
 
 # Step 2: Create release branch (inherits PreviousDocs update from main)
 git checkout -b release-${SHORT_RELEASE_VERSION}
