@@ -40,24 +40,73 @@ In Flink Agents, embedding models are essential for:
 
 ## Getting Started
 
-To use embedding models in your agents, you need to define both a connection and setup using decorators, then access the embedding model through the runtime context.
+To use embedding models in your agents, you need to define both a connection and setup using decorators/annotations, then access the embedding model through the runtime context.
 
-### Resource Decorators
+### Resource Declaration
 
-Flink Agents provides decorators to simplify embedding model setup within agents:
+Flink Agents provides decorators(in python) and annotations(in java) to simplify embedding model setup within agents:
 
-#### @embedding_model_connection
+#### Declare an embedding model connection
 
-The `@embedding_model_connection` decorator marks a method that creates an embedding model connection.
+The **`@embedding_model_connection`** decorator/ **`@EmbeddingModelConnection`** annotation marks a method that creates an embedding model connection.
+This is typically defined once and shared across multiple embedding model setups.
 
-#### @embedding_model_setup
+{{< tabs "Declare an embedding model connection" >}}
 
-The `@embedding_model_setup` decorator marks a method that creates an embedding model setup.
+{{< tab "Python" >}}
+```python
+@embedding_model_connection
+@staticmethod
+def embedding_model_connection() -> ResourceDescriptor:
+    ...
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+@EmbeddingModelConnection
+public static ResourceDescriptor embeddingModelConnection() {
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Declare an embedding model setup
+
+The **`@embedding_model_setup`** decorator/ **`@EmbeddingModelSetup`** annotation marks a method that creates an embedding model setup.
+This references an embedding model connection and adds embed-specific configuration like model and dimensions.
+
+{{< tabs "Declare an embedding model setup" >}}
+
+{{< tab "Python" >}}
+```python
+@embedding_model_setup
+@staticmethod
+def embedding_model_setup() -> ResourceDescriptor:
+    ...
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+@EmbeddingModelSetup
+public static ResourceDescriptor embeddingModelSetup() {
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ### Usage Example
 
 Here's how to define and use embedding models in your agent:
 
+{{< tabs "Usage example" >}}
+
+{{< tab "Python" >}}
 ```python
 class MyAgent(Agent):
     
@@ -93,6 +142,48 @@ class MyAgent(Agent):
         # Handle the embedding
         # Process the embedding vector as needed for your use case
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    
+    @EmbeddingModelConnection
+    public static ResourceDescriptor ollamaConnection() {
+        return ResourceDescriptor.Builder.newBuilder(
+                        ResourceName.EmbeddingModel.OLLAMA_CONNECTION)
+                .addInitialArgument("host", "http://localhost:11434")
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor ollamaEmbedding() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OLLAMA_SETUP)
+                .addInitialArgument("connection", "ollamaConnection")
+                .addInitialArgument("model", "nomic-embed-text")
+                .build();
+    }
+
+    @Action(listenEvents = {InputEvent.class})
+    public static void processText(InputEvent event, RunnerContext ctx)
+            throws Exception {
+        // Get the embedding model from the runtime context
+        BaseEmbeddingModelSetup embeddingModel =
+                (BaseEmbeddingModelSetup)
+                        ctx.getResource("embeddingModel", ResourceType.EMBEDDING_MODEL);
+
+        // Use the embedding model to generate embeddings
+        String input = (String) event.getInput();
+        float[] embedding = embeddingModel.embed(input);
+
+        // Handle the embedding
+        // Process the embedding vector as needed for your use case
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ## Built-in Providers
 
@@ -108,22 +199,59 @@ Ollama provides local embedding models that run on your machine, offering privac
 
 #### OllamaEmbeddingModelConnection Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `base_url` | str | `"http://localhost:11434"` | Ollama server URL |
-| `request_timeout` | float | `30.0` | HTTP request timeout in seconds |
+{{< tabs "OllamaEmbeddingModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter         | Type  | Default                    | Description                     |
+|-------------------|-------|----------------------------|---------------------------------|
+| `base_url`        | str   | `"http://localhost:11434"` | Ollama server URL               |
+| `request_timeout` | float | `30.0`                     | HTTP request timeout in seconds |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type   | Default                    | Description                         |
+|-----------|--------|----------------------------|-------------------------------------|
+| `host`    | String | `"http://localhost:11434"` | Ollama server URL                   |
+| `model`   | String | `nomic-embed-text`         | Name of the default embedding model |
+
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### OllamaEmbeddingModelSetup Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `connection` | str | Required | Reference to connection method name |
-| `model` | str | Required | Name of the embedding model to use |
-| `truncate` | bool | `True` | Whether to truncate text exceeding model limits |
-| `keep_alive` | str/float | `"5m"` | How long to keep model loaded in memory |
-| `additional_kwargs` | dict | `{}` | Additional Ollama API parameters |
+{{< tabs "OllamaEmbeddingModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter           | Type      | Default  | Description                                     |
+|---------------------|-----------|----------|-------------------------------------------------|
+| `connection`        | str       | Required | Reference to connection method name             |
+| `model`             | str       | Required | Name of the embedding model to use              |
+| `truncate`          | bool      | `True`   | Whether to truncate text exceeding model limits |
+| `keep_alive`        | str/float | `"5m"`   | How long to keep model loaded in memory         |
+| `additional_kwargs` | dict      | `{}`     | Additional Ollama API parameters                |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter           | Type   | Default  | Description                                     |
+|---------------------|--------|----------|-------------------------------------------------|
+| `connection`        | String | Required | Reference to connection method name             |
+| `model`             | String | Required | Name of the embedding model to use              |
+
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### Usage Example
+{{< tabs "Ollama Usage Example" >}}
+
+{{< tab "Python" >}}
 
 ```python
 class MyAgent(Agent):
@@ -150,6 +278,34 @@ class MyAgent(Agent):
 
     ...
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    
+    @EmbeddingModelConnection
+    public static ResourceDescriptor ollamaConnection() {
+        return ResourceDescriptor.Builder.newBuilder(
+                        ResourceName.EmbeddingModel.OLLAMA_CONNECTION)
+                .addInitialArgument("host", "http://localhost:11434")
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor ollamaEmbedding() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OLLAMA_SETUP)
+                .addInitialArgument("connection", "ollamaConnection")
+                .addInitialArgument("model", "nomic-embed-text")
+                .build();
+    }
+    
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### Available Models
 
@@ -289,7 +445,7 @@ class MyAgent(Agent):
         #     .build();
         return ResourceDescriptor(
             clazz=ResourceName.EmbeddingModel.JAVA_WRAPPER_SETUP,
-            java_clazz=ResourceName.EmbeddingModel.Java.OLLAMA_Setup,
+            java_clazz=ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,
             connection="java_embedding_connection",
             model="nomic-embed-text"
         )
@@ -366,11 +522,15 @@ If you want to use embedding models not offered by the built-in providers, you c
 ### BaseEmbeddingModelConnection
 
 Handles the connection to embedding services and provides the core embedding functionality.
+{{< tabs "Custom Embedding Connection" >}}
+
+{{< tab "Python" >}}
 
 ```python
 class MyEmbeddingConnection(BaseEmbeddingModelConnection):
     
-    def embed(self, text: str, **kwargs) -> list[float]:
+    @abstractmethod
+    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
         # Core method: convert text to embedding vector
         # - text: Input text to embed
         # - kwargs: Additional parameters from model_kwargs
@@ -378,11 +538,44 @@ class MyEmbeddingConnection(BaseEmbeddingModelConnection):
         pass
 ```
 
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyEmbeddingConnection extends BaseEmbeddingModelConnection {
+
+    @Override
+    public float[] embed(String text, Map<String, Object> parameters) {
+        // Core method: convert text to embedding vector
+        // - text: Input text to embed
+        // - parameters: Additional parameters
+        // - Returns: Float array representing the embedding
+        float[] embedding = ...;
+        return embedding;
+    }
+
+    @Override
+    public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
+        // Core method: convert texts to embedding vectors
+        // - text: Input texts to embed
+        // - parameters: Additional parameters
+        // - Returns: List of float array representing the embeddings
+        List<float[]> embeddings = ...;
+        return embeddings;
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
 ### BaseEmbeddingModelSetup
 
 The setup class acts as a high-level configuration interface that defines which connection to use and how to configure the embedding model.
 
+{{< tabs "Custom Embedding Setup" >}}
 
+{{< tab "Python" >}}
 ```python
 class MyEmbeddingSetup(BaseEmbeddingModelSetup):
     # Add your custom configuration fields here
@@ -393,3 +586,28 @@ class MyEmbeddingSetup(BaseEmbeddingModelSetup):
         # This dictionary is passed as **kwargs to the embed() method
         return {"model": self.model, ...}
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyEmbeddingSetup extends BaseEmbeddingModelSetup {
+    
+    @Override
+    public Map<String, Object> getParameters() {
+        // Return model-specific configuration passed to embed()
+        // This dictionary is passed as parameters to the embed() method
+        Map<String, Object> parameters = new HashMap<>();
+
+        if (model != null) {
+            parameters.put("model", model);
+        }
+        ...
+
+        return parameters;
+    }
+    
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
