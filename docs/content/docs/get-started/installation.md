@@ -168,7 +168,7 @@ For developing Flink Agents applications in Java, add the following dependencies
 {{< hint info >}}
 All the above dependencies should be in provided scope, to avoid potential conflict with the Flink cluster.
 
-For execution in IDE, enable the feature `add dependencies with provided scope to classpath` in your IDE. See [FAQ]({{< ref "docs/faq/faq/#q4-how-to-run-agent-in-ide" >}}) for details. 
+For execution in IDE, enable the feature `add dependencies with provided scope to classpath` in your IDE. See [FAQ]({{< ref "docs/faq/faq#q4-how-to-run-agent-in-ide" >}}) for details. 
 {{< /hint >}}
 
 **Example `pom.xml`**
