@@ -427,19 +427,22 @@ Ollama provides local chat models that run on your machine, offering privacy, co
 | `temperature`       | float                                    | `0.75`   | Sampling temperature (0.0 to 1.0)               |
 | `num_ctx`           | int                                      | `2048`   | Maximum number of context tokens                |
 | `keep_alive`        | str \| float                             | `"5m"`   | How long to keep model loaded in memory         |
-| `extract_reasoning` | bool                                     | `True`   | Extract reasoning content from response         |
-| `additional_kwargs` | dict                                     | `{}`     | Additional Ollama API parameters                |
 | `think`             | bool \| Literal["low", "medium", "high"] | True     | Whether enable model think                      |
+| `extract_reasoning` | bool                                     | True     | Extract reasoning content from response         |
+| `additional_kwargs` | dict                                     | `{}`     | Additional Ollama API parameters                |
 {{< /tab >}}
 
 {{< tab "Java" >}}
 
-| Parameter | Type             | Default | Description |
-|-----------|------------------|---------|-------------|
-| `connection` | String           | Required | Reference to connection method name |
-| `model` | String           | Required | Name of the chat model to use |
-| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
-| `tools` | List[String]     | None | List of tool names available to the model |
+| Parameter           | Type                                        | Default  | Description                                     |
+|---------------------|---------------------------------------------|----------|-------------------------------------------------|
+| `connection`        | String                                      | Required | Reference to connection method name             |
+| `model`             | String                                      | Required | Name of the chat model to use                   |
+| `prompt`            | Prompt \| String                            | None     | Prompt template or reference to prompt resource |
+| `tools`             | List[String]                                | None     | List of tool names available to the model       |
+| `think`             | Boolean \| Literal["low", "medium", "high"] | true     | Whether enable model think                      |
+| `extract_reasoning` | Boolean                                     | true     | Extract reasoning content from response         |
+
 {{< /tab >}}
 
 {{< /tabs >}}
@@ -471,6 +474,7 @@ class MyAgent(Agent):
             temperature=0.7,
             num_ctx=4096,
             keep_alive="10m",
+            think=True,
             extract_reasoning=True
         )
 
@@ -494,6 +498,7 @@ public class MyAgent extends Agent {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaConnection")
                 .addInitialArgument("model", "qwen3:8b")
+                .addInitialArgument("extract_reasoning", true)
                 .build();
     }
     
@@ -831,7 +836,7 @@ class MyAgent(Agent):
     @staticmethod
     def tongyi_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.Python.TONGYI_SETUP,
+            clazz=ResourceName.ChatModel.TONGYI_SETUP,
             connection="tongyi_connection",
             model="qwen-plus",
             temperature=0.7,
