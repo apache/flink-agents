@@ -72,7 +72,7 @@ chat_model_descriptor = ResourceDescriptor(
     clazz=ResourceName.ChatModel.OLLAMA_SETUP,
     connection="my_ollama_connection",
     model="qwen3:8b",
-    tools=["my_tool1, my_tool2"],
+    tools=["my_tool1", "my_tool2"],
 )
 ```
 {{< /tab >}}
@@ -209,7 +209,7 @@ public static class MyBaseModelDataType {
     private final List<String> reasons;
 
     @JsonCreator
-    public ProductReviewAnalysisRes(
+    public MyBaseModelDataType(
             @JsonProperty("id") String id,
             @JsonProperty("score") int score,
             @JsonProperty("reasons") List<String> reasons) {
@@ -218,7 +218,7 @@ public static class MyBaseModelDataType {
         this.reasons = reasons;
     }
 
-    public ProductReviewAnalysisRes() {
+    public MyBaseModelDataType() {
         id = null;
         score = 0;
         reasons = List.of();
@@ -239,7 +239,7 @@ public static class MyBaseModelDataType {
     @Override
     public String toString() {
         return String.format(
-                "ProductReviewAnalysisRes{id='%s', score=%d, reasons=%s}", id, score, reasons);
+                "MyBaseModelDataType{id='%s', score=%d, reasons=%s}", id, score, reasons);
     }
 }
 

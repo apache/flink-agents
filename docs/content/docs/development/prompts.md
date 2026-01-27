@@ -156,7 +156,7 @@ review_analysis_prompt = Prompt.from_messages(
 {{< tab "Java" >}}
 ```java
 Prompt reviewAnalysisPrompt =
-        new Prompt.fromMessages(
+        Prompt.fromMessages(
                 Arrays.asList(
                         new ChatMessage(
                                 MessageRole.SYSTEM,
@@ -236,7 +236,7 @@ class ReviewAnalysisAgent(Agent):
     def review_analysis_model() -> ResourceDescriptor:
         """ChatModel which focus on review analysis."""
         return ResourceDescriptor(
-            clazz=OllamaChatModelSetup,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_server",
             model="qwen3:8b",
             prompt="review_analysis_prompt",
@@ -267,7 +267,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @Prompt
     public static org.apache.flink.agents.api.prompt.Prompt reviewAnalysisPrompt() {
-        return new org.apache.flink.agents.api.prompt.Prompt(
+        return Prompt.fromMessages(
                 Arrays.asList(
                         new ChatMessage(
                                 MessageRole.SYSTEM,
@@ -291,7 +291,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor reviewAnalysisModel() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
                 .addInitialArgument("model", "qwen3:8b")
                 .addInitialArgument("prompt", "reviewAnalysisPrompt")

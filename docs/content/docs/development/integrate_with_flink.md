@@ -75,7 +75,7 @@ output_stream.print()
 {{< tab "Java" >}}
 ```java
 // create input datastream
-DataStream<String> inputStream = env.fromSource(...);
+DataStream<YourPojo> inputStream = env.fromSource(...);
 
 // integrate agent with input datastream, and return output datastream
 DataStream<Object> outputStream =
@@ -172,7 +172,7 @@ Table outputTable =
 {{< /tabs >}}
 
 
-User should provide `KeySelector` in `from_table()` to tell how to convert the input `Table` to `KeyedStream` internally. And provide `Schema` and `TypeInfomation` in `to_table()` to tell the output `Table` schema.
+User should provide `KeySelector` in `from_table()` to tell how to convert the input `Table` to `KeyedStream` internally. And provide `Schema` and `TypeInformation` in `to_table()` to tell the output `Table` schema.
 {{< hint info >}}
 Currently, user should provide both `Schema` and `TypeInformation` when call `to_table()`, we will support only provide one of them in the future.
 {{< /hint >}}
