@@ -52,6 +52,7 @@ agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 # and ProductSuggestionAgent.
 agents_env.add_resource(
     "ollama_server",
+    ResourceType.CHAT_MODEL_CONNECTION,
     ollama_server_descriptor,
 )
 ```
@@ -362,7 +363,7 @@ You can deploy a standalone Flink cluster in your local environment with the fol
 {{< tab "Python" >}}
 ```bash
 export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-./flink-1.20.3/bin/start-cluster.sh
+$FLINK_HOME/bin/start-cluster.sh
 ```
 {{< /tab >}}
 
@@ -370,7 +371,7 @@ export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["pu
 1. Build Flink Agents from source to generate example jar. See [installation]({{< ref "docs/get-started/installation" >}}) for more details.
 2. Start the Flink cluster
     ```bash
-    ./flink-1.20.3/bin/start-cluster.sh
+    $FLINK_HOME/bin/start-cluster.sh
     ```
 {{< /tab >}}
 
@@ -379,7 +380,7 @@ You can refer to the [local cluster](https://nightlies.apache.org/flink/flink-do
 
 
 {{< hint info >}}
-If you can't navigate to the web UI at [localhost:8081](localhost:8081), you can find the reason in `./flink-1.20.3/log`. If the reason is port conflict, you can change the port in `./flink-1.20.3/conf/config.yaml`.
+If you can't navigate to the web UI at [localhost:8081](localhost:8081), you can find the reason in `$FLINK_HOME/log`. If the reason is port conflict, you can change the port in `$FLINK_HOME/conf/config.yaml`.
 {{< /hint >}}
 
 #### Prepare Ollama
@@ -403,20 +404,20 @@ ollama run qwen3:8b
 export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
 
 # Run review analysis example
-./flink-1.20.3/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/workflow_single_agent_example.py
+$FLINK_HOME/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/workflow_single_agent_example.py
 
 # Run product suggestion example
-./flink-1.20.3/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/workflow_multiple_agent_example.py
+$FLINK_HOME/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/workflow_multiple_agent_example.py
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```bash
 # Run review analysis example
-./flink-1.20.3/bin/flink run -c org.apache.flink.agents.examples.WorkflowSingleAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
+$FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.WorkflowSingleAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
 
 # Run product suggestion example
-./flink-1.20.3/bin/flink run -c org.apache.flink.agents.examples.WorkflowMultipleAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
+$FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.WorkflowMultipleAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
 ```
 {{< /tab >}}
 
