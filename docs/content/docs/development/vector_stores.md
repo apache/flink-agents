@@ -654,7 +654,7 @@ class MyAgent(Agent):
         #     .addInitialArgument("dims", 768)
         #     .build();
         return ResourceDescriptor(
-            clazz=ResourceName.VectorStore.Java_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE,
+            clazz=ResourceName.VectorStore.JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE,
             java_clazz=ResourceName.VectorStore.Java.ELASTICSEARCH_VECTOR_STORE,
             embedding_model="my_embedding_model",
             host="http://localhost:9200",

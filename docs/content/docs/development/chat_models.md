@@ -914,7 +914,7 @@ class MyAgent(Agent):
         #     .build();
         return ResourceDescriptor(
             clazz=ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
-          	java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
+            java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
             connection="java_chat_model_connection",
             model="qwen3:8b",
             prompt="my_prompt",
