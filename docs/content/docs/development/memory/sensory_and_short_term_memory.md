@@ -124,7 +124,7 @@ public static void processEvent(InputEvent event, RunnerContext ctx) throws Exce
     WordWithCount value3 = (WordWithCount) memory.get("pojo").getValue();
     Prompt value4 = (Prompt) memory.get("object").getValue();
     MemoryObject value5 = memory.get("obj1");
-    String value6 = value5.get("field1");
+    String value6 = (String) value5.get("field1").getValue();
 }
 ```
 {{< /tab >}}
@@ -171,17 +171,17 @@ MemoryObject user = memory.newObject("user", true);
 user.set("name", "john");
 user.set("age", 13);
 
-user = sensoryMemory.get("user");
+user = memory.get("user");
 String name = (String) user.get("name").getValue();
 int age = (int) user.get("age").getValue();
 
 // access fields from an outer memory object with paths to the fields
 // any missing intermediate objects (here is user) will be created automatically.
-sensoryMemory.set("user.name", "john");
-sensoryMemory.set("user.age", 13);
+memory.set("user.name", "john");
+memory.set("user.age", 13);
 
-name = (String) sensoryMemory.get("user.name").getValue();
-age = (int) sensoryMemory.get("user.age").getValue();
+name = (String) memory.get("user.name").getValue();
+age = (int) memory.get("user.age").getValue();
 ```
 {{< /tab >}}
 
@@ -229,16 +229,16 @@ public static void firstAction(Event event, RunnerContext ctx) throws Exception 
     MemoryObject sensoryMemory = ctx.getSensoryMemory();
 
     MemoryRef dataRef = sensoryMemory.set(dataPath, dataToStore);
-    ctx.send_event(new MyEvent(dataRef));
+    ctx.sendEvent(new MyEvent(dataRef));
     ...
 }
 
 @Action(listenEvents = {MyEvent.class})
 public static void secondAction(Event event, RunnerContext ctx) throws Exception {
     ...
-    MemoryObject sensoryMemory = ctx.getSensoryTermMemory();
+    MemoryObject sensoryMemory = ctx.getSensoryMemory();
 
-    ProcessedData processedData = (ProcessedData) ctx.getSensoryTermMemory()
+    ProcessedData processedData = (ProcessedData) ctx.getSensoryMemory()
                                                      .get(event.getValue())
                                                      .getValue();
     // or
