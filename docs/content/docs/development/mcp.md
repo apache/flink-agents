@@ -78,7 +78,7 @@ MCP servers can be configured with authentication:
 ```python
 @mcp_server
 @staticmethod
-def authenticated_mcp_server() -> MCPServer:
+def authenticated_mcp_server() -> ResourceDescriptor:
     """Connect to MCP server with authentication."""
     return ResourceDescriptor(clazz=ResourceName.MCP_SERVER, 
                               endpoint="http://api.example.com/mcp",
@@ -95,7 +95,7 @@ def authenticated_mcp_server() -> MCPServer:
 {{< tab "Java" >}}
 ```java
 @MCPServer
-public static org.apache.flink.agents.integrations.mcp.MCPServer authenticatedMcpServer() {
+public static ResourceDescriptor authenticatedMcpServer() {
     // Using Bearer Token Authentication
     return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", "http://api.example.com/mcp")
