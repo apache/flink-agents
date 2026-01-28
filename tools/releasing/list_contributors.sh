@@ -29,4 +29,4 @@ elif [ "$#" -eq 2 ]; then
   log_range=("${1}..${2}")
 fi
 
-{ git log --pretty=format:'%an' "${log_range[@]}"; git log --pretty=format:%B "${log_range[@]}" | awk '/^[Cc]o-authored-by:/ { sub(/[^:]+:/, ""); sub(/^ */, ""); sub(/ <[^>]+>$/, ""); print }'; } | sort -u | awk 'NR==1{printf "%s", $0; next} {printf ", %s", $0} END{print ""}'
+{ git log --pretty=format:'%an' "${log_range[@]}"; echo; git log --pretty=format:%B "${log_range[@]}" | awk '/^[Cc]o-authored-by:/ { sub(/[^:]+:/, ""); sub(/^ */, ""); sub(/ <[^>]+>$/, ""); print }'; } | sort -u | awk 'NR==1{printf "%s", $0; next} {printf ", %s", $0} END{print ""}'
