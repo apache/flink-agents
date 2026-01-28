@@ -61,13 +61,37 @@ To use cross-language resources, please test the functionality by deploying to a
 
 ## Q3: Should I choose Java or Python?
 
-When choosing between Flink Agents' Java API and Python API, besides the team's experience and preferences, there's another thing needs to be considered. Flink Agents provides built-in integration supports for many echosystem providers. Some of these supports are in only one language. While you can still use them when building agents in another language, leveraging Flink Agents' cross-language supports, this comes with a limitation of not supporting async execution, which may bring performance concerns. 
+When choosing between Flink Agents' Java API and Python API, consider the following factors:
 
-The following matrix shows the native integration support status of providers over languages. For those marked as ❌, cross-language is needed thus async execution is not supported.
+1. **Team experience and preferences**
+2. **JDK version** (for Java users)
+3. **Integration supports**
+
+### Understanding Async Execution and JDK Versions
+
+Async execution can significantly improve performance by allowing multiple operations to run concurrently. However, async execution support varies by language and JDK version:
+
+| Environment | Async Execution Support |
+|-------------|------------------------|
+| Python | ✅ Supported |
+| Java (JDK 21+) | ✅ Supported (via Continuation API) |
+| Java (JDK < 21) | ❌ Not supported (falls back to synchronous execution) |
+
+> **Cross-language async limitation**: When using cross-language resources (e.g., calling Java integrations from Python or vice versa), async execution is not supported. Cross-language calls always execute synchronously regardless of your JDK version.
+
+This is important because:
+
+- **For Python users**: Async execution is always available.
+- **For Java users on JDK 21+**: Async execution is available, so using native integrations (instead of cross-language) matters for performance.
+- **For Java users on JDK < 21**: Async execution is **not available regardless of whether you use native or cross-language integrations**. Therefore, the cross-language async limitation has **no additional performance impact** for these users.
+
+### Native Integration Support Matrix
+
+Flink Agents provides built-in integrations for many ecosystem providers. Some integrations are only available in one language. For those marked as ❌, you can still use them from the other language via cross-language support, but cross-language calls do not support async execution.
 
 **Chat Models**
 
-| provider | Python | Java |
+| Provider | Python | Java |
 |---|---|---|
 | [OpenAI]({{< ref "docs/development/chat_models#openai" >}}) | ✅ | ✅ |
 | [Anthropic]({{< ref "docs/development/chat_models#anthropic" >}}) | ✅ | ❌ |
@@ -77,25 +101,25 @@ The following matrix shows the native integration support status of providers ov
 
 **Embedding Models**
 
-| provider | Python | Java |
+| Provider | Python | Java |
 |---|---|---|
 | [OpenAI]({{< ref "docs/development/embedding_models#openai" >}}) | ✅ | ❌ |
 | [Ollama]({{< ref "docs/development/embedding_models#ollama" >}}) | ✅ | ✅ |
 
 **Vector Stores**
 
-| provider | Python | Java |
+| Provider | Python | Java |
 |---|---|---|
 | [Chroma]({{< ref "docs/development/vector_stores#chroma" >}}) | ✅ | ❌ |
 | [Elasticsearch]({{< ref "docs/development/vector_stores#elasticsearch" >}}) | ❌ | ✅ |
 
 **MCP Server**
 
-| provider | Python | Java 17+ | Java 11-16 |
-|---|---|---|---|
-| [MCP Server]({{< ref "docs/development/mcp" >}}) | ✅ | ✅ | ❌ |
+| Provider | Python | Java |
+|---|---|---|
+| [MCP Server]({{< ref "docs/development/mcp" >}}) | ✅ | ✅ |
 
-Java native MCP support requires **JDK 17+**. See [MCP]({{< ref "docs/development/mcp" >}}) for details.
+> **Note**: Java native MCP support requires **JDK 17+**. For JDK 11-16, the framework automatically uses the Python SDK via cross-language support, which works seamlessly without additional configuration. See [MCP]({{< ref "docs/development/mcp" >}}) for details.
 
 ## Q4: How to run agent in IDE.
 
