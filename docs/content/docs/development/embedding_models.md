@@ -25,7 +25,7 @@ under the License.
 # Embedding Models
 
 {{< hint info >}}
-This page covers text-based embedding models. Flink agents does not currently support multimodal embeddings.
+This page covers text-based embedding models. Flink Agents does not currently support multimodal embeddings.
 {{< /hint >}}
 
 ## Overview

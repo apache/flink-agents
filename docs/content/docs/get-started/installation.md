@@ -192,7 +192,7 @@ For execution in IDE, enable the feature `add dependencies with provided scope t
         <groupId>org.apache.flink</groupId>
         <artifactId>flink-agents-api</artifactId>
         <version>${flink-agents.version}</version>
-        <scope>provide</scope>
+        <scope>provided</scope>
     </dependency>
     <!-- Flink Core API -->
     <dependency>
