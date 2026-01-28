@@ -63,7 +63,7 @@ To use cross-language resources, please test the functionality by deploying to a
 
 When choosing between Flink Agents' Java API and Python API, besides the team's experience and preferences, there's another thing needs to be considered. Flink Agents provides built-in integration supports for many echosystem providers. Some of these supports are in only one language. While you can still use them when building agents in another language, leveraging Flink Agents' cross-language supports, this comes with a limitation of not supporting async execution, which may bring performance concerns. 
 
-The following matrix shows the native integration support status of providers over languages. For those marked as ❌, cross-langauge is needed thus async execution is not supported.
+The following matrix shows the native integration support status of providers over languages. For those marked as ❌, cross-language is needed thus async execution is not supported.
 
 **Chat Models**
 

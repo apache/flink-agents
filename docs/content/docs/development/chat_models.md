@@ -468,7 +468,7 @@ class MyAgent(Agent):
     @staticmethod
     def my_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_connection",
             model="qwen3:8b",
             temperature=0.7,
