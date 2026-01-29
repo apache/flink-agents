@@ -568,4 +568,4 @@ def create_async_thread_pool(max_workers: int | None) -> ThreadPoolExecutor:
 
 def close_async_thread_pool(executor: ThreadPoolExecutor) -> None:
     """Used to close the thread pool."""
-    executor.shutdown()
+    executor.shutdown(cancel_futures=True)
