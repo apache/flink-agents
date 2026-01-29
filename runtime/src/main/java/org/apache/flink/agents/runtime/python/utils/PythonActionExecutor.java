@@ -17,6 +17,10 @@
  */
 package org.apache.flink.agents.runtime.python.utils;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
@@ -65,7 +69,7 @@ public class PythonActionExecutor {
             "python_java_utils.get_output_from_output_event";
 
     private final PythonInterpreter interpreter;
-    private final String agentPlanJson;
+    private final AgentPlan agentPlan;
     private final PythonRunnerContextImpl runnerContext;
     private final JavaResourceAdapter javaResourceAdapter;
     private final String jobIdentifier;
@@ -74,12 +78,13 @@ public class PythonActionExecutor {
 
     public PythonActionExecutor(
             PythonInterpreter interpreter,
-            String agentPlanJson,
+            AgentPlan agentPlan,
             JavaResourceAdapter javaResourceAdapter,
             PythonRunnerContextImpl runnerContext,
-            String jobIdentifier) {
+            String jobIdentifier)
+            throws JsonProcessingException {
         this.interpreter = interpreter;
-        this.agentPlanJson = agentPlanJson;
+        this.agentPlan = agentPlan;
         this.runnerContext = runnerContext;
         this.javaResourceAdapter = javaResourceAdapter;
         this.jobIdentifier = jobIdentifier;
@@ -88,14 +93,18 @@ public class PythonActionExecutor {
     public void open() throws Exception {
         interpreter.exec(PYTHON_IMPORTS);
 
-        pythonAsyncThreadPool = (PyObject) interpreter.invoke(CREATE_ASYNC_THREAD_POOL);
+        pythonAsyncThreadPool =
+                (PyObject)
+                        interpreter.invoke(
+                                CREATE_ASYNC_THREAD_POOL,
+                                agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS));
 
         pythonRunnerContext =
                 (PyObject)
                         interpreter.invoke(
                                 CREATE_FLINK_RUNNER_CONTEXT,
                                 runnerContext,
-                                agentPlanJson,
+                                new ObjectMapper().writeValueAsString(agentPlan),
                                 pythonAsyncThreadPool,
                                 javaResourceAdapter,
                                 jobIdentifier);

@@ -558,11 +558,12 @@ def close_flink_runner_context(
     ctx.close()
 
 
-def create_async_thread_pool() -> ThreadPoolExecutor:
+def create_async_thread_pool(max_workers: int | None) -> ThreadPoolExecutor:
     """Used to create a thread pool to execute asynchronous
     code block in action.
     """
-    return ThreadPoolExecutor(max_workers=os.cpu_count() * 2)
+    logging.info(f"Initialize fixed thread pool for async task with {max_workers} threads")
+    return ThreadPoolExecutor(max_workers=max_workers or os.cpu_count() * 2)
 
 
 def close_async_thread_pool(executor: ThreadPoolExecutor) -> None:

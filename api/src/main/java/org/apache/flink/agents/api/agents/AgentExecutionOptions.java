@@ -30,7 +30,12 @@ public class AgentExecutionOptions {
     public static final ConfigOption<Integer> MAX_RETRIES =
             new ConfigOption<>("max-retries", Integer.class, 3);
 
-    // Async execution is supported on jdk >= 21, so set default false here.
+    public static final ConfigOption<Integer> NUM_ASYNC_THREADS =
+            new ConfigOption<>(
+                    "num-async-threads",
+                    Integer.class,
+                    Runtime.getRuntime().availableProcessors() * 2);
+
     public static final ConfigOption<Boolean> CHAT_ASYNC =
             new ConfigOption<>("chat.async", Boolean.class, true);
 

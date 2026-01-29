@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import os
 from enum import Enum
 from typing import Any
 
@@ -104,6 +105,12 @@ class AgentExecutionOptions:
         key="max-retries",
         config_type=int,
         default=3,
+    )
+
+    NUM_ASYNC_THREADS = ConfigOption(
+        key="num-async-threads",
+        config_type=int,
+        default=os.cpu_count() * 2,
     )
 
     CHAT_ASYNC = ConfigOption(

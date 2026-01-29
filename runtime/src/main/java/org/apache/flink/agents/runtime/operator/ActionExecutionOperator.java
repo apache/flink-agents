@@ -17,11 +17,11 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
@@ -315,7 +315,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         initPythonEnvironment();
 
         // init executor for Java async execution
-        continuationActionExecutor = new ContinuationActionExecutor();
+        continuationActionExecutor =
+                new ContinuationActionExecutor(
+                        agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS));
 
         mailboxProcessor = getMailboxProcessor();
 
@@ -652,7 +654,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         pythonActionExecutor =
                 new PythonActionExecutor(
                         pythonInterpreter,
-                        new ObjectMapper().writeValueAsString(agentPlan),
+                        agentPlan,
                         javaResourceAdapter,
                         pythonRunnerContext,
                         jobIdentifier);
@@ -1055,7 +1057,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (isJava) {
             if (runnerContext == null) {
                 if (continuationActionExecutor == null) {
-                    continuationActionExecutor = new ContinuationActionExecutor();
+                    continuationActionExecutor =
+                            new ContinuationActionExecutor(
+                                    agentPlan
+                                            .getConfig()
+                                            .get(AgentExecutionOptions.NUM_ASYNC_THREADS));
                 }
                 runnerContext =
                         new JavaRunnerContextImpl(
