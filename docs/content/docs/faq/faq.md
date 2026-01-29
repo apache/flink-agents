@@ -97,6 +97,7 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 | [Anthropic]({{< ref "docs/development/chat_models#anthropic" >}}) | ✅ | ❌ |
 | [Ollama]({{< ref "docs/development/chat_models#ollama" >}}) | ✅ | ✅ |
 | [Tongyi (DashScope)]({{< ref "docs/development/chat_models#tongyi-dashscope" >}}) | ✅ | ❌ |
+| [OpenAI (Azure)]({{< ref "docs/development/chat_models#openai-azure" >}}) | ✅ | ❌ |
 | [Azure AI]({{< ref "docs/development/chat_models#azure-ai" >}}) | ❌ | ✅ |
 
 **Embedding Models**

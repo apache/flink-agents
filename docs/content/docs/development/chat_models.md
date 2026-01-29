@@ -144,10 +144,14 @@ public class MyAgent extends Agent {
 
 ### Azure AI
 
-Azure AI provides cloud-based chat models through Azure AI Inference API, supporting various models including GPT-4, GPT-4o, and other Azure-hosted models.
+Azure AI provides cloud-based chat models through Azure AI Inference API, supporting various models including Llama, Mistral, Phi, and other models deployed via Azure AI Studio.
 
 {{< hint info >}}
 Azure AI is only supported in Java currently. To use Azure AI from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint warning >}}
+**Azure AI vs OpenAI (Azure):** Azure AI uses the Azure AI Inference API to access models deployed via Azure AI Studio (Llama, Mistral, Phi, etc.). If you want to use OpenAI models (GPT-4, etc.) hosted on Azure, see [OpenAI (Azure)](#openai-azure) instead.
 {{< /hint >}}
 
 #### Prerequisites
@@ -686,10 +690,14 @@ Model availability and specifications may change. Always check the official Open
 
 ### OpenAI (Azure)
 
-OpenAI (Azure) provides access to OpenAI models through Azure's cloud infrastructure, using the same OpenAI SDK with Azure-specific authentication and endpoints. This offers enterprise security, compliance, and regional availability while using familiar OpenAI APIs.
+OpenAI (Azure) provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azure's cloud infrastructure, using the same OpenAI SDK with Azure-specific authentication and endpoints. This offers enterprise security, compliance, and regional availability while using familiar OpenAI APIs.
 
 {{< hint info >}}
 OpenAI (Azure) is only supported in Python currently. To use OpenAI (Azure) from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint warning >}}
+**OpenAI (Azure) vs Azure AI:** OpenAI (Azure) uses the OpenAI SDK to access OpenAI models (GPT-4, etc.) hosted on Azure. If you want to use other models like Llama, Mistral, or Phi deployed via Azure AI Studio, see [Azure AI](#azure-ai) instead.
 {{< /hint >}}
 
 #### Prerequisites
