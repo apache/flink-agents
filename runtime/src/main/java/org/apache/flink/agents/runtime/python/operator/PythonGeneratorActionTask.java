@@ -33,17 +33,28 @@ public class PythonGeneratorActionTask extends PythonActionTask {
     }
 
     @Override
-    public ActionTaskResult invoke(ClassLoader userCodeClassLoader, PythonActionExecutor executor) {
+    public ActionTaskResult invoke(ClassLoader userCodeClassLoader, PythonActionExecutor executor)
+            throws Exception {
         LOG.debug(
                 "Try execute python awaitable action {} for event {} with key {}.",
                 action.getName(),
                 event,
                 key);
-        boolean finished = executor.callPythonAwaitable(pythonAwaitableRef);
-        ActionTask generatedActionTask = finished ? null : this;
-        return new ActionTaskResult(
-                finished,
-                runnerContext.drainEvents(event.getSourceTimestamp()),
-                generatedActionTask);
+        try {
+            boolean finished = executor.callPythonAwaitable(pythonAwaitableRef);
+            ActionTask generatedActionTask = finished ? null : this;
+            return new ActionTaskResult(
+                    finished,
+                    runnerContext.drainEvents(event.getSourceTimestamp()),
+                    generatedActionTask);
+        } catch (PythonActionExecutor.AwaitableLostException e) {
+            // Awaitable lost during restore - re-execute action from beginning.
+            // Durable execution will skip already-completed calls.
+            LOG.info(
+                    "Awaitable lost for action {}, re-executing from beginning.", action.getName());
+            PythonActionTask freshTask = new PythonActionTask(key, event, action);
+            freshTask.setRunnerContext(runnerContext);
+            return freshTask.invoke(userCodeClassLoader, executor);
+        }
     }
 }

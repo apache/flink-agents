@@ -163,10 +163,14 @@ public class PythonActionExecutor {
      * @param pythonAwaitableRef the reference name of the Python awaitable object stored in the
      *     interpreter's context
      * @return true if the awaitable has completed; false otherwise
+     * @throws AwaitableLostException if the awaitable is not found (e.g., lost during restore)
      */
     public boolean callPythonAwaitable(String pythonAwaitableRef) {
         // Calling awaitable.send(None) in Python returns a tuple of (finished, output).
         Object pythonAwaitable = interpreter.get(pythonAwaitableRef);
+        if (pythonAwaitable == null) {
+            throw new AwaitableLostException(pythonAwaitableRef);
+        }
         Object invokeResult = interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable);
         checkState(invokeResult.getClass().isArray() && ((Object[]) invokeResult).length == 2);
         return (boolean) ((Object[]) invokeResult)[0];
@@ -192,6 +196,27 @@ public class PythonActionExecutor {
     public static class PythonActionExecutionException extends Exception {
         public PythonActionExecutionException(String message, Throwable cause) {
             super(message, cause);
+        }
+    }
+
+    /**
+     * Thrown when a Python awaitable is not found during restore. This typically happens when the
+     * coroutine state was lost because Python coroutines cannot be serialized. The action should be
+     * re-executed from the beginning, and durable execution will skip already-completed calls.
+     */
+    public static class AwaitableLostException extends RuntimeException {
+        private final String awaitableRef;
+
+        public AwaitableLostException(String awaitableRef) {
+            super(
+                    "Python awaitable '"
+                            + awaitableRef
+                            + "' not found. The action will be re-executed from the beginning.");
+            this.awaitableRef = awaitableRef;
+        }
+
+        public String getAwaitableRef() {
+            return awaitableRef;
         }
     }
 }
