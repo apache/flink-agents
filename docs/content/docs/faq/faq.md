@@ -93,19 +93,19 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 
 | Provider | Python | Java |
 |---|---|---|
-| [OpenAI]({{< ref "docs/development/chat_models#openai" >}}) | ✅ | ✅ |
 | [Anthropic]({{< ref "docs/development/chat_models#anthropic" >}}) | ✅ | ❌ |
-| [Ollama]({{< ref "docs/development/chat_models#ollama" >}}) | ✅ | ✅ |
-| [Tongyi (DashScope)]({{< ref "docs/development/chat_models#tongyi-dashscope" >}}) | ✅ | ❌ |
-| [OpenAI (Azure)]({{< ref "docs/development/chat_models#openai-azure" >}}) | ✅ | ❌ |
 | [Azure AI]({{< ref "docs/development/chat_models#azure-ai" >}}) | ❌ | ✅ |
+| [Azure OpenAI]({{< ref "docs/development/chat_models#azure-openai" >}}) | ✅ | ❌ |
+| [Ollama]({{< ref "docs/development/chat_models#ollama" >}}) | ✅ | ✅ |
+| [OpenAI]({{< ref "docs/development/chat_models#openai" >}}) | ✅ | ✅ |
+| [Tongyi (DashScope)]({{< ref "docs/development/chat_models#tongyi-dashscope" >}}) | ✅ | ❌ |
 
 **Embedding Models**
 
 | Provider | Python | Java |
 |---|---|---|
-| [OpenAI]({{< ref "docs/development/embedding_models#openai" >}}) | ✅ | ❌ |
 | [Ollama]({{< ref "docs/development/embedding_models#ollama" >}}) | ✅ | ✅ |
+| [OpenAI]({{< ref "docs/development/embedding_models#openai" >}}) | ✅ | ❌ |
 
 **Vector Stores**
 

@@ -142,99 +142,6 @@ public class MyAgent extends Agent {
 
 ## Built-in Providers
 
-### Azure AI
-
-Azure AI provides cloud-based chat models through Azure AI Inference API, supporting various models including Llama, Mistral, Phi, and other models deployed via Azure AI Studio.
-
-{{< hint info >}}
-Azure AI is only supported in Java currently. To use Azure AI from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
-{{< /hint >}}
-
-{{< hint warning >}}
-**Azure AI vs OpenAI (Azure):** Azure AI uses the Azure AI Inference API to access models deployed via Azure AI Studio (Llama, Mistral, Phi, etc.). If you want to use OpenAI models (GPT-4, etc.) hosted on Azure, see [OpenAI (Azure)](#openai-azure) instead.
-{{< /hint >}}
-
-#### Prerequisites
-
-1. Create an Azure AI resource in the [Azure Portal](https://portal.azure.com/)
-2. Obtain your endpoint URL and API key from the Azure AI resource
-
-#### AzureAIChatModelConnection Parameters
-
-{{< tabs "AzureAIChatModelConnection Parameters" >}}
-
-{{< tab "Java" >}}
-
-| Parameter | Type   | Default  | Description                            |
-|-----------|--------|----------|----------------------------------------|
-| `endpoint` | String | Required | Azure AI service endpoint URL          |
-| `apiKey`   | String | Required | Azure AI API key for authentication   |
-
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### AzureAIChatModelSetup Parameters
-
-{{< tabs "AzureAIChatModelSetup Parameters" >}}
-
-{{< tab "Java" >}}
-
-| Parameter    | Type             | Default  | Description                                      |
-|--------------|------------------|----------|--------------------------------------------------|
-| `connection` | String           | Required | Reference to connection method name              |
-| `model`      | String           | Required | Name of the chat model to use (e.g., "gpt-4o")   |
-| `prompt`     | Prompt \| String | None     | Prompt template or reference to prompt resource  |
-| `tools`      | List[String]     | None     | List of tool names available to the model        |
-
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Usage Example
-
-{{< tabs "Azure AI Usage Example" >}}
-
-{{< tab "Java" >}}
-```java
-public class MyAgent extends Agent {
-    @ChatModelConnection
-    public static ResourceDescriptor azureAIConnection() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_CONNECTION)
-                .addInitialArgument("endpoint", "https://your-resource.inference.ai.azure.com")
-                .addInitialArgument("apiKey", "your-api-key-here")
-                .build();
-    }
-
-    @ChatModelSetup
-    public static ResourceDescriptor azureAIChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_SETUP)
-                .addInitialArgument("connection", "azureAIConnection")
-                .addInitialArgument("model", "gpt-4o")
-                .build();
-    }
-    
-    ...
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Available Models
-
-Azure AI supports various models through the Azure AI Inference API. Visit the [Azure AI Model Catalog](https://ai.azure.com/explore/models) for the complete and up-to-date list of available models.
-
-Some popular options include:
-- **GPT-4o** (gpt-4o)
-- **GPT-4** (gpt-4)
-- **GPT-4 Turbo** (gpt-4-turbo)
-- **GPT-3.5 Turbo** (gpt-3.5-turbo)
-
-{{< hint warning >}}
-Model availability and specifications may change. Always check the official Azure AI documentation for the latest information before implementing in production.
-{{< /hint >}}
-
 ### Anthropic
 
 Anthropic provides cloud-based chat models featuring the Claude family, known for their strong reasoning, coding, and safety capabilities.
@@ -380,6 +287,206 @@ Some popular options include:
 
 {{< hint warning >}}
 Model availability and specifications may change. Always check the official Anthropic documentation for the latest information before implementing in production.
+{{< /hint >}}
+
+### Azure AI
+
+Azure AI provides cloud-based chat models through Azure AI Inference API, supporting various models including Llama, Mistral, Phi, and other models deployed via Azure AI Studio.
+
+{{< hint info >}}
+Azure AI is only supported in Java currently. To use Azure AI from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint warning >}}
+**Azure AI vs Azure OpenAI:** Azure AI uses the Azure AI Inference API to access models deployed via Azure AI Studio (Llama, Mistral, Phi, etc.). If you want to use OpenAI models (GPT-4, etc.) hosted on Azure, see [Azure OpenAI](#azure-openai) instead.
+{{< /hint >}}
+
+#### Prerequisites
+
+1. Create an Azure AI resource in the [Azure Portal](https://portal.azure.com/)
+2. Obtain your endpoint URL and API key from the Azure AI resource
+
+#### AzureAIChatModelConnection Parameters
+
+{{< tabs "AzureAIChatModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type   | Default  | Description                            |
+|-----------|--------|----------|----------------------------------------|
+| `endpoint` | String | Required | Azure AI service endpoint URL          |
+| `apiKey`   | String | Required | Azure AI API key for authentication   |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### AzureAIChatModelSetup Parameters
+
+{{< tabs "AzureAIChatModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter    | Type             | Default  | Description                                      |
+|--------------|------------------|----------|--------------------------------------------------|
+| `connection` | String           | Required | Reference to connection method name              |
+| `model`      | String           | Required | Name of the chat model to use (e.g., "gpt-4o")   |
+| `prompt`     | Prompt \| String | None     | Prompt template or reference to prompt resource  |
+| `tools`      | List[String]     | None     | List of tool names available to the model        |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Azure AI Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor azureAIConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_CONNECTION)
+                .addInitialArgument("endpoint", "https://your-resource.inference.ai.azure.com")
+                .addInitialArgument("apiKey", "your-api-key-here")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor azureAIChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_SETUP)
+                .addInitialArgument("connection", "azureAIConnection")
+                .addInitialArgument("model", "gpt-4o")
+                .build();
+    }
+    
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Azure AI supports various models through the Azure AI Inference API. Visit the [Azure AI Model Catalog](https://ai.azure.com/explore/models) for the complete and up-to-date list of available models.
+
+Some popular options include:
+- **GPT-4o** (gpt-4o)
+- **GPT-4** (gpt-4)
+- **GPT-4 Turbo** (gpt-4-turbo)
+- **GPT-3.5 Turbo** (gpt-3.5-turbo)
+
+{{< hint warning >}}
+Model availability and specifications may change. Always check the official Azure AI documentation for the latest information before implementing in production.
+{{< /hint >}}
+
+### Azure OpenAI
+
+Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azure's cloud infrastructure, using the same OpenAI SDK with Azure-specific authentication and endpoints. This offers enterprise security, compliance, and regional availability while using familiar OpenAI APIs.
+
+{{< hint info >}}
+Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint warning >}}
+**Azure OpenAI vs Azure AI:** Azure OpenAI uses the OpenAI SDK to access OpenAI models (GPT-4, etc.) hosted on Azure. If you want to use other models like Llama, Mistral, or Phi deployed via Azure AI Studio, see [Azure AI](#azure-ai) instead.
+{{< /hint >}}
+
+#### Prerequisites
+
+1. Create an Azure OpenAI resource in the [Azure Portal](https://portal.azure.com/)
+2. Deploy a model in [Azure OpenAI Studio](https://oai.azure.com/)
+3. Obtain your endpoint URL, API key, API version, and deployment name from the Azure portal
+
+#### AzureOpenAIChatModelConnection Parameters
+
+{{< tabs "AzureOpenAIChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | str | Required | Azure OpenAI API key for authentication |
+| `api_version` | str | Required | Azure OpenAI REST API version (e.g., "2024-02-15-preview"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
+| `azure_endpoint` | str | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) |
+| `timeout` | float | `60.0` | API request timeout in seconds |
+| `max_retries` | int | `3` | Maximum number of API retry attempts |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### AzureOpenAIChatModelSetup Parameters
+
+{{< tabs "AzureOpenAIChatModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | str | Required | Reference to connection method name |
+| `model` | str | Required | Name of OpenAI model deployment on Azure |
+| `model_of_azure_deployment` | str | None | The underlying model name (e.g., 'gpt-4', 'gpt-35-turbo'). Used for token metrics tracking |
+| `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
+| `tools` | List[str] | None | List of tool names available to the model |
+| `temperature` | float | None | Sampling temperature (0.0 to 2.0). Not supported by reasoning models |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `logprobs` | bool | `False` | Whether to return log probabilities of output tokens |
+| `additional_kwargs` | dict | `{}` | Additional Azure OpenAI API parameters |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Azure OpenAI Usage Example" >}}
+
+{{< tab "Python" >}}
+```python
+class MyAgent(Agent):
+
+    @chat_model_connection
+    @staticmethod
+    def azure_openai_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.AZURE_OPENAI_CONNECTION,
+            api_key="<your-api-key>",
+            api_version="2024-02-15-preview",
+            azure_endpoint="https://your-resource.openai.azure.com"
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def azure_openai_chat_model() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.AZURE_OPENAI_SETUP,
+            connection="azure_openai_connection",
+            model="my-gpt4-deployment",  # Your Azure deployment name
+            model_of_azure_deployment="gpt-4",  # Underlying model for metrics
+            max_tokens=1000
+        )
+
+    ...
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Azure OpenAI supports OpenAI models deployed through your Azure subscription. Visit the [Azure OpenAI Models documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models) for the complete and up-to-date list of available models.
+
+Some popular options include:
+- **GPT-4o** (gpt-4o)
+- **GPT-4** (gpt-4)
+- **GPT-4 Turbo** (gpt-4-turbo)
+- **GPT-3.5 Turbo** (gpt-35-turbo)
+
+{{< hint warning >}}
+Model availability depends on your Azure region and subscription. Always check the official Azure OpenAI documentation for regional availability before implementing in production.
 {{< /hint >}}
 
 ### Ollama
@@ -686,113 +793,6 @@ Some popular options include:
 
 {{< hint warning >}}
 Model availability and specifications may change. Always check the official OpenAI documentation for the latest information before implementing in production.
-{{< /hint >}}
-
-### OpenAI (Azure)
-
-OpenAI (Azure) provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azure's cloud infrastructure, using the same OpenAI SDK with Azure-specific authentication and endpoints. This offers enterprise security, compliance, and regional availability while using familiar OpenAI APIs.
-
-{{< hint info >}}
-OpenAI (Azure) is only supported in Python currently. To use OpenAI (Azure) from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
-{{< /hint >}}
-
-{{< hint warning >}}
-**OpenAI (Azure) vs Azure AI:** OpenAI (Azure) uses the OpenAI SDK to access OpenAI models (GPT-4, etc.) hosted on Azure. If you want to use other models like Llama, Mistral, or Phi deployed via Azure AI Studio, see [Azure AI](#azure-ai) instead.
-{{< /hint >}}
-
-#### Prerequisites
-
-1. Create an Azure OpenAI resource in the [Azure Portal](https://portal.azure.com/)
-2. Deploy a model in [Azure OpenAI Studio](https://oai.azure.com/)
-3. Obtain your endpoint URL, API key, API version, and deployment name from the Azure portal
-
-#### AzureOpenAIChatModelConnection Parameters
-
-{{< tabs "AzureOpenAIChatModelConnection Parameters" >}}
-
-{{< tab "Python" >}}
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `api_key` | str | Required | Azure OpenAI API key for authentication |
-| `api_version` | str | Required | Azure OpenAI REST API version (e.g., "2024-02-15-preview"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
-| `azure_endpoint` | str | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) |
-| `timeout` | float | `60.0` | API request timeout in seconds |
-| `max_retries` | int | `3` | Maximum number of API retry attempts |
-
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### AzureOpenAIChatModelSetup Parameters
-
-{{< tabs "AzureOpenAIChatModelSetup Parameters" >}}
-
-{{< tab "Python" >}}
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `connection` | str | Required | Reference to connection method name |
-| `model` | str | Required | Name of OpenAI model deployment on Azure |
-| `model_of_azure_deployment` | str | None | The underlying model name (e.g., 'gpt-4', 'gpt-35-turbo'). Used for token metrics tracking |
-| `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
-| `tools` | List[str] | None | List of tool names available to the model |
-| `temperature` | float | None | Sampling temperature (0.0 to 2.0). Not supported by reasoning models |
-| `max_tokens` | int | None | Maximum number of tokens to generate |
-| `logprobs` | bool | `False` | Whether to return log probabilities of output tokens |
-| `additional_kwargs` | dict | `{}` | Additional Azure OpenAI API parameters |
-
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Usage Example
-
-{{< tabs "OpenAI (Azure) Usage Example" >}}
-
-{{< tab "Python" >}}
-```python
-class MyAgent(Agent):
-
-    @chat_model_connection
-    @staticmethod
-    def azure_openai_connection() -> ResourceDescriptor:
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.AZURE_OPENAI_CONNECTION,
-            api_key="<your-api-key>",
-            api_version="2024-02-15-preview",
-            azure_endpoint="https://your-resource.openai.azure.com"
-        )
-
-    @chat_model_setup
-    @staticmethod
-    def azure_openai_chat_model() -> ResourceDescriptor:
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.AZURE_OPENAI_SETUP,
-            connection="azure_openai_connection",
-            model="my-gpt4-deployment",  # Your Azure deployment name
-            model_of_azure_deployment="gpt-4",  # Underlying model for metrics
-            max_tokens=1000
-        )
-
-    ...
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Available Models
-
-OpenAI (Azure) supports OpenAI models deployed through your Azure subscription. Visit the [Azure OpenAI Models documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models) for the complete and up-to-date list of available models.
-
-Some popular options include:
-- **GPT-4o** (gpt-4o)
-- **GPT-4** (gpt-4)
-- **GPT-4 Turbo** (gpt-4-turbo)
-- **GPT-3.5 Turbo** (gpt-35-turbo)
-
-{{< hint warning >}}
-Model availability depends on your Azure region and subscription. Always check the official Azure OpenAI documentation for regional availability before implementing in production.
 {{< /hint >}}
 
 ### Tongyi (DashScope)
