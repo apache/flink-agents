@@ -64,6 +64,7 @@ where = [""]
 
 [tool.setuptools.package-data]
 "flink_agents.lib" = ["**/*.jar"]
+"flink_agents.examples.quickstart.resources" = ["**/*.txt"]
 
 # Optional dependencies (dependency groups)
 [project.optional-dependencies]

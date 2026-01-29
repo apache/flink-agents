@@ -223,6 +223,10 @@ Follow the [installation]({{< ref "docs/get-started/installation" >}}) instructi
 git clone https://github.com/apache/flink-agents.git
 cd flink-agents
 ```
+{{< hint info >}}
+For python examples, you can skip this step and submit the python file in installed flink-agents wheel.
+{{< /hint >}}
+
 
 #### Deploy a Standalone Flink Cluster
 
@@ -279,6 +283,8 @@ export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["pu
 
 # Run review analysis example
 $FLINK_HOME/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/react_agent_example.py
+# or submit the example python file in installed flink-agents wheel
+$FLINK_HOME/bin/flink run -py  $PYTHONPATH/flink_agents/examples/quickstart/react_agent_example.py
 ```
 {{< /tab >}}
 
