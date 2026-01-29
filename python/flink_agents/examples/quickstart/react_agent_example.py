@@ -22,6 +22,7 @@ from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.file_system import FileSource, StreamFormat
 
 from flink_agents.api.agents.react_agent import ReActAgent
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import (
     ResourceDescriptor,
@@ -52,6 +53,9 @@ def main() -> None:
     # Set up the Flink streaming environment and the Agents execution environment.
     env = StreamExecutionEnvironment.get_execution_environment()
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
+
+    # limit async request to avoid overwhelming ollama server
+    agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2)
 
     # Add Ollama chat model connection and notify shipping manager tool to be used
     # by the Agent.

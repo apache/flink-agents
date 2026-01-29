@@ -19,6 +19,7 @@ package org.apache.flink.agents.examples;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ReActAgent;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
@@ -82,6 +83,9 @@ public class ReActAgentExample {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         AgentsExecutionEnvironment agentsEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        // limit async request to avoid overwhelming ollama server
+        agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
 
         // Add Ollama chat model connection and record shipping question tool to be used
         // by the Agent.
@@ -147,7 +151,6 @@ public class ReActAgentExample {
                 ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                         .addInitialArgument("connection", "ollamaChatModelConnection")
                         .addInitialArgument("model", "qwen3:8b")
-                        .addInitialArgument("think", false)
                         .addInitialArgument(
                                 "tools", Collections.singletonList("notifyShippingManager"))
                         .build(),

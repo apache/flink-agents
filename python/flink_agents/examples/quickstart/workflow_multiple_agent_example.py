@@ -27,6 +27,7 @@ from pyflink.datastream.window import TumblingProcessingTimeWindows
 from pyflink.table import DataTypes, Schema, StreamTableEnvironment, TableDescriptor
 from pyflink.table.expressions import col
 
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceType
 from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
@@ -104,6 +105,9 @@ def main() -> None:
     agents_env = AgentsExecutionEnvironment.get_execution_environment(
         env=env, t_env=t_env
     )
+
+    # limit async request to avoid overwhelming ollama server
+    agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2)
 
     # Add Ollama chat model connection to be used by the ReviewAnalysisAgent
     # and ProductSuggestionAgent.
