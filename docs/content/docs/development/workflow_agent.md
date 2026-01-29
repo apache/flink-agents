@@ -402,6 +402,10 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
     ctx.sendEvent(new OutputEvent(result));
 }
 ```
+
+{{< hint info >}}
+To use async execution on JDK 21+, user should append jvm option `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to [env.java.opts.all](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#env-java-opts-all) before start the flink cluster.
+{{< /hint >}}
 {{< /tab >}}
 {{< /tabs >}}
 

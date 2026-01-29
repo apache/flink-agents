@@ -373,11 +373,14 @@ $FLINK_HOME/bin/start-cluster.sh
     ```bash
     $FLINK_HOME/bin/start-cluster.sh
     ```
+
+{{< hint info >}}
+To run example on JDK 21+, append jvm option `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to [env.java.opts.all](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#env-java-opts-all) in `$FLINK_HOME/conf/config.yaml` before start the flink cluster.
+{{< /hint >}}
 {{< /tab >}}
 
 {{< /tabs >}}
 You can refer to the [local cluster](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/try-flink/local_installation/#starting-and-stopping-a-local-cluster) instructions for more detailed step.
-
 
 {{< hint info >}}
 If you can't navigate to the web UI at [localhost:8081](localhost:8081), you can find the reason in `$FLINK_HOME/log`. If the reason is port conflict, you can change the port in `$FLINK_HOME/conf/config.yaml`.

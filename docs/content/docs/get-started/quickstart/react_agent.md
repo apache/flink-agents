@@ -243,6 +243,10 @@ $FLINK_HOME/bin/start-cluster.sh
     ```bash
     $FLINK_HOME/bin/start-cluster.sh
     ```
+
+{{< hint info >}}
+To run example on JDK 21+, append jvm option `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to [env.java.opts.all](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#env-java-opts-all) in `$FLINK_HOME/conf/config.yaml` before start the flink cluster.
+{{< /hint >}}
 {{< /tab >}}
 
 {{< /tabs >}}
