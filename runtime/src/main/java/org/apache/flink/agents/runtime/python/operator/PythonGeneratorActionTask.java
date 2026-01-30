@@ -20,16 +20,14 @@ package org.apache.flink.agents.runtime.python.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
+import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 
 /** An {@link ActionTask} wrapper a Python awaitable to represent a code block in Python action. */
 public class PythonGeneratorActionTask extends PythonActionTask {
-    private final String pythonAwaitableRef;
 
-    public PythonGeneratorActionTask(
-            Object key, Event event, Action action, String pythonAwaitableRef) {
+    public PythonGeneratorActionTask(Object key, Event event, Action action) {
         super(key, event, action);
-        this.pythonAwaitableRef = pythonAwaitableRef;
     }
 
     @Override
@@ -40,21 +38,25 @@ public class PythonGeneratorActionTask extends PythonActionTask {
                 action.getName(),
                 event,
                 key);
-        try {
-            boolean finished = executor.callPythonAwaitable(pythonAwaitableRef);
-            ActionTask generatedActionTask = finished ? null : this;
-            return new ActionTaskResult(
-                    finished,
-                    runnerContext.drainEvents(event.getSourceTimestamp()),
-                    generatedActionTask);
-        } catch (PythonActionExecutor.AwaitableLostException e) {
-            // Awaitable lost during restore - re-execute action from beginning.
-            // Durable execution will skip already-completed calls.
+
+        String pythonAwaitableRef =
+                ((PythonRunnerContextImpl) runnerContext).getPythonAwaitableRef();
+
+        if (pythonAwaitableRef == null) {
             LOG.info(
-                    "Awaitable lost for action {}, re-executing from beginning.", action.getName());
+                    "Python awaitable ref is null for action {} (likely restored from checkpoint), "
+                            + "re-executing from beginning.",
+                    action.getName());
             PythonActionTask freshTask = new PythonActionTask(key, event, action);
             freshTask.setRunnerContext(runnerContext);
             return freshTask.invoke(userCodeClassLoader, executor);
         }
+
+        boolean finished = executor.callPythonAwaitable(pythonAwaitableRef);
+        ActionTask generatedActionTask = finished ? null : this;
+        return new ActionTaskResult(
+                finished,
+                runnerContext.drainEvents(event.getSourceTimestamp()),
+                generatedActionTask);
     }
 }

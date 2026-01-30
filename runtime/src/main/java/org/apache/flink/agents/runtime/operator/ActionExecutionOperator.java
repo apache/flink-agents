@@ -203,6 +203,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private final transient Map<ActionTask, ContinuationContext> continuationContexts;
 
+    private final transient Map<ActionTask, String> pythonAwaitableRefs;
+
     // Each job can only have one identifier and this identifier must be consistent across restarts.
     // We cannot use job id as the identifier here because user may change job id by
     // creating a savepoint, stop the job and then resume from savepoint.
@@ -229,6 +231,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.actionTaskMemoryContexts = new HashMap<>();
         this.actionTaskDurableContexts = new HashMap<>();
         this.continuationContexts = new HashMap<>();
+        this.pythonAwaitableRefs = new HashMap<>();
         OperatorUtils.setChainStrategy(this, ChainingStrategy.ALWAYS);
     }
 
@@ -508,6 +511,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             actionTaskMemoryContexts.remove(actionTask);
             actionTaskDurableContexts.remove(actionTask);
             continuationContexts.remove(actionTask);
+            pythonAwaitableRefs.remove(actionTask);
             maybePersistTaskResult(
                     key,
                     sequenceNumber,
@@ -554,6 +558,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         generatedActionTask,
                         ((JavaRunnerContextImpl) actionTask.getRunnerContext())
                                 .getContinuationContext());
+            }
+            if (actionTask.getRunnerContext() instanceof PythonRunnerContextImpl) {
+                String awaitableRef =
+                        ((PythonRunnerContextImpl) actionTask.getRunnerContext())
+                                .getPythonAwaitableRef();
+                if (awaitableRef != null) {
+                    pythonAwaitableRefs.put(generatedActionTask, awaitableRef);
+                }
             }
 
             actionTasksKState.add(generatedActionTask);
@@ -883,6 +895,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 continuationContext = new ContinuationContext();
             }
             ((JavaRunnerContextImpl) runnerContext).setContinuationContext(continuationContext);
+        }
+        if (runnerContext instanceof PythonRunnerContextImpl) {
+            // Get the awaitable ref from the transient map. After checkpoint restore, this will be
+            // null, signaling that the awaitable was lost and needs re-execution.
+            String awaitableRef = pythonAwaitableRefs.get(actionTask);
+            ((PythonRunnerContextImpl) runnerContext).setPythonAwaitableRef(awaitableRef);
         }
         actionTask.setRunnerContext(runnerContext);
     }
