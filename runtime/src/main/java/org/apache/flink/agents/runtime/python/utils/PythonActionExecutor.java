@@ -176,6 +176,10 @@ public class PythonActionExecutor {
     public boolean callPythonAwaitable(String pythonAwaitableRef) {
         // Calling awaitable.send(None) in Python returns a tuple of (finished, output).
         Object pythonAwaitable = interpreter.get(pythonAwaitableRef);
+        checkState(
+                pythonAwaitable != null,
+                "Python awaitable '%s' not found in interpreter. ",
+                pythonAwaitableRef);
         Object invokeResult = interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable);
         checkState(invokeResult.getClass().isArray() && ((Object[]) invokeResult).length == 2);
         return (boolean) ((Object[]) invokeResult)[0];
