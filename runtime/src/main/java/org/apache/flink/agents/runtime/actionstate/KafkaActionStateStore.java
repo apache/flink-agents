@@ -43,7 +43,6 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -121,7 +120,6 @@ public class KafkaActionStateStore implements ActionStateStore {
         this.producer = new KafkaProducer<>(producerProp);
         Properties consumerProp = createConsumerProp();
         this.consumer = new KafkaConsumer<>(consumerProp);
-        consumer.subscribe(Collections.singletonList(topic));
         LOG.info("Initialized KafkaActionStateStore with topic: {}", topic);
     }
 
@@ -138,7 +136,12 @@ public class KafkaActionStateStore implements ActionStateStore {
             ProducerRecord<String, ActionState> kafkaRecord =
                     new ProducerRecord<>(topic, stateKey, state);
             producer.send(kafkaRecord);
-            LOG.debug("Sent action state to Kafka for key: {}", stateKey);
+            actionStates.put(stateKey, state);
+            producer.flush();
+            LOG.debug(
+                    "Stored action state to Kafka: key={}, isCompleted={}",
+                    stateKey,
+                    state.isCompleted());
         } catch (Exception e) {
             throw new RuntimeException("Failed to send action state to Kafka", e);
         }
@@ -147,6 +150,13 @@ public class KafkaActionStateStore implements ActionStateStore {
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
         String stateKey = generateKey(key, seqNum, action, event);
+
+        LOG.debug(
+                "Looking up action state: key={}, seqNum={}, stateKey={}, cachedStates={}",
+                key,
+                seqNum,
+                stateKey,
+                actionStates.keySet());
 
         boolean hasDivergence = checkDivergence(key.toString(), seqNum);
 
@@ -173,7 +183,14 @@ public class KafkaActionStateStore implements ActionStateStore {
                             });
         }
 
-        return actionStates.get(stateKey);
+        ActionState result = actionStates.get(stateKey);
+        if (result != null) {
+            LOG.debug("Found action state: key={}, isCompleted={}", stateKey, result.isCompleted());
+        } else {
+            LOG.debug("Action state not found: key={}", stateKey);
+        }
+
+        return result;
     }
 
     private boolean checkDivergence(String key, long seqNum) {
@@ -184,6 +201,10 @@ public class KafkaActionStateStore implements ActionStateStore {
     @Override
     public void rebuildState(List<Object> recoveryMarkers) {
         LOG.info("Rebuilding state from {} recovery markers", recoveryMarkers.size());
+        if (recoveryMarkers.isEmpty()) {
+            LOG.info("No recovery markers, skipping state rebuild");
+            return;
+        }
 
         try {
             Map<Integer, Long> partitionMap = new HashMap<>();
@@ -201,9 +222,23 @@ public class KafkaActionStateStore implements ActionStateStore {
                     }
                 }
             }
-            partitionMap.forEach(
-                    (partition, offset) ->
-                            consumer.seek(new TopicPartition(topic, partition), offset));
+
+            // Build list of TopicPartitions to assign
+            List<TopicPartition> partitionsToAssign = new ArrayList<>();
+            for (Integer partition : partitionMap.keySet()) {
+                partitionsToAssign.add(new TopicPartition(topic, partition));
+            }
+
+            // Assign partitions
+            consumer.assign(partitionsToAssign);
+
+            // Seek to marker offsets
+            if (!partitionMap.isEmpty()) {
+                // Seek to marker offsets
+                partitionMap.forEach(
+                        (partition, offset) ->
+                                consumer.seek(new TopicPartition(topic, partition), offset));
+            }
 
             // Poll for records and rebuild state until the latest offsets
             while (true) {
@@ -236,7 +271,7 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     @Override
     public void pruneState(Object key, long seqNum) {
-        LOG.info("Pruning state for key: {} up to sequence number: {}", key, seqNum);
+        LOG.debug("Pruning state for key: {} up to sequence number: {}", key, seqNum);
 
         // Remove states from in-memory cache for this key up to the specified sequence
         // number
