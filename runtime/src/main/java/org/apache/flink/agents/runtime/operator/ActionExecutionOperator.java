@@ -268,13 +268,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         keySegmentQueue = new SegmentedQueue();
 
-        // init the action state store with proper implementation
-        if (actionStateStore == null
-                && KAFKA.getType()
-                        .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
-            LOG.info("Using Kafka as backend of action state store.");
-            actionStateStore = new KafkaActionStateStore(agentPlan.getConfig());
-        }
+        maybeInitActionStateStore();
 
         if (actionStateStore != null) {
             // init recovery marker state for recovery marker persistence
@@ -475,6 +469,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Check if action is already completed
         if (actionState != null && actionState.isCompleted()) {
             // Action has completed, skip execution and replay memory/events
+            LOG.debug(
+                    "Skipping already completed action: {} for key: {}",
+                    actionTask.action.getName(),
+                    key);
             isFinished = true;
             outputEvents = actionState.getOutputEvents();
             for (MemoryUpdate memoryUpdate : actionState.getShortTermMemoryUpdates()) {
@@ -739,6 +737,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
 
+        maybeInitActionStateStore();
+
         if (actionStateStore != null) {
             List<Object> markers = new ArrayList<>();
 
@@ -757,6 +757,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             if (recoveryMarkers != null) {
                 recoveryMarkers.forEach(markers::add);
             }
+            LOG.info("Rebuilding action state from {} recovery markers", markers.size());
             actionStateStore.rebuildState(markers);
         }
 
@@ -1110,6 +1111,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             loggerConfigBuilder.property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, baseLogDir);
         }
         return EventLoggerFactory.createLogger(loggerConfigBuilder.build());
+    }
+
+    private void maybeInitActionStateStore() {
+        if (actionStateStore == null
+                && KAFKA.getType()
+                        .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
+            LOG.info("Using Kafka as backend of action state store.");
+            actionStateStore = new KafkaActionStateStore(agentPlan.getConfig());
+        }
     }
 
     /** Failed to execute Action task. */

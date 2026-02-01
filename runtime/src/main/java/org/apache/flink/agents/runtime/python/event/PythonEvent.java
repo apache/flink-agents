@@ -20,7 +20,6 @@
 package org.apache.flink.agents.runtime.python.event;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.Event;
 
@@ -61,7 +60,6 @@ public class PythonEvent extends Event {
         this.eventJsonStr = eventJsonStr;
     }
 
-    @JsonIgnore // Don't serialize byte array in logs - used for processing only
     public byte[] getEvent() {
         return event;
     }
