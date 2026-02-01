@@ -60,22 +60,37 @@ make_binary_release() {
 
   echo "Creating binary release"
 
-  DIST_JAR_NAME="flink-agents-dist-${RELEASE_VERSION}.jar"
+  # Dynamically discover dist sub-modules (directories containing pom.xml)
+  DIST_MODULES=()
+  for module_dir in dist/*/; do
+    if [ -f "${module_dir}pom.xml" ]; then
+      DIST_MODULES+=("$(basename "${module_dir}")")
+    fi
+  done
+
+  # Build comma-separated list of dist sub-modules for Maven -pl
+  DIST_MODULE_LIST=$(printf "dist/%s," "${DIST_MODULES[@]}")
+  DIST_MODULE_LIST=${DIST_MODULE_LIST%,}  # Remove trailing comma
 
   # enable release profile here (to check for the maven version)
-  $MVN clean package -Prelease -pl dist -am -Dgpg.skip -Dcheckstyle.skip=true -DskipTests
+  $MVN clean package -Prelease -pl ${DIST_MODULE_LIST} -am -Dgpg.skip -Dcheckstyle.skip=true -DskipTests
 
-  cd dist/target
-  cp $DIST_JAR_NAME ${RELEASE_DIR}
-  cd ${RELEASE_DIR}
+  # Copy jars from all dist sub-modules
+  for module in "${DIST_MODULES[@]}"; do
+    DIST_JAR_NAME="flink-agents-dist-${module}-${RELEASE_VERSION}.jar"
 
-  # Sign sha the tgz
-  if [ "$SKIP_GPG" == "false" ] ; then
-    gpg --armor --detach-sig "${DIST_JAR_NAME}"
-  fi
-  $SHASUM "${DIST_JAR_NAME}" > "${DIST_JAR_NAME}.sha512"
+    cd dist/${module}/target
+    cp $DIST_JAR_NAME ${RELEASE_DIR}
+    cd ${RELEASE_DIR}
 
-  cd ${FLINK_AGENTS_DIR}
+    # Sign sha the jar
+    if [ "$SKIP_GPG" == "false" ] ; then
+      gpg --armor --detach-sig "${DIST_JAR_NAME}"
+    fi
+    $SHASUM "${DIST_JAR_NAME}" > "${DIST_JAR_NAME}.sha512"
+
+    cd ${FLINK_AGENTS_DIR}
+  done
 }
 
 make_python_release() {
