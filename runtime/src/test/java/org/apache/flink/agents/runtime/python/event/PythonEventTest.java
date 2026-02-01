@@ -117,7 +117,7 @@ class PythonEventTest {
         JsonNode eventNode = jsonNode.get("event");
         assertThat(eventNode.get("eventType").asText()).isEqualTo(eventType);
         assertThat(eventNode.get("id").asText()).isEqualTo(eventId.toString());
-        // Byte array should be serialized for ActionState persistence
-        assertThat(eventNode.has("event")).isTrue();
+        // Byte array should not be in the log
+        assertThat(eventNode.has("event")).isFalse();
     }
 }
