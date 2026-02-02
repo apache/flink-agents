@@ -265,10 +265,14 @@ If you can't navigate to the web UI at [localhost:8081](localhost:8081), you can
 
 Download and install Ollama from the official [website](https://ollama.com/download).
 
-Then run the qwen3:8b model, which is required by the quickstart examples
+{{< hint info >}}
+Ollama server **0.9.0** or higher is required.
+{{< /hint >}}
+
+Then pull the qwen3:8b model, which is required by the quickstart examples
 
 ```bash
-ollama run qwen3:8b
+ollama pull qwen3:8b
 ```
 
 ### Submit Flink Agents Job to Standalone Flink Cluster

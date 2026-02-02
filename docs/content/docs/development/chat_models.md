@@ -495,6 +495,10 @@ Ollama provides local chat models that run on your machine, offering privacy, co
 
 #### Prerequisites
 
+{{< hint info >}}
+Ollama server **0.9.0** or higher is required.
+{{< /hint >}}
+
 1. Install Ollama from [https://ollama.com/](https://ollama.com/)
 2. Start the Ollama server: `ollama serve`
 3. Download a chat model: `ollama pull qwen3:8b`
