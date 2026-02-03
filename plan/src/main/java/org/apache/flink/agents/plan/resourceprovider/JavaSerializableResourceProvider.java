@@ -83,7 +83,12 @@ public class JavaSerializableResourceProvider extends SerializableResourceProvid
         if (resource == null) {
             resource =
                     (SerializableResource)
-                            objectMapper.readValue(serializedResource, Class.forName(getClazz()));
+                            objectMapper.readValue(
+                                    serializedResource,
+                                    Class.forName(
+                                            getClazz(),
+                                            true,
+                                            Thread.currentThread().getContextClassLoader()));
         }
         return resource;
     }
