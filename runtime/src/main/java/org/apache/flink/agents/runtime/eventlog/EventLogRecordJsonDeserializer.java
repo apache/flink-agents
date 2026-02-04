@@ -83,7 +83,8 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
             throws IOException {
         try {
             // Load the concrete event class
-            Class<?> eventClass = Class.forName(eventType);
+            Class<?> eventClass =
+                    Class.forName(eventType, true, Thread.currentThread().getContextClassLoader());
 
             // Verify it's actually an Event subclass
             if (!Event.class.isAssignableFrom(eventClass)) {

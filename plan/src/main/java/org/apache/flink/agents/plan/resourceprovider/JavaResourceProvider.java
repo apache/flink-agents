@@ -43,7 +43,8 @@ public class JavaResourceProvider extends ResourceProvider {
         } else {
             clazzName = descriptor.getInitialArguments().remove("java_clazz").toString();
         }
-        Class<?> clazz = Class.forName(clazzName);
+        Class<?> clazz =
+                Class.forName(clazzName, true, Thread.currentThread().getContextClassLoader());
         Constructor<?> constructor =
                 clazz.getConstructor(ResourceDescriptor.class, BiFunction.class);
         return (Resource) constructor.newInstance(descriptor, getResource);
