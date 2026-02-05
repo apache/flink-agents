@@ -114,11 +114,11 @@ Choose one of the following installation methods:
 {{< hint warning >}}
 __Temporary (v0.2.0):__ Due to PyPI wheel size limitations, the `flink-agents` version 0.2.0 is currently not available directly from PyPI. Please download the wheel file manually and install from local:
 
-```shell
-# Download the wheel file
-wget https://downloads.apache.org/flink/flink-agents-0.2.0/python/flink_agents-0.2.0-py3-none-any.whl
+1. Download [flink-agents 0.2.0 wheel](https://www.apache.org/dyn/closer.lua/flink/flink-agents-0.2.0/python/flink_agents-0.2.0-py3-none-any.whl)
 
-# Install from local wheel
+2. Install from local wheel:
+
+```shell
 pip install flink_agents-0.2.0-py3-none-any.whl apache-flink==${FLINK_VERSION}
 ```
 {{< /hint >}}
