@@ -76,6 +76,8 @@ jobs:
           cd python
           uv sync --all-extras
       - name: Run Java Tests
+        env:
+          LOG_LEVEL: INFO
         run: |
           # Add Python venv to PATH so Java tests can find MCP dependencies
           export PATH="${{ github.workspace }}/python/.venv/bin:$PATH"
@@ -170,6 +172,8 @@ jobs:
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
       - name: Run Java IT
+        env:
+          LOG_LEVEL: INFO
         run: tools/ut.sh -j -e -f ${{ matrix.flink-version }}
 
   cross_language_tests:
@@ -227,6 +231,8 @@ jobs:
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
       - name: Run e2e tests
+        env:
+          LOG_LEVEL: INFO
         run: |
           export ES_HOST="http://localhost:9200"
           tools/e2e.sh
