@@ -19,7 +19,7 @@ package org.apache.flink.agents.api.memory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.memory.compaction.SummarizationStrategy;
+import org.apache.flink.agents.api.memory.compaction.CompactionConfig;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -33,8 +33,7 @@ public class MemorySetTest {
                         "test",
                         ChatMessage.class,
                         100,
-                        new SummarizationStrategy(
-                                "testModel", Prompt.fromText("Test prompt"), 100));
+                        new CompactionConfig("testModel", Prompt.fromText("Test prompt"), 100));
         String jsonValue = mapper.writeValueAsString(memorySet);
 
         MemorySet deserialized = mapper.readValue(jsonValue, MemorySet.class);

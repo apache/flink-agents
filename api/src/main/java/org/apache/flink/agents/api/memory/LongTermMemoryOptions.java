@@ -44,7 +44,7 @@ public class LongTermMemoryOptions {
 
     /** Whether execute compaction asynchronously . */
     public static final ConfigOption<Boolean> ASYNC_COMPACTION =
-            new ConfigOption<>("long-term-memory.async-compaction", Boolean.class, false);
+            new ConfigOption<>("long-term-memory.async-compaction", Boolean.class, true);
 
     /** The thread count of executor for async compaction. */
     public static final ConfigOption<Integer> THREAD_COUNT =

@@ -50,3 +50,81 @@ To ensure stability and compatibility when running Flink Agents jobs, please be 
     ```
 
   If you see an error like this, switch immediately to one of the officially recommended installation methods and confirm that you're using a supported Python version.
+
+## Q2: Why do cross-language resources not work in local development mode?
+
+Cross-language resources, such as using Java resources from Python or vice versa, are currently supported only when running in Flink. Local development mode does not support cross-language resources.
+
+This limitation exists because cross-language communication requires the Flink runtime environment to effectively bridge Java and Python processes. In local development mode, this bridge is unavailable.
+
+To use cross-language resources, please test the functionality by deploying to a Flink standalone cluster.
+
+## Q3: Should I choose Java or Python?
+
+When choosing between Flink Agents' Java API and Python API, consider the following factors:
+
+1. **Team experience and preferences**
+2. **JDK version** (for Java users)
+3. **Integration supports**
+
+### Understanding Async Execution and JDK Versions
+
+Async execution can significantly improve performance by allowing multiple operations to run concurrently. However, async execution support varies by language and JDK version:
+
+| Environment | Async Execution Support |
+|-------------|------------------------|
+| Python | ✅ Supported |
+| Java (JDK 21+) | ✅ Supported (via Continuation API) |
+| Java (JDK < 21) | ❌ Not supported (falls back to synchronous execution) |
+
+> **Cross-language async limitation**: When using cross-language resources (e.g., calling Java integrations from Python or vice versa), async execution is not supported. Cross-language calls always execute synchronously regardless of your JDK version.
+
+This is important because:
+
+- **For Python users**: Async execution is always available.
+- **For Java users on JDK 21+**: Async execution is available, so using native integrations (instead of cross-language) matters for performance.
+- **For Java users on JDK < 21**: Async execution is **not available regardless of whether you use native or cross-language integrations**. Therefore, the cross-language async limitation has **no additional performance impact** for these users.
+
+### Native Integration Support Matrix
+
+Flink Agents provides built-in integrations for many ecosystem providers. Some integrations are only available in one language. For those marked as ❌, you can still use them from the other language via cross-language support, but cross-language calls do not support async execution.
+
+**Chat Models**
+
+| Provider | Python | Java |
+|---|---|---|
+| [Anthropic]({{< ref "docs/development/chat_models#anthropic" >}}) | ✅ | ❌ |
+| [Azure AI]({{< ref "docs/development/chat_models#azure-ai" >}}) | ❌ | ✅ |
+| [Azure OpenAI]({{< ref "docs/development/chat_models#azure-openai" >}}) | ✅ | ❌ |
+| [Ollama]({{< ref "docs/development/chat_models#ollama" >}}) | ✅ | ✅ |
+| [OpenAI]({{< ref "docs/development/chat_models#openai" >}}) | ✅ | ✅ |
+| [Tongyi (DashScope)]({{< ref "docs/development/chat_models#tongyi-dashscope" >}}) | ✅ | ❌ |
+
+**Embedding Models**
+
+| Provider | Python | Java |
+|---|---|---|
+| [Ollama]({{< ref "docs/development/embedding_models#ollama" >}}) | ✅ | ✅ |
+| [OpenAI]({{< ref "docs/development/embedding_models#openai" >}}) | ✅ | ❌ |
+
+**Vector Stores**
+
+| Provider | Python | Java |
+|---|---|---|
+| [Chroma]({{< ref "docs/development/vector_stores#chroma" >}}) | ✅ | ❌ |
+| [Elasticsearch]({{< ref "docs/development/vector_stores#elasticsearch" >}}) | ❌ | ✅ |
+
+**MCP Server**
+
+| Provider | Python | Java |
+|---|---|---|
+| [MCP Server]({{< ref "docs/development/mcp" >}}) | ✅ | ✅ |
+
+> **Note**: Java native MCP support requires **JDK 17+**. For JDK 11-16, the framework automatically uses the Python SDK via cross-language support, which works seamlessly without additional configuration. See [MCP]({{< ref "docs/development/mcp" >}}) for details.
+
+## Q4: How to run agent in IDE.
+
+To avoid potential conflict with Flink cluster, the scope of the dependencies related to Flink and Flink Agents for agent job are provided. See [Maven Dependencies]({{< ref "docs/get-started/installation#maven-dependencies-for-java" >}}) for details.
+
+To run the examples in IDE, users must enable the IDE feature: `add dependencies with provided scope to classpath`.
+* For **IDEA**, edit the **`Run/Debug Configuration`** and enable **`add dependencies with provided scope to classpath`**. See [Run/Debug Configuration](https://www.jetbrains.com/help/idea/run-debug-configuration-scala.html) for details.

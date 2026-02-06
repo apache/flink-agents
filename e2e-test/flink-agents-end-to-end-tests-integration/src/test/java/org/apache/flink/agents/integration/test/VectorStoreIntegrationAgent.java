@@ -29,15 +29,12 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.vectorstores.Document;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import static org.apache.flink.agents.api.resource.Constant.ELASTICSEARCH_VECTOR_STORE;
-import static org.apache.flink.agents.api.resource.Constant.OLLAMA_EMBEDDING_MODEL_CONNECTION;
-import static org.apache.flink.agents.api.resource.Constant.OLLAMA_EMBEDDING_MODEL_SETUP;
 
 public class VectorStoreIntegrationAgent extends Agent {
     public static final String OLLAMA_MODEL = "nomic-embed-text";
@@ -46,7 +43,8 @@ public class VectorStoreIntegrationAgent extends Agent {
     public static ResourceDescriptor embeddingConnection() {
         final String provider = System.getProperty("MODEL_PROVIDER", "OLLAMA");
         if (provider.equals("OLLAMA")) {
-            return ResourceDescriptor.Builder.newBuilder(OLLAMA_EMBEDDING_MODEL_CONNECTION)
+            return ResourceDescriptor.Builder.newBuilder(
+                            ResourceName.EmbeddingModel.OLLAMA_CONNECTION)
                     .addInitialArgument("host", "http://localhost:11434")
                     .addInitialArgument("timeout", 60)
                     .build();
@@ -59,7 +57,7 @@ public class VectorStoreIntegrationAgent extends Agent {
     public static ResourceDescriptor embeddingModel() {
         String provider = System.getProperty("MODEL_PROVIDER", "OLLAMA");
         if (provider.equals("OLLAMA")) {
-            return ResourceDescriptor.Builder.newBuilder(OLLAMA_EMBEDDING_MODEL_SETUP)
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OLLAMA_SETUP)
                     .addInitialArgument("connection", "embeddingConnection")
                     .addInitialArgument("model", OLLAMA_MODEL)
                     .build();
@@ -73,7 +71,8 @@ public class VectorStoreIntegrationAgent extends Agent {
         final String provider = System.getProperty("VECTOR_STORE_PROVIDER", "ELASTICSEARCH");
         if (provider.equals("ELASTICSEARCH")) {
             final ResourceDescriptor.Builder builder =
-                    ResourceDescriptor.Builder.newBuilder(ELASTICSEARCH_VECTOR_STORE)
+                    ResourceDescriptor.Builder.newBuilder(
+                                    ResourceName.VectorStore.ELASTICSEARCH_VECTOR_STORE)
                             .addInitialArgument("embedding_model", "embeddingModel")
                             .addInitialArgument("host", System.getenv("ES_HOST"))
                             .addInitialArgument("index", System.getenv("ES_INDEX"))

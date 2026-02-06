@@ -65,7 +65,7 @@ class MyAgent(Agent):
     @staticmethod
     def ollama_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION,
             base_url="http://localhost:11434",
             request_timeout=30.0
         )
@@ -74,7 +74,7 @@ class MyAgent(Agent):
     @staticmethod
     def ollama_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_connection",
             model="qwen3:8b",
             temperature=0.7
@@ -106,14 +106,14 @@ class MyAgent(Agent):
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor ollamaConnection() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_CONNECTION)
                 .addInitialArgument("endpoint", "http://localhost:11434")
                 .build();
     }
 
     @ChatModelSetup
     public static ResourceDescriptor ollamaChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaConnection")
                 .addInitialArgument("model", "qwen3:8b")
                 .build();
@@ -142,12 +142,163 @@ public class MyAgent extends Agent {
 
 ## Built-in Providers
 
-### Azure AI
+### Anthropic
 
-Azure AI provides cloud-based chat models through Azure AI Inference API, supporting various models including GPT-4, GPT-4o, and other Azure-hosted models.
+Anthropic provides cloud-based chat models featuring the Claude family, known for their strong reasoning, coding, and safety capabilities.
+
+#### Prerequisites
+
+1. Create an account at [Anthropic Console](https://console.anthropic.com/)
+2. Navigate to [API Keys](https://console.anthropic.com/settings/keys) and create a new secret key
+
+#### AnthropicChatModelConnection Parameters
+
+{{< tabs "AnthropicChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | str | Required | Anthropic API key for authentication |
+| `max_retries` | int | `3` | Maximum number of API retry attempts |
+| `timeout` | float | `60.0` | API request timeout in seconds |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | Anthropic API key for authentication |
+| `timeout` | int | None | Timeout in seconds for API requests |
+| `max_retries` | int | `2` | Maximum number of API retry attempts |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### AnthropicChatModelSetup Parameters
+
+{{< tabs "AnthropicChatModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | str | Required | Reference to connection method name |
+| `model` | str | `"claude-sonnet-4-20250514"` | Name of the chat model to use |
+| `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
+| `tools` | List[str] | None | List of tool names available to the model |
+| `max_tokens` | int | `1024` | Maximum number of tokens to generate |
+| `temperature` | float | `0.1` | Sampling temperature (0.0 to 1.0) |
+| `additional_kwargs` | dict | `{}` | Additional Anthropic API parameters |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"claude-sonnet-4-20250514"` | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `max_tokens` | long | `1024` | Maximum number of tokens to generate |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 1.0) |
+| `json_prefill` | boolean | `true` | Prefill assistant response with "{" to enforce JSON output (disabled when tools are used) |
+| `strict_tools` | boolean | `false` | Enable strict mode for tool calling schemas |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Anthropic API parameters (top_k, top_p, stop_sequences) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Anthropic Usage Example" >}}
+
+{{< tab "Python" >}}
+```python
+class MyAgent(Agent):
+
+    @chat_model_connection
+    @staticmethod
+    def anthropic_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.ANTHROPIC_CONNECTION,
+            api_key="<your-api-key>",
+            max_retries=3,
+            timeout=60.0
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def anthropic_chat_model() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.ANTHROPIC_SETUP,
+            connection="anthropic_connection",
+            model="claude-sonnet-4-20250514",
+            max_tokens=2048,
+            temperature=0.7
+        )
+
+    ...
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor anthropicConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.ANTHROPIC_CONNECTION)
+                .addInitialArgument("api_key", "<your-api-key>")
+                .addInitialArgument("timeout", 120)
+                .addInitialArgument("max_retries", 3)
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor anthropicChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.ANTHROPIC_SETUP)
+                .addInitialArgument("connection", "anthropicConnection")
+                .addInitialArgument("model", "claude-sonnet-4-20250514")
+                .addInitialArgument("temperature", 0.7d)
+                .addInitialArgument("max_tokens", 2048)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Visit the [Anthropic Models documentation](https://docs.anthropic.com/en/docs/about-claude/models) for the complete and up-to-date list of available chat models.
+
+Some popular options include:
+- **Claude Sonnet 4.5** (claude-sonnet-4-5-20250929)
+- **Claude Sonnet 4** (claude-sonnet-4-20250514)
+- **Claude Sonnet 3.7** (claude-3-7-sonnet-20250219)
+- **Claude Opus 4.1** (claude-opus-4-1-20250805)
 
 {{< hint warning >}}
-Azure AI is only supported in Java currently.
+Model availability and specifications may change. Always check the official Anthropic documentation for the latest information before implementing in production.
+{{< /hint >}}
+
+### Azure AI
+
+Azure AI provides cloud-based chat models through Azure AI Inference API, supporting various models including Llama, Mistral, Phi, and other models deployed via Azure AI Studio.
+
+{{< hint info >}}
+Azure AI is only supported in Java currently. To use Azure AI from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint warning >}}
+**Azure AI vs Azure OpenAI:** Azure AI uses the Azure AI Inference API to access models deployed via Azure AI Studio (Llama, Mistral, Phi, etc.). If you want to use OpenAI models (GPT-4, etc.) hosted on Azure, see [Azure OpenAI](#azure-openai) instead.
 {{< /hint >}}
 
 #### Prerequisites
@@ -196,7 +347,7 @@ Azure AI is only supported in Java currently.
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor azureAIConnection() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.AZURE_CHAT_MODEL_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_CONNECTION)
                 .addInitialArgument("endpoint", "https://your-resource.inference.ai.azure.com")
                 .addInitialArgument("apiKey", "your-api-key-here")
                 .build();
@@ -204,7 +355,7 @@ public class MyAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor azureAIChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.AZURE_CHAT_MODEL_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_SETUP)
                 .addInitialArgument("connection", "azureAIConnection")
                 .addInitialArgument("model", "gpt-4o")
                 .build();
@@ -231,79 +382,111 @@ Some popular options include:
 Model availability and specifications may change. Always check the official Azure AI documentation for the latest information before implementing in production.
 {{< /hint >}}
 
-### Anthropic
+### Azure OpenAI
 
-Anthropic provides cloud-based chat models featuring the Claude family, known for their strong reasoning, coding, and safety capabilities.
+Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azure's cloud infrastructure, using the same OpenAI SDK with Azure-specific authentication and endpoints. This offers enterprise security, compliance, and regional availability while using familiar OpenAI APIs.
+
+{{< hint info >}}
+Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
 
 {{< hint warning >}}
-Anthropic is only supported in python currently.
+**Azure OpenAI vs Azure AI:** Azure OpenAI uses the OpenAI SDK to access OpenAI models (GPT-4, etc.) hosted on Azure. If you want to use other models like Llama, Mistral, or Phi deployed via Azure AI Studio, see [Azure AI](#azure-ai) instead.
 {{< /hint >}}
 
 #### Prerequisites
 
-1. Get an API key from [Anthropic Console](https://console.anthropic.com/)
+1. Create an Azure OpenAI resource in the [Azure Portal](https://portal.azure.com/)
+2. Deploy a model in [Azure OpenAI Studio](https://oai.azure.com/)
+3. Obtain your endpoint URL, API key, API version, and deployment name from the Azure portal
 
-#### AnthropicChatModelConnection Parameters
+#### AzureOpenAIChatModelConnection Parameters
+
+{{< tabs "AzureOpenAIChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `api_key` | str | Required | Anthropic API key for authentication |
-| `max_retries` | int | `3` | Maximum number of API retry attempts |
+| `api_key` | str | Required | Azure OpenAI API key for authentication |
+| `api_version` | str | Required | Azure OpenAI REST API version (e.g., "2024-02-15-preview"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
+| `azure_endpoint` | str | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) |
 | `timeout` | float | `60.0` | API request timeout in seconds |
+| `max_retries` | int | `3` | Maximum number of API retry attempts |
 
-#### AnthropicChatModelSetup Parameters
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### AzureOpenAIChatModelSetup Parameters
+
+{{< tabs "AzureOpenAIChatModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Reference to connection method name |
-| `model` | str | `"claude-sonnet-4-20250514"` | Name of the chat model to use |
+| `model` | str | Required | Name of OpenAI model deployment on Azure |
+| `model_of_azure_deployment` | str | None | The underlying model name (e.g., 'gpt-4', 'gpt-35-turbo'). Used for token metrics tracking |
 | `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
 | `tools` | List[str] | None | List of tool names available to the model |
-| `max_tokens` | int | `1024` | Maximum number of tokens to generate |
-| `temperature` | float | `0.1` | Sampling temperature (0.0 to 1.0) |
-| `additional_kwargs` | dict | `{}` | Additional Anthropic API parameters |
+| `temperature` | float | None | Sampling temperature (0.0 to 2.0). Not supported by reasoning models |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `logprobs` | bool | `False` | Whether to return log probabilities of output tokens |
+| `additional_kwargs` | dict | `{}` | Additional Azure OpenAI API parameters |
+
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### Usage Example
 
+{{< tabs "Azure OpenAI Usage Example" >}}
+
+{{< tab "Python" >}}
 ```python
 class MyAgent(Agent):
 
     @chat_model_connection
     @staticmethod
-    def anthropic_connection() -> ResourceDescriptor:
+    def azure_openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.ANTHROPIC_CHAT_MODEL_CONNECTION,
-            api_key="your-api-key-here",  # Or set ANTHROPIC_API_KEY env var
-            max_retries=3,
-            timeout=60.0
+            clazz=ResourceName.ChatModel.AZURE_OPENAI_CONNECTION,
+            api_key="<your-api-key>",
+            api_version="2024-02-15-preview",
+            azure_endpoint="https://your-resource.openai.azure.com"
         )
 
     @chat_model_setup
     @staticmethod
-    def anthropic_chat_model() -> ResourceDescriptor:
+    def azure_openai_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.ANTHROPIC_CHAT_MODEL_SETUP,
-            connection="anthropic_connection",
-            model="claude-sonnet-4-20250514",
-            max_tokens=2048,
-            temperature=0.7
+            clazz=ResourceName.ChatModel.AZURE_OPENAI_SETUP,
+            connection="azure_openai_connection",
+            model="my-gpt4-deployment",  # Your Azure deployment name
+            model_of_azure_deployment="gpt-4",  # Underlying model for metrics
+            max_tokens=1000
         )
 
     ...
 ```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### Available Models
 
-Visit the [Anthropic Models documentation](https://docs.anthropic.com/en/docs/about-claude/models) for the complete and up-to-date list of available chat models.
+Azure OpenAI supports OpenAI models deployed through your Azure subscription. Visit the [Azure OpenAI Models documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models) for the complete and up-to-date list of available models.
 
 Some popular options include:
-- **Claude Sonnet 4.5** (claude-sonnet-4-5-20250929)
-- **Claude Sonnet 4** (claude-sonnet-4-20250514)
-- **Claude Sonnet 3.7** (claude-3-7-sonnet-20250219)
-- **Claude Opus 4.1** (claude-opus-4-1-20250805)
+- **GPT-4o** (gpt-4o)
+- **GPT-4** (gpt-4)
+- **GPT-4 Turbo** (gpt-4-turbo)
+- **GPT-3.5 Turbo** (gpt-35-turbo)
 
 {{< hint warning >}}
-Model availability and specifications may change. Always check the official Anthropic documentation for the latest information before implementing in production.
+Model availability depends on your Azure region and subscription. Always check the official Azure OpenAI documentation for regional availability before implementing in production.
 {{< /hint >}}
 
 ### Ollama
@@ -311,6 +494,10 @@ Model availability and specifications may change. Always check the official Anth
 Ollama provides local chat models that run on your machine, offering privacy, control, and no API costs.
 
 #### Prerequisites
+
+{{< hint info >}}
+Ollama server **0.9.0** or higher is required.
+{{< /hint >}}
 
 1. Install Ollama from [https://ollama.com/](https://ollama.com/)
 2. Start the Ollama server: `ollama serve`
@@ -346,27 +533,31 @@ Ollama provides local chat models that run on your machine, offering privacy, co
 
 {{< tab "Python" >}}
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `connection` | str | Required | Reference to connection method name |
-| `model` | str | Required | Name of the chat model to use |
-| `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
-| `tools` | List[str] | None | List of tool names available to the model |
-| `temperature` | float | `0.75` | Sampling temperature (0.0 to 1.0) |
-| `num_ctx` | int | `2048` | Maximum number of context tokens |
-| `keep_alive` | str \| float | `"5m"` | How long to keep model loaded in memory |
-| `extract_reasoning` | bool | `True` | Extract reasoning content from response |
-| `additional_kwargs` | dict | `{}` | Additional Ollama API parameters |
+| Parameter           | Type                                     | Default  | Description                                     |
+|---------------------|------------------------------------------|----------|-------------------------------------------------|
+| `connection`        | str                                      | Required | Reference to connection method name             |
+| `model`             | str                                      | Required | Name of the chat model to use                   |
+| `prompt`            | Prompt \| str                            | None     | Prompt template or reference to prompt resource |
+| `tools`             | List[str]                                | None     | List of tool names available to the model       |
+| `temperature`       | float                                    | `0.75`   | Sampling temperature (0.0 to 1.0)               |
+| `num_ctx`           | int                                      | `2048`   | Maximum number of context tokens                |
+| `keep_alive`        | str \| float                             | `"5m"`   | How long to keep model loaded in memory         |
+| `think`             | bool \| Literal["low", "medium", "high"] | True     | Whether enable model think                      |
+| `extract_reasoning` | bool                                     | True     | Extract reasoning content from response         |
+| `additional_kwargs` | dict                                     | `{}`     | Additional Ollama API parameters                |
 {{< /tab >}}
 
 {{< tab "Java" >}}
 
-| Parameter | Type             | Default | Description |
-|-----------|------------------|---------|-------------|
-| `connection` | String           | Required | Reference to connection method name |
-| `model` | String           | Required | Name of the chat model to use |
-| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
-| `tools` | List[String]     | None | List of tool names available to the model |
+| Parameter           | Type                                        | Default  | Description                                     |
+|---------------------|---------------------------------------------|----------|-------------------------------------------------|
+| `connection`        | String                                      | Required | Reference to connection method name             |
+| `model`             | String                                      | Required | Name of the chat model to use                   |
+| `prompt`            | Prompt \| String                            | None     | Prompt template or reference to prompt resource |
+| `tools`             | List[String]                                | None     | List of tool names available to the model       |
+| `think`             | Boolean \| Literal["low", "medium", "high"] | true     | Whether enable model think                      |
+| `extract_reasoning` | Boolean                                     | true     | Extract reasoning content from response         |
+
 {{< /tab >}}
 
 {{< /tabs >}}
@@ -383,7 +574,7 @@ class MyAgent(Agent):
     @staticmethod
     def ollama_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION,
             base_url="http://localhost:11434",
             request_timeout=120.0
         )
@@ -392,12 +583,13 @@ class MyAgent(Agent):
     @staticmethod
     def my_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_connection",
             model="qwen3:8b",
             temperature=0.7,
             num_ctx=4096,
             keep_alive="10m",
+            think=True,
             extract_reasoning=True
         )
 
@@ -410,7 +602,7 @@ class MyAgent(Agent):
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor ollamaConnection() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_CONNECTION)
                 .addInitialArgument("endpoint", "http://localhost:11434")
                 .addInitialArgument("requestTimeout", 120)
                 .build();
@@ -418,9 +610,10 @@ public class MyAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor ollamaChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaConnection")
                 .addInitialArgument("model", "qwen3:8b")
+                .addInitialArgument("extract_reasoning", true)
                 .build();
     }
     
@@ -450,27 +643,48 @@ Model availability and specifications may change. Always check the official Olla
 
 OpenAI provides cloud-based chat models with state-of-the-art performance for a wide range of natural language tasks.
 
-{{< hint warning >}}
-OpenAI is only supported in python currently.
-{{< /hint >}}
-
 #### Prerequisites
 
-1. Get an API key from [OpenAI Platform](https://platform.openai.com/)
-2. Set the API key as an environment variable: `export OPENAI_API_KEY=your-api-key`
+1. Create an account at [OpenAI Platform](https://platform.openai.com/)
+2. Navigate to [API Keys](https://platform.openai.com/api-keys) and create a new secret key
 
 #### OpenAIChatModelConnection Parameters
 
+{{< tabs "OpenAIChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `api_key` | str | `$OPENAI_API_KEY` | OpenAI API key for authentication |
+| `api_key` | str | Required | OpenAI API key for authentication |
 | `api_base_url` | str | `"https://api.openai.com/v1"` | Base URL for OpenAI API |
 | `max_retries` | int | `3` | Maximum number of API retry attempts |
 | `timeout` | float | `60.0` | API request timeout in seconds |
 | `default_headers` | dict | None | Default headers for API requests |
 | `reuse_client` | bool | `True` | Whether to reuse the OpenAI client between requests |
 
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | OpenAI API key for authentication |
+| `api_base_url` | String | `"https://api.openai.com/v1"` | Base URL for OpenAI API |
+| `max_retries` | int | `2` | Maximum number of API retry attempts |
+| `timeout` | int | None | Timeout in seconds for API requests |
+| `default_headers` | Map<String, String> | None | Default headers for API requests |
+| `model` | String | None | Default model to use if not specified in setup |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 #### OpenAIChatModelSetup Parameters
+
+{{< tabs "OpenAIChatModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -486,8 +700,33 @@ OpenAI is only supported in python currently.
 | `reasoning_effort` | str | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
 | `additional_kwargs` | dict | `{}` | Additional OpenAI API parameters |
 
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"gpt-3.5-turbo"` | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `logprobs` | boolean | None | Whether to return log probabilities per token |
+| `top_logprobs` | int | `0` | Number of top token log probabilities to return (0-20) |
+| `strict` | boolean | `false` | Enable strict mode for tool calling and schemas |
+| `reasoning_effort` | String | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional OpenAI API parameters |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 #### Usage Example
 
+{{< tabs "OpenAI Usage Example" >}}
+
+{{< tab "Python" >}}
 ```python
 class MyAgent(Agent):
 
@@ -495,8 +734,8 @@ class MyAgent(Agent):
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_CHAT_MODEL_CONNECTION,
-            api_key="your-api-key-here",  # Or set OPENAI_API_KEY env var
+            clazz=ResourceName.ChatModel.OPENAI_CONNECTION,
+            api_key="<your-api-key>",
             api_base_url="https://api.openai.com/v1",
             max_retries=3,
             timeout=60.0
@@ -506,7 +745,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.OPENAI_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.OPENAI_SETUP,
             connection="openai_connection",
             model="gpt-4",
             temperature=0.7,
@@ -515,6 +754,37 @@ class MyAgent(Agent):
 
     ...
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor openaiConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_CONNECTION)
+                .addInitialArgument("api_key", "<your-api-key>")
+                .addInitialArgument("api_base_url", "https://api.openai.com/v1")
+                .addInitialArgument("timeout", 60)
+                .addInitialArgument("max_retries", 3)
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor openaiChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_SETUP)
+                .addInitialArgument("connection", "openaiConnection")
+                .addInitialArgument("model", "gpt-4")
+                .addInitialArgument("temperature", 0.7d)
+                .addInitialArgument("max_tokens", 1000)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### Available Models
 
@@ -533,8 +803,8 @@ Model availability and specifications may change. Always check the official Open
 
 Tongyi provides cloud-based chat models from Alibaba Cloud, offering powerful Chinese and English language capabilities.
 
-{{< hint warning >}}
-Tongyi is only supported in python currently.
+{{< hint info >}}
+Tongyi is only supported in Python currently. To use Tongyi from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
 
 #### Prerequisites
@@ -569,7 +839,7 @@ class MyAgent(Agent):
     @staticmethod
     def tongyi_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.TONGYI_CHAT_MODEL_CONNECTION,
+            clazz=ResourceName.ChatModel.TONGYI_CONNECTION,
             api_key="your-api-key-here",  # Or set DASHSCOPE_API_KEY env var
             request_timeout=60.0
         )
@@ -578,7 +848,7 @@ class MyAgent(Agent):
     @staticmethod
     def tongyi_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=Constant.TONGYI_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.TONGYI_SETUP,
             connection="tongyi_connection",
             model="qwen-plus",
             temperature=0.7,
@@ -601,6 +871,150 @@ Some popular options include:
 {{< hint warning >}}
 Model availability and specifications may change. Always check the official DashScope documentation for the latest information before implementing in production.
 {{< /hint >}}
+
+## Using Cross-Language Providers
+
+Flink Agents supports cross-language chat model integration, allowing you to use chat models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a chat model provider is only available in one language (e.g., Tongyi is currently Python-only).
+
+{{< hint warning >}}
+**Limitations:**
+
+- Cross-language resources are currently supported only when [running in Flink]({{< ref "docs/operations/deployment#run-in-flink" >}}), not in local development mode
+- Complex object serialization between languages may have limitations
+{{< /hint >}}
+
+### How To Use
+
+To leverage chat model supports provided in a different language, you need to declare the resource within a built-in cross-language wrapper, and specify the target provider as an argument:
+
+- **Using Java chat models in Python**: Use `ResourceName.ChatModel.JAVA_WRAPPER_CONNECTION` and `ResourceName.ChatModel.JAVA_WRAPPER_SETUP`, specifying the Java provider class via the `java_clazz` parameter
+- **Using Python chat models in Java**: Use `ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION` and `ResourceName.ChatModel.PYTHON_WRAPPER_SETUP`, specifying the Python provider via the `pythonClazz` parameter
+
+
+
+### Usage Example
+
+{{< tabs "Cross-Language Chat Model Usage Example" >}}
+
+{{< tab "Using Java Chat Model in Python" >}}
+```python
+class MyAgent(Agent):
+
+    @chat_model_connection
+    @staticmethod
+    def java_chat_model_connection() -> ResourceDescriptor:
+        # In pure Java, the equivalent ResourceDescriptor would be:
+        # ResourceDescriptor.Builder
+        #     .newBuilder(ResourceName.ChatModel.OLLAMA_CONNECTION)
+        #     .addInitialArgument("endpoint", "http://localhost:11434")
+        #     .addInitialArgument("requestTimeout", 120)
+        #     .build();
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.JAVA_WRAPPER_CONNECTION,
+            java_clazz=ResourceName.ChatModel.Java.OLLAMA_CONNECTION,
+            endpoint="http://localhost:11434",
+            requestTimeout=120,
+        )
+    
+    
+    @chat_model_setup
+    @staticmethod
+    def java_chat_model() -> ResourceDescriptor:
+        # In pure Java, the equivalent ResourceDescriptor would be:
+        # ResourceDescriptor.Builder
+        #     .newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+        #     .addInitialArgument("connection", "java_chat_model_connection")
+        #     .addInitialArgument("model", "qwen3:8b")
+        #     .addInitialArgument("prompt", "my_prompt")
+        #     .addInitialArgument("tools", List.of("my_tool1", "my_tool2"))
+        #     .addInitialArgument("extractReasoning", true)
+        #     .build();
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
+            java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
+            connection="java_chat_model_connection",
+            model="qwen3:8b",
+            prompt="my_prompt",
+            tools=["my_tool1", "my_tool2"],
+            extract_reasoning=True,
+        )
+
+    @action(InputEvent)
+    @staticmethod
+    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+        # Create a chat request with user message
+        user_message = ChatMessage(
+            role=MessageRole.USER,
+            content=f"input: {event.input}"
+        )
+        ctx.send_event(
+            ChatRequestEvent(model="java_chat_model", messages=[user_message])
+        )
+
+    @action(ChatResponseEvent)
+    @staticmethod
+    def process_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+        response_content = event.response.content
+        # Handle the LLM's response
+        # Process the response as needed for your use case
+```
+{{< /tab >}}
+
+{{< tab "Using Python Chat Model in Java" >}}
+```java
+public class MyAgent extends Agent {
+
+    @ChatModelConnection
+    public static ResourceDescriptor pythonChatModelConnection() {
+        // In pure Python, the equivalent ResourceDescriptor would be:
+        // ResourceDescriptor(
+        //     clazz=ResourceName.ChatModel.OLLAMA_CONNECTION,
+        //     request_timeout=120.0
+        // )
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION)
+                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_CONNECTION)
+                .addInitialArgument("request_timeout", 120.0)
+                .build();
+    }
+  
+  	@ChatModelSetup
+    public static ResourceDescriptor pythonChatModel() {
+        // In pure Python, the equivalent ResourceDescriptor would be:
+        // ResourceDescriptor(
+        //     clazz=ResourceName.ChatModel.OLLAMA_SETUP,
+        //     connection="pythonChatModelConnection",
+        //     model="qwen3:8b",
+        //     tools=["tool1", "tool2"],
+        //     extract_reasoning=True
+        // )
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_SETUP)
+                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_SETUP)
+                .addInitialArgument("connection", "pythonChatModelConnection")
+                .addInitialArgument("model", "qwen3:8b")
+                .addInitialArgument("tools", List.of("tool1", "tool2"))
+                .addInitialArgument("extract_reasoning", true)
+                .build();
+    }
+
+    @Action(listenEvents = {InputEvent.class})
+    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+        ChatMessage userMessage =
+                new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
+        ctx.sendEvent(new ChatRequestEvent("pythonChatModel", List.of(userMessage)));
+    }
+
+    @Action(listenEvents = {ChatResponseEvent.class})
+    public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
+            throws Exception {
+        String response = event.getResponse().getContent();
+        // Handle the LLM's response
+        // Process the response as needed for your use case
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ## Custom Providers
 

@@ -17,7 +17,10 @@
 #################################################################################
 
 from flink_agents.api.chat_message import ChatMessage
-from flink_agents.api.memory.long_term_memory import MemorySet, SummarizationStrategy
+from flink_agents.api.memory.long_term_memory import (
+    CompactionConfig,
+    MemorySet,
+)
 
 
 def test_memory_set_serialization() -> None:  # noqa:D103
@@ -25,7 +28,7 @@ def test_memory_set_serialization() -> None:  # noqa:D103
         name="chat_history",
         item_type=ChatMessage,
         capacity=100,
-        compaction_strategy=SummarizationStrategy(model="llm"),
+        compaction_config=CompactionConfig(model="llm"),
     )
 
     json_data = memory_set.model_dump_json()

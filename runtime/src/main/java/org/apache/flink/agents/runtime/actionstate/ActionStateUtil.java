@@ -59,22 +59,15 @@ public class ActionStateUtil {
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {
-        if (event instanceof InputEvent) {
+        if (event instanceof PythonEvent) {
+            PythonEvent pythonEvent = (PythonEvent) event;
+            return String.valueOf(UUID.nameUUIDFromBytes(pythonEvent.getEvent()));
+        } else if (event instanceof InputEvent) {
             InputEvent inputEvent = (InputEvent) event;
             byte[] inputEventBytes =
                     MAPPER.writeValueAsBytes(
                             new Object[] {inputEvent.getInput(), inputEvent.getAttributes()});
             return String.valueOf(UUID.nameUUIDFromBytes(inputEventBytes));
-        } else if (event instanceof PythonEvent) {
-            PythonEvent pythonEvent = (PythonEvent) event;
-            byte[] pythonEventBytes =
-                    MAPPER.writeValueAsBytes(
-                            new Object[] {
-                                pythonEvent.getEvent(),
-                                pythonEvent.getEventType(),
-                                pythonEvent.getAttributes()
-                            });
-            return String.valueOf(UUID.nameUUIDFromBytes(pythonEventBytes));
         } else {
             return String.valueOf(
                     UUID.nameUUIDFromBytes(

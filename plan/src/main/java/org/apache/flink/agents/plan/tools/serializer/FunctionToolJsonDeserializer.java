@@ -77,7 +77,11 @@ public class FunctionToolJsonDeserializer extends StdDeserializer<FunctionTool> 
         for (int i = 0; i < parameterTypes.length; i++) {
             try {
                 String parameterTypeName = execNode.get("parameter_types").get(i).asText();
-                parameterTypes[i] = Class.forName(parameterTypeName);
+                parameterTypes[i] =
+                        Class.forName(
+                                parameterTypeName,
+                                true,
+                                Thread.currentThread().getContextClassLoader());
             } catch (ClassNotFoundException e) {
                 throw new IOException("Failed to deserialize parameter type", e);
             }

@@ -30,6 +30,10 @@ In Flink-Agents, a workflow agent is defined as a class that inherits from the `
 
 A workflow agent is well-suited for scenarios where the solution requires explicit orchestration, branching, or multi-step reasoning, such as data enrichment, multi-tool pipelines, or complex business logic.
 
+{{< hint info >}}
+For guidance on choosing Java or Python, see [Should I choose Java or Python?]({{< ref "docs/faq/faq#q3-should-i-choose-java-or-python" >}}).
+{{< /hint >}}
+
 ## Workflow Agent Example
 
 {{< tabs "Workflow Agent Example" >}}
@@ -73,7 +77,7 @@ class ReviewAnalysisAgent(Agent):
     def review_analysis_model() -> ResourceDescriptor:
         """ChatModel which focus on review analysis."""
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_server",
             model="qwen3:8b",
             prompt="review_analysis_prompt",
@@ -139,7 +143,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor reviewAnalysisModel() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
                 .addInitialArgument("model", "qwen3:8b")
                 .addInitialArgument("prompt", "reviewAnalysisPrompt")
@@ -277,40 +281,133 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
 
 {{< /tabs >}}
 
-### Async Execution
+### Durable Execution
 
-{{< hint warning >}}
-Async Execution is only supported in Python currently.
+Use durable execution when you wrap a time-consuming or side-effecting operation. The framework persists the result and replays it on recovery when the same call is encountered, so the function will not be called again and side effects are avoided. Action code outside `durable_execute` / `durable_execute_async` is always re-executed during recovery.
+
+**Constraints:**
+- The function must be deterministic and called in the same order on recovery.
+- Access to Memory and `send_event` is prohibited inside the function/callable.
+- Arguments and results must be serializable.
+
+{{< hint info >}}
+Durable execution requires an external action state store. See
+[Exactly-Once Action Consistency]({{< ref "docs/operations/deployment#exactly-once-action-consistency" >}})
+on how to setup and configure the external action state store.
 {{< /hint >}}
 
-When an action needs to perform time-consuming I/O operations (such as calling external APIs, database queries, or network requests), you can use `ctx.execute_async()` to execute these operations asynchronously. This allows Flink to efficiently manage resources and avoid blocking the main processing thread.
+**Best-effort replay:**
+- Results may not be reused if call order or arguments change (non-deterministic actions), which clears subsequent cached results and re-executes.
+- If a failure happens after a function completes but before its result is persisted, the call will be re-executed.
+- In Python async actions, if `ctx.durable_execute_async(...)` is not awaited, the result is not recorded and cannot be replayed.
 
-To use async execution, define your action as an `async def` function and use `await` with `ctx.execute_async()`:
+{{< tabs "Durable Execution" >}}
+{{< tab "Python" >}}
+Python actions can call `ctx.durable_execute(...)` to run a synchronous durable code block.
+```python
+@action(InputEvent)
+@staticmethod
+def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def slow_external_call(data: str) -> str:
+        time.sleep(2)
+        return f"Processed: {data}"
 
+    # Synchronous durable execution
+    result = ctx.durable_execute(slow_external_call, event.input)
+    ctx.send_event(OutputEvent(output=result))
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+Java actions use `DurableCallable<T>` with `ctx.durableExecute(...)`, where `getId()` must be stable and `getResultClass()` supports recovery deserialization.
+```java
+@Action(listenEvents = {InputEvent.class})
+public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    DurableCallable<String> call = new DurableCallable<>() {
+        @Override
+        public String getId() {
+            // Stable, deterministic ID for this call
+            return "slow_external_call";
+        }
+
+        @Override
+        public Class<String> getResultClass() {
+            return String.class;
+        }
+
+        @Override
+        public String call() throws Exception {
+            Thread.sleep(2000);
+            return "Processed: " + event.getInput();
+        }
+    };
+
+    String result = ctx.durableExecute(call);
+    ctx.sendEvent(new OutputEvent(result));
+}
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+### Async Execution
+
+Async execution uses the same durable semantics but yields while waiting for a thread-pool task. This is useful for high-latency I/O.
+
+{{< tabs "Async Execution" >}}
+{{< tab "Python" >}}
+Define an `async def` action and `await ctx.durable_execute_async(...)`.
 ```python
 @action(InputEvent)
 @staticmethod
 async def process_with_async(event: InputEvent, ctx: RunnerContext) -> None:
     def slow_external_call(data: str) -> str:
-        # Simulate a slow external API call
         time.sleep(2)
         return f"Processed: {data}"
-    
-    # Execute the slow operation asynchronously
-    result = await ctx.execute_async(slow_external_call, event.input)
-    
+
+    result = await ctx.durable_execute_async(slow_external_call, event.input)
     ctx.send_event(OutputEvent(output=result))
 ```
+{{< hint info >}}
+Python async actions only support `await ctx.durable_execute_async(...)`. Standard asyncio
+functions like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and
+`asyncio.sleep` are **NOT** supported because there is no asyncio event loop.
+{{< /hint >}}
+{{< /tab >}}
 
-**Key points:**
-- Use `async def` to define the action function
-- Use `await ctx.execute_async(func, *args, **kwargs)` to execute slow operations
-- The function passed to `execute_async` will be submitted to a thread pool
-- Access to memory is prohibited within the function passed to `execute_async`
+{{< tab "Java" >}}
+Use `ctx.durableExecuteAsync(DurableCallable)`; on **JDK 21+** it yields using Continuation,
+and on **JDK < 21** it falls back to synchronous execution.
+```java
+@Action(listenEvents = {InputEvent.class})
+public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    DurableCallable<String> call = new DurableCallable<>() {
+        @Override
+        public String getId() {
+            return "slow_external_call";
+        }
+
+        @Override
+        public Class<String> getResultClass() {
+            return String.class;
+        }
+
+        @Override
+        public String call() throws Exception {
+            Thread.sleep(2000);
+            return "Processed: " + event.getInput();
+        }
+    };
+
+    String result = ctx.durableExecuteAsync(call);
+    ctx.sendEvent(new OutputEvent(result));
+}
+```
 
 {{< hint info >}}
-Only `await ctx.execute_async(...)` is supported. Standard asyncio functions like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and `asyncio.sleep` are **NOT** supported because there is no asyncio event loop running.
+To use async execution on JDK 21+, user should append jvm option `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to [env.java.opts.all](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#env-java-opts-all) before start the flink cluster.
 {{< /hint >}}
+{{< /tab >}}
+{{< /tabs >}}
 
 ## Event
 Events are messages passed between actions. Events may carry payloads. A single event may trigger multiple actions if they are all listening to its type.
@@ -319,7 +416,7 @@ There are 2 special types of event.
 * `InputEvent`: Generated by the framework, carrying an input data record that arrives at the agent in `input` field . Actions listening to the `InputEvent` will be the entry points of agent.
 * `OutputEvent`: The framework will listen to `OutputEvent`, and convert its payload in `output` field into outputs of the agent. By generating `OutputEvent`, actions can emit output data.
 
-User can define owner event by extends `Event`.
+User can define own event by extends `Event`.
 
 {{< tabs "Custom Event" >}}
 
@@ -351,188 +448,3 @@ The payload of python `Event` should be `BaseModel` serializable, of java `Event
 There are several built-in `Event` and `Action` in Flink-Agents:
 * See [Chat Models]({{< ref "docs/development/chat_models" >}}) for how to chat with a LLM leveraging built-in action and events.
 * See [Tool Use]({{< ref "docs/development/tool_use" >}}) for how to programmatically use a tool leveraging built-in action and events.
-
-## Memory
-
-Memory is data that will be remembered across actions and agent runs.
-
-### Short-Term Memory
-
-Short-Term Memory is shared across all actions within an agent run, and multiple agent runs with the same input key. 
-
-Here an *agent run* refers to a complete execution of an agent. Each record from upstream will trigger a new run of agent.
-
-This corresponds to Flink's Keyed State, which is visible to processing of multiple records within the same keyed partition, and is not visible to processing of data in other keyed partitions.
-
-#### Basic Usage
-
-User can set and get short-term memory in actions.
-
-{{< tabs "Basic Usage" >}}
-
-{{< tab "Python" >}}
-```python
-@action(InputEvent)
-@staticmethod
-def first_action(event: InputEvent, ctx: RunnerContext) -> None:
-    ...
-    ctx.short_term_memory.set("id", input.id)
-    ...
-
-@action(ChatResponseEvent)
-@staticmethod
-def second_action(event: ChatResponseEvent, ctx: RunnerContext) -> None:
-    ...
-    id = ctx.short_term_memory.get("id"),
-    ...
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-@Action(listenEvents = {InputEvent.class})
-public static void firstAction(Event event, RunnerContext ctx) throws Exception {
-    ...
-    ctx.getShortTermMemory().set("id", inputObj.getId());
-    ...
-}
-
-@Action(listenEvents = {ChatResponseEvent.class})
-public static void firstAction(Event event, RunnerContext ctx) throws Exception {
-    ...
-    String id = ctx.getShortTermMemory().get("id").getValue();
-    ...
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Store Nested Object
-
-It's not just a k-v map. User can store nested objects.
-
-{{< tabs "Store Nested Object" >}}
-
-{{< tab "Python" >}}
-```python
-@action(InputEvent)
-@staticmethod
-def first_action(event: InputEvent, ctx: RunnerContext) -> None:
-    ...
-    stm = ctx.short_term_memory
-    
-    # create nested memory object, and then set the leaf value
-    nested_obj = stm.new_object("a")
-    nested_obj.set("b", input.id)
-    
-    # directly set leaf value, will auto crate the nested object    
-    stm.set("x.y", input.user)
-    ...
-    
-@action(ChatResponseEvent)
-@staticmethod
-def second_action(event: InputEvent, ctx: RunnerContext) -> None:
-    ...
-    stm = ctx.short_term_memory
-    
-    # directly get leaf value, will auto parse the nested object
-    id = stm.get("a.b")
-    
-    # get the nested object, and then get the leaf value
-    nested_obj = stm.get("x")
-    user = nested_obj.get("y")
-    ...
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-@Action(listenEvents = {InputEvent.class})
-public static void firstAction(Event event, RunnerContext ctx) throws Exception {
-    ...
-    MemoryObject stm = ctx.getShortTermMemory();
-    
-    // create nested memory object, and then set the leaf value
-    MemoryObject nestedObj = stm.newObject("a", true);
-    nestedObj.set("b", input.getId());
-    
-    // directly set leaf value, will auto crate the nested object
-    stm.set("x.y", input.getUser());
-    ...
-}
-
-@Action(listenEvents = {ChatResponseEvent.class})
-public static void secondAction(Event event, RunnerContext ctx) throws Exception {
-    ...
-    MemoryObject stm = ctx.getShortTermMemory();
-    
-    // directly get leaf value, will auto parse the nested object
-    String id = stm.get("a.b").getValue();
-    
-    // get the nested object, and then get the leaf value
-    MemoryObject nestedObj = stm.get("x");
-    String user = nestedObj.get("y").getValue();
-    ...
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Memory Reference
-
-The `set` method of short term memory will return a `MemoryRef`, which can be treated as a reference to the stored object. 
-
-If user want to pass the stored object between actions, they can pass the reference instead, which can reduce the payload size of Event.
-
-{{< tabs "Memory Reference" >}}
-
-{{< tab "Python" >}}
-```python
-@staticmethod
-def first_action(event: Event, ctx: RunnerContext):  # noqa D102
-    ...
-    stm = ctx.get_short_term_memory()
-    
-    data_ref = stm.set(data_path, data_to_store)
-    ctx.send_event(MyEvent(value=data_ref))
-    ...
-
-@action(MyEvent)
-@staticmethod
-def second_action(event: Event, ctx: RunnerContext):  # noqa D102
-    ...
-    stm = ctx.get_short_term_memory()
-    
-    content_ref: MemoryRef = event.value
-    processed_data: ProcessedData = stm.get(content_ref)
-    ...
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-@Action(listenEvents = {InputEvent.class})
-public static void firstAction(Event event, RunnerContext ctx) throws Exception {
-    ...
-    MemoryObject stm = ctx.getShortTermMemory();
-
-    MemoryRef dataRef = stm.set(dataPath, dataToStore);
-    ctx.send_event(new MyEvent(dataRef));
-    ...
-}
-
-@Action(listenEvents = {MyEvent.class})
-public static void secondAction(Event event, RunnerContext ctx) throws Exception {
-    ...
-    MemoryObject stm = ctx.getShortTermMemory();
-
-    MemoryRef contentRef = event.getValue();
-    ProcessedData processedData = stm.get(contentRef).getValue();
-    ...
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}

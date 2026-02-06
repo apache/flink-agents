@@ -40,7 +40,7 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.api.memory.MemorySetItem;
-import org.apache.flink.agents.api.memory.compaction.SummarizationStrategy;
+import org.apache.flink.agents.api.memory.compaction.CompactionConfig;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
 import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup;
@@ -150,7 +150,7 @@ public class VectorStoreLongTermMemoryAgent extends Agent {
         BaseLongTermMemory ltm = ctx.getLongTermMemory();
         MemorySet memorySet =
                 ltm.getOrCreateMemorySet(
-                        "test-ltm", String.class, 5, new SummarizationStrategy("ollamaQwen3", 1));
+                        "test-ltm", String.class, 5, new CompactionConfig("ollamaQwen3", 1));
         ProductReview review = (ProductReview) event.getInput();
         memorySet.add(Collections.singletonList(review.getReview()), null, null);
 

@@ -24,7 +24,11 @@ from flink_agents.api.decorators import (
     embedding_model_setup,
 )
 from flink_agents.api.events.event import InputEvent, OutputEvent
-from flink_agents.api.resource import Constant, ResourceDescriptor, ResourceType
+from flink_agents.api.resource import (
+    ResourceDescriptor,
+    ResourceName,
+    ResourceType,
+)
 from flink_agents.api.runner_context import RunnerContext
 
 
@@ -36,8 +40,8 @@ class EmbeddingModelCrossLanguageAgent(Agent):
     def embedding_model_connection() -> ResourceDescriptor:
         """EmbeddingModelConnection responsible for ollama model service connection."""
         return ResourceDescriptor(
-            clazz=Constant.JAVA_EMBEDDING_MODEL_CONNECTION,
-            java_clazz="org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelConnection",
+            clazz=ResourceName.EmbeddingModel.JAVA_WRAPPER_CONNECTION,
+            java_clazz=ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
             host="http://localhost:11434",
         )
 
@@ -46,8 +50,8 @@ class EmbeddingModelCrossLanguageAgent(Agent):
     def embedding_model() -> ResourceDescriptor:
         """EmbeddingModel which focus on math, and reuse ChatModelConnection."""
         return ResourceDescriptor(
-            clazz=Constant.JAVA_EMBEDDING_MODEL_SETUP,
-            java_clazz="org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelSetup",
+            clazz=ResourceName.EmbeddingModel.JAVA_WRAPPER_SETUP,
+            java_clazz=ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,
             connection="embedding_model_connection",
             model=os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"),
         )

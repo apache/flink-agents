@@ -34,9 +34,14 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
 os.environ["OLLAMA_CHAT_MODEL"] = OLLAMA_MODEL
 OPENAI_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo")
 os.environ["OPENAI_CHAT_MODEL"] = OPENAI_MODEL
+AZURE_OPENAI_MODEL = os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5")
+os.environ["AZURE_OPENAI_CHAT_MODEL"] = AZURE_OPENAI_MODEL
+AZURE_OPENAI_API_VERSION= os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+os.environ["AZURE_OPENAI_API_VERSION"] = AZURE_OPENAI_API_VERSION
 
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+AZURE_OPENAI_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY")
 
 client = pull_model(OLLAMA_MODEL)
 
@@ -61,6 +66,12 @@ client = pull_model(OLLAMA_MODEL)
             "OpenAI",
             marks=pytest.mark.skipif(
                 OPENAI_API_KEY is None, reason="OpenAI api key is not set."
+            ),
+        ),
+        pytest.param(
+            "AzureOpenAI",
+            marks=pytest.mark.skipif(
+                AZURE_OPENAI_API_KEY is None, reason="Azure OpenAI api key is not set."
             ),
         ),
     ],

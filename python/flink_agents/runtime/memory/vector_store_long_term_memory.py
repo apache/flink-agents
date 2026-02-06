@@ -27,8 +27,7 @@ from typing_extensions import override
 
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.memory.long_term_memory import (
-    CompactionStrategy,
-    CompactionStrategyType,
+    CompactionConfig,
     DatetimeRange,
     ItemType,
     LongTermMemoryOptions,
@@ -124,13 +123,13 @@ class VectorStoreLongTermMemory(InternalBaseLongTermMemory):
         name: str,
         item_type: type[str] | Type[ChatMessage],
         capacity: int,
-        compaction_strategy: CompactionStrategy,
+        compaction_config: CompactionConfig,
     ) -> MemorySet:
         memory_set = MemorySet(
             name=name,
             item_type=item_type,
             capacity=capacity,
-            compaction_strategy=compaction_strategy,
+            compaction_config=compaction_config,
             ltm=self,
         )
         self.store.get_or_create_collection(
@@ -277,16 +276,11 @@ class VectorStoreLongTermMemory(InternalBaseLongTermMemory):
 
     def _compact(self, memory_set: MemorySet, metric_group: MetricGroup) -> Any | None:
         """Compact memory set to manage storge."""
-        compaction_strategy: CompactionStrategy = memory_set.compaction_strategy
-        if compaction_strategy.type == CompactionStrategyType.SUMMARIZATION:
-            # currently, only support summarize all the items.
-            extra_args = summarize(
-                ltm=self, memory_set=memory_set, ctx=self.ctx, metric_group=metric_group
-            )
-            self.metric_records.put(extra_args)
-        else:
-            msg = f"Unknown compaction strategy: {compaction_strategy.type}"
-            raise RuntimeError(msg)
+        # currently, only support summarize all the items.
+        extra_args = summarize(
+            ltm=self, memory_set=memory_set, ctx=self.ctx, metric_group=metric_group
+        )
+        self.metric_records.put(extra_args)
 
     @staticmethod
     def _handle_exception(

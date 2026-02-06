@@ -30,7 +30,6 @@ from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.java_chat_model import JavaChatModelSetup
 from flink_agents.api.core_options import (
-    AgentConfigOptions,
     AgentExecutionOptions,
     ErrorHandlingStrategy,
 )
@@ -184,10 +183,10 @@ async def chat(
     # see https://github.com/apache/flink-agents/issues/448 for details.
     chat_async = chat_async and not isinstance(chat_model, JavaChatModelSetup)
 
-    error_handling_strategy = ctx.config.get(AgentConfigOptions.ERROR_HANDLING_STRATEGY)
+    error_handling_strategy = ctx.config.get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY)
     num_retries = 0
     if error_handling_strategy == ErrorHandlingStrategy.RETRY:
-        num_retries = max(0, ctx.config.get(AgentConfigOptions.MAX_RETRIES))
+        num_retries = max(0, ctx.config.get(AgentExecutionOptions.MAX_RETRIES))
 
     response = None
     for attempt in range(num_retries + 1):

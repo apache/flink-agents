@@ -135,14 +135,21 @@ class _DurableAsyncExecutionResult(AsyncExecutionResult):
         future = self._executor.submit(self._func, *self._args, **self._kwargs)
         while not future.done():
             yield
-
-        result = future.result()
+        try:
+            result = future.result()
+        except _DurableExecutionException as exc:
+            # Record and re-raise the original exception for better diagnostics.
+            exc.record_and_raise()
 
         # Handle the wrapped result/exception
         if isinstance(result, _DurableExecutionResult):
             return result.get_result()
         elif isinstance(result, _DurableExecutionException):
-            result.record_and_raise()
+            error_message = (
+                "Unexpected _DurableExecutionException returned from executor; "
+                "it should have been raised via future.result()."
+            )
+            raise TypeError(error_message) from result.original_exception
         else:
             return result
 
@@ -551,13 +558,14 @@ def close_flink_runner_context(
     ctx.close()
 
 
-def create_async_thread_pool() -> ThreadPoolExecutor:
+def create_async_thread_pool(max_workers: int | None) -> ThreadPoolExecutor:
     """Used to create a thread pool to execute asynchronous
     code block in action.
     """
-    return ThreadPoolExecutor(max_workers=os.cpu_count() * 2)
+    logging.info(f"Initialize fixed thread pool for async task with {max_workers} threads")
+    return ThreadPoolExecutor(max_workers=max_workers or os.cpu_count() * 2)
 
 
 def close_async_thread_pool(executor: ThreadPoolExecutor) -> None:
     """Used to close the thread pool."""
-    executor.shutdown()
+    executor.shutdown(cancel_futures=True)

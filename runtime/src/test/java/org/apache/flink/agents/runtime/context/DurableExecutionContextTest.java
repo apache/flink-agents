@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.runtime.context;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
@@ -202,5 +204,108 @@ class DurableExecutionContextTest {
         // Each call should trigger persistence
         assertEquals(3, persistCallCount.get());
         assertEquals(3, actionState.getCallResults().size());
+    }
+
+    // ==================== DurableExecutionException Tests ====================
+
+    @Test
+    void testDurableExecutionExceptionSerialization() throws Exception {
+        // Create exception
+        RuntimeException original = new RuntimeException("Test error message");
+        RunnerContextImpl.DurableExecutionException durableException =
+                RunnerContextImpl.DurableExecutionException.fromException(original);
+
+        // Serialize to JSON
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(durableException);
+
+        // Verify JSON field names are semantically correct
+        JsonNode node = mapper.readTree(json);
+        assertEquals(
+                "java.lang.RuntimeException",
+                node.get("exceptionClass").asText(),
+                "JSON field 'exceptionClass' should contain the exception class name");
+        assertEquals(
+                "Test error message",
+                node.get("message").asText(),
+                "JSON field 'message' should contain the error message");
+    }
+
+    @Test
+    void testDurableExecutionExceptionDeserialization() throws Exception {
+        // Create and serialize exception
+        IllegalArgumentException original = new IllegalArgumentException("Invalid argument: foo");
+        RunnerContextImpl.DurableExecutionException durableException =
+                RunnerContextImpl.DurableExecutionException.fromException(original);
+
+        ObjectMapper mapper = new ObjectMapper();
+        byte[] serialized = mapper.writeValueAsBytes(durableException);
+
+        // Deserialize
+        RunnerContextImpl.DurableExecutionException deserialized =
+                mapper.readValue(serialized, RunnerContextImpl.DurableExecutionException.class);
+
+        // Convert back to exception and verify content
+        Exception recovered = deserialized.toException();
+        assertTrue(
+                recovered.getMessage().contains("IllegalArgumentException"),
+                "Recovered exception should contain original class name");
+        assertTrue(
+                recovered.getMessage().contains("Invalid argument: foo"),
+                "Recovered exception should contain original message");
+    }
+
+    @Test
+    void testDurableExecutionExceptionRoundTrip() throws Exception {
+        // Test various exception types
+        Exception[] testExceptions = {
+            new RuntimeException("Runtime error"),
+            new IllegalStateException("Illegal state"),
+            new NullPointerException("Null value"),
+            new RuntimeException("Message with special chars: \"quotes\" and 'apostrophes'"),
+            new RuntimeException("") // Empty message
+        };
+
+        ObjectMapper mapper = new ObjectMapper();
+
+        for (Exception original : testExceptions) {
+            // Create DurableExecutionException
+            RunnerContextImpl.DurableExecutionException durableException =
+                    RunnerContextImpl.DurableExecutionException.fromException(original);
+
+            // Serialize and deserialize
+            byte[] serialized = mapper.writeValueAsBytes(durableException);
+            RunnerContextImpl.DurableExecutionException deserialized =
+                    mapper.readValue(serialized, RunnerContextImpl.DurableExecutionException.class);
+
+            // Verify round-trip
+            Exception recovered = deserialized.toException();
+            assertTrue(
+                    recovered.getMessage().contains(original.getClass().getName()),
+                    "Recovered exception should contain class: " + original.getClass().getName());
+            if (original.getMessage() != null && !original.getMessage().isEmpty()) {
+                assertTrue(
+                        recovered.getMessage().contains(original.getMessage()),
+                        "Recovered exception should contain message: " + original.getMessage());
+            }
+        }
+    }
+
+    @Test
+    void testDurableExecutionExceptionWithNullMessage() throws Exception {
+        // Create exception with null message
+        RuntimeException original = new RuntimeException((String) null);
+        RunnerContextImpl.DurableExecutionException durableException =
+                RunnerContextImpl.DurableExecutionException.fromException(original);
+
+        ObjectMapper mapper = new ObjectMapper();
+        byte[] serialized = mapper.writeValueAsBytes(durableException);
+
+        // Should not throw during serialization/deserialization
+        RunnerContextImpl.DurableExecutionException deserialized =
+                mapper.readValue(serialized, RunnerContextImpl.DurableExecutionException.class);
+
+        Exception recovered = deserialized.toException();
+        assertTrue(recovered.getMessage().contains("RuntimeException"));
     }
 }

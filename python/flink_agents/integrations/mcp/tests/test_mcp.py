@@ -18,7 +18,6 @@
 import multiprocessing
 import runpy
 import time
-from datetime import timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -108,7 +107,7 @@ def test_serialize_mcp_server() -> None:  # noqa:D103
     mcp_server = MCPServer(
         endpoint="http://localhost:8080",
         auth=oauth_auth,
-        timeout=timedelta(seconds=5),
+        timeout=5,
     )
     data = mcp_server.model_dump_json(serialize_as_any=True)
 

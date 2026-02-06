@@ -30,8 +30,8 @@ from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEve
 from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import (
-    Constant,
     ResourceDescriptor,
+    ResourceName,
 )
 from flink_agents.api.runner_context import RunnerContext
 
@@ -69,7 +69,7 @@ class ChatModelCrossLanguageAgent(Agent):
     def ollama_connection_python() -> ResourceDescriptor:
         """ChatModelConnection responsible for ollama model service connection."""
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=240.0
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0
         )
 
     @chat_model_connection
@@ -77,8 +77,8 @@ class ChatModelCrossLanguageAgent(Agent):
     def ollama_connection_java() -> ResourceDescriptor:
         """ChatModelConnection responsible for ollama model service connection."""
         return ResourceDescriptor(
-            clazz=Constant.JAVA_CHAT_MODEL_CONNECTION,
-            java_clazz="org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection",
+            clazz=ResourceName.ChatModel.JAVA_WRAPPER_CONNECTION,
+            java_clazz=ResourceName.ChatModel.Java.OLLAMA_CONNECTION,
             endpoint="http://localhost:11434",
             requestTimeout=120,
         )
@@ -88,9 +88,9 @@ class ChatModelCrossLanguageAgent(Agent):
     def math_chat_model() -> ResourceDescriptor:
         """ChatModel which focus on math, and reuse ChatModelConnection."""
         return ResourceDescriptor(
-            clazz=Constant.JAVA_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
+            java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
             connection="ollama_connection_python",
-            java_clazz="org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup",
             model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b"),
             prompt="from_messages_prompt",
             tools=["add"],
@@ -102,9 +102,9 @@ class ChatModelCrossLanguageAgent(Agent):
     def creative_chat_model() -> ResourceDescriptor:
         """ChatModel which focus on text generate, and reuse ChatModelConnection."""
         return ResourceDescriptor(
-            clazz=Constant.JAVA_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
+            java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
             connection="ollama_connection_java",
-            java_clazz="org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup",
             model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b"),
             prompt="from_text_prompt",
             extract_reasoning=True,

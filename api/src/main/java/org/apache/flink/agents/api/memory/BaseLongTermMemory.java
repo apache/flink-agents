@@ -17,7 +17,7 @@
  */
 package org.apache.flink.agents.api.memory;
 
-import org.apache.flink.agents.api.memory.compaction.CompactionStrategy;
+import org.apache.flink.agents.api.memory.compaction.CompactionConfig;
 
 import javax.annotation.Nullable;
 
@@ -28,7 +28,7 @@ import java.util.Map;
  * Base interface for long-term memory management. It provides operations to create, retrieve,
  * delete, and search memory sets, which are collections of memory items. A memory set can store
  * items of a specific type (e.g., String or ChatMessage) and has a capacity limit. When the
- * capacity is exceeded, a compaction strategy is applied to manage the memory set size.
+ * capacity is exceeded, compaction will be applied to manage the memory set size.
  */
 public interface BaseLongTermMemory extends AutoCloseable {
 
@@ -38,12 +38,12 @@ public interface BaseLongTermMemory extends AutoCloseable {
      * @param name the name of the memory set
      * @param itemType the type of items stored in the memory set
      * @param capacity the maximum number of items the memory set can hold
-     * @param strategy the compaction strategy to use when the capacity is exceeded
+     * @param compactionConfig the compaction config to use when the capacity is exceeded
      * @return the existing or newly created memory set
      * @throws Exception if the memory set cannot be created or retrieved
      */
     MemorySet getOrCreateMemorySet(
-            String name, Class<?> itemType, int capacity, CompactionStrategy strategy)
+            String name, Class<?> itemType, int capacity, CompactionConfig compactionConfig)
             throws Exception;
 
     /**

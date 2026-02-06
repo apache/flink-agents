@@ -26,10 +26,6 @@ under the License.
 
 MCP (Model Context Protocol) is a standardized protocol for integrating AI applications with external data sources and tools. Flink Agents provides the support for using prompts and tools from MCP server.
 
-{{< hint warning >}}
-**JDK Requirement (Java API Only):** If you are using the **Java API** to develop Flink Agents jobs with MCP, you need **JDK 17 or higher**. This requirement does not apply to **Python API** users - the Python SDK has its own MCP implementation and works with JDK 11+.
-{{< /hint >}}
-
 ## Declare MCP Server in Agent
 
 Developer can declare a mcp server by decorator/annotation when creating an Agent.
@@ -44,7 +40,7 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def my_mcp_server() -> ResourceDescriptor:
         """Define MCP server connection."""
-        return ResourceDescriptor(clazz=Constant.MCP_SERVER, 
+        return ResourceDescriptor(clazz=ResourceName.MCP_SERVER, 
                                   endpoint="http://127.0.0.1:8000/mcp")
 ```
 {{< /tab >}}
@@ -55,7 +51,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @MCPServer
     public static ResourceDescriptor myMcp() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.MCP_SERVER)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", MCP_ENDPOINT)
                     .addInitialArgument("timeout", 30)
                     .build();
@@ -82,9 +78,9 @@ MCP servers can be configured with authentication:
 ```python
 @mcp_server
 @staticmethod
-def authenticated_mcp_server() -> MCPServer:
+def authenticated_mcp_server() -> ResourceDescriptor:
     """Connect to MCP server with authentication."""
-    return ResourceDescriptor(clazz=Constant.MCP_SERVER, 
+    return ResourceDescriptor(clazz=ResourceName.MCP_SERVER, 
                               endpoint="http://api.example.com/mcp",
                               headers={"Authorization": "Bearer your-token"})
     # Or using Basic Authentication
@@ -99,9 +95,9 @@ def authenticated_mcp_server() -> MCPServer:
 {{< tab "Java" >}}
 ```java
 @MCPServer
-public static org.apache.flink.agents.integrations.mcp.MCPServer authenticatedMcpServer() {
+public static ResourceDescriptor authenticatedMcpServer() {
     // Using Bearer Token Authentication
-    return ResourceDescriptor.Builder.newBuilder(Constant.MCP_SERVER)
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", "http://api.example.com/mcp")
                     .addInitialArgument("timeout", 30)
                     .addInitialArgument("auth", new BearerTokenAuth("your-oauth-token"))
@@ -138,14 +134,14 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def review_mcp_server() -> ResourceDescriptor:
         """Connect to MCP server."""
-        return ResourceDescriptor(clazz=Constant.MCP_SERVER, 
+        return ResourceDescriptor(clazz=ResourceName.MCP_SERVER, 
                                   endpoint="http://127.0.0.1:8000/mcp")
 
     @chat_model_setup
     @staticmethod
     def review_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=OllamaChatModelSetup,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_server",
             model="qwen3:8b",
             # Reference MCP prompt by name like local prompt
@@ -162,7 +158,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @MCPServer
     public static ResourceDescriptor myMcp() {
-        return ResourceDescriptor.Builder.newBuilder(Constant.MCP_SERVER)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", "http://127.0.0.1:8000/mcp")
                     .addInitialArgument("timeout", 30)
                     .build();
@@ -170,7 +166,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor reviewModel() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
                 .addInitialArgument("model", "qwen3:8b")
                 // Reference MCP prompt by name like local prompt
@@ -187,5 +183,25 @@ public class ReviewAnalysisAgent extends Agent {
 
 **Key points:**
 - All tools and prompts from the MCP server are automatically registered.
-- Reference MCP prompts and tools by their names, like reference [local prompt]({{< ref "docs/development/prompts/#using-prompts-in-agents" >}}) and [function tool]({{< ref "docs/development/tool_use/#define-tool-as-static-method-in-agent-class" >}}) .
-- For MCP servers that do not support the list_prompts interface, the list_prompts method will return an empty list. In such cases, you need to define a LocalPrompt to call the tools.
+- Reference MCP prompts and tools by their names, like reference [local prompt]({{< ref "docs/development/prompts#using-prompts-in-agents" >}}) and [function tool]({{< ref "docs/development/tool_use#define-tool-as-static-method-in-agent-class" >}}) .
+
+## Appendix
+
+### MCP SDK
+
+Flink Agents offers two implementations of MCP support, based on MCP SDKs in different languages (Python and Java). Typically, users do not need to be aware of this, as the framework automatically determines the appropriate implementation based on the language and version. The default behavior is described as follows:
+
+| Agent Language | JDK Version      | Default Implementation |
+|----------------|------------------|------------------------|
+| Python         | Any              | Python SDK  |
+| Java           | JDK 17+          | Java SDK    |
+| Java           | JDK 16 and below | Python SDK  |
+
+
+As shown in the table above, for Java agents running on JDK 17+, the framework automatically uses the Java SDK implementation. If you need to use the Python SDK instead (not recommended), you can set the `lang` parameter to `"python"` in the `@MCPServer` annotation:
+```java
+@MCPServer(lang = "python")
+public static ResourceDescriptor myMcp() {
+    // ...
+}
+```

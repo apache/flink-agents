@@ -25,7 +25,8 @@ import javax.annotation.Nullable;
 
 import java.util.Objects;
 
-public class SummarizationStrategy implements CompactionStrategy {
+/** Configuration for long-term memory compaction. */
+public class CompactionConfig {
     private final String model;
 
     @JsonTypeInfo(
@@ -36,23 +37,18 @@ public class SummarizationStrategy implements CompactionStrategy {
 
     private final int limit;
 
-    public SummarizationStrategy(String model, int limit) {
+    public CompactionConfig(String model, int limit) {
         this(model, null, limit);
     }
 
     @JsonCreator
-    public SummarizationStrategy(
+    public CompactionConfig(
             @JsonProperty("model") String model,
             @Nullable @JsonProperty("prompt") Object prompt,
             @JsonProperty("limit") int limit) {
         this.model = model;
         this.prompt = prompt;
         this.limit = limit;
-    }
-
-    @Override
-    public Type type() {
-        return Type.SUMMARIZATION;
     }
 
     public String getModel() {
@@ -70,7 +66,7 @@ public class SummarizationStrategy implements CompactionStrategy {
     @Override
     public boolean equals(Object o) {
         if (o == null || getClass() != o.getClass()) return false;
-        SummarizationStrategy that = (SummarizationStrategy) o;
+        CompactionConfig that = (CompactionConfig) o;
         return limit == that.limit
                 && Objects.equals(model, that.model)
                 && Objects.equals(prompt, that.prompt);
@@ -83,7 +79,7 @@ public class SummarizationStrategy implements CompactionStrategy {
 
     @Override
     public String toString() {
-        return "SummarizationStrategy{"
+        return "CompactionConfig{"
                 + "model='"
                 + model
                 + '\''

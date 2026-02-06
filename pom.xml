@@ -31,7 +31,7 @@ under the License.
     <name>Flink Agents : </name>
     <!-- TODO: build website and update url -->
     <url>https://flink.apache.org</url>
-    <version>0.2-SNAPSHOT</version>
+    <version>0.3-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <properties>
@@ -48,7 +48,7 @@ under the License.
         <pemja.version>0.5.5</pemja.version>
         <log4j2.version>2.23.1</log4j2.version>
         <slf4j.version>1.7.36</slf4j.version>
-        <assertj.version>3.23.1</assertj.version>
+        <assertj.version>3.27.7</assertj.version>
         <mockito.version>5.14.2</mockito.version>
         <bytebuddy.version>1.15.4</bytebuddy.version>
         <gpg.useagent>true</gpg.useagent>
@@ -63,6 +63,7 @@ under the License.
         <module>e2e-test</module>
         <module>integrations</module>
         <module>dist</module>
+        <module>ide-support</module>
     </modules>
 
     <dependencyManagement>

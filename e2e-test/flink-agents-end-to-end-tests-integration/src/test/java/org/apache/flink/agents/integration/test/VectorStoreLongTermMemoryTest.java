@@ -25,7 +25,7 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.api.memory.MemorySetItem;
-import org.apache.flink.agents.api.memory.compaction.SummarizationStrategy;
+import org.apache.flink.agents.api.memory.compaction.CompactionConfig;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -158,7 +158,7 @@ public class VectorStoreLongTermMemoryTest {
                         NAME,
                         ChatMessage.class,
                         100,
-                        new SummarizationStrategy("ollama-setup", null, 1));
+                        new CompactionConfig("ollama-setup", null, 1));
         for (int i = 0; i < 10; i++) {
             messages.add(
                     new ChatMessage(
@@ -206,10 +206,7 @@ public class VectorStoreLongTermMemoryTest {
     public void testCompact() throws Exception {
         memorySet =
                 ltm.getOrCreateMemorySet(
-                        NAME,
-                        ChatMessage.class,
-                        8,
-                        new SummarizationStrategy("ollama-setup", null, 2));
+                        NAME, ChatMessage.class, 8, new CompactionConfig("ollama-setup", null, 2));
         messages.add(ChatMessage.user("What is flink?"));
         messages.add(
                 ChatMessage.assistant(

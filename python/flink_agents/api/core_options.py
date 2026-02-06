@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import os
 from enum import Enum
 from typing import Any
 
@@ -90,6 +91,10 @@ class AgentConfigOptions(metaclass=AgentConfigOptionsMeta):
         default=None,
     )
 
+
+class AgentExecutionOptions:
+    """Execution options for Flink Agents."""
+
     ERROR_HANDLING_STRATEGY = ConfigOption(
         key="error-handling-strategy",
         config_type=ErrorHandlingStrategy,
@@ -102,9 +107,11 @@ class AgentConfigOptions(metaclass=AgentConfigOptionsMeta):
         default=3,
     )
 
-
-class AgentExecutionOptions(metaclass=AgentConfigOptionsMeta):
-    """Execution options for Flink Agents."""
+    NUM_ASYNC_THREADS = ConfigOption(
+        key="num-async-threads",
+        config_type=int,
+        default=os.cpu_count() * 2,
+    )
 
     CHAT_ASYNC = ConfigOption(
         key="chat.async",

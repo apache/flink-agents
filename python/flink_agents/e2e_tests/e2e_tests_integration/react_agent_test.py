@@ -31,12 +31,15 @@ from flink_agents.api.agents.react_agent import (
     ReActAgent,
 )
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.core_options import AgentConfigOptions, ErrorHandlingStrategy
+from flink_agents.api.core_options import (
+    AgentExecutionOptions,
+    ErrorHandlingStrategy,
+)
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import (
-    Constant,
     ResourceDescriptor,
+    ResourceName,
     ResourceType,
 )
 from flink_agents.api.tools.tool import Tool
@@ -78,16 +81,16 @@ client = pull_model(OLLAMA_MODEL)
 def test_react_agent_on_local_runner() -> None:  # noqa: D103
     env = AgentsExecutionEnvironment.get_execution_environment()
     env.get_config().set(
-        AgentConfigOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
+        AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
     )
-    env.get_config().set(AgentConfigOptions.MAX_RETRIES, 3)
+    env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
 
     # register resource to execution environment
     (
         env.add_resource(
             "ollama",
             ResourceType.CHAT_MODEL_CONNECTION,
-            ResourceDescriptor(clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=240.0),
+            ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0),
         )
         .add_resource("add", ResourceType.TOOL,  Tool.from_callable(add))
         .add_resource("multiply", ResourceType.TOOL, Tool.from_callable(multiply))
@@ -107,7 +110,7 @@ def test_react_agent_on_local_runner() -> None:  # noqa: D103
     # create ReAct agent.
     agent = ReActAgent(
         chat_model=ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama",
             model=OLLAMA_MODEL,
             tools=["add", "multiply"],
@@ -156,17 +159,17 @@ def test_react_agent_on_remote_runner(tmp_path: Path) -> None:  # noqa: D103
     )
 
     env.get_config().set(
-        AgentConfigOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
+        AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
     )
 
-    env.get_config().set(AgentConfigOptions.MAX_RETRIES, 3)
+    env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
 
     # register resource to execution environment
     (
         env.add_resource(
             "ollama",
             ResourceType.CHAT_MODEL_CONNECTION,
-            ResourceDescriptor(clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=240.0),
+            ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0),
         )
         .add_resource("add", ResourceType.TOOL, Tool.from_callable(add))
         .add_resource("multiply", ResourceType.TOOL, Tool.from_callable(multiply))
@@ -191,7 +194,7 @@ def test_react_agent_on_remote_runner(tmp_path: Path) -> None:  # noqa: D103
     # create ReAct agent.
     agent = ReActAgent(
         chat_model=ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama",
             model=OLLAMA_MODEL,
             tools=["add", "multiply"],

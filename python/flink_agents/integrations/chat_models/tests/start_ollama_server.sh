@@ -35,6 +35,6 @@ if [[ $os == "Linux" ]]; then
       sleep 10 # wait for ollama to start
   fi
 
-  ollama pull qwen3:0.6b
-  ollama run qwen3:0.6b
+  echo "ollama pull $1"
+  ollama pull $1
 fi

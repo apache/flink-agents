@@ -24,7 +24,7 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.api.memory.MemorySetItem;
-import org.apache.flink.agents.api.memory.compaction.SummarizationStrategy;
+import org.apache.flink.agents.api.memory.compaction.CompactionConfig;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.slf4j.Logger;
@@ -90,10 +90,11 @@ public class CompactionFunctions {
             RunnerContext ctx,
             @Nullable List<String> ids)
             throws Exception {
-        SummarizationStrategy strategy = (SummarizationStrategy) memorySet.getStrategy();
+        CompactionConfig compactionConfig = memorySet.getCompactionConfig();
 
         List<MemorySetItem> items = ltm.get(memorySet, ids);
-        ChatMessage response = generateSummarization(items, memorySet.getItemType(), strategy, ctx);
+        ChatMessage response =
+                generateSummarization(items, memorySet.getItemType(), compactionConfig, ctx);
 
         LOG.debug("Items to be summarized: {}\n, Summarization: {}", items, response.getContent());
 
@@ -104,7 +105,7 @@ public class CompactionFunctions {
             String summarization = (String) topic.get("summarization");
             List<Integer> indices = (List<Integer>) topic.get("messages");
 
-            if (strategy.getLimit() == 1) {
+            if (compactionConfig.getLimit() == 1) {
                 indices = IntStream.range(0, items.size()).boxed().collect(Collectors.toList());
             }
 
@@ -162,7 +163,7 @@ public class CompactionFunctions {
     private static ChatMessage generateSummarization(
             List<MemorySetItem> items,
             Class<?> itemType,
-            SummarizationStrategy strategy,
+            CompactionConfig compactionConfig,
             RunnerContext ctx)
             throws Exception {
         List<ChatMessage> messages = new ArrayList<>();
@@ -177,9 +178,10 @@ public class CompactionFunctions {
         }
 
         BaseChatModelSetup model =
-                (BaseChatModelSetup) ctx.getResource(strategy.getModel(), ResourceType.CHAT_MODEL);
+                (BaseChatModelSetup)
+                        ctx.getResource(compactionConfig.getModel(), ResourceType.CHAT_MODEL);
 
-        Object prompt = strategy.getPrompt();
+        Object prompt = compactionConfig.getPrompt();
         if (prompt != null) {
             if (prompt instanceof String) {
                 prompt = ctx.getResource((String) prompt, ResourceType.PROMPT);
@@ -201,7 +203,7 @@ public class CompactionFunctions {
                             MessageRole.SYSTEM,
                             Map.of(
                                     "limit",
-                                    String.valueOf(strategy.getLimit()),
+                                    String.valueOf(compactionConfig.getLimit()),
                                     "count",
                                     String.valueOf(items.size()),
                                     "end",

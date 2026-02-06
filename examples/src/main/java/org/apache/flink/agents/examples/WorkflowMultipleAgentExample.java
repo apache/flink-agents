@@ -21,6 +21,7 @@ package org.apache.flink.agents.examples;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.examples.agents.CustomTypesAndResources;
 import org.apache.flink.agents.examples.agents.ProductSuggestionAgent;
@@ -128,6 +129,9 @@ public class WorkflowMultipleAgentExample {
         env.setParallelism(1);
         AgentsExecutionEnvironment agentsEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        // limit async request to avoid overwhelming ollama server
+        agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
 
         // Add Ollama chat model connection to be used by the ReviewAnalysisAgent
         // and ProductSuggestionAgent.

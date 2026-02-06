@@ -148,3 +148,72 @@ def test_cloudpickle_serialization() -> None:
         assert str(deserialized_exc) == "test error"
         assert isinstance(deserialized_exc, ValueError)
 
+
+def test_cloudpickle_exception_roundtrip_various_types() -> None:
+    """Test that various exception types can be serialized and deserialized."""
+    # Test various exception types that might occur in durable execution
+    test_exceptions = [
+        ValueError("Invalid value: 42"),
+        RuntimeError("Connection timeout"),
+        TypeError("Expected int, got str"),
+        KeyError("missing_key"),
+        AttributeError("Object has no attribute 'foo'"),
+        Exception("Generic exception with special chars: \"quotes\" and 'apostrophes'"),
+    ]
+
+    for original_exc in test_exceptions:
+        serialized = cloudpickle.dumps(original_exc)
+        deserialized = cloudpickle.loads(serialized)
+
+        assert type(deserialized) is type(original_exc), (
+            f"Exception type mismatch: expected {type(original_exc)}, "
+            f"got {type(deserialized)}"
+        )
+        assert str(deserialized) == str(original_exc), (
+            f"Exception message mismatch: expected '{original_exc}', "
+            f"got '{deserialized}'"
+        )
+
+
+def test_cloudpickle_exception_with_custom_attributes() -> None:
+    """Test exceptions with custom attributes set after construction."""
+    # Create a standard exception and add custom attributes
+    original = RuntimeError("API error occurred")
+    original.error_code = 500
+    original.details = {"endpoint": "/api/chat", "retry_count": 3}
+
+    serialized = cloudpickle.dumps(original)
+    deserialized = cloudpickle.loads(serialized)
+
+    assert isinstance(deserialized, RuntimeError)
+    assert str(deserialized) == "API error occurred"
+    assert deserialized.error_code == 500
+    assert deserialized.details == {"endpoint": "/api/chat", "retry_count": 3}
+
+
+def test_cloudpickle_exception_basic_types_preserved() -> None:
+    """Test that common exception types are preserved through serialization."""
+    # Test that the exception type and message are preserved
+    # Note: cloudpickle may not preserve __cause__ chains
+
+    original = ValueError("Test value error")
+    serialized = cloudpickle.dumps(original)
+    deserialized = cloudpickle.loads(serialized)
+
+    assert isinstance(deserialized, ValueError)
+    assert str(deserialized) == "Test value error"
+    assert type(deserialized).__name__ == "ValueError"
+
+
+def test_cloudpickle_none_exception_message() -> None:
+    """Test that exceptions with None message can be serialized."""
+    # Some exceptions might have None as their message
+    original = RuntimeError(None)
+
+    serialized = cloudpickle.dumps(original)
+    deserialized = cloudpickle.loads(serialized)
+
+    assert isinstance(deserialized, RuntimeError)
+    # str() of an exception with None message is "None"
+    assert str(deserialized) == "None"
+

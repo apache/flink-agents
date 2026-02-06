@@ -785,6 +785,180 @@ public class ActionExecutionOperatorTest {
         }
     }
 
+    /**
+     * Tests that durableExecute exception can be serialized and recovered correctly when the action
+     * does NOT catch the exception (simulates built-in action behavior like ChatModelAction).
+     *
+     * <p>This test verifies that:
+     *
+     * <ul>
+     *   <li>DurableExecutionException can be properly serialized by Jackson
+     *   <li>On recovery, the cached exception is re-thrown without re-executing the supplier
+     *   <li>The exception content (class name and message) is preserved
+     * </ul>
+     */
+    @Test
+    void testDurableExecuteExceptionRecoveryWithUncaughtException() throws Exception {
+        AgentPlan agentPlan = TestAgent.getDurableExceptionUncaughtAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+
+        // Reset counter
+        TestAgent.UNCAUGHT_EXCEPTION_CALL_COUNTER.set(0);
+
+        String firstExecutionExceptionChain = null;
+
+        // First execution - will execute the supplier, throw exception, and store it
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(1L));
+
+            // This should throw because the exception is not caught in the action
+            try {
+                operator.waitInFlightEventsFinished();
+            } catch (Exception e) {
+                // Collect all exception messages in the chain
+                firstExecutionExceptionChain = ExceptionUtils.stringifyException(e);
+            }
+        }
+
+        // Verify supplier was called once
+        assertThat(TestAgent.UNCAUGHT_EXCEPTION_CALL_COUNTER.get()).isEqualTo(1);
+
+        // Verify exception was thrown and contains correct info somewhere in the chain
+        assertThat(firstExecutionExceptionChain).isNotNull();
+        assertThat(firstExecutionExceptionChain)
+                .as("Exception chain should contain original class name")
+                .contains("IllegalStateException");
+        assertThat(firstExecutionExceptionChain)
+                .as("Exception chain should contain original message")
+                .contains("Simulated LLM failure");
+
+        // Verify action state was stored with call result
+        assertThat(actionStateStore.getKeyedActionStates()).isNotEmpty();
+
+        String recoveryExceptionChain = null;
+
+        // Second execution - should recover cached exception without calling supplier
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(1L));
+
+            try {
+                operator.waitInFlightEventsFinished();
+            } catch (Exception e) {
+                // Collect all exception messages in the chain
+                recoveryExceptionChain = ExceptionUtils.stringifyException(e);
+            }
+        }
+
+        // CRITICAL: Verify supplier was NOT called during recovery
+        assertThat(TestAgent.UNCAUGHT_EXCEPTION_CALL_COUNTER.get())
+                .as("Supplier should NOT be called during exception recovery")
+                .isEqualTo(1);
+
+        // Verify recovered exception contains correct information in the chain
+        assertThat(recoveryExceptionChain).isNotNull();
+        assertThat(recoveryExceptionChain)
+                .as("Recovered exception chain should contain original class name")
+                .contains("IllegalStateException");
+        assertThat(recoveryExceptionChain)
+                .as("Recovered exception chain should contain original message")
+                .contains("Simulated LLM failure");
+    }
+
+    /**
+     * Tests that durableExecuteAsync exception can be serialized and recovered correctly.
+     *
+     * <p>This test verifies async exception handling works the same way as sync.
+     */
+    @Test
+    void testDurableExecuteAsyncExceptionRecovery() throws Exception {
+        AgentPlan agentPlan = TestAgent.getDurableAsyncExceptionAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+
+        // Reset counter
+        TestAgent.ASYNC_EXCEPTION_CALL_COUNTER.set(0);
+
+        String firstExecutionExceptionChain = null;
+
+        // First execution - will execute the async supplier, throw exception, and store it
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(1L));
+
+            try {
+                operator.waitInFlightEventsFinished();
+            } catch (Exception e) {
+                firstExecutionExceptionChain = ExceptionUtils.stringifyException(e);
+            }
+        }
+
+        // Verify supplier was called once
+        assertThat(TestAgent.ASYNC_EXCEPTION_CALL_COUNTER.get()).isEqualTo(1);
+
+        // Verify exception was thrown
+        assertThat(firstExecutionExceptionChain).isNotNull();
+        assertThat(firstExecutionExceptionChain)
+                .as("Exception chain should contain original message")
+                .contains("Async operation failed");
+
+        // Verify action state was stored
+        assertThat(actionStateStore.getKeyedActionStates()).isNotEmpty();
+
+        String recoveryExceptionChain = null;
+
+        // Second execution - should recover cached exception without calling supplier
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(1L));
+
+            try {
+                operator.waitInFlightEventsFinished();
+            } catch (Exception e) {
+                recoveryExceptionChain = ExceptionUtils.stringifyException(e);
+            }
+        }
+
+        // CRITICAL: Verify supplier was NOT called during recovery
+        assertThat(TestAgent.ASYNC_EXCEPTION_CALL_COUNTER.get())
+                .as("Supplier should NOT be called during async exception recovery")
+                .isEqualTo(1);
+
+        // Verify recovered exception contains correct information
+        assertThat(recoveryExceptionChain).isNotNull();
+        assertThat(recoveryExceptionChain)
+                .as("Recovered exception chain should contain original message")
+                .contains("Async operation failed");
+    }
+
     public static class TestAgent {
 
         /** Counter to track how many times the durable supplier is executed. */
@@ -1142,6 +1316,130 @@ public class ActionExecutionOperatorTest {
                                 new JavaFunction(
                                         TestAgent.class,
                                         "durableExceptionAction",
+                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.class.getName()));
+                actionsByEvent.put(
+                        InputEvent.class.getName(), Collections.singletonList(exceptionAction));
+                actions.put(exceptionAction.getName(), exceptionAction);
+
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        // ==================== Actions for Exception Recovery Tests ====================
+
+        /**
+         * Counter to track how many times the uncaught exception supplier is executed. Used to
+         * verify that on recovery, the supplier is not re-executed.
+         */
+        public static final java.util.concurrent.atomic.AtomicInteger
+                UNCAUGHT_EXCEPTION_CALL_COUNTER = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        /**
+         * Action that uses durableExecute and does NOT catch the exception. This simulates the
+         * behavior of built-in actions like ChatModelAction.
+         */
+        public static void durableExceptionUncaughtAction(InputEvent event, RunnerContext context) {
+            try {
+                context.durableExecute(
+                        new DurableCallable<String>() {
+                            @Override
+                            public String getId() {
+                                return "uncaught-exception-action";
+                            }
+
+                            @Override
+                            public Class<String> getResultClass() {
+                                return String.class;
+                            }
+
+                            @Override
+                            public String call() {
+                                UNCAUGHT_EXCEPTION_CALL_COUNTER.incrementAndGet();
+                                throw new IllegalStateException(
+                                        "Simulated LLM failure: Connection timeout");
+                            }
+                        });
+            } catch (Exception e) {
+                // Re-throw without wrapping - simulates built-in action behavior
+                ExceptionUtils.rethrow(e);
+            }
+        }
+
+        /**
+         * Counter to track how many times the async exception supplier is executed. Used to verify
+         * that on recovery, the supplier is not re-executed.
+         */
+        public static final java.util.concurrent.atomic.AtomicInteger ASYNC_EXCEPTION_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+
+        /**
+         * Action that uses durableExecuteAsync and does NOT catch the exception. This simulates
+         * async operations that fail.
+         */
+        public static void durableAsyncExceptionAction(InputEvent event, RunnerContext context) {
+            try {
+                context.durableExecuteAsync(
+                        new DurableCallable<String>() {
+                            @Override
+                            public String getId() {
+                                return "async-exception-action";
+                            }
+
+                            @Override
+                            public Class<String> getResultClass() {
+                                return String.class;
+                            }
+
+                            @Override
+                            public String call() {
+                                ASYNC_EXCEPTION_CALL_COUNTER.incrementAndGet();
+                                throw new RuntimeException("Async operation failed: API error");
+                            }
+                        });
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+        }
+
+        public static AgentPlan getDurableExceptionUncaughtAgentPlan() {
+            try {
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                Map<String, Action> actions = new HashMap<>();
+
+                Action exceptionAction =
+                        new Action(
+                                "durableExceptionUncaughtAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "durableExceptionUncaughtAction",
+                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.class.getName()));
+                actionsByEvent.put(
+                        InputEvent.class.getName(), Collections.singletonList(exceptionAction));
+                actions.put(exceptionAction.getName(), exceptionAction);
+
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getDurableAsyncExceptionAgentPlan() {
+            try {
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                Map<String, Action> actions = new HashMap<>();
+
+                Action exceptionAction =
+                        new Action(
+                                "durableAsyncExceptionAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "durableAsyncExceptionAction",
                                         new Class<?>[] {InputEvent.class, RunnerContext.class}),
                                 Collections.singletonList(InputEvent.class.getName()));
                 actionsByEvent.put(

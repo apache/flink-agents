@@ -29,7 +29,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.util.Map;
 
-import static org.apache.flink.agents.resource.test.OllamaPreparationUtils.pullModel;
+import static org.apache.flink.agents.resource.test.CrossLanguageTestPreparationUtils.pullModel;
 
 /**
  * Example application that applies {@link EmbeddingCrossLanguageAgent} to a DataStream of prompts.

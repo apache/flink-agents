@@ -58,11 +58,26 @@ import java.lang.annotation.Target;
  * }</pre>
  *
  * <p>This is the Java equivalent of Python's {@code @mcp_server} decorator.
- *
- * @see org.apache.flink.agents.integrations.mcp.MCPServer
- * @see org.apache.flink.agents.integrations.mcp.MCPTool
- * @see org.apache.flink.agents.integrations.mcp.MCPPrompt
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
-public @interface MCPServer {}
+public @interface MCPServer {
+    /**
+     * Specifies the implementation language for the MCP server connection.
+     *
+     * <p>Supported values:
+     *
+     * <ul>
+     *   <li><b>"auto"</b> (default): Automatically selects the language based on JDK version. Uses
+     *       Python for JDK 16 and below, and Java for JDK 17+.
+     *   <li><b>"python"</b>: Forces the use of Python-based MCP server implementation.
+     *   <li><b>"java"</b>: Forces the use of Java-based MCP server implementation.
+     * </ul>
+     *
+     * <p>The language selection affects how the agent plan communicates with the MCP server and
+     * which runtime dependencies are required.
+     *
+     * @return the language identifier ("auto", "python", or "java")
+     */
+    String lang() default "auto";
+}

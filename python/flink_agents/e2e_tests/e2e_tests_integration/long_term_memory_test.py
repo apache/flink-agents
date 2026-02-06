@@ -49,14 +49,14 @@ from flink_agents.api.decorators import (
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.memory.long_term_memory import (
+    CompactionConfig,
     LongTermMemoryBackend,
     LongTermMemoryOptions,
     MemorySetItem,
-    SummarizationStrategy,
 )
 from flink_agents.api.resource import (
-    Constant,
     ResourceDescriptor,
+    ResourceName,
 )
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.e2e_tests.test_utils import pull_model
@@ -70,7 +70,7 @@ os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
 chromadb_path = tempfile.mkdtemp()
 
-OLLAMA_CHAT_MODEL = "qwen3:4b"
+OLLAMA_CHAT_MODEL = "qwen3:8b"
 OLLAMA_EMBEDDING_MODEL = "nomic-embed-text"
 pull_model(OLLAMA_CHAT_MODEL)
 pull_model(OLLAMA_EMBEDDING_MODEL)
@@ -124,7 +124,7 @@ class LongTermMemoryAgent(Agent):
     def ollama_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for ollama model service connection."""
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=480.0
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=480.0
         )
 
     @chat_model_setup
@@ -132,24 +132,25 @@ class LongTermMemoryAgent(Agent):
     def ollama_qwen3() -> ResourceDescriptor:
         """ChatModel which focus on math, and reuse ChatModelConnection."""
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_connection",
             model=OLLAMA_CHAT_MODEL,
             extract_reasoning=True,
+            think=False,
         )
 
     @embedding_model_connection
     @staticmethod
     def ollama_embedding_connection() -> ResourceDescriptor:  # noqa D102
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_EMBEDDING_MODEL_CONNECTION, request_timeout=240.0
+            clazz=ResourceName.EmbeddingModel.OLLAMA_CONNECTION, request_timeout=240.0
         )
 
     @embedding_model_setup
     @staticmethod
     def ollama_nomic_embed_text() -> ResourceDescriptor:  # noqa D102
         return ResourceDescriptor(
-            clazz=Constant.OLLAMA_EMBEDDING_MODEL_SETUP,
+            clazz=ResourceName.EmbeddingModel.OLLAMA_SETUP,
             connection="ollama_embedding_connection",
             model=OLLAMA_EMBEDDING_MODEL,
         )
@@ -159,7 +160,7 @@ class LongTermMemoryAgent(Agent):
     def chroma_vector_store() -> ResourceDescriptor:
         """Vector store setup for knowledge base."""
         return ResourceDescriptor(
-            clazz=Constant.CHROMA_VECTOR_STORE,
+            clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
             embedding_model="ollama_nomic_embed_text",
             persist_directory=chromadb_path,
         )
@@ -175,7 +176,7 @@ class LongTermMemoryAgent(Agent):
             name="test_ltm",
             item_type=str,
             capacity=5,
-            compaction_strategy=SummarizationStrategy(model="ollama_qwen3"),
+            compaction_config=CompactionConfig(model="ollama_qwen3"),
         )
         await ctx.durable_execute_async(memory_set.add, items=input_data.review)
         timestamp_after_add = datetime.now(timezone.utc).isoformat()

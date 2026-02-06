@@ -17,6 +17,7 @@
 #################################################################################
 import importlib
 import json
+import typing
 from typing import Any, Callable, Dict
 
 import cloudpickle
@@ -24,8 +25,11 @@ import cloudpickle
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.events.event import Event, InputEvent
 from flink_agents.api.resource import Resource, ResourceType, get_resource_class
-from flink_agents.api.tools.tool import ToolMetadata
-from flink_agents.api.tools.utils import create_model_from_java_tool_schema_str
+from flink_agents.api.tools.tool import Tool, ToolMetadata
+from flink_agents.api.tools.utils import (
+    create_java_tool_schema_str_from_model,
+    create_model_from_java_tool_schema_str,
+)
 from flink_agents.api.vector_stores.vector_store import (
     Collection,
     Document,
@@ -244,6 +248,14 @@ def from_java_collection(j_collection: Any) -> Collection:
         name=j_collection.getName(),
         metadata=j_collection.getMetadata(),
     )
+
+def from_java_message_role(j_role: Any) -> MessageRole:
+    """Convert a Java message role to a Python message role."""
+    return MessageRole(j_role.getValue())
+
+def get_java_tool_metadata_from_tool(tool: Tool) -> typing.Dict[str, str]:
+    """Retrieve Java format tool metadata from a tool input schema string."""
+    return {"name": tool.name, "description": tool.metadata.description, "inputSchema": create_java_tool_schema_str_from_model(tool.metadata.args_schema)}
 
 def get_mode_value(query: VectorStoreQuery) -> str:
     """Get the mode value of a VectorStoreQuery."""
