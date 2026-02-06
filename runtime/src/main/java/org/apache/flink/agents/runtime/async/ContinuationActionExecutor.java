@@ -28,7 +28,7 @@ import java.util.function.Supplier;
 public class ContinuationActionExecutor {
 
     /** Creates a new ContinuationActionExecutor. */
-    public ContinuationActionExecutor() {}
+    public ContinuationActionExecutor(int numAsyncThreads) {}
 
     /**
      * Executes the action. In JDK 11, this simply runs the action synchronously.

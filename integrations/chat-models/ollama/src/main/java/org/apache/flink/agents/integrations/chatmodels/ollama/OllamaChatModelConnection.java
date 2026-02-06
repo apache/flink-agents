@@ -180,8 +180,18 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
         try {
+            // convert think to think mode.
+            final Object think = arguments.getOrDefault("think", true);
+            ThinkMode thinkMode = ThinkMode.ENABLED;
+            for (ThinkMode mode : ThinkMode.values()) {
+                if (mode.getValue().equals(think)) {
+                    thinkMode = mode;
+                    break;
+                }
+            }
+
             final boolean extractReasoning =
-                    (boolean) arguments.getOrDefault("extract_reasoning", false);
+                    (boolean) arguments.getOrDefault("extract_reasoning", true);
 
             final List<Tools.Tool> ollamaTools = this.convertToOllamaTools(tools);
             final List<OllamaChatMessage> ollamaChatMessages =
@@ -194,7 +204,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
                     OllamaChatRequest.builder()
                             .withMessages(ollamaChatMessages)
                             .withModel(modelName)
-                            .withThinking(extractReasoning ? ThinkMode.ENABLED : ThinkMode.DISABLED)
+                            .withThinking(thinkMode)
                             .withUseTools(false)
                             .build();
 

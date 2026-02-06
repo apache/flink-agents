@@ -31,6 +31,13 @@ import javax.annotation.concurrent.NotThreadSafe;
 /** A specialized {@link RunnerContext} that is specifically used when executing Python actions. */
 @NotThreadSafe
 public class PythonRunnerContextImpl extends RunnerContextImpl {
+
+    /**
+     * Reference to the Python awaitable object in the interpreter. This is set when a Python action
+     * yields an awaitable and is used by PythonGeneratorActionTask to resume execution.
+     */
+    private String pythonAwaitableRef;
+
     public PythonRunnerContextImpl(
             FlinkAgentsMetricGroupImpl agentMetricGroup,
             Runnable mailboxThreadChecker,
@@ -49,5 +56,13 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
     public void sendEvent(String type, byte[] event, String eventJsonStr) {
         // this method will be invoked by PythonActionExecutor's python interpreter.
         sendEvent(new PythonEvent(event, type, eventJsonStr));
+    }
+
+    public String getPythonAwaitableRef() {
+        return pythonAwaitableRef;
+    }
+
+    public void setPythonAwaitableRef(String pythonAwaitableRef) {
+        this.pythonAwaitableRef = pythonAwaitableRef;
     }
 }

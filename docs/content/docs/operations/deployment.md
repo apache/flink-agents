@@ -40,7 +40,7 @@ These deployment modes differ in supported languages and data formats, allowing 
 
 ## Run without Flink
 
-After completing the [installation of flink-agents]({{< ref "docs/get-started/installation" >}}) and building your [ReAct Agent]({{< ref "docs/development/react_agent" >}}) or [workflow agent]({{< ref "docs/development/workflow_agent" >}}), you can test and execute your agent locally using a simple Python script. This allows you to validate logic without requiring a Flink cluster.
+After completing the [installation of flink-agents]({{< ref "docs/get-started/installation" >}}) and building your [ReAct Agent]({{< ref "docs/development/react_agent" >}}) or [Workflow Agent]({{< ref "docs/development/workflow_agent" >}}), you can test and execute your agent locally using a simple Python script. This allows you to validate logic without requiring a Flink cluster.
 
 ### Example for Local Run with Test Data
 
@@ -113,11 +113,11 @@ The output data is a list of dictionaries `List[Dict[str, Any]]` where each dict
 
 - **Operating System**: Unix-like environment (Linux, macOS, Cygwin, or WSL)  
 - **Python**: Version 3.10 or 3.11  
-- **Flink**: A running Flink cluster with version 1.20.3 and the Flink Agents dependency installed
+- **Flink**: A running Flink cluster with version above 1.20.3 (including 1.20.3) and the Flink Agents dependency installed
 
 ### Prepare Flink Agents
 
-We recommand creating a Python virtual environment to install the Flink Agents Python library.
+We recommend creating a Python virtual environment to install the Flink Agents Python library.
 
 Follow the [instructions]({{< ref "docs/get-started/installation" >}}) to install the Flink Agents Python and Java libraries.
 
@@ -143,9 +143,6 @@ Submitting Flink Agent jobs to the Flink Cluster is the same as submitting Flink
       -c <MAIN_CLASS> \
       <PATH_TO_YOUR_FLINK_AGENTS_JOB_JAR>
 ```
-{{< hint warning >}}
-Currently, to resolve the classloader issue, user should place the Flink Agents job jar to Flink lib directory before start the Flink cluster.
-{{< /hint >}}
 
 {{< /tab >}}
 

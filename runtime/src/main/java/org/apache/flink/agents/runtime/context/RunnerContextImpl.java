@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.context;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
@@ -359,7 +360,13 @@ public class RunnerContextImpl implements RunnerContext {
 
     /** Serializable exception info for durable execution persistence. */
     public static class DurableExecutionException {
+        private static final String FIELD_MESSAGE = "message";
+        private static final String FIELD_EXCEPTION_CLASS = "exceptionClass";
+
+        @JsonProperty(FIELD_EXCEPTION_CLASS)
         private final String exceptionClass;
+
+        @JsonProperty(FIELD_MESSAGE)
         private final String message;
 
         public DurableExecutionException() {

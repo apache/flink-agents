@@ -56,6 +56,21 @@ class ExecuteTestOutput(BaseModel):
     result: int
 
 
+class ExecuteTestErrorOutput(BaseModel):
+    """Output data model for durable execute exception test.
+
+    Attributes:
+    ----------
+    id : int
+        Unique identifier of the item
+    error : str
+        The error message
+    """
+
+    id: int
+    error: str
+
+
 class ExecuteTestKeySelector(KeySelector):
     """KeySelector for extracting key from ExecuteTestData."""
 
@@ -72,6 +87,11 @@ def compute_value(x: int, y: int) -> int:
 def multiply_value(x: int, y: int) -> int:
     """A function that multiplies two values."""
     return x * y
+
+
+def raise_exception(message: str) -> None:
+    """A function that raises a ValueError for testing."""
+    raise ValueError(message)
 
 
 class ExecuteTestAgent(Agent):
@@ -115,4 +135,24 @@ class ExecuteWithAsyncTestAgent(Agent):
         ctx.send_event(
             OutputEvent(output=ExecuteTestOutput(id=input_data.id, result=async_result))
         )
+
+
+class ExecuteWithAsyncExceptionTestAgent(Agent):
+    """Agent that tests exception handling in durable_execute_async()."""
+
+    @action(InputEvent)
+    @staticmethod
+    async def process(event: Event, ctx: RunnerContext) -> None:
+        """Process an event and capture durable_execute_async() exceptions."""
+        input_data: ExecuteTestData = event.input
+        try:
+            await ctx.durable_execute_async(
+                raise_exception, f"Test error: {input_data.value}"
+            )
+        except ValueError as exc:
+            ctx.send_event(
+                OutputEvent(
+                    output=ExecuteTestErrorOutput(id=input_data.id, error=str(exc))
+                )
+            )
 

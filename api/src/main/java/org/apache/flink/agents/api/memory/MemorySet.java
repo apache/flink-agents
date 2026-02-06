@@ -20,7 +20,7 @@ package org.apache.flink.agents.api.memory;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import org.apache.flink.agents.api.memory.compaction.CompactionStrategy;
+import org.apache.flink.agents.api.memory.compaction.CompactionConfig;
 
 import javax.annotation.Nullable;
 
@@ -33,7 +33,7 @@ public class MemorySet {
     private final String name;
     private final Class<?> itemType;
     private final int capacity;
-    private final CompactionStrategy strategy;
+    private final CompactionConfig compactionConfig;
     private @JsonIgnore BaseLongTermMemory ltm;
 
     @JsonCreator
@@ -41,11 +41,11 @@ public class MemorySet {
             @JsonProperty("name") String name,
             @JsonProperty("itemType") Class<?> itemType,
             @JsonProperty("capacity") int capacity,
-            @JsonProperty("strategy") CompactionStrategy strategy) {
+            @JsonProperty("compactionConfig") CompactionConfig compactionConfig) {
         this.name = name;
         this.itemType = itemType;
         this.capacity = capacity;
-        this.strategy = strategy;
+        this.compactionConfig = compactionConfig;
     }
 
     /**
@@ -123,8 +123,8 @@ public class MemorySet {
         return capacity;
     }
 
-    public CompactionStrategy getStrategy() {
-        return strategy;
+    public CompactionConfig getCompactionConfig() {
+        return compactionConfig;
     }
 
     @Override
@@ -134,12 +134,12 @@ public class MemorySet {
         return capacity == memorySet.capacity
                 && Objects.equals(name, memorySet.name)
                 && Objects.equals(itemType, memorySet.itemType)
-                && Objects.equals(strategy, memorySet.strategy);
+                && Objects.equals(compactionConfig, memorySet.compactionConfig);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, itemType, capacity, strategy);
+        return Objects.hash(name, itemType, capacity, compactionConfig);
     }
 
     @Override
@@ -152,8 +152,8 @@ public class MemorySet {
                 + itemType
                 + ", capacity="
                 + capacity
-                + ", strategy="
-                + strategy
+                + ", compactionConfig="
+                + compactionConfig
                 + '}';
     }
 }

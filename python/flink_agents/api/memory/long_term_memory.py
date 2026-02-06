@@ -27,7 +27,6 @@ from pydantic import (
     field_serializer,
     model_validator,
 )
-from typing_extensions import override
 
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.configuration import ConfigOption
@@ -35,24 +34,8 @@ from flink_agents.api.prompts.prompt import Prompt
 
 ItemType = str | ChatMessage
 
-
-class CompactionStrategyType(Enum):
-    """Strategy for compact memory set."""
-
-    SUMMARIZATION = "summarization"
-
-
-class CompactionStrategy(BaseModel, ABC):
-    """Strategy for compact memory set."""
-
-    @property
-    @abstractmethod
-    def type(self) -> CompactionStrategyType:
-        """Return type of this strategy."""
-
-
-class SummarizationStrategy(CompactionStrategy):
-    """Summarization strategy.
+class CompactionConfig(BaseModel):
+    """Compaction configuration.
 
     Attributes:
         model: The name of the llm used for generating the summarization.
@@ -64,12 +47,6 @@ class SummarizationStrategy(CompactionStrategy):
     model: str
     prompt: str | Prompt | None = None
     limit: int = 1
-
-    @property
-    @override
-    def type(self) -> CompactionStrategyType:
-        return CompactionStrategyType.SUMMARIZATION
-
 
 class LongTermMemoryBackend(Enum):
     """Backend for Long-Term Memory."""
@@ -95,7 +72,7 @@ class LongTermMemoryOptions:
     ASYNC_COMPACTION = ConfigOption(
         key="long-term-memory.async-compaction",
         config_type=bool,
-        default=False,
+        default=True,
     )
 
 
@@ -135,44 +112,25 @@ class MemorySet(BaseModel):
         name: The name of this memory set.
         item_type: The type of items stored in this set.
         capacity: The capacity of this memory set.
-        compaction_strategy: Compaction strategy and additional arguments used
+        compaction_config: Compaction config
         to compact memory set.
     """
 
     name: str
     item_type: Type[str] | Type[ChatMessage]
     capacity: int
-    compaction_strategy: CompactionStrategy
+    compaction_config: CompactionConfig
     ltm: "BaseLongTermMemory" = Field(default=None, exclude=True)
 
     @field_serializer("item_type")
     def _serialize_item_type(self, item_type: Type) -> Dict[str, str]:
         return {"module": item_type.__module__, "name": item_type.__name__}
 
-    @field_serializer("compaction_strategy")
-    def _serialize_compaction_strategy(
-        self, compaction_strategy: CompactionStrategy
-    ) -> Dict[str, str]:
-        data = compaction_strategy.model_dump()
-        data.update(
-            {
-                "module": compaction_strategy.__class__.__module__,
-                "name": compaction_strategy.__class__.__name__,
-            }
-        )
-        return data
-
     @model_validator(mode="before")
     def _deserialize_item_type(self) -> "MemorySet":
         if isinstance(self["item_type"], Dict):
             module = importlib.import_module(self["item_type"]["module"])
             self["item_type"] = getattr(module, self["item_type"]["name"])
-        if isinstance(self["compaction_strategy"], Dict):
-            module = importlib.import_module(self["compaction_strategy"].pop("module"))
-            clazz = getattr(module, self["compaction_strategy"].pop("name"))
-            self["compaction_strategy"] = clazz.model_validate(
-                self["compaction_strategy"]
-            )
         return self
 
     @property
@@ -231,7 +189,7 @@ class BaseLongTermMemory(ABC, BaseModel):
         name: str,
         item_type: type[str] | Type[ChatMessage],
         capacity: int,
-        compaction_strategy: CompactionStrategy,
+        compaction_config: CompactionConfig,
     ) -> MemorySet:
         """Create a memory set, if the memory set already exists, return it.
 
@@ -239,7 +197,7 @@ class BaseLongTermMemory(ABC, BaseModel):
             name: The name of the memory set.
             item_type: The type of the memory item.
             capacity: The capacity of the memory set.
-            compaction_strategy: The compaction strategy and arguments for
+            compaction_config: The compaction config
             storge management.
 
         Returns:

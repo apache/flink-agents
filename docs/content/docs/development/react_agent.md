@@ -1,6 +1,6 @@
 ---
 title: ReAct Agent
-weight: 1
+weight: 2
 type: docs
 ---
 <!--
@@ -25,6 +25,10 @@ under the License.
 ## Overview
 
 ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. Leveraging this paradigm, the user only needs to specify the goal with prompt and provide available tools, and the LLM will decide how to achieve the goal and take actions autonomously
+
+{{< hint info >}}
+For guidance on choosing Java or Python, see [Should I choose Java or Python?]({{< ref "docs/faq/faq#q3-should-i-choose-java-or-python" >}}).
+{{< /hint >}}
 
 ## ReAct Agent Example
 
@@ -65,10 +69,10 @@ We use `ResourceDescriptor` to describe the chat model, includes chat model type
 {{< tab "Python" >}}
 ```python
 chat_model_descriptor = ResourceDescriptor(
-    clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+    clazz=ResourceName.ChatModel.OLLAMA_SETUP,
     connection="my_ollama_connection",
     model="qwen3:8b",
-    tools=["my_tool1, my_tool2"],
+    tools=["my_tool1", "my_tool2"],
 )
 ```
 {{< /tab >}}
@@ -76,7 +80,7 @@ chat_model_descriptor = ResourceDescriptor(
 {{< tab "Java" >}}
 ```java
 ResourceDescriptor chatModelDescriptor =
-                ResourceDescriptor.Builder.newBuilder(Constant.OLLAMA_CHAT_MODEL_SETUP)
+                ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                         .addInitialArgument("connection", "myOllamaConnection")
                         .addInitialArgument("model", "qwen3:8b")
                         .addInitialArgument(
@@ -205,7 +209,7 @@ public static class MyBaseModelDataType {
     private final List<String> reasons;
 
     @JsonCreator
-    public ProductReviewAnalysisRes(
+    public MyBaseModelDataType(
             @JsonProperty("id") String id,
             @JsonProperty("score") int score,
             @JsonProperty("reasons") List<String> reasons) {
@@ -214,7 +218,7 @@ public static class MyBaseModelDataType {
         this.reasons = reasons;
     }
 
-    public ProductReviewAnalysisRes() {
+    public MyBaseModelDataType() {
         id = null;
         score = 0;
         reasons = List.of();
@@ -235,7 +239,7 @@ public static class MyBaseModelDataType {
     @Override
     public String toString() {
         return String.format(
-                "ProductReviewAnalysisRes{id='%s', score=%d, reasons=%s}", id, score, reasons);
+                "MyBaseModelDataType{id='%s', score=%d, reasons=%s}", id, score, reasons);
     }
 }
 

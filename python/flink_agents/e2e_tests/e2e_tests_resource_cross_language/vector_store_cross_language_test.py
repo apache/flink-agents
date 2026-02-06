@@ -51,7 +51,7 @@ os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
 @pytest.mark.skipif(client is None or ES_HOST is None, reason="Ollama client or Elasticsearch host is missing.")
 @pytest.mark.parametrize("embedding_type", ["JAVA", "PYTHON"])
-def test_java_embedding_model_integration(tmp_path: Path, embedding_type: str) -> None:  # noqa: D103
+def test_java_vector_store_integration(tmp_path: Path, embedding_type: str) -> None:  # noqa: D103
     os.environ["EMBEDDING_TYPE"] = embedding_type
 
     env = StreamExecutionEnvironment.get_execution_environment()

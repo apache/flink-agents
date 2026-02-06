@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -42,7 +43,6 @@ import java.net.URL;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import static org.apache.flink.agents.api.resource.Constant.MCP_SERVER;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -72,7 +72,7 @@ class AgentPlanDeclareMCPServerTest {
 
         @org.apache.flink.agents.api.annotation.MCPServer
         public static ResourceDescriptor testMcpServer() {
-            return ResourceDescriptor.Builder.newBuilder(MCP_SERVER)
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", MCP_ENDPOINT)
                     .addInitialArgument("timeout", 30)
                     .build();

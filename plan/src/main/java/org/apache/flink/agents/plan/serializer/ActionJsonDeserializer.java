@@ -108,7 +108,11 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
         for (int i = 0; i < parameterTypes.length; i++) {
             try {
                 String parameterTypeName = execNode.get("parameter_types").get(i).asText();
-                parameterTypes[i] = Class.forName(parameterTypeName);
+                parameterTypes[i] =
+                        Class.forName(
+                                parameterTypeName,
+                                true,
+                                Thread.currentThread().getContextClassLoader());
             } catch (ClassNotFoundException e) {
                 throw new IOException("Failed to deserialize parameter type", e);
             }
@@ -141,7 +145,14 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
                 JsonNode clazzAndValue = entry.getValue();
                 String clazz = clazzAndValue.get("@class").asText();
                 JsonNode value = clazzAndValue.get("value");
-                config.put(key, mapper.treeToValue(value, Class.forName(clazz)));
+                config.put(
+                        key,
+                        mapper.treeToValue(
+                                value,
+                                Class.forName(
+                                        clazz,
+                                        true,
+                                        Thread.currentThread().getContextClassLoader())));
             }
         }
         return config;

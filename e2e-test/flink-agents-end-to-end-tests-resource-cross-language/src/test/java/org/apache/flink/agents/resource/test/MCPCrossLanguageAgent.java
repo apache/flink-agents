@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolParameters;
@@ -37,12 +38,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.apache.flink.agents.api.resource.Constant.MCP_SERVER;
-
 public class MCPCrossLanguageAgent extends Agent {
     @MCPServer(lang = "python")
     public static ResourceDescriptor pythonMCPServer() {
-        return ResourceDescriptor.Builder.newBuilder(MCP_SERVER)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                 .addInitialArgument("endpoint", "http://127.0.0.1:8000/mcp")
                 .build();
     }

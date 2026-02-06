@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import hashlib
 from abc import ABC
 from typing import Any, Dict
 
@@ -22,7 +23,7 @@ try:
     from typing import override
 except ImportError:
     from typing_extensions import override
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_core import PydanticSerializationError
@@ -30,16 +31,20 @@ from pyflink.common import Row
 
 
 class Event(BaseModel, ABC, extra="allow"):
-    """Base class for all event types in the system. Event allow extra properties, but
-    these properties are required isinstance of BaseModel, or json serializable.
+    """Base class for all event types in the system.
+
+    Event allows extra properties, but these must be BaseModel instances or JSON
+    serializable.
 
     Attributes:
     ----------
     id : UUID
-        Unique identifier for the event, automatically generated using uuid4.
+        Unique identifier for the event, generated deterministically based on
+        event content. This ensures events with identical content have the same
+        ID, which is critical for ActionStateStore divergence detection.
     """
 
-    id: UUID = Field(default_factory=uuid4)
+    id: UUID = Field(default=None)
 
     @staticmethod
     def __serialize_unknown(field: Any) -> Dict[str, Any]:
@@ -58,9 +63,23 @@ class Event(BaseModel, ABC, extra="allow"):
             kwargs["fallback"] = self.__serialize_unknown
         return super().model_dump_json(**kwargs)
 
+    def _generate_content_based_id(self) -> UUID:
+        """Generate a deterministic UUID based on event content using MD5 hash.
+
+        Similar to Java's UUID.nameUUIDFromBytes(), uses MD5 for version 3 UUID.
+        """
+        # Serialize content excluding 'id' to avoid circular dependency
+        content_json = super().model_dump_json(
+            exclude={"id"}, fallback=self.__serialize_unknown
+        )
+        md5_hash = hashlib.md5(content_json.encode()).digest()
+        return UUID(bytes=md5_hash, version=3)
+
     @model_validator(mode="after")
-    def validate_extra(self) -> "Event":
-        """Ensure init fields is serializable."""
+    def validate_and_set_id(self) -> "Event":
+        """Validate that fields are serializable and generate content-based ID."""
+        if self.id is None:
+            object.__setattr__(self, "id", self._generate_content_based_id())
         self.model_dump_json()
         return self
 
@@ -68,6 +87,9 @@ class Event(BaseModel, ABC, extra="allow"):
         super().__setattr__(name, value)
         # Ensure added property can be serialized.
         self.model_dump_json()
+        # Regenerate ID if content changed (but not if setting 'id' itself)
+        if name != "id":
+            object.__setattr__(self, "id", self._generate_content_based_id())
 
 
 class InputEvent(Event):

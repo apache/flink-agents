@@ -22,8 +22,13 @@ from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.file_system import FileSource, StreamFormat
 
 from flink_agents.api.agents.react_agent import ReActAgent
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from flink_agents.api.resource import Constant, ResourceDescriptor, ResourceType
+from flink_agents.api.resource import (
+    ResourceDescriptor,
+    ResourceName,
+    ResourceType,
+)
 from flink_agents.api.tools.tool import Tool
 from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
     ProductReview,
@@ -49,12 +54,15 @@ def main() -> None:
     env = StreamExecutionEnvironment.get_execution_environment()
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
+    # limit async request to avoid overwhelming ollama server
+    agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2)
+
     # Add Ollama chat model connection and notify shipping manager tool to be used
     # by the Agent.
     agents_env.add_resource(
         "ollama_server",
         ResourceType.CHAT_MODEL_CONNECTION,
-        ResourceDescriptor(clazz=Constant.OLLAMA_CHAT_MODEL_CONNECTION, request_timeout=120),
+        ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=120),
     ).add_resource(
         "notify_shipping_manager", ResourceType.TOOL, Tool.from_callable(notify_shipping_manager)
     )
@@ -79,7 +87,7 @@ def main() -> None:
     # Create react agent
     review_analysis_react_agent = ReActAgent(
         chat_model=ResourceDescriptor(
-            clazz=Constant.OLLAMA_CHAT_MODEL_SETUP,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_server",
             model="qwen3:8b",
             tools=["notify_shipping_manager"],

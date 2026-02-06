@@ -23,7 +23,7 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.api.memory.MemorySetItem;
-import org.apache.flink.agents.api.memory.compaction.CompactionStrategy;
+import org.apache.flink.agents.api.memory.compaction.CompactionConfig;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
@@ -98,9 +98,9 @@ public class VectorStoreLongTermMemory implements InteranlBaseLongTermMemory {
 
     @Override
     public MemorySet getOrCreateMemorySet(
-            String name, Class<?> itemType, int capacity, CompactionStrategy strategy)
+            String name, Class<?> itemType, int capacity, CompactionConfig compactionConfig)
             throws Exception {
-        MemorySet memorySet = new MemorySet(name, itemType, capacity, strategy);
+        MemorySet memorySet = new MemorySet(name, itemType, capacity, compactionConfig);
         ((CollectionManageableVectorStore) this.store())
                 .getOrCreateCollection(
                         this.nameMangling(name),
@@ -283,23 +283,11 @@ public class VectorStoreLongTermMemory implements InteranlBaseLongTermMemory {
     }
 
     private void compact(MemorySet memorySet) throws Exception {
-        CompactionStrategy strategy = memorySet.getStrategy();
-        if (strategy.type() == CompactionStrategy.Type.SUMMARIZATION) {
-            summarize(this, memorySet, ctx, null);
-        } else {
-            throw new RuntimeException(
-                    String.format("Unknown compaction strategy: %s", strategy.type()));
-        }
+        summarize(this, memorySet, ctx, null);
     }
 
     private void asyncCompact(MemorySet memorySet, AtomicBoolean inCompaction) throws Exception {
-        CompactionStrategy strategy = memorySet.getStrategy();
-        if (strategy.type() == CompactionStrategy.Type.SUMMARIZATION) {
-            summarize(this, memorySet, ctx, null);
-        } else {
-            throw new RuntimeException(
-                    String.format("Unknown compaction strategy: %s", strategy.type()));
-        }
+        summarize(this, memorySet, ctx, null);
         inCompaction.set(false);
     }
 

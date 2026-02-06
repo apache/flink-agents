@@ -375,7 +375,11 @@ public class AgentPlan implements Serializable {
         descriptor =
                 descriptorDecorator != null ? descriptorDecorator.apply(descriptor) : descriptor;
 
-        if (PythonResourceWrapper.class.isAssignableFrom(Class.forName(descriptor.getClazz()))) {
+        if (PythonResourceWrapper.class.isAssignableFrom(
+                Class.forName(
+                        descriptor.getClazz(),
+                        true,
+                        Thread.currentThread().getContextClassLoader()))) {
             provider = new PythonResourceProvider(name, type, descriptor);
         } else {
             provider = new JavaResourceProvider(name, type, descriptor);
@@ -561,7 +565,10 @@ public class AgentPlan implements Serializable {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     ResourceProvider provider;
                     if (PythonResourceWrapper.class.isAssignableFrom(
-                            Class.forName(((ResourceDescriptor) kv.getValue()).getClazz()))) {
+                            Class.forName(
+                                    ((ResourceDescriptor) kv.getValue()).getClazz(),
+                                    true,
+                                    Thread.currentThread().getContextClassLoader()))) {
                         provider =
                                 new PythonResourceProvider(
                                         kv.getKey(), type, (ResourceDescriptor) kv.getValue());

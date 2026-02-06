@@ -17,11 +17,11 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
@@ -203,6 +203,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private final transient Map<ActionTask, ContinuationContext> continuationContexts;
 
+    private final transient Map<ActionTask, String> pythonAwaitableRefs;
+
     // Each job can only have one identifier and this identifier must be consistent across restarts.
     // We cannot use job id as the identifier here because user may change job id by
     // creating a savepoint, stop the job and then resume from savepoint.
@@ -229,6 +231,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.actionTaskMemoryContexts = new HashMap<>();
         this.actionTaskDurableContexts = new HashMap<>();
         this.continuationContexts = new HashMap<>();
+        this.pythonAwaitableRefs = new HashMap<>();
         OperatorUtils.setChainStrategy(this, ChainingStrategy.ALWAYS);
     }
 
@@ -265,13 +268,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         keySegmentQueue = new SegmentedQueue();
 
-        // init the action state store with proper implementation
-        if (actionStateStore == null
-                && KAFKA.getType()
-                        .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
-            LOG.info("Using Kafka as backend of action state store.");
-            actionStateStore = new KafkaActionStateStore(agentPlan.getConfig());
-        }
+        maybeInitActionStateStore();
 
         if (actionStateStore != null) {
             // init recovery marker state for recovery marker persistence
@@ -315,7 +312,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         initPythonEnvironment();
 
         // init executor for Java async execution
-        continuationActionExecutor = new ContinuationActionExecutor();
+        continuationActionExecutor =
+                new ContinuationActionExecutor(
+                        agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS));
 
         mailboxProcessor = getMailboxProcessor();
 
@@ -470,6 +469,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Check if action is already completed
         if (actionState != null && actionState.isCompleted()) {
             // Action has completed, skip execution and replay memory/events
+            LOG.debug(
+                    "Skipping already completed action: {} for key: {}",
+                    actionTask.action.getName(),
+                    key);
             isFinished = true;
             outputEvents = actionState.getOutputEvents();
             for (MemoryUpdate memoryUpdate : actionState.getShortTermMemoryUpdates()) {
@@ -508,6 +511,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             actionTaskMemoryContexts.remove(actionTask);
             actionTaskDurableContexts.remove(actionTask);
             continuationContexts.remove(actionTask);
+            pythonAwaitableRefs.remove(actionTask);
             maybePersistTaskResult(
                     key,
                     sequenceNumber,
@@ -554,6 +558,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         generatedActionTask,
                         ((JavaRunnerContextImpl) actionTask.getRunnerContext())
                                 .getContinuationContext());
+            }
+            if (actionTask.getRunnerContext() instanceof PythonRunnerContextImpl) {
+                String awaitableRef =
+                        ((PythonRunnerContextImpl) actionTask.getRunnerContext())
+                                .getPythonAwaitableRef();
+                if (awaitableRef != null) {
+                    pythonAwaitableRefs.put(generatedActionTask, awaitableRef);
+                }
             }
 
             actionTasksKState.add(generatedActionTask);
@@ -652,7 +664,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         pythonActionExecutor =
                 new PythonActionExecutor(
                         pythonInterpreter,
-                        new ObjectMapper().writeValueAsString(agentPlan),
+                        agentPlan,
                         javaResourceAdapter,
                         pythonRunnerContext,
                         jobIdentifier);
@@ -725,6 +737,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
 
+        maybeInitActionStateStore();
+
         if (actionStateStore != null) {
             List<Object> markers = new ArrayList<>();
 
@@ -743,6 +757,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             if (recoveryMarkers != null) {
                 recoveryMarkers.forEach(markers::add);
             }
+            LOG.info("Rebuilding action state from {} recovery markers", markers.size());
             actionStateStore.rebuildState(markers);
         }
 
@@ -883,6 +898,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 continuationContext = new ContinuationContext();
             }
             ((JavaRunnerContextImpl) runnerContext).setContinuationContext(continuationContext);
+        }
+        if (runnerContext instanceof PythonRunnerContextImpl) {
+            // Get the awaitable ref from the transient map. After checkpoint restore, this will be
+            // null, signaling that the awaitable was lost and needs re-execution.
+            String awaitableRef = pythonAwaitableRefs.get(actionTask);
+            ((PythonRunnerContextImpl) runnerContext).setPythonAwaitableRef(awaitableRef);
         }
         actionTask.setRunnerContext(runnerContext);
     }
@@ -1055,7 +1076,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (isJava) {
             if (runnerContext == null) {
                 if (continuationActionExecutor == null) {
-                    continuationActionExecutor = new ContinuationActionExecutor();
+                    continuationActionExecutor =
+                            new ContinuationActionExecutor(
+                                    agentPlan
+                                            .getConfig()
+                                            .get(AgentExecutionOptions.NUM_ASYNC_THREADS));
                 }
                 runnerContext =
                         new JavaRunnerContextImpl(
@@ -1086,6 +1111,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             loggerConfigBuilder.property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, baseLogDir);
         }
         return EventLoggerFactory.createLogger(loggerConfigBuilder.build());
+    }
+
+    private void maybeInitActionStateStore() {
+        if (actionStateStore == null
+                && KAFKA.getType()
+                        .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
+            LOG.info("Using Kafka as backend of action state store.");
+            actionStateStore = new KafkaActionStateStore(agentPlan.getConfig());
+        }
     }
 
     /** Failed to execute Action task. */

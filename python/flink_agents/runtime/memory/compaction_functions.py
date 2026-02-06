@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Type, cast
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.memory.long_term_memory import (
     BaseLongTermMemory,
+    CompactionConfig,
     MemorySet,
     MemorySetItem,
-    SummarizationStrategy,
 )
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
@@ -79,15 +79,13 @@ def summarize(
         ids: The ids of items to be summarized. If not provided, all items will be
         involved in summarization. Optional
     """
-    strategy: SummarizationStrategy = cast(
-        "SummarizationStrategy", memory_set.compaction_strategy
-    )
+    compaction_config: CompactionConfig = memory_set.compaction_config
 
     # retrieve all items
     items: List[MemorySetItem] = ltm.get(memory_set=memory_set, ids=ids)
 
     response: ChatMessage = _generate_summarization(
-        items, memory_set.item_type, strategy, ctx, metric_group
+        items, memory_set.item_type, compaction_config, ctx, metric_group
     )
 
     logging.debug(f"Items to be summarized: {items}\nSummarization: {response.content}")
@@ -96,7 +94,7 @@ def summarize(
         summarization = topic["summarization"]
         indices = topic["messages"]
 
-        if strategy.limit == 1:
+        if compaction_config.limit == 1:
             indices = list(range(len(items)))
 
         if memory_set.item_type == ChatMessage:
@@ -142,14 +140,14 @@ def summarize(
 def _generate_summarization(
     memory_set_items: List[MemorySetItem],
     item_type: Type,
-    strategy: SummarizationStrategy,
+    compaction_config: CompactionConfig,
     ctx: RunnerContext,
     metric_group: MetricGroup
 ) -> ChatMessage:
     """Generate summarization of the items by llm."""
     # get arguments
-    model_name = strategy.model
-    prompt = strategy.prompt
+    model_name = compaction_config.model
+    prompt = compaction_config.prompt
 
     msgs: List[ChatMessage]
     if item_type == ChatMessage:
@@ -180,7 +178,7 @@ def _generate_summarization(
         )
         msgs.extend(prompt_messages)
     else:
-        msgs.extend(DEFAULT_ANALYSIS_PROMPT.format_messages(limit=str(strategy.limit)))
+        msgs.extend(DEFAULT_ANALYSIS_PROMPT.format_messages(limit=str(compaction_config.limit)))
 
     response: ChatMessage = model.chat(messages=msgs)
 

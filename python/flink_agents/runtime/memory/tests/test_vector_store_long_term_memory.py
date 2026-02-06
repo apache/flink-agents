@@ -28,10 +28,9 @@ from pydantic import ConfigDict
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.memory.long_term_memory import (
-    CompactionStrategy,
+    CompactionConfig,
     DatetimeRange,
     MemorySet,
-    SummarizationStrategy,
 )
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
@@ -133,13 +132,13 @@ def long_term_memory() -> VectorStoreLongTermMemory:  # noqa: D103
 
 def prepare_memory_set(  # noqa: D103
     long_term_memory: VectorStoreLongTermMemory,
-    compaction_strategy: CompactionStrategy = SummarizationStrategy(model="llm"),  # noqa:B008
+    compaction_config: CompactionConfig = CompactionConfig(model="llm"),  # noqa:B008
 ) -> (MemorySet, List[ChatMessage]):
     memory_set: MemorySet = long_term_memory.get_or_create_memory_set(
         name="chat_history",
         item_type=ChatMessage,
         capacity=100,
-        compaction_strategy=compaction_strategy,
+        compaction_config=compaction_config,
     )
 
     msgs: List[ChatMessage] = []
@@ -197,7 +196,7 @@ def test_compact(  # noqa:D103
         name="chat_history",
         item_type=ChatMessage,
         capacity=8,
-        compaction_strategy=SummarizationStrategy(model="llm", limit=2),
+        compaction_config=CompactionConfig(model="llm", limit=2),
     )
 
     msgs: List[ChatMessage] = [

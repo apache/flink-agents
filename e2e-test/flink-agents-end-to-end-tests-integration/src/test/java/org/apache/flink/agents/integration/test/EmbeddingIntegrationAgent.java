@@ -30,12 +30,10 @@ import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 
 import java.util.HashMap;
 import java.util.Map;
-
-import static org.apache.flink.agents.api.resource.Constant.OLLAMA_EMBEDDING_MODEL_CONNECTION;
-import static org.apache.flink.agents.api.resource.Constant.OLLAMA_EMBEDDING_MODEL_SETUP;
 
 /**
  * Integration test agent for verifying embedding functionality with Ollama models.
@@ -54,7 +52,8 @@ public class EmbeddingIntegrationAgent extends Agent {
     public static ResourceDescriptor embeddingConnection() {
         String provider = System.getProperty("MODEL_PROVIDER", "OLLAMA");
         if (provider.equals("OLLAMA")) {
-            return ResourceDescriptor.Builder.newBuilder(OLLAMA_EMBEDDING_MODEL_CONNECTION)
+            return ResourceDescriptor.Builder.newBuilder(
+                            ResourceName.EmbeddingModel.OLLAMA_CONNECTION)
                     .addInitialArgument("host", "http://localhost:11434")
                     .addInitialArgument("timeout", 60)
                     .build();
@@ -67,7 +66,7 @@ public class EmbeddingIntegrationAgent extends Agent {
     public static ResourceDescriptor embeddingModel() {
         String provider = System.getProperty("MODEL_PROVIDER", "OLLAMA");
         if (provider.equals("OLLAMA")) {
-            return ResourceDescriptor.Builder.newBuilder(OLLAMA_EMBEDDING_MODEL_SETUP)
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OLLAMA_SETUP)
                     .addInitialArgument("connection", "embeddingConnection")
                     .addInitialArgument("model", OLLAMA_MODEL)
                     .build();
