@@ -21,9 +21,10 @@ This example shows how to:
 1. Define an MCP server connection
 2. Use MCP prompts in chat model setups
 3. Use MCP tools in actions
+4. Use MCP tools without prompts
 
 Prerequisites:
-- Run the MCP server first: mcp_server.py
+- Run the MCP server first: mcp_server.py or mcp_server_without_prompts.py
 """
 
 import multiprocessing
@@ -55,6 +56,7 @@ from flink_agents.e2e_tests.test_utils import pull_model
 
 OLLAMA_MODEL = os.environ.get("MCP_OLLAMA_CHAT_MODEL", "qwen3:1.7b")
 MCP_SERVER_ENDPOINT = "http://127.0.0.1:8000/mcp"
+MCP_SERVER_ENDPOINT_WITHOUT_PROMPTS = "http://127.0.0.1:8001/mcp"
 
 
 class CalculationInput(BaseModel):
@@ -121,9 +123,71 @@ class MyMCPAgent(Agent):
             ctx.send_event(OutputEvent(output=response.content))
 
 
+class MyMCPAgentWithoutPrompts(Agent):
+    """Example agent demonstrating MCP tools integration (without prompts)."""
+
+    @mcp_server
+    @staticmethod
+    def my_mcp_server() -> ResourceDescriptor:
+        """Define MCP server connection."""
+        return ResourceDescriptor(
+            clazz=ResourceName.MCP_SERVER, endpoint=MCP_SERVER_ENDPOINT_WITHOUT_PROMPTS
+        )
+
+    @chat_model_connection
+    @staticmethod
+    def ollama_connection() -> ResourceDescriptor:
+        """ChatModelConnection for Ollama."""
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def math_chat_model() -> ResourceDescriptor:
+        """ChatModel using MCP tool (without prompts)."""
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
+            connection="ollama_connection",
+            model=OLLAMA_MODEL,
+            tools=["add"],  # MCP tool registered from my_mcp_server
+            extract_reasoning=True,
+        )
+
+    @action(InputEvent)
+    @staticmethod
+    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+        """Process input and send chat request to use MCP tool.
+
+        The chat model will be asked to use the "add" tool to calculate the sum.
+        """
+        input_data: CalculationInput = event.input
+
+        # Send chat request asking to use the add tool
+        msg = ChatMessage(
+            role=MessageRole.USER,
+            content=f"Please use the add tool to calculate the sum of {input_data.a} and {input_data.b}.",
+        )
+
+        ctx.send_event(ChatRequestEvent(model="math_chat_model", messages=[msg]))
+
+    @action(ChatResponseEvent)
+    @staticmethod
+    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+        """Process chat response and output result."""
+        response = event.response
+        if response and response.content:
+            ctx.send_event(OutputEvent(output=response.content))
+
+
 def run_mcp_server() -> None:
     """Run the MCP server in a separate process."""
     runpy.run_path(f"{current_dir}/mcp_server.py")
+
+
+def run_mcp_server_without_prompts() -> None:
+    """Run the MCP server without prompts in a separate process."""
+    runpy.run_path(f"{current_dir}/mcp_server_without_prompts.py")
 
 
 current_dir = Path(__file__).parent
@@ -147,6 +211,39 @@ def test_mcp() -> None:  # noqa:D103
     env = AgentsExecutionEnvironment.get_execution_environment()
     input_list = []
     agent = MyMCPAgent()
+
+    output_list = env.from_list(input_list).apply(agent).to_list()
+
+    # Add test inputs
+    input_list.append({"key": "calc1", "value": CalculationInput(a=1, b=2)})
+    input_list.append({"key": "calc2", "value": CalculationInput(a=12, b=34)})
+
+    env.execute()
+
+    print("Results:")
+    for output in output_list:
+        for key, value in output.items():
+            print(f"{key}: {value}")
+
+    server_process.kill()
+
+
+@pytest.mark.skipif(
+    client is None, reason="Ollama client is not available or test model is missing"
+)
+def test_mcp_without_prompts() -> None:  # noqa:D103
+    # Start MCP server in background
+    print("Starting MCP server without prompts...")
+    server_process = multiprocessing.Process(target=run_mcp_server_without_prompts)
+    server_process.start()
+    time.sleep(5)
+
+    print(f"\nRunning MyMCPAgentWithoutPrompts with Ollama model: {OLLAMA_MODEL}")
+    print(f"MCP server endpoint: {MCP_SERVER_ENDPOINT_WITHOUT_PROMPTS}\n")
+
+    env = AgentsExecutionEnvironment.get_execution_environment()
+    input_list = []
+    agent = MyMCPAgentWithoutPrompts()
 
     output_list = env.from_list(input_list).apply(agent).to_list()
 

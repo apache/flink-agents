@@ -76,8 +76,9 @@ class ToolMetadata(BaseModel):
     def __custom_deserialize(self) -> "ToolMetadata":
         args_schema = self["args_schema"]
         if isinstance(args_schema, dict):
+            title = args_schema.get("title", "default")
             self["args_schema"] = create_model_from_schema(
-                args_schema["title"], args_schema
+                title, args_schema
             )
         return self
 

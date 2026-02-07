@@ -27,6 +27,7 @@ import cloudpickle
 import httpx
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.shared.exceptions import McpError
 from mcp.types import PromptArgument, TextContent
 from pydantic import (
     ConfigDict,
@@ -271,7 +272,12 @@ class MCPServer(Resource, ABC):
 
     def list_prompts(self) -> List[MCPPrompt]:
         """List available prompts from the MCP server."""
-        return asyncio.run(self._list_prompts_async())
+        try:
+            return asyncio.run(self._list_prompts_async())
+        except McpError as e:
+            if "prompts not supported" in str(e).lower():
+                return []
+            raise
 
     async def _list_prompts_async(self) -> List[MCPPrompt]:
         """Async implementation of list_prompts."""
