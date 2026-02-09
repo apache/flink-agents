@@ -83,33 +83,47 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
 
     @Override
     public float[] embed(String text, Map<String, Object> parameters) {
-        try {
-            String model = (String) parameters.getOrDefault("model", defaultModel);
-            Integer dimensions = (Integer) parameters.get("dimensions");
+        String model = (String) parameters.getOrDefault("model", defaultModel);
+        Integer dimensions = (Integer) parameters.get("dimensions");
 
-            ObjectNode body = MAPPER.createObjectNode();
-            body.put("inputText", text);
-            if (dimensions != null) {
-                body.put("dimensions", dimensions);
-            }
-            body.put("normalize", true);
-
-            InvokeModelResponse response = client.invokeModel(InvokeModelRequest.builder()
-                    .modelId(model)
-                    .contentType("application/json")
-                    .body(SdkBytes.fromUtf8String(body.toString()))
-                    .build());
-
-            JsonNode result = MAPPER.readTree(response.body().asUtf8String());
-            JsonNode embeddingNode = result.get("embedding");
-            float[] embedding = new float[embeddingNode.size()];
-            for (int i = 0; i < embeddingNode.size(); i++) {
-                embedding[i] = (float) embeddingNode.get(i).asDouble();
-            }
-            return embedding;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to generate Bedrock embedding.", e);
+        ObjectNode body = MAPPER.createObjectNode();
+        body.put("inputText", text);
+        if (dimensions != null) {
+            body.put("dimensions", dimensions);
         }
+        body.put("normalize", true);
+
+        int maxRetries = 5;
+        for (int attempt = 0; ; attempt++) {
+            try {
+                InvokeModelResponse response = client.invokeModel(InvokeModelRequest.builder()
+                        .modelId(model)
+                        .contentType("application/json")
+                        .body(SdkBytes.fromUtf8String(body.toString()))
+                        .build());
+
+                JsonNode result = MAPPER.readTree(response.body().asUtf8String());
+                JsonNode embeddingNode = result.get("embedding");
+                float[] embedding = new float[embeddingNode.size()];
+                for (int i = 0; i < embeddingNode.size(); i++) {
+                    embedding[i] = (float) embeddingNode.get(i).asDouble();
+                }
+                return embedding;
+            } catch (Exception e) {
+                if (attempt < maxRetries && isRetryable(e)) {
+                    try { Thread.sleep((long) (Math.pow(2, attempt) * 200)); }
+                    catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                } else {
+                    throw new RuntimeException("Failed to generate Bedrock embedding.", e);
+                }
+            }
+        }
+    }
+
+    private static boolean isRetryable(Exception e) {
+        String msg = e.toString();
+        return msg.contains("ThrottlingException") || msg.contains("ModelErrorException")
+                || msg.contains("429") || msg.contains("424") || msg.contains("503");
     }
 
     @Override
