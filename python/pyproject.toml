@@ -18,7 +18,7 @@
 [build-system]
 # Minimum requirements for the build system to execute.
 requires = [
-    "setuptools>=75.3",
+    "setuptools>=75.3,<82",
     "wheel",
 ]
 build-backend = "setuptools.build_meta"
@@ -46,7 +46,7 @@ dependencies = [
     "docstring-parser==0.16",
     "pyyaml==6.0.2",
     "mcp>=1.8.0",
-    "setuptools>=75.3",
+    "setuptools>=75.3,<82",
     "find_libpython",
     #TODO: Seperate integration dependencies from project
     "ollama==0.6.1",
