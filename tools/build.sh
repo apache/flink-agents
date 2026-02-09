@@ -78,6 +78,7 @@ if $build_python; then
   cd python
   rm -rf dist/  # Clean old build artifacts before building
   pip install uv
+  uv lock
   uv sync --extra dev
   uv run python -m build
   uv pip install dist/*.whl
