@@ -115,6 +115,10 @@ required-environments = [
     "sys_platform == 'win32'",
 ]
 
+# setuptools 82.0.0 removed pkg_resources, which breaks apache-beam<2.66.0 build
+[tool.uv.extra-build-dependencies]
+apache-beam = ["setuptools<82"]
+
 [tool.ruff]
 line-length = 88
 fix = true
