@@ -20,6 +20,7 @@ package org.apache.flink.agents.integrations.mcp;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -38,6 +39,7 @@ import java.util.Objects;
  * <p>This represents a single tool from an MCP server. It extends the base Tool class and delegates
  * actual execution to the MCP server.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class MCPTool extends Tool {
 
     private static final String FIELD_MCP_SERVER = "mcpServer";

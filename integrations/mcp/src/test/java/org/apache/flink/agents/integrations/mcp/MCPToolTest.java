@@ -36,6 +36,27 @@ class MCPToolTest {
 
     @Test
     @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("JSON deserialization works with default ObjectMapper (no FAIL_ON_UNKNOWN_PROPERTIES override)")
+    void testJsonDeserializationWithDefaultMapper() throws Exception {
+        ToolMetadata metadata =
+                new ToolMetadata("add", "Add two numbers", "{\"type\":\"object\"}");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
+        MCPTool original = new MCPTool(metadata, server);
+
+        // Use a default ObjectMapper — this would fail without @JsonIgnoreProperties
+        // because Tool.getName()/getDescription() are serialized but MCPTool's
+        // @JsonCreator only accepts metadata + mcpServer.
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(original);
+        MCPTool deserialized = mapper.readValue(json, MCPTool.class);
+
+        assertThat(deserialized.getName()).isEqualTo("add");
+        assertThat(deserialized.getMetadata()).isEqualTo(metadata);
+        assertThat(deserialized.getMcpServer()).isEqualTo(server);
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPTool with metadata and server")
     void testCreation() {
         ToolMetadata metadata = new ToolMetadata("add", "Add two numbers", "{\"type\":\"object\"}");
