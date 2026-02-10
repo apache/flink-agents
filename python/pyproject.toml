@@ -18,7 +18,7 @@
 [build-system]
 # Minimum requirements for the build system to execute.
 requires = [
-    "setuptools>=75.3",
+    "setuptools>=75.3,<82",
     "wheel",
 ]
 build-backend = "setuptools.build_meta"
@@ -47,7 +47,7 @@ dependencies = [
     "docstring-parser==0.16",
     "pyyaml==6.0.2",
     "mcp>=1.8.0",
-    "setuptools>=75.3",
+    "setuptools>=75.3,<82",
     #TODO: Seperate integration dependencies from project
     "ollama==0.4.8",
     "dashscope~=1.24.2",
@@ -104,6 +104,10 @@ archs = ["x86_64"]
 [tool.uv.workspace]
 # Currently a single package project, but ready for workspace expansion
 members = ["."]
+
+# setuptools 82.0.0 removed pkg_resources, which breaks apache-beam<2.66.0 build
+[tool.uv.extra-build-dependencies]
+apache-beam = ["setuptools<82"]
 
 [tool.ruff]
 line-length = 88
