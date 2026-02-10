@@ -108,6 +108,8 @@ jobs:
         with:
           version: "latest"
       - name: Run Python Tests
+        env:  
+          LOG_LEVEL: INFO
         run: tools/ut.sh -p
 
   python_it_tests:
