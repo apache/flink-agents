@@ -55,7 +55,6 @@ async def add(a: int, b: int) -> int:
     Returns:
         The sum of a and b
     """
-    print(f"DEBUG: with_prompts add tool called with a={a}, b={b}")
     return a + b
 
 
