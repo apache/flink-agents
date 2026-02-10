@@ -25,16 +25,17 @@ import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.examples.agents.CustomTypesAndResources;
 import org.apache.flink.agents.examples.agents.ProductSuggestionAgent;
-import org.apache.flink.agents.examples.agents.ReviewAnalysisAgent;
-import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.connector.file.src.FileSource;
-import org.apache.flink.connector.file.src.reader.TextLineInputFormat;
-import org.apache.flink.core.fs.Path;
+import org.apache.flink.agents.examples.agents.TableReviewAnalysisAgent;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.apache.flink.table.api.DataTypes;
+import org.apache.flink.table.api.Schema;
+import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.TableDescriptor;
+import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.util.Collector;
 
 import java.io.File;
@@ -52,8 +53,9 @@ import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.Pr
  * <p>This example demonstrates a multi-stage streaming pipeline using Flink Agents:
  *
  * <ol>
- *   <li>Reads product reviews from a source as a streaming source.
- *   <li>Uses an LLM agent to analyze each review and extract score and unsatisfied reasons.
+ *   <li>Reads product reviews from a JSON file using Flink Table API.
+ *   <li>Uses an LLM agent (via {@link TableReviewAnalysisAgent}) to analyze each review and extract
+ *       score and unsatisfied reasons.
  *   <li>Aggregates the analysis results in 1-minute tumbling windows, producing score distributions
  *       and collecting all unsatisfied reasons.
  *   <li>Uses another LLM agent to generate product improvement suggestions based on the aggregated
@@ -124,46 +126,56 @@ public class WorkflowMultipleAgentExample {
 
     /** Runs the example pipeline. */
     public static void main(String[] args) throws Exception {
-        // Set up the Flink streaming environment and the Agents execution environment.
+        // Set up the Flink streaming environment.
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
+
+        // Create StreamTableEnvironment for Table API support.
+        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+
+        // Create AgentsExecutionEnvironment with both env and tableEnv to enable
+        // Table API integration.
         AgentsExecutionEnvironment agentsEnv =
-                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+                AgentsExecutionEnvironment.getExecutionEnvironment(env, tableEnv);
 
         // limit async request to avoid overwhelming ollama server
         agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
 
-        // Add Ollama chat model connection to be used by the ReviewAnalysisAgent
+        // Add Ollama chat model connection to be used by the TableReviewAnalysisAgent
         // and ProductSuggestionAgent.
         agentsEnv.addResource(
                 "ollamaChatModelConnection",
                 ResourceType.CHAT_MODEL_CONNECTION,
                 CustomTypesAndResources.OLLAMA_SERVER_DESCRIPTOR);
 
-        // Read product reviews from input_data.txt file as a streaming source.
-        // Each element represents a ProductReview.
+        // Read product reviews from input_data.txt file using Flink Table API.
+        // Each line in the file is a JSON string representing a product review.
         File inputDataFile = copyResource("input_data.txt");
-        DataStream<String> productReviewStream =
-                env.fromSource(
-                        FileSource.forRecordStreamFormat(
-                                        new TextLineInputFormat(),
-                                        new Path(inputDataFile.getAbsolutePath()))
-                                .build(),
-                        WatermarkStrategy.noWatermarks(),
-                        "streaming-agent-example");
+        tableEnv.createTemporaryTable(
+                "product_reviews",
+                TableDescriptor.forConnector("filesystem")
+                        .schema(
+                                Schema.newBuilder()
+                                        .column("id", DataTypes.STRING())
+                                        .column("review", DataTypes.STRING())
+                                        .build())
+                        .option("format", "json")
+                        .option("path", inputDataFile.getAbsolutePath())
+                        .build());
 
-        // Use the ReviewAnalysisAgent (LLM) to analyze each review.
+        Table inputTable = tableEnv.from("product_reviews");
+
+        // Use the TableReviewAnalysisAgent (LLM) to analyze each review.
         // The agent extracts the review score and unsatisfied reasons.
         DataStream<Object> reviewAnalysisResStream =
                 agentsEnv
-                        .fromDataStream(productReviewStream)
-                        .apply(new ReviewAnalysisAgent())
+                        .fromTable(inputTable, new TableReviewAnalysisAgent.RowKeySelector())
+                        .apply(new TableReviewAnalysisAgent())
                         .toDataStream();
 
         // Aggregate the analysis results in 1-minute tumbling windows.
         // This produces a score distribution and collects all unsatisfied reasons for
-        // each
-        // product.
+        // each product.
         DataStream<String> aggregatedAnalysisResStream =
                 reviewAnalysisResStream
                         .map(element -> (ProductReviewAnalysisRes) element)
@@ -172,8 +184,7 @@ public class WorkflowMultipleAgentExample {
                         .process(new AggregateScoreDistributionAndDislikeReasons());
 
         // Use the ProductSuggestionAgent (LLM) to generate product improvement
-        // suggestions
-        // based on the aggregated analysis results.
+        // suggestions based on the aggregated analysis results.
         DataStream<Object> productSuggestionResStream =
                 agentsEnv
                         .fromDataStream(aggregatedAnalysisResStream)

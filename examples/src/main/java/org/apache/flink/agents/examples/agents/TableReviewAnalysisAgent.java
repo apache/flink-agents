@@ -1,0 +1,151 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.flink.agents.examples.agents;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.annotation.Action;
+import org.apache.flink.agents.api.annotation.ChatModelSetup;
+import org.apache.flink.agents.api.annotation.Prompt;
+import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.annotation.ToolParam;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
+import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
+import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.types.Row;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
+import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.REVIEW_ANALYSIS_PROMPT;
+
+/**
+ * An agent that analyzes product reviews from Flink Table API input.
+ *
+ * <p>This agent is designed to work with the Flink Table API. It receives input as {@link Row}
+ * objects (when using {@code fromTable()}) and produces analysis results including satisfaction
+ * score and reasons for dissatisfaction.
+ *
+ * <p>The main difference from {@link ReviewAnalysisAgent} is that this agent handles {@link Row}
+ * input instead of JSON strings.
+ */
+public class TableReviewAnalysisAgent extends Agent {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /** Key selector for extracting keys from Row objects used with Table API input. */
+    public static class RowKeySelector implements KeySelector<Object, String> {
+        @Override
+        public String getKey(Object value) {
+            if (value instanceof Row) {
+                Row row = (Row) value;
+                return (String) row.getField("id");
+            }
+            return "";
+        }
+    }
+
+    @Prompt
+    public static org.apache.flink.agents.api.prompt.Prompt reviewAnalysisPrompt() {
+        return REVIEW_ANALYSIS_PROMPT;
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor reviewAnalysisModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+                .addInitialArgument("connection", "ollamaChatModelConnection")
+                .addInitialArgument("model", "qwen3:8b")
+                .addInitialArgument("prompt", "reviewAnalysisPrompt")
+                .addInitialArgument("tools", Collections.singletonList("notifyShippingManager"))
+                .addInitialArgument("extract_reasoning", true)
+                .build();
+    }
+
+    /**
+     * Tool for notifying the shipping manager when product received a negative review due to
+     * shipping damage.
+     *
+     * @param id The id of the product that received a negative review due to shipping damage
+     * @param review The negative review content
+     */
+    @Tool(
+            description =
+                    "Notify the shipping manager when product received a negative review due to shipping damage.")
+    public static void notifyShippingManager(
+            @ToolParam(name = "id") String id, @ToolParam(name = "review") String review) {
+        CustomTypesAndResources.notifyShippingManager(id, review);
+    }
+
+    /**
+     * Process input event from Table data (Row format).
+     *
+     * <p>When using {@code fromTable()}, the input is a {@link Row} with fields matching the table
+     * column names.
+     */
+    @Action(listenEvents = {InputEvent.class})
+    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+        Row row = (Row) event.getInput();
+        String productId = (String) row.getField("id");
+        String reviewText = (String) row.getField("review");
+
+        ctx.getShortTermMemory().set("id", productId);
+
+        String content =
+                String.format(
+                        "{\n" + "\"id\": \"%s\",\n" + "\"review\": \"%s\"\n" + "}",
+                        productId, reviewText);
+        ChatMessage msg = new ChatMessage(MessageRole.USER, "", Map.of("input", content));
+
+        ctx.sendEvent(new ChatRequestEvent("reviewAnalysisModel", List.of(msg)));
+    }
+
+    @Action(listenEvents = ChatResponseEvent.class)
+    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
+            throws Exception {
+        JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());
+        JsonNode scoreNode = jsonNode.findValue("score");
+        JsonNode reasonsNode = jsonNode.findValue("reasons");
+        if (scoreNode == null || reasonsNode == null) {
+            throw new IllegalStateException(
+                    "Invalid response from LLM: missing 'score' or 'reasons' field.");
+        }
+        List<String> result = new ArrayList<>();
+        if (reasonsNode.isArray()) {
+            for (JsonNode node : reasonsNode) {
+                result.add(node.asText());
+            }
+        }
+
+        ctx.sendEvent(
+                new OutputEvent(
+                        new CustomTypesAndResources.ProductReviewAnalysisRes(
+                                ctx.getShortTermMemory().get("id").getValue().toString(),
+                                scoreNode.asInt(),
+                                result)));
+    }
+}
