@@ -72,7 +72,7 @@ class MyMCPAgent(Agent):
     @mcp_server
     @staticmethod
     def my_mcp_server() -> ResourceDescriptor:
-        """Define MCP server connection based on MCP_SERVER_MODE environment variable."""
+        """Define MCP server connection based on MCP_SERVER_MODE env variable."""
         mcp_mode = os.environ.get("MCP_SERVER_MODE", "with_prompts")
         if mcp_mode == "without_prompts":
             endpoint = MCP_SERVER_ENDPOINT_WITHOUT_PROMPTS
@@ -151,7 +151,7 @@ client = pull_model(OLLAMA_MODEL)
 
 
 @pytest.mark.parametrize(
-    "mcp_server_mode,server_file,server_endpoint",
+    ("mcp_server_mode", "server_file", "server_endpoint"),
     [
         ("with_prompts", "mcp_server.py", MCP_SERVER_ENDPOINT),
         ("without_prompts", "mcp_server_without_prompts.py", MCP_SERVER_ENDPOINT_WITHOUT_PROMPTS),
