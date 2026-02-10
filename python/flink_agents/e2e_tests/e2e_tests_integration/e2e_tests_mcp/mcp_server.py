@@ -39,7 +39,7 @@ def ask_sum(a: int, b: int) -> str:
     Returns:
         A formatted prompt string
     """
-    return f"Calculate the sum of {a} and {b}?"
+    return f"Calculate the sum of {a} and {b} by using the add tool"
 
 
 @mcp.tool()
@@ -55,6 +55,7 @@ async def add(a: int, b: int) -> int:
     Returns:
         The sum of a and b
     """
+    print(f"DEBUG: with_prompts add tool called with a={a}, b={b}")
     return a + b
 
 

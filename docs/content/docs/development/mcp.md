@@ -1,6 +1,6 @@
 ---
 title: MCP
-weight: 7
+weight: 9
 type: docs
 ---
 <!--
