@@ -15,12 +15,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.flink.agents.integrations.vectorstores.opensearch;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -28,43 +30,76 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
+
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.signer.Aws4Signer;
 import software.amazon.awssdk.auth.signer.params.Aws4SignerParams;
-import software.amazon.awssdk.http.*;
+import software.amazon.awssdk.http.HttpExecuteRequest;
+import software.amazon.awssdk.http.HttpExecuteResponse;
+import software.amazon.awssdk.http.SdkHttpClient;
+import software.amazon.awssdk.http.SdkHttpFullRequest;
+import software.amazon.awssdk.http.SdkHttpMethod;
 import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.regions.Region;
 
 import javax.annotation.Nullable;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 import java.util.function.BiFunction;
 
 /**
- * OpenSearch vector store supporting both OpenSearch Serverless (AOSS) and
- * OpenSearch Service domains, with IAM (SigV4) or basic auth.
+ * OpenSearch vector store supporting both OpenSearch Serverless (AOSS) and OpenSearch Service
+ * domains, with IAM (SigV4) or basic auth.
  *
- * <p>Implements {@link CollectionManageableVectorStore} for Long-Term Memory support.
- * Collections map to OpenSearch indices. Collection metadata is stored in a
- * dedicated {@code _collection_metadata} index.
+ * <p>Implements {@link CollectionManageableVectorStore} for Long-Term Memory support. Collections
+ * map to OpenSearch indices. Collection metadata is stored in a dedicated {@code
+ * flink_agents_collection_metadata} index.
  *
- * <p>Parameters:
+ * <p>Supported parameters:
+ *
  * <ul>
- *   <li><b>embedding_model</b> (required): name of the embedding model resource</li>
- *   <li><b>endpoint</b> (required): OpenSearch endpoint URL</li>
- *   <li><b>index</b> (required): default index name</li>
- *   <li><b>service_type</b> (optional): "serverless" (default) or "domain"</li>
- *   <li><b>auth</b> (optional): "iam" (default) or "basic"</li>
- *   <li><b>username</b> (required if auth=basic): basic auth username</li>
- *   <li><b>password</b> (required if auth=basic): basic auth password</li>
- *   <li><b>vector_field</b> (optional): vector field name (default: "embedding")</li>
- *   <li><b>content_field</b> (optional): content field name (default: "content")</li>
- *   <li><b>region</b> (optional): AWS region (default: us-east-1)</li>
- *   <li><b>dims</b> (optional): vector dimensions for index creation (default: 1024)</li>
+ *   <li><b>embedding_model</b> (required): name of the embedding model resource
+ *   <li><b>endpoint</b> (required): OpenSearch endpoint URL
+ *   <li><b>index</b> (required): default index name
+ *   <li><b>service_type</b> (optional): "serverless" (default) or "domain"
+ *   <li><b>auth</b> (optional): "iam" (default) or "basic"
+ *   <li><b>username</b> (required if auth=basic): basic auth username
+ *   <li><b>password</b> (required if auth=basic): basic auth password
+ *   <li><b>vector_field</b> (optional): vector field name (default: "embedding")
+ *   <li><b>content_field</b> (optional): content field name (default: "content")
+ *   <li><b>region</b> (optional): AWS region (default: us-east-1)
+ *   <li><b>dims</b> (optional): vector dimensions for index creation (default: 1024)
+ *   <li><b>max_bulk_mb</b> (optional): max bulk payload size in MB (default: 5)
  * </ul>
+ *
+ * <p>Example usage:
+ *
+ * <pre>{@code
+ * @VectorStore
+ * public static ResourceDescriptor opensearchStore() {
+ *     return ResourceDescriptor.Builder.newBuilder(OpenSearchVectorStore.class.getName())
+ *             .addInitialArgument("embedding_model", "bedrockEmbeddingSetup")
+ *             .addInitialArgument("endpoint", "https://my-domain.us-east-1.es.amazonaws.com")
+ *             .addInitialArgument("index", "my-vectors")
+ *             .addInitialArgument("service_type", "domain")
+ *             .addInitialArgument("auth", "iam")
+ *             .addInitialArgument("dims", 1024)
+ *             .build();
+ * }
+ * }</pre>
  */
 public class OpenSearchVectorStore extends BaseVectorStore
         implements CollectionManageableVectorStore {
@@ -81,9 +116,12 @@ public class OpenSearchVectorStore extends BaseVectorStore
     private final boolean serverless;
     private final boolean useIamAuth;
     private final String basicAuthHeader;
+    private final int maxBulkBytes;
 
     private final SdkHttpClient httpClient;
+    // TODO: Aws4Signer is legacy; migrate to AwsV4HttpSigner from http-auth-aws in a follow-up.
     private final Aws4Signer signer;
+    private final DefaultCredentialsProvider credentialsProvider;
 
     public OpenSearchVectorStore(
             ResourceDescriptor descriptor,
@@ -91,16 +129,27 @@ public class OpenSearchVectorStore extends BaseVectorStore
         super(descriptor, getResource);
 
         this.endpoint = descriptor.getArgument("endpoint");
+        if (this.endpoint == null || this.endpoint.isBlank()) {
+            throw new IllegalArgumentException("endpoint is required for OpenSearchVectorStore");
+        }
+
         this.index = descriptor.getArgument("index");
-        this.vectorField = Objects.requireNonNullElse(descriptor.getArgument("vector_field"), "embedding");
-        this.contentField = Objects.requireNonNullElse(descriptor.getArgument("content_field"), "content");
+        if (this.index == null || this.index.isBlank()) {
+            throw new IllegalArgumentException("index is required for OpenSearchVectorStore");
+        }
+
+        this.vectorField =
+                Objects.requireNonNullElse(descriptor.getArgument("vector_field"), "embedding");
+        this.contentField =
+                Objects.requireNonNullElse(descriptor.getArgument("content_field"), "content");
         Integer dimsArg = descriptor.getArgument("dims");
         this.dims = dimsArg != null ? dimsArg : 1024;
 
         String regionStr = descriptor.getArgument("region");
         this.region = Region.of(regionStr != null ? regionStr : "us-east-1");
 
-        String serviceType = Objects.requireNonNullElse(descriptor.getArgument("service_type"), "serverless");
+        String serviceType =
+                Objects.requireNonNullElse(descriptor.getArgument("service_type"), "serverless");
         this.serverless = serviceType.equalsIgnoreCase("serverless");
 
         String auth = Objects.requireNonNullElse(descriptor.getArgument("auth"), "iam");
@@ -112,25 +161,44 @@ public class OpenSearchVectorStore extends BaseVectorStore
             if (username == null || password == null) {
                 throw new IllegalArgumentException("username and password required for basic auth");
             }
-            this.basicAuthHeader = "Basic " + Base64.getEncoder()
-                    .encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8));
+            this.basicAuthHeader =
+                    "Basic "
+                            + Base64.getEncoder()
+                                    .encodeToString(
+                                            (username + ":" + password)
+                                                    .getBytes(StandardCharsets.UTF_8));
         } else {
             this.basicAuthHeader = null;
         }
 
         this.httpClient = ApacheHttpClient.create();
         this.signer = Aws4Signer.create();
+        this.credentialsProvider = DefaultCredentialsProvider.create();
 
         Integer bulkMb = descriptor.getArgument("max_bulk_mb");
         this.maxBulkBytes = (bulkMb != null ? bulkMb : 5) * 1024 * 1024;
     }
 
-    /** Batch-embeds all documents in a single call, then delegates to addEmbedding. */
     @Override
-    public List<String> add(List<Document> documents, @Nullable String collection,
-                            Map<String, Object> extraArgs) throws IOException {
-        BaseEmbeddingModelSetup emb = (BaseEmbeddingModelSetup)
-                this.getResource.apply(this.embeddingModel, ResourceType.EMBEDDING_MODEL);
+    public void close() throws Exception {
+        this.httpClient.close();
+    }
+
+    /**
+     * Batch-embeds all documents in a single call, then delegates to addEmbedding.
+     *
+     * <p>TODO: This batch embedding logic is duplicated in S3VectorsVectorStore. Consider
+     * extracting to BaseVectorStore in a follow-up (would also benefit ElasticsearchVectorStore).
+     */
+    @Override
+    public List<String> add(
+            List<Document> documents,
+            @Nullable String collection,
+            Map<String, Object> extraArgs)
+            throws IOException {
+        BaseEmbeddingModelSetup emb =
+                (BaseEmbeddingModelSetup)
+                        this.getResource.apply(this.embeddingModel, ResourceType.EMBEDDING_MODEL);
         List<String> texts = new ArrayList<>();
         List<Integer> needsEmbedding = new ArrayList<>();
         for (int i = 0; i < documents.size(); i++) {
@@ -157,7 +225,6 @@ public class OpenSearchVectorStore extends BaseVectorStore
         if (!indexExists(idx)) {
             createKnnIndex(idx);
         }
-        // Store metadata
         ensureMetadataIndex();
         ObjectNode doc = MAPPER.createObjectNode();
         doc.put("collection_name", name);
@@ -176,10 +243,11 @@ public class OpenSearchVectorStore extends BaseVectorStore
         }
         try {
             ensureMetadataIndex();
-            JsonNode resp = executeRequest("GET", "/" + METADATA_INDEX + "/_doc/" + idx, null);
+            JsonNode resp =
+                    executeRequest("GET", "/" + METADATA_INDEX + "/_doc/" + idx, null);
             if (resp.has("found") && resp.get("found").asBoolean()) {
-                Map<String, Object> meta = MAPPER.convertValue(
-                        resp.path("_source").path("metadata"), Map.class);
+                Map<String, Object> meta =
+                        MAPPER.convertValue(resp.path("_source").path("metadata"), Map.class);
                 return new Collection(name, meta != null ? meta : Collections.emptyMap());
             }
         } catch (Exception ignored) {
@@ -196,6 +264,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
         try {
             executeRequest("DELETE", "/" + METADATA_INDEX + "/_doc/" + idx, null);
         } catch (Exception ignored) {
+            // metadata doc may not exist
         }
         return col;
     }
@@ -210,11 +279,13 @@ public class OpenSearchVectorStore extends BaseVectorStore
     }
 
     private void createKnnIndex(String idx) {
-        String body = String.format(
-                "{\"settings\":{\"index\":{\"knn\":true}},"
-                + "\"mappings\":{\"properties\":{\"%s\":{\"type\":\"knn_vector\",\"dimension\":%d},"
-                + "\"%s\":{\"type\":\"text\"},\"metadata\":{\"type\":\"object\"}}}}",
-                vectorField, dims, contentField);
+        String body =
+                String.format(
+                        "{\"settings\":{\"index\":{\"knn\":true}},"
+                                + "\"mappings\":{\"properties\":{\"%s\":{\"type\":\"knn_vector\","
+                                + "\"dimension\":%d},\"%s\":{\"type\":\"text\"},"
+                                + "\"metadata\":{\"type\":\"object\"}}}}",
+                        vectorField, dims, contentField);
         try {
             executeRequest("PUT", "/" + idx, body);
         } catch (RuntimeException e) {
@@ -227,9 +298,11 @@ public class OpenSearchVectorStore extends BaseVectorStore
     private void ensureMetadataIndex() {
         if (!indexExists(METADATA_INDEX)) {
             try {
-                executeRequest("PUT", "/" + METADATA_INDEX,
+                executeRequest(
+                        "PUT",
+                        "/" + METADATA_INDEX,
                         "{\"mappings\":{\"properties\":{\"collection_name\":{\"type\":\"keyword\"},"
-                        + "\"metadata\":{\"type\":\"object\"}}}}");
+                                + "\"metadata\":{\"type\":\"object\"}}}}");
             } catch (RuntimeException e) {
                 if (!e.getMessage().contains("resource_already_exists_exception")) {
                     throw e;
@@ -242,7 +315,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
     private String sanitizeIndexName(String name) {
         return name.toLowerCase(Locale.ROOT)
                 .replaceAll("[^a-z0-9\\-_]", "-")
-                .replaceAll("^[^a-z]+", "a-");  // must start with letter
+                .replaceAll("^[^a-z]+", "a-");
     }
 
     // ---- BaseVectorStore ----
@@ -263,8 +336,11 @@ public class OpenSearchVectorStore extends BaseVectorStore
     }
 
     @Override
-    public List<Document> get(@Nullable List<String> ids, @Nullable String collection,
-                              Map<String, Object> extraArgs) throws IOException {
+    public List<Document> get(
+            @Nullable List<String> ids,
+            @Nullable String collection,
+            Map<String, Object> extraArgs)
+            throws IOException {
         String idx = collection != null ? sanitizeIndexName(collection) : this.index;
         if (ids != null && !ids.isEmpty()) {
             ObjectNode body = MAPPER.createObjectNode();
@@ -273,13 +349,23 @@ public class OpenSearchVectorStore extends BaseVectorStore
             body.put("size", ids.size());
             return parseHits(executeRequest("POST", "/" + idx + "/_search", body.toString()));
         }
-        return parseHits(executeRequest("POST", "/" + idx + "/_search",
-                "{\"query\":{\"match_all\":{}},\"size\":10000}"));
+        int limit = 10000;
+        if (extraArgs != null && extraArgs.containsKey("limit")) {
+            limit = ((Number) extraArgs.get("limit")).intValue();
+        }
+        return parseHits(
+                executeRequest(
+                        "POST",
+                        "/" + idx + "/_search",
+                        "{\"query\":{\"match_all\":{}},\"size\":" + limit + "}"));
     }
 
     @Override
-    public void delete(@Nullable List<String> ids, @Nullable String collection,
-                       Map<String, Object> extraArgs) throws IOException {
+    public void delete(
+            @Nullable List<String> ids,
+            @Nullable String collection,
+            Map<String, Object> extraArgs)
+            throws IOException {
         String idx = collection != null ? sanitizeIndexName(collection) : this.index;
         if (ids != null && !ids.isEmpty()) {
             ObjectNode body = MAPPER.createObjectNode();
@@ -287,15 +373,18 @@ public class OpenSearchVectorStore extends BaseVectorStore
             ids.forEach(idsArray::add);
             executeRequest("POST", "/" + idx + "/_delete_by_query", body.toString());
         } else {
-            executeRequest("POST", "/" + idx + "/_delete_by_query",
-                    "{\"query\":{\"match_all\":{}}}");
+            executeRequest(
+                    "POST", "/" + idx + "/_delete_by_query", "{\"query\":{\"match_all\":{}}}");
         }
         executeRequest("POST", "/" + idx + "/_refresh", null);
     }
 
     @Override
-    protected List<Document> queryEmbedding(float[] embedding, int limit,
-                                            @Nullable String collection, Map<String, Object> args) {
+    protected List<Document> queryEmbedding(
+            float[] embedding,
+            int limit,
+            @Nullable String collection,
+            Map<String, Object> args) {
         try {
             String idx = collection != null ? sanitizeIndexName(collection) : this.index;
             int k = (int) args.getOrDefault("k", Math.max(1, limit));
@@ -305,13 +394,16 @@ public class OpenSearchVectorStore extends BaseVectorStore
             ObjectNode knnQuery = body.putObject("query").putObject("knn");
             ObjectNode fieldQuery = knnQuery.putObject(vectorField);
             ArrayNode vectorArray = fieldQuery.putArray("vector");
-            for (float v : embedding) vectorArray.add(v);
+            for (float v : embedding) {
+                vectorArray.add(v);
+            }
             fieldQuery.put("k", k);
             if (args.containsKey("min_score")) {
                 fieldQuery.put("min_score", ((Number) args.get("min_score")).floatValue());
             }
             if (args.containsKey("ef_search")) {
-                fieldQuery.putObject("method_parameters")
+                fieldQuery
+                        .putObject("method_parameters")
                         .put("ef_search", ((Number) args.get("ef_search")).intValue());
             }
             if (args.containsKey("filter_query")) {
@@ -324,12 +416,12 @@ public class OpenSearchVectorStore extends BaseVectorStore
         }
     }
 
-    /** Max bulk payload size in bytes (default 5MB, configurable via constructor). */
-    private final int maxBulkBytes;
-
     @Override
-    protected List<String> addEmbedding(List<Document> documents, @Nullable String collection,
-                                        Map<String, Object> extraArgs) throws IOException {
+    protected List<String> addEmbedding(
+            List<Document> documents,
+            @Nullable String collection,
+            Map<String, Object> extraArgs)
+            throws IOException {
         String idx = collection != null ? sanitizeIndexName(collection) : this.index;
         if (!indexExists(idx)) {
             createKnnIndex(idx);
@@ -350,7 +442,9 @@ public class OpenSearchVectorStore extends BaseVectorStore
             source.put(contentField, doc.getContent());
             if (doc.getEmbedding() != null) {
                 ArrayNode vec = source.putArray(vectorField);
-                for (float v : doc.getEmbedding()) vec.add(v);
+                for (float v : doc.getEmbedding()) {
+                    vec.add(v);
+                }
             }
             if (doc.getMetadata() != null) {
                 source.set("metadata", MAPPER.valueToTree(doc.getMetadata()));
@@ -359,7 +453,6 @@ public class OpenSearchVectorStore extends BaseVectorStore
 
             int entryBytes = actionLine.length() + sourceLine.length();
 
-            // Flush if adding this entry would exceed the bulk size limit
             if (bulkBytes > 0 && bulkBytes + entryBytes > maxBulkBytes) {
                 executeRequest("POST", "/_bulk", bulk.toString());
                 bulk.setLength(0);
@@ -377,6 +470,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
         return allIds;
     }
 
+    @SuppressWarnings("unchecked")
     private List<Document> parseHits(JsonNode response) {
         List<Document> docs = new ArrayList<>();
         JsonNode hits = response.path("hits").path("hits");
@@ -393,35 +487,36 @@ public class OpenSearchVectorStore extends BaseVectorStore
         return docs;
     }
 
-    @SuppressWarnings("unchecked")
     private JsonNode executeRequest(String method, String path, @Nullable String body) {
         try {
             URI uri = URI.create(endpoint + path);
-            SdkHttpFullRequest.Builder reqBuilder = SdkHttpFullRequest.builder()
-                    .uri(uri)
-                    .method(SdkHttpMethod.valueOf(method))
-                    .putHeader("Content-Type", "application/json");
+            SdkHttpFullRequest.Builder reqBuilder =
+                    SdkHttpFullRequest.builder()
+                            .uri(uri)
+                            .method(SdkHttpMethod.valueOf(method))
+                            .putHeader("Content-Type", "application/json");
 
             if (body != null) {
-                reqBuilder.contentStreamProvider(() ->
-                        new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
+                reqBuilder.contentStreamProvider(
+                        () -> new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
             }
 
             SdkHttpFullRequest request;
             if (useIamAuth) {
-                Aws4SignerParams signerParams = Aws4SignerParams.builder()
-                        .awsCredentials(DefaultCredentialsProvider.create().resolveCredentials())
-                        .signingName(serverless ? "aoss" : "es")
-                        .signingRegion(region)
-                        .build();
+                AwsCredentials credentials = credentialsProvider.resolveCredentials();
+                Aws4SignerParams signerParams =
+                        Aws4SignerParams.builder()
+                                .awsCredentials(credentials)
+                                .signingName(serverless ? "aoss" : "es")
+                                .signingRegion(region)
+                                .build();
                 request = signer.sign(reqBuilder.build(), signerParams);
             } else {
-                request = reqBuilder
-                        .putHeader("Authorization", basicAuthHeader)
-                        .build();
+                request = reqBuilder.putHeader("Authorization", basicAuthHeader).build();
             }
 
-            HttpExecuteRequest.Builder execBuilder = HttpExecuteRequest.builder().request(request);
+            HttpExecuteRequest.Builder execBuilder =
+                    HttpExecuteRequest.builder().request(request);
             if (request.contentStreamProvider().isPresent()) {
                 execBuilder.contentStreamProvider(request.contentStreamProvider().get());
             }
@@ -431,17 +526,18 @@ public class OpenSearchVectorStore extends BaseVectorStore
 
             if ("HEAD".equals(method)) {
                 if (statusCode >= 400) {
-                    throw new RuntimeException("OpenSearch HEAD request failed (" + statusCode + ")");
+                    throw new RuntimeException(
+                            "OpenSearch HEAD request failed (" + statusCode + ")");
                 }
                 return MAPPER.createObjectNode().put("status", statusCode);
             }
 
-            String responseBody = new String(
-                    response.responseBody().orElseThrow().readAllBytes());
+            String responseBody =
+                    new String(response.responseBody().orElseThrow().readAllBytes());
 
-            if (response.httpResponse().statusCode() >= 400) {
-                throw new RuntimeException("OpenSearch request failed (" +
-                        response.httpResponse().statusCode() + "): " + responseBody);
+            if (statusCode >= 400) {
+                throw new RuntimeException(
+                        "OpenSearch request failed (" + statusCode + "): " + responseBody);
             }
             return MAPPER.readTree(responseBody);
         } catch (RuntimeException e) {
