@@ -160,7 +160,7 @@ client = pull_model(OLLAMA_MODEL)
 @pytest.mark.skipif(
     client is None, reason="Ollama client is not available or test model is missing"
 )
-def test_mcp(mcp_server_mode: str, server_file: str, server_endpoint: str) -> None:  # noqa:D103
+def test_mcp(mcp_server_mode: str, server_file: str, server_endpoint: str) -> None:
     """Test MCP integration with different server modes.
 
     Args:
