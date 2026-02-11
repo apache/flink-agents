@@ -336,15 +336,12 @@ class MCPRetryTest {
         assertThat(server.getMaxBackoffMs()).isEqualTo(10000);
     }
 
-    /**
-     * Helper method to invoke the private executeWithRetry method via reflection.
-     */
+    /** Helper method to invoke the private executeWithRetry method via reflection. */
     @SuppressWarnings("unchecked")
     private <T> T invokeExecuteWithRetry(
             MCPServer server, Callable<T> operation, String operationName) throws Exception {
         Method method =
-                MCPServer.class.getDeclaredMethod(
-                        "executeWithRetry", Callable.class, String.class);
+                MCPServer.class.getDeclaredMethod("executeWithRetry", Callable.class, String.class);
         method.setAccessible(true);
         try {
             return (T) method.invoke(server, operation, operationName);

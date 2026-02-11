@@ -172,7 +172,13 @@ public class MCPServer extends Resource {
 
         public MCPServer build() {
             return new MCPServer(
-                    endpoint, headers, timeoutSeconds, auth, maxRetries, initialBackoffMs, maxBackoffMs);
+                    endpoint,
+                    headers,
+                    timeoutSeconds,
+                    auth,
+                    maxRetries,
+                    initialBackoffMs,
+                    maxBackoffMs);
         }
     }
 
@@ -185,19 +191,29 @@ public class MCPServer extends Resource {
         Map<String, String> headers = descriptor.getArgument(FIELD_HEADERS);
         this.headers = headers != null ? new HashMap<>(headers) : new HashMap<>();
         Object timeoutArg = descriptor.getArgument(FIELD_TIMEOUT);
-        this.timeoutSeconds = timeoutArg instanceof Number ? ((Number) timeoutArg).longValue() : DEFAULT_TIMEOUT_VALUE;
+        this.timeoutSeconds =
+                timeoutArg instanceof Number
+                        ? ((Number) timeoutArg).longValue()
+                        : DEFAULT_TIMEOUT_VALUE;
         this.auth = descriptor.getArgument(FIELD_AUTH);
 
         Object maxRetriesArg = descriptor.getArgument(FIELD_MAX_RETRIES);
-        this.maxRetries = maxRetriesArg instanceof Number ? ((Number) maxRetriesArg).intValue() : MAX_RETRIES_VALUE;
+        this.maxRetries =
+                maxRetriesArg instanceof Number
+                        ? ((Number) maxRetriesArg).intValue()
+                        : MAX_RETRIES_VALUE;
 
         Object initialBackoffArg = descriptor.getArgument(FIELD_INITIAL_BACKOFF_MS);
-        this.initialBackoffMs = initialBackoffArg instanceof Number
-                ? ((Number) initialBackoffArg).longValue() : INITIAL_BACKOFF_MS_VALUE;
+        this.initialBackoffMs =
+                initialBackoffArg instanceof Number
+                        ? ((Number) initialBackoffArg).longValue()
+                        : INITIAL_BACKOFF_MS_VALUE;
 
         Object maxBackoffArg = descriptor.getArgument(FIELD_MAX_BACKOFF_MS);
-        this.maxBackoffMs = maxBackoffArg instanceof Number
-                ? ((Number) maxBackoffArg).longValue() : MAX_BACKOFF_MS_VALUE;
+        this.maxBackoffMs =
+                maxBackoffArg instanceof Number
+                        ? ((Number) maxBackoffArg).longValue()
+                        : MAX_BACKOFF_MS_VALUE;
     }
 
     /**
@@ -223,7 +239,8 @@ public class MCPServer extends Resource {
         this.timeoutSeconds = timeoutSeconds != null ? timeoutSeconds : DEFAULT_TIMEOUT_VALUE;
         this.auth = auth;
         this.maxRetries = maxRetries != null ? maxRetries : MAX_RETRIES_VALUE;
-        this.initialBackoffMs = initialBackoffMs != null ? initialBackoffMs : INITIAL_BACKOFF_MS_VALUE;
+        this.initialBackoffMs =
+                initialBackoffMs != null ? initialBackoffMs : INITIAL_BACKOFF_MS_VALUE;
         this.maxBackoffMs = maxBackoffMs != null ? maxBackoffMs : MAX_BACKOFF_MS_VALUE;
     }
 
@@ -286,8 +303,7 @@ public class MCPServer extends Resource {
     private McpSyncClient createClient() {
         validateHttpUrl();
 
-        var requestBuilder =
-                HttpRequest.newBuilder().timeout(Duration.ofSeconds(timeoutSeconds));
+        var requestBuilder = HttpRequest.newBuilder().timeout(Duration.ofSeconds(timeoutSeconds));
 
         // Add custom headers
         headers.forEach(requestBuilder::header);
@@ -355,8 +371,7 @@ public class MCPServer extends Resource {
                 if (!isRetryable(e)) {
                     throw new RuntimeException(
                             String.format(
-                                    "MCP operation '%s' failed: %s",
-                                    operationName, e.getMessage()),
+                                    "MCP operation '%s' failed: %s", operationName, e.getMessage()),
                             e);
                 }
 
