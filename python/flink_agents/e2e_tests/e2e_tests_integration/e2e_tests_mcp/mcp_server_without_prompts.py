@@ -23,24 +23,7 @@ from mcp.server.fastmcp import FastMCP
 dotenv.load_dotenv()
 
 # Create MCP server
-mcp = FastMCP("MathServer")
-
-
-@mcp.prompt()
-def ask_sum(a: int, b: int) -> str:
-    """Generate a prompt asking to calculate the sum of two numbers.
-
-    This prompt will be used by chat models to request calculations.
-
-    Args:
-        a: The first operand
-        b: The second operand
-
-    Returns:
-        A formatted prompt string
-    """
-    return f"Calculate the sum of {a} and {b} by using the add tool"
-
+mcp = FastMCP("MathServer", port = 8001)
 
 @mcp.tool()
 async def add(a: int, b: int) -> int:
