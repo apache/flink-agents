@@ -20,7 +20,7 @@ name: Flink Agents CI
 on:
   push:
     branches: [ main, 'release-*' ]
-  pull_request:
+  pull_request_target:
     branches: [ main, 'release-*' ]
   workflow_dispatch:
 
