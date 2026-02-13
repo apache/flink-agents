@@ -24,7 +24,6 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
-
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3vectors.S3VectorsClient;
@@ -54,8 +53,8 @@ import java.util.function.BiFunction;
 /**
  * Amazon S3 Vectors vector store for flink-agents.
  *
- * <p>Uses the S3 Vectors SDK for PutVectors/QueryVectors/GetVectors/DeleteVectors. PutVectors
- * calls are chunked at 500 vectors per request (API limit).
+ * <p>Uses the S3 Vectors SDK for PutVectors/QueryVectors/GetVectors/DeleteVectors. PutVectors calls
+ * are chunked at 500 vectors per request (API limit).
  *
  * <p>Supported parameters:
  *
@@ -89,8 +88,7 @@ public class S3VectorsVectorStore extends BaseVectorStore {
     private final String vectorIndex;
 
     public S3VectorsVectorStore(
-            ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
+            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
 
         this.vectorBucket = descriptor.getArgument("vector_bucket");
@@ -101,8 +99,7 @@ public class S3VectorsVectorStore extends BaseVectorStore {
 
         this.vectorIndex = descriptor.getArgument("vector_index");
         if (this.vectorIndex == null || this.vectorIndex.isBlank()) {
-            throw new IllegalArgumentException(
-                    "vector_index is required for S3VectorsVectorStore");
+            throw new IllegalArgumentException("vector_index is required for S3VectorsVectorStore");
         }
 
         String regionStr = descriptor.getArgument("region");
@@ -126,9 +123,7 @@ public class S3VectorsVectorStore extends BaseVectorStore {
      */
     @Override
     public List<String> add(
-            List<Document> documents,
-            @Nullable String collection,
-            Map<String, Object> extraArgs)
+            List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
         BaseEmbeddingModelSetup emb =
                 (BaseEmbeddingModelSetup)
@@ -165,15 +160,12 @@ public class S3VectorsVectorStore extends BaseVectorStore {
      */
     @Override
     public long size(@Nullable String collection) {
-        throw new UnsupportedOperationException(
-                "S3 Vectors does not support count operations");
+        throw new UnsupportedOperationException("S3 Vectors does not support count operations");
     }
 
     @Override
     public List<Document> get(
-            @Nullable List<String> ids,
-            @Nullable String collection,
-            Map<String, Object> extraArgs)
+            @Nullable List<String> ids, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
         if (ids == null || ids.isEmpty()) {
             return Collections.emptyList();
@@ -198,9 +190,7 @@ public class S3VectorsVectorStore extends BaseVectorStore {
 
     @Override
     public void delete(
-            @Nullable List<String> ids,
-            @Nullable String collection,
-            Map<String, Object> extraArgs)
+            @Nullable List<String> ids, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
         if (ids == null || ids.isEmpty()) {
             return;
@@ -216,10 +206,7 @@ public class S3VectorsVectorStore extends BaseVectorStore {
 
     @Override
     protected List<Document> queryEmbedding(
-            float[] embedding,
-            int limit,
-            @Nullable String collection,
-            Map<String, Object> args) {
+            float[] embedding, int limit, @Nullable String collection, Map<String, Object> args) {
         try {
             String idx = collection != null ? collection : vectorIndex;
             int topK = (int) args.getOrDefault("top_k", Math.max(1, limit));
@@ -251,9 +238,7 @@ public class S3VectorsVectorStore extends BaseVectorStore {
 
     @Override
     protected List<String> addEmbedding(
-            List<Document> documents,
-            @Nullable String collection,
-            Map<String, Object> extraArgs)
+            List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
         String idx = collection != null ? collection : vectorIndex;
         List<String> allKeys = new ArrayList<>();
@@ -296,8 +281,7 @@ public class S3VectorsVectorStore extends BaseVectorStore {
 
         for (int i = 0; i < allVectors.size(); i += MAX_PUT_VECTORS_BATCH) {
             List<PutInputVector> batch =
-                    allVectors.subList(
-                            i, Math.min(i + MAX_PUT_VECTORS_BATCH, allVectors.size()));
+                    allVectors.subList(i, Math.min(i + MAX_PUT_VECTORS_BATCH, allVectors.size()));
             client.putVectors(
                     PutVectorsRequest.builder()
                             .vectorBucketName(vectorBucket)

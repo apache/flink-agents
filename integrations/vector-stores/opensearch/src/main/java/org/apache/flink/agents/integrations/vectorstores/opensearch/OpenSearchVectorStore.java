@@ -22,7 +22,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -30,7 +29,6 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
-
 import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.signer.Aws4Signer;
@@ -124,8 +122,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
     private final DefaultCredentialsProvider credentialsProvider;
 
     public OpenSearchVectorStore(
-            ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
+            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
 
         this.endpoint = descriptor.getArgument("endpoint");
@@ -192,9 +189,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
      */
     @Override
     public List<String> add(
-            List<Document> documents,
-            @Nullable String collection,
-            Map<String, Object> extraArgs)
+            List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
         BaseEmbeddingModelSetup emb =
                 (BaseEmbeddingModelSetup)
@@ -243,8 +238,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
         }
         try {
             ensureMetadataIndex();
-            JsonNode resp =
-                    executeRequest("GET", "/" + METADATA_INDEX + "/_doc/" + idx, null);
+            JsonNode resp = executeRequest("GET", "/" + METADATA_INDEX + "/_doc/" + idx, null);
             if (resp.has("found") && resp.get("found").asBoolean()) {
                 Map<String, Object> meta =
                         MAPPER.convertValue(resp.path("_source").path("metadata"), Map.class);
@@ -337,9 +331,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
 
     @Override
     public List<Document> get(
-            @Nullable List<String> ids,
-            @Nullable String collection,
-            Map<String, Object> extraArgs)
+            @Nullable List<String> ids, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
         String idx = collection != null ? sanitizeIndexName(collection) : this.index;
         if (ids != null && !ids.isEmpty()) {
@@ -362,9 +354,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
 
     @Override
     public void delete(
-            @Nullable List<String> ids,
-            @Nullable String collection,
-            Map<String, Object> extraArgs)
+            @Nullable List<String> ids, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
         String idx = collection != null ? sanitizeIndexName(collection) : this.index;
         if (ids != null && !ids.isEmpty()) {
@@ -381,10 +371,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
 
     @Override
     protected List<Document> queryEmbedding(
-            float[] embedding,
-            int limit,
-            @Nullable String collection,
-            Map<String, Object> args) {
+            float[] embedding, int limit, @Nullable String collection, Map<String, Object> args) {
         try {
             String idx = collection != null ? sanitizeIndexName(collection) : this.index;
             int k = (int) args.getOrDefault("k", Math.max(1, limit));
@@ -418,9 +405,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
 
     @Override
     protected List<String> addEmbedding(
-            List<Document> documents,
-            @Nullable String collection,
-            Map<String, Object> extraArgs)
+            List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
         String idx = collection != null ? sanitizeIndexName(collection) : this.index;
         if (!indexExists(idx)) {
@@ -515,8 +500,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
                 request = reqBuilder.putHeader("Authorization", basicAuthHeader).build();
             }
 
-            HttpExecuteRequest.Builder execBuilder =
-                    HttpExecuteRequest.builder().request(request);
+            HttpExecuteRequest.Builder execBuilder = HttpExecuteRequest.builder().request(request);
             if (request.contentStreamProvider().isPresent()) {
                 execBuilder.contentStreamProvider(request.contentStreamProvider().get());
             }
@@ -532,8 +516,7 @@ public class OpenSearchVectorStore extends BaseVectorStore
                 return MAPPER.createObjectNode().put("status", statusCode);
             }
 
-            String responseBody =
-                    new String(response.responseBody().orElseThrow().readAllBytes());
+            String responseBody = new String(response.responseBody().orElseThrow().readAllBytes());
 
             if (statusCode >= 400) {
                 throw new RuntimeException(

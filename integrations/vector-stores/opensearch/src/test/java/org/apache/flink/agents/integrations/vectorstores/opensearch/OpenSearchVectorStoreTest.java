@@ -54,15 +54,16 @@ public class OpenSearchVectorStoreTest {
     @Test
     @DisplayName("Constructor creates store with IAM auth")
     void testConstructorIamAuth() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(OpenSearchVectorStore.class.getName())
-                .addInitialArgument("embedding_model", "emb")
-                .addInitialArgument("endpoint", "https://example.aoss.us-east-1.amazonaws.com")
-                .addInitialArgument("index", "test-index")
-                .addInitialArgument("region", "us-east-1")
-                .addInitialArgument("service_type", "serverless")
-                .addInitialArgument("auth", "iam")
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(OpenSearchVectorStore.class.getName())
+                        .addInitialArgument("embedding_model", "emb")
+                        .addInitialArgument(
+                                "endpoint", "https://example.aoss.us-east-1.amazonaws.com")
+                        .addInitialArgument("index", "test-index")
+                        .addInitialArgument("region", "us-east-1")
+                        .addInitialArgument("service_type", "serverless")
+                        .addInitialArgument("auth", "iam")
+                        .build();
         OpenSearchVectorStore store = new OpenSearchVectorStore(desc, NOOP);
         assertThat(store).isInstanceOf(BaseVectorStore.class);
         assertThat(store).isInstanceOf(CollectionManageableVectorStore.class);
@@ -71,17 +72,18 @@ public class OpenSearchVectorStoreTest {
     @Test
     @DisplayName("Constructor creates store with basic auth")
     void testConstructorBasicAuth() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(OpenSearchVectorStore.class.getName())
-                .addInitialArgument("embedding_model", "emb")
-                .addInitialArgument("endpoint", "https://my-domain.us-east-1.es.amazonaws.com")
-                .addInitialArgument("index", "test-index")
-                .addInitialArgument("region", "us-east-1")
-                .addInitialArgument("service_type", "domain")
-                .addInitialArgument("auth", "basic")
-                .addInitialArgument("username", "admin")
-                .addInitialArgument("password", "password")
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(OpenSearchVectorStore.class.getName())
+                        .addInitialArgument("embedding_model", "emb")
+                        .addInitialArgument(
+                                "endpoint", "https://my-domain.us-east-1.es.amazonaws.com")
+                        .addInitialArgument("index", "test-index")
+                        .addInitialArgument("region", "us-east-1")
+                        .addInitialArgument("service_type", "domain")
+                        .addInitialArgument("auth", "basic")
+                        .addInitialArgument("username", "admin")
+                        .addInitialArgument("password", "password")
+                        .build();
         OpenSearchVectorStore store = new OpenSearchVectorStore(desc, NOOP);
         assertThat(store).isInstanceOf(BaseVectorStore.class);
     }
@@ -89,13 +91,14 @@ public class OpenSearchVectorStoreTest {
     @Test
     @DisplayName("Constructor with custom max_bulk_mb")
     void testConstructorCustomBulkSize() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(OpenSearchVectorStore.class.getName())
-                .addInitialArgument("embedding_model", "emb")
-                .addInitialArgument("endpoint", "https://example.aoss.us-east-1.amazonaws.com")
-                .addInitialArgument("index", "test-index")
-                .addInitialArgument("max_bulk_mb", 10)
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(OpenSearchVectorStore.class.getName())
+                        .addInitialArgument("embedding_model", "emb")
+                        .addInitialArgument(
+                                "endpoint", "https://example.aoss.us-east-1.amazonaws.com")
+                        .addInitialArgument("index", "test-index")
+                        .addInitialArgument("max_bulk_mb", 10)
+                        .build();
         OpenSearchVectorStore store = new OpenSearchVectorStore(desc, NOOP);
         assertThat(store.getStoreKwargs()).containsEntry("index", "test-index");
     }
@@ -103,15 +106,15 @@ public class OpenSearchVectorStoreTest {
     @Test
     @DisplayName("Basic auth requires username and password")
     void testBasicAuthRequiresCredentials() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(OpenSearchVectorStore.class.getName())
-                .addInitialArgument("embedding_model", "emb")
-                .addInitialArgument("endpoint", "https://example.com")
-                .addInitialArgument("index", "test")
-                .addInitialArgument("auth", "basic")
-                .build();
-        Assertions.assertThrows(IllegalArgumentException.class,
-                () -> new OpenSearchVectorStore(desc, NOOP));
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(OpenSearchVectorStore.class.getName())
+                        .addInitialArgument("embedding_model", "emb")
+                        .addInitialArgument("endpoint", "https://example.com")
+                        .addInitialArgument("index", "test")
+                        .addInitialArgument("auth", "basic")
+                        .build();
+        Assertions.assertThrows(
+                IllegalArgumentException.class, () -> new OpenSearchVectorStore(desc, NOOP));
     }
 
     // --- Integration tests (require real OpenSearch) ---
@@ -121,19 +124,21 @@ public class OpenSearchVectorStoreTest {
     private static Resource getResource(String name, ResourceType type) {
         BaseEmbeddingModelSetup emb = Mockito.mock(BaseEmbeddingModelSetup.class);
         Mockito.when(emb.embed("OpenSearch is a search engine"))
-                .thenReturn(new float[]{0.2f, 0.3f, 0.4f, 0.5f, 0.6f});
+                .thenReturn(new float[] {0.2f, 0.3f, 0.4f, 0.5f, 0.6f});
         Mockito.when(emb.embed("Flink Agents is an AI framework"))
-                .thenReturn(new float[]{0.1f, 0.2f, 0.3f, 0.4f, 0.5f});
+                .thenReturn(new float[] {0.1f, 0.2f, 0.3f, 0.4f, 0.5f});
         Mockito.when(emb.embed("search engine"))
-                .thenReturn(new float[]{0.2f, 0.3f, 0.4f, 0.5f, 0.6f});
-        Mockito.when(emb.embed(Mockito.anyList())).thenAnswer(inv -> {
-            List<String> texts = inv.getArgument(0);
-            List<float[]> result = new ArrayList<>();
-            for (String t : texts) {
-                result.add(emb.embed(t));
-            }
-            return result;
-        });
+                .thenReturn(new float[] {0.2f, 0.3f, 0.4f, 0.5f, 0.6f});
+        Mockito.when(emb.embed(Mockito.anyList()))
+                .thenAnswer(
+                        inv -> {
+                            List<String> texts = inv.getArgument(0);
+                            List<float[]> result = new ArrayList<>();
+                            for (String t : texts) {
+                                result.add(emb.embed(t));
+                            }
+                            return result;
+                        });
         return emb;
     }
 
@@ -142,16 +147,19 @@ public class OpenSearchVectorStoreTest {
         String endpoint = System.getenv("OPENSEARCH_ENDPOINT");
         if (endpoint == null) return;
         String auth = System.getenv().getOrDefault("OPENSEARCH_AUTH", "iam");
-        ResourceDescriptor.Builder builder = ResourceDescriptor.Builder
-                .newBuilder(OpenSearchVectorStore.class.getName())
-                .addInitialArgument("embedding_model", "emb")
-                .addInitialArgument("endpoint", endpoint)
-                .addInitialArgument("index", "test-opensearch")
-                .addInitialArgument("dims", 5)
-                .addInitialArgument("region", System.getenv().getOrDefault("AWS_REGION", "us-east-1"))
-                .addInitialArgument("service_type",
-                        System.getenv().getOrDefault("OPENSEARCH_SERVICE_TYPE", "serverless"))
-                .addInitialArgument("auth", auth);
+        ResourceDescriptor.Builder builder =
+                ResourceDescriptor.Builder.newBuilder(OpenSearchVectorStore.class.getName())
+                        .addInitialArgument("embedding_model", "emb")
+                        .addInitialArgument("endpoint", endpoint)
+                        .addInitialArgument("index", "test-opensearch")
+                        .addInitialArgument("dims", 5)
+                        .addInitialArgument(
+                                "region", System.getenv().getOrDefault("AWS_REGION", "us-east-1"))
+                        .addInitialArgument(
+                                "service_type",
+                                System.getenv()
+                                        .getOrDefault("OPENSEARCH_SERVICE_TYPE", "serverless"))
+                        .addInitialArgument("auth", auth);
         if ("basic".equals(auth)) {
             builder.addInitialArgument("username", System.getenv("OPENSEARCH_USERNAME"));
             builder.addInitialArgument("password", System.getenv("OPENSEARCH_PASSWORD"));
@@ -213,13 +221,16 @@ public class OpenSearchVectorStoreTest {
         Thread.sleep(1000);
 
         // Query with filter: only src=web
-        VectorStoreQuery q = new VectorStoreQuery(
-                "search engine", 5, name,
-                Map.of("filter_query", "{\"term\":{\"metadata.src.keyword\":\"web\"}}"));
+        VectorStoreQuery q =
+                new VectorStoreQuery(
+                        "search engine",
+                        5,
+                        name,
+                        Map.of("filter_query", "{\"term\":{\"metadata.src.keyword\":\"web\"}}"));
         List<Document> results = store.query(q).getDocuments();
         Assertions.assertFalse(results.isEmpty());
-        Assertions.assertTrue(results.stream().allMatch(
-                d -> "web".equals(d.getMetadata().get("src"))));
+        Assertions.assertTrue(
+                results.stream().allMatch(d -> "web".equals(d.getMetadata().get("src"))));
 
         ((CollectionManageableVectorStore) store).deleteCollection(name);
     }

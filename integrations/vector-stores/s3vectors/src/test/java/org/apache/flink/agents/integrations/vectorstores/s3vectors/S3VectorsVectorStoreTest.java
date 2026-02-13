@@ -51,13 +51,13 @@ public class S3VectorsVectorStoreTest {
     @Test
     @DisplayName("Constructor creates store")
     void testConstructor() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(S3VectorsVectorStore.class.getName())
-                .addInitialArgument("embedding_model", "emb")
-                .addInitialArgument("vector_bucket", "my-bucket")
-                .addInitialArgument("vector_index", "my-index")
-                .addInitialArgument("region", "us-east-1")
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(S3VectorsVectorStore.class.getName())
+                        .addInitialArgument("embedding_model", "emb")
+                        .addInitialArgument("vector_bucket", "my-bucket")
+                        .addInitialArgument("vector_index", "my-index")
+                        .addInitialArgument("region", "us-east-1")
+                        .build();
         S3VectorsVectorStore store = new S3VectorsVectorStore(desc, NOOP);
         assertThat(store).isInstanceOf(BaseVectorStore.class);
     }
@@ -65,12 +65,12 @@ public class S3VectorsVectorStoreTest {
     @Test
     @DisplayName("getStoreKwargs returns bucket and index")
     void testStoreKwargs() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(S3VectorsVectorStore.class.getName())
-                .addInitialArgument("embedding_model", "emb")
-                .addInitialArgument("vector_bucket", "test-bucket")
-                .addInitialArgument("vector_index", "test-index")
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(S3VectorsVectorStore.class.getName())
+                        .addInitialArgument("embedding_model", "emb")
+                        .addInitialArgument("vector_bucket", "test-bucket")
+                        .addInitialArgument("vector_index", "test-index")
+                        .build();
         S3VectorsVectorStore store = new S3VectorsVectorStore(desc, NOOP);
         Map<String, Object> kwargs = store.getStoreKwargs();
         assertThat(kwargs).containsEntry("vector_bucket", "test-bucket");
@@ -84,17 +84,19 @@ public class S3VectorsVectorStoreTest {
     private static Resource getResource(String name, ResourceType type) {
         BaseEmbeddingModelSetup emb = Mockito.mock(BaseEmbeddingModelSetup.class);
         Mockito.when(emb.embed("Test document one"))
-                .thenReturn(new float[]{0.1f, 0.2f, 0.3f, 0.4f, 0.5f});
+                .thenReturn(new float[] {0.1f, 0.2f, 0.3f, 0.4f, 0.5f});
         Mockito.when(emb.embed("Test document two"))
-                .thenReturn(new float[]{0.5f, 0.4f, 0.3f, 0.2f, 0.1f});
-        Mockito.when(emb.embed(Mockito.anyList())).thenAnswer(inv -> {
-            List<String> texts = inv.getArgument(0);
-            List<float[]> result = new ArrayList<>();
-            for (String t : texts) {
-                result.add(emb.embed(t));
-            }
-            return result;
-        });
+                .thenReturn(new float[] {0.5f, 0.4f, 0.3f, 0.2f, 0.1f});
+        Mockito.when(emb.embed(Mockito.anyList()))
+                .thenAnswer(
+                        inv -> {
+                            List<String> texts = inv.getArgument(0);
+                            List<float[]> result = new ArrayList<>();
+                            for (String t : texts) {
+                                result.add(emb.embed(t));
+                            }
+                            return result;
+                        });
         return emb;
     }
 
@@ -102,15 +104,16 @@ public class S3VectorsVectorStoreTest {
     static void initialize() {
         String bucket = System.getenv("S3V_BUCKET");
         if (bucket == null) return;
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(S3VectorsVectorStore.class.getName())
-                .addInitialArgument("embedding_model", "emb")
-                .addInitialArgument("vector_bucket", bucket)
-                .addInitialArgument("vector_index",
-                        System.getenv().getOrDefault("S3V_INDEX", "test-index"))
-                .addInitialArgument("region",
-                        System.getenv().getOrDefault("AWS_REGION", "us-east-1"))
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(S3VectorsVectorStore.class.getName())
+                        .addInitialArgument("embedding_model", "emb")
+                        .addInitialArgument("vector_bucket", bucket)
+                        .addInitialArgument(
+                                "vector_index",
+                                System.getenv().getOrDefault("S3V_INDEX", "test-index"))
+                        .addInitialArgument(
+                                "region", System.getenv().getOrDefault("AWS_REGION", "us-east-1"))
+                        .build();
         store = new S3VectorsVectorStore(desc, S3VectorsVectorStoreTest::getResource);
     }
 
@@ -123,8 +126,8 @@ public class S3VectorsVectorStoreTest {
         docs.add(new Document("Test document two", Map.of("src", "test"), "s3v-doc2"));
         store.add(docs, null, Collections.emptyMap());
 
-        List<Document> retrieved = store.get(List.of("s3v-doc1", "s3v-doc2"),
-                null, Collections.emptyMap());
+        List<Document> retrieved =
+                store.get(List.of("s3v-doc1", "s3v-doc2"), null, Collections.emptyMap());
         Assertions.assertEquals(2, retrieved.size());
 
         store.delete(List.of("s3v-doc1", "s3v-doc2"), null, Collections.emptyMap());
