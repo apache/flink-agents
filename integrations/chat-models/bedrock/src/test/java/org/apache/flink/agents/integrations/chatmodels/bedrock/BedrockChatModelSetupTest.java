@@ -38,11 +38,11 @@ class BedrockChatModelSetupTest {
     @Test
     @DisplayName("getParameters includes model and default temperature")
     void testGetParametersDefaults() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(BedrockChatModelSetup.class.getName())
-                .addInitialArgument("connection", "conn")
-                .addInitialArgument("model", "us.anthropic.claude-sonnet-4-20250514-v1:0")
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(BedrockChatModelSetup.class.getName())
+                        .addInitialArgument("connection", "conn")
+                        .addInitialArgument("model", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+                        .build();
         BedrockChatModelSetup setup = new BedrockChatModelSetup(desc, NOOP);
 
         Map<String, Object> params = setup.getParameters();
@@ -53,12 +53,12 @@ class BedrockChatModelSetupTest {
     @Test
     @DisplayName("getParameters uses custom temperature")
     void testGetParametersCustomTemperature() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(BedrockChatModelSetup.class.getName())
-                .addInitialArgument("connection", "conn")
-                .addInitialArgument("model", "test-model")
-                .addInitialArgument("temperature", 0.7)
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(BedrockChatModelSetup.class.getName())
+                        .addInitialArgument("connection", "conn")
+                        .addInitialArgument("model", "test-model")
+                        .addInitialArgument("temperature", 0.7)
+                        .build();
         BedrockChatModelSetup setup = new BedrockChatModelSetup(desc, NOOP);
 
         assertThat(setup.getParameters()).containsEntry("temperature", 0.7);
@@ -67,11 +67,11 @@ class BedrockChatModelSetupTest {
     @Test
     @DisplayName("Extends BaseChatModelSetup")
     void testInheritance() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(BedrockChatModelSetup.class.getName())
-                .addInitialArgument("connection", "conn")
-                .addInitialArgument("model", "m")
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(BedrockChatModelSetup.class.getName())
+                        .addInitialArgument("connection", "conn")
+                        .addInitialArgument("model", "m")
+                        .build();
         assertThat(new BedrockChatModelSetup(desc, NOOP)).isInstanceOf(BaseChatModelSetup.class);
     }
 }

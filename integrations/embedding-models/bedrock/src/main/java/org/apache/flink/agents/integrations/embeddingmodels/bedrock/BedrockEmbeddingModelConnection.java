@@ -15,6 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.flink.agents.integrations.embeddingmodels.bedrock;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -42,36 +43,55 @@ import java.util.function.BiFunction;
 /**
  * Bedrock embedding model connection using Amazon Titan Text Embeddings V2.
  *
- * <p>Uses the InvokeModel API to generate embeddings. Supports configurable
- * dimensions (256, 512, or 1024) and normalization.
+ * <p>Uses the InvokeModel API to generate embeddings. Supports configurable dimensions (256, 512,
+ * or 1024) and normalization. Since Titan V2 processes one text per API call, batch embedding is
+ * parallelized via a configurable thread pool.
  *
- * <p>Parameters:
+ * <p>Supported connection parameters:
+ *
  * <ul>
- *   <li><b>region</b> (optional): AWS region, defaults to us-east-1</li>
- *   <li><b>model</b> (optional): default model ID, defaults to amazon.titan-embed-text-v2:0</li>
+ *   <li><b>region</b> (optional): AWS region, defaults to us-east-1
+ *   <li><b>model</b> (optional): default model ID, defaults to amazon.titan-embed-text-v2:0
+ *   <li><b>embed_concurrency</b> (optional): thread pool size for parallel embedding (default: 4)
  * </ul>
+ *
+ * <p>Example usage:
+ *
+ * <pre>{@code
+ * @EmbeddingModelConnection
+ * public static ResourceDescriptor bedrockEmbedding() {
+ *     return ResourceDescriptor.Builder.newBuilder(BedrockEmbeddingModelConnection.class.getName())
+ *             .addInitialArgument("region", "us-east-1")
+ *             .addInitialArgument("model", "amazon.titan-embed-text-v2:0")
+ *             .addInitialArgument("embed_concurrency", 8)
+ *             .build();
+ * }
+ * }</pre>
  */
 public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnection {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String DEFAULT_MODEL = "amazon.titan-embed-text-v2:0";
+    private static final int MAX_RETRIES = 5;
 
     private final BedrockRuntimeClient client;
     private final String defaultModel;
     private final ExecutorService embedPool;
 
     public BedrockEmbeddingModelConnection(
-            ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
+            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
 
         String region = descriptor.getArgument("region");
-        if (region == null || region.isBlank()) region = "us-east-1";
+        if (region == null || region.isBlank()) {
+            region = "us-east-1";
+        }
 
-        this.client = BedrockRuntimeClient.builder()
-                .region(Region.of(region))
-                .credentialsProvider(DefaultCredentialsProvider.create())
-                .build();
+        this.client =
+                BedrockRuntimeClient.builder()
+                        .region(Region.of(region))
+                        .credentialsProvider(DefaultCredentialsProvider.create())
+                        .build();
 
         String model = descriptor.getArgument("model");
         this.defaultModel = (model != null && !model.isBlank()) ? model : DEFAULT_MODEL;
@@ -93,14 +113,15 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
         }
         body.put("normalize", true);
 
-        int maxRetries = 5;
         for (int attempt = 0; ; attempt++) {
             try {
-                InvokeModelResponse response = client.invokeModel(InvokeModelRequest.builder()
-                        .modelId(model)
-                        .contentType("application/json")
-                        .body(SdkBytes.fromUtf8String(body.toString()))
-                        .build());
+                InvokeModelResponse response =
+                        client.invokeModel(
+                                InvokeModelRequest.builder()
+                                        .modelId(model)
+                                        .contentType("application/json")
+                                        .body(SdkBytes.fromUtf8String(body.toString()))
+                                        .build());
 
                 JsonNode result = MAPPER.readTree(response.body().asUtf8String());
                 JsonNode embeddingNode = result.get("embedding");
@@ -110,9 +131,14 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
                 }
                 return embedding;
             } catch (Exception e) {
-                if (attempt < maxRetries && isRetryable(e)) {
-                    try { Thread.sleep((long) (Math.pow(2, attempt) * 200)); }
-                    catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                if (attempt < MAX_RETRIES && isRetryable(e)) {
+                    try {
+                        long delay =
+                                (long) (Math.pow(2, attempt) * 200 * (0.5 + Math.random() * 0.5));
+                        Thread.sleep(delay);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
                 } else {
                     throw new RuntimeException("Failed to generate Bedrock embedding.", e);
                 }
@@ -122,25 +148,41 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
 
     private static boolean isRetryable(Exception e) {
         String msg = e.toString();
-        return msg.contains("ThrottlingException") || msg.contains("ModelErrorException")
-                || msg.contains("429") || msg.contains("424") || msg.contains("503");
+        return msg.contains("ThrottlingException")
+                || msg.contains("ModelErrorException")
+                || msg.contains("429")
+                || msg.contains("424")
+                || msg.contains("503");
     }
 
     @Override
     public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
         if (texts.size() <= 1) {
             List<float[]> results = new ArrayList<>(texts.size());
-            for (String text : texts) results.add(embed(text, parameters));
+            for (String text : texts) {
+                results.add(embed(text, parameters));
+            }
             return results;
         }
-        // Parallelize — Titan V2 is single-text per call, so concurrent requests help throughput
         @SuppressWarnings("unchecked")
-        CompletableFuture<float[]>[] futures = texts.stream()
-                .map(text -> CompletableFuture.supplyAsync(() -> embed(text, parameters), embedPool))
-                .toArray(CompletableFuture[]::new);
+        CompletableFuture<float[]>[] futures =
+                texts.stream()
+                        .map(
+                                text ->
+                                        CompletableFuture.supplyAsync(
+                                                () -> embed(text, parameters), embedPool))
+                        .toArray(CompletableFuture[]::new);
         CompletableFuture.allOf(futures).join();
         List<float[]> results = new ArrayList<>(texts.size());
-        for (CompletableFuture<float[]> f : futures) results.add(f.join());
+        for (CompletableFuture<float[]> f : futures) {
+            results.add(f.join());
+        }
         return results;
+    }
+
+    @Override
+    public void close() throws Exception {
+        this.embedPool.shutdown();
+        this.client.close();
     }
 }

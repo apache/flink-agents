@@ -15,11 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.flink.agents.integrations.chatmodels.bedrock;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -30,22 +30,61 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.core.SdkNumber;
+import software.amazon.awssdk.core.document.Document;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
-import software.amazon.awssdk.services.bedrockruntime.model.*;
+import software.amazon.awssdk.services.bedrockruntime.model.ContentBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.ConversationRole;
+import software.amazon.awssdk.services.bedrockruntime.model.ConverseRequest;
+import software.amazon.awssdk.services.bedrockruntime.model.ConverseResponse;
+import software.amazon.awssdk.services.bedrockruntime.model.InferenceConfiguration;
+import software.amazon.awssdk.services.bedrockruntime.model.Message;
+import software.amazon.awssdk.services.bedrockruntime.model.SystemContentBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolConfiguration;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolInputSchema;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolResultBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolResultContentBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolSpecification;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolUseBlock;
 
-import java.util.*;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 /**
  * Bedrock Converse API chat model connection for flink-agents.
  *
+ * <p>Uses the Converse API which provides a unified interface across all Bedrock models with native
+ * tool calling support. Authentication is handled via SigV4 using the default AWS credentials
+ * chain.
+ *
+ * <p>Future work: support reasoning content blocks (Claude extended thinking), citation blocks, and
+ * image/document content blocks.
+ *
  * <p>Supported connection parameters:
+ *
  * <ul>
- *   <li><b>region</b> (optional): AWS region (defaults to us-east-1)</li>
- *   <li><b>model</b> (optional): Default model ID (e.g. us.anthropic.claude-sonnet-4-20250514-v1:0)</li>
+ *   <li><b>region</b> (optional): AWS region (defaults to us-east-1)
+ *   <li><b>model</b> (optional): Default model ID (e.g. us.anthropic.claude-sonnet-4-20250514-v1:0)
  * </ul>
+ *
+ * <p>Example usage:
+ *
+ * <pre>{@code
+ * @ChatModelConnection
+ * public static ResourceDescriptor bedrockConnection() {
+ *     return ResourceDescriptor.Builder.newBuilder(BedrockChatModelConnection.class.getName())
+ *             .addInitialArgument("region", "us-east-1")
+ *             .addInitialArgument("model", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+ *             .build();
+ * }
+ * }</pre>
  */
 public class BedrockChatModelConnection extends BaseChatModelConnection {
 
@@ -54,8 +93,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
     private final String defaultModel;
 
     public BedrockChatModelConnection(
-            ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
+            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
 
         String region = descriptor.getArgument("region");
@@ -63,10 +101,11 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             region = "us-east-1";
         }
 
-        this.client = BedrockRuntimeClient.builder()
-                .region(Region.of(region))
-                .credentialsProvider(DefaultCredentialsProvider.create())
-                .build();
+        this.client =
+                BedrockRuntimeClient.builder()
+                        .region(Region.of(region))
+                        .credentialsProvider(DefaultCredentialsProvider.create())
+                        .build();
 
         this.defaultModel = descriptor.getArgument("model");
     }
@@ -77,55 +116,73 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         try {
             String modelId = resolveModel(arguments);
 
-            // Separate system messages from conversation messages
-            List<ChatMessage> systemMsgs = messages.stream()
-                    .filter(m -> m.getRole() == MessageRole.SYSTEM)
-                    .collect(Collectors.toList());
-            List<ChatMessage> conversationMsgs = messages.stream()
-                    .filter(m -> m.getRole() != MessageRole.SYSTEM)
-                    .collect(Collectors.toList());
+            List<ChatMessage> systemMsgs =
+                    messages.stream()
+                            .filter(m -> m.getRole() == MessageRole.SYSTEM)
+                            .collect(Collectors.toList());
+            List<ChatMessage> conversationMsgs =
+                    messages.stream()
+                            .filter(m -> m.getRole() != MessageRole.SYSTEM)
+                            .collect(Collectors.toList());
 
-            ConverseRequest.Builder requestBuilder = ConverseRequest.builder()
-                    .modelId(modelId)
-                    .messages(mergeMessages(conversationMsgs));
+            ConverseRequest.Builder requestBuilder =
+                    ConverseRequest.builder()
+                            .modelId(modelId)
+                            .messages(mergeMessages(conversationMsgs));
 
-            // System prompt
             if (!systemMsgs.isEmpty()) {
-                requestBuilder.system(systemMsgs.stream()
-                        .map(m -> SystemContentBlock.builder().text(m.getContent()).build())
-                        .collect(Collectors.toList()));
+                requestBuilder.system(
+                        systemMsgs.stream()
+                                .map(m -> SystemContentBlock.builder().text(m.getContent()).build())
+                                .collect(Collectors.toList()));
             }
 
-            // Tools
             if (tools != null && !tools.isEmpty()) {
-                requestBuilder.toolConfig(ToolConfiguration.builder()
-                        .tools(tools.stream().map(this::toBedrockTool).collect(Collectors.toList()))
-                        .build());
+                requestBuilder.toolConfig(
+                        ToolConfiguration.builder()
+                                .tools(
+                                        tools.stream()
+                                                .map(this::toBedrockTool)
+                                                .collect(Collectors.toList()))
+                                .build());
             }
 
-            // Temperature
+            // Inference config: temperature and max_tokens
             if (arguments != null) {
+                InferenceConfiguration.Builder inferenceBuilder = null;
                 Object temp = arguments.get("temperature");
                 if (temp instanceof Number) {
-                    requestBuilder.inferenceConfig(InferenceConfiguration.builder()
-                            .temperature(((Number) temp).floatValue())
-                            .build());
+                    inferenceBuilder = InferenceConfiguration.builder();
+                    inferenceBuilder.temperature(((Number) temp).floatValue());
+                }
+                Object maxTokens = arguments.get("max_tokens");
+                if (maxTokens instanceof Number) {
+                    if (inferenceBuilder == null) {
+                        inferenceBuilder = InferenceConfiguration.builder();
+                    }
+                    inferenceBuilder.maxTokens(((Number) maxTokens).intValue());
+                }
+                if (inferenceBuilder != null) {
+                    requestBuilder.inferenceConfig(inferenceBuilder.build());
                 }
             }
 
             ConverseResponse response = client.converse(requestBuilder.build());
 
-            // Record token metrics
             if (response.usage() != null) {
-                recordTokenMetrics(modelId,
-                        response.usage().inputTokens(),
-                        response.usage().outputTokens());
+                recordTokenMetrics(
+                        modelId, response.usage().inputTokens(), response.usage().outputTokens());
             }
 
             return convertResponse(response);
         } catch (Exception e) {
             throw new RuntimeException("Failed to call Bedrock Converse API.", e);
         }
+    }
+
+    @Override
+    public void close() throws Exception {
+        this.client.close();
     }
 
     private String resolveModel(Map<String, Object> arguments) {
@@ -140,8 +197,8 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
     }
 
     /**
-     * Merge consecutive TOOL messages into a single USER message with multiple
-     * toolResult content blocks, as required by Bedrock Converse API.
+     * Merge consecutive TOOL messages into a single USER message with multiple toolResult content
+     * blocks, as required by Bedrock Converse API.
      */
     private List<Message> mergeMessages(List<ChatMessage> msgs) {
         List<Message> result = new ArrayList<>();
@@ -149,23 +206,26 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         while (i < msgs.size()) {
             ChatMessage msg = msgs.get(i);
             if (msg.getRole() == MessageRole.TOOL) {
-                // Collect all consecutive TOOL messages into one USER message
                 List<ContentBlock> toolResultBlocks = new ArrayList<>();
                 while (i < msgs.size() && msgs.get(i).getRole() == MessageRole.TOOL) {
                     ChatMessage toolMsg = msgs.get(i);
                     String toolCallId = (String) toolMsg.getExtraArgs().get("externalId");
-                    toolResultBlocks.add(ContentBlock.fromToolResult(ToolResultBlock.builder()
-                            .toolUseId(toolCallId)
-                            .content(ToolResultContentBlock.builder()
-                                    .text(toolMsg.getContent())
-                                    .build())
-                            .build()));
+                    toolResultBlocks.add(
+                            ContentBlock.fromToolResult(
+                                    ToolResultBlock.builder()
+                                            .toolUseId(toolCallId)
+                                            .content(
+                                                    ToolResultContentBlock.builder()
+                                                            .text(toolMsg.getContent())
+                                                            .build())
+                                            .build()));
                     i++;
                 }
-                result.add(Message.builder()
-                        .role(ConversationRole.USER)
-                        .content(toolResultBlocks)
-                        .build());
+                result.add(
+                        Message.builder()
+                                .role(ConversationRole.USER)
+                                .content(toolResultBlocks)
+                                .build());
             } else {
                 result.add(toBedrockMessage(msg));
                 i++;
@@ -186,7 +246,6 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
                 if (msg.getContent() != null && !msg.getContent().isEmpty()) {
                     blocks.add(ContentBlock.fromText(msg.getContent()));
                 }
-                // Re-emit tool use blocks for multi-turn tool calling
                 if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
                     for (Map<String, Object> call : msg.getToolCalls()) {
                         @SuppressWarnings("unchecked")
@@ -194,45 +253,46 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
                         String toolUseId = (String) call.get("id");
                         String name = (String) fn.get("name");
                         Object args = fn.get("arguments");
-                        blocks.add(ContentBlock.fromToolUse(ToolUseBlock.builder()
-                                .toolUseId(toolUseId)
-                                .name(name)
-                                .input(toDocument(args))
-                                .build()));
+                        blocks.add(
+                                ContentBlock.fromToolUse(
+                                        ToolUseBlock.builder()
+                                                .toolUseId(toolUseId)
+                                                .name(name)
+                                                .input(toDocument(args))
+                                                .build()));
                     }
                 }
-                return Message.builder()
-                        .role(ConversationRole.ASSISTANT)
-                        .content(blocks)
-                        .build();
+                return Message.builder().role(ConversationRole.ASSISTANT).content(blocks).build();
             case TOOL:
                 String toolCallId = (String) msg.getExtraArgs().get("externalId");
                 return Message.builder()
                         .role(ConversationRole.USER)
-                        .content(ContentBlock.fromToolResult(ToolResultBlock.builder()
-                                .toolUseId(toolCallId)
-                                .content(ToolResultContentBlock.builder()
-                                        .text(msg.getContent())
-                                        .build())
-                                .build()))
+                        .content(
+                                ContentBlock.fromToolResult(
+                                        ToolResultBlock.builder()
+                                                .toolUseId(toolCallId)
+                                                .content(
+                                                        ToolResultContentBlock.builder()
+                                                                .text(msg.getContent())
+                                                                .build())
+                                                .build()))
                         .build();
             default:
-                throw new IllegalArgumentException("Unsupported role for Bedrock: " + msg.getRole());
+                throw new IllegalArgumentException(
+                        "Unsupported role for Bedrock: " + msg.getRole());
         }
     }
 
     private software.amazon.awssdk.services.bedrockruntime.model.Tool toBedrockTool(Tool tool) {
         ToolMetadata meta = tool.getMetadata();
-        software.amazon.awssdk.services.bedrockruntime.model.ToolSpecification.Builder specBuilder =
-                software.amazon.awssdk.services.bedrockruntime.model.ToolSpecification.builder()
-                        .name(meta.getName())
-                        .description(meta.getDescription());
+        ToolSpecification.Builder specBuilder =
+                ToolSpecification.builder().name(meta.getName()).description(meta.getDescription());
 
         String schema = meta.getInputSchema();
         if (schema != null && !schema.isBlank()) {
             try {
-                Map<String, Object> schemaMap = MAPPER.readValue(schema,
-                        new TypeReference<Map<String, Object>>() {});
+                Map<String, Object> schemaMap =
+                        MAPPER.readValue(schema, new TypeReference<Map<String, Object>>() {});
                 specBuilder.inputSchema(ToolInputSchema.fromJson(toDocument(schemaMap)));
             } catch (JsonProcessingException e) {
                 throw new RuntimeException("Failed to parse tool schema.", e);
@@ -274,11 +334,17 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         return result;
     }
 
-    /** Strip markdown code fences and extract JSON from mixed text responses. */
+    /**
+     * Strip markdown code fences and extract JSON from mixed text responses. Some Bedrock models
+     * wrap JSON output in markdown fences or add prose around it.
+     *
+     * <p>Note: Unlike OpenAI's strict mode, Bedrock models do not guarantee pure JSON output. The
+     * flink-agents framework's {@code ChatModelAction.generateStructuredOutput} expects clean JSON,
+     * so this extraction is necessary at the connection layer.
+     */
     private static String stripMarkdownFences(String text) {
         if (text == null) return null;
         String trimmed = text.trim();
-        // Strip ```json ... ``` fences
         if (trimmed.startsWith("```")) {
             int firstNewline = trimmed.indexOf('\n');
             if (firstNewline >= 0) {
@@ -289,7 +355,6 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             }
             return trimmed;
         }
-        // Extract first JSON object from mixed text
         int start = trimmed.indexOf('{');
         int end = trimmed.lastIndexOf('}');
         if (start >= 0 && end > start) {
@@ -299,35 +364,33 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
     }
 
     @SuppressWarnings("unchecked")
-    private software.amazon.awssdk.core.document.Document toDocument(Object obj) {
+    private Document toDocument(Object obj) {
         if (obj == null) {
-            return software.amazon.awssdk.core.document.Document.fromNull();
+            return Document.fromNull();
         }
         if (obj instanceof Map) {
-            Map<String, software.amazon.awssdk.core.document.Document> docMap = new LinkedHashMap<>();
+            Map<String, Document> docMap = new LinkedHashMap<>();
             ((Map<String, Object>) obj).forEach((k, v) -> docMap.put(k, toDocument(v)));
-            return software.amazon.awssdk.core.document.Document.fromMap(docMap);
+            return Document.fromMap(docMap);
         }
         if (obj instanceof List) {
-            return software.amazon.awssdk.core.document.Document.fromList(
-                    ((List<Object>) obj).stream().map(this::toDocument).collect(Collectors.toList()));
+            return Document.fromList(
+                    ((List<Object>) obj)
+                            .stream().map(this::toDocument).collect(Collectors.toList()));
         }
         if (obj instanceof String) {
-            return software.amazon.awssdk.core.document.Document.fromString((String) obj);
+            return Document.fromString((String) obj);
         }
         if (obj instanceof Number) {
-            return software.amazon.awssdk.core.document.Document.fromNumber(
-                    software.amazon.awssdk.core.SdkNumber.fromBigDecimal(
-                            new java.math.BigDecimal(obj.toString())));
+            return Document.fromNumber(SdkNumber.fromBigDecimal(new BigDecimal(obj.toString())));
         }
         if (obj instanceof Boolean) {
-            return software.amazon.awssdk.core.document.Document.fromBoolean((Boolean) obj);
+            return Document.fromBoolean((Boolean) obj);
         }
-        return software.amazon.awssdk.core.document.Document.fromString(obj.toString());
+        return Document.fromString(obj.toString());
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> documentToMap(software.amazon.awssdk.core.document.Document doc) {
+    private Map<String, Object> documentToMap(Document doc) {
         if (doc == null || !doc.isMap()) {
             return Collections.emptyMap();
         }
@@ -336,7 +399,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         return result;
     }
 
-    private Object documentToObject(software.amazon.awssdk.core.document.Document doc) {
+    private Object documentToObject(Document doc) {
         if (doc == null || doc.isNull()) return null;
         if (doc.isString()) return doc.asString();
         if (doc.isNumber()) return doc.asNumber().bigDecimalValue();

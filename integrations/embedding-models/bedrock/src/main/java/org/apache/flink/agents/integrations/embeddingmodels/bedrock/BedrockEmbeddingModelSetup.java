@@ -15,6 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.flink.agents.integrations.embeddingmodels.bedrock;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
@@ -29,20 +30,33 @@ import java.util.function.BiFunction;
 /**
  * Embedding model setup for Bedrock Titan Text Embeddings.
  *
- * <p>Parameters:
+ * <p>Supported parameters:
+ *
  * <ul>
- *   <li><b>connection</b> (required): name of the BedrockEmbeddingModelConnection resource</li>
- *   <li><b>model</b> (optional): model ID (default: amazon.titan-embed-text-v2:0)</li>
- *   <li><b>dimensions</b> (optional): embedding dimensions (256, 512, or 1024)</li>
+ *   <li><b>connection</b> (required): name of the BedrockEmbeddingModelConnection resource
+ *   <li><b>model</b> (optional): model ID (default: amazon.titan-embed-text-v2:0)
+ *   <li><b>dimensions</b> (optional): embedding dimensions (256, 512, or 1024)
  * </ul>
+ *
+ * <p>Example usage:
+ *
+ * <pre>{@code
+ * @EmbeddingModelSetup
+ * public static ResourceDescriptor bedrockEmbeddingSetup() {
+ *     return ResourceDescriptor.Builder.newBuilder(BedrockEmbeddingModelSetup.class.getName())
+ *             .addInitialArgument("connection", "bedrockEmbedding")
+ *             .addInitialArgument("model", "amazon.titan-embed-text-v2:0")
+ *             .addInitialArgument("dimensions", 1024)
+ *             .build();
+ * }
+ * }</pre>
  */
 public class BedrockEmbeddingModelSetup extends BaseEmbeddingModelSetup {
 
     private final Integer dimensions;
 
     public BedrockEmbeddingModelSetup(
-            ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
+            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
         this.dimensions = descriptor.getArgument("dimensions");
     }
@@ -50,8 +64,17 @@ public class BedrockEmbeddingModelSetup extends BaseEmbeddingModelSetup {
     @Override
     public Map<String, Object> getParameters() {
         Map<String, Object> params = new HashMap<>();
-        if (model != null) params.put("model", model);
-        if (dimensions != null) params.put("dimensions", dimensions);
+        if (model != null) {
+            params.put("model", model);
+        }
+        if (dimensions != null) {
+            params.put("dimensions", dimensions);
+        }
         return params;
+    }
+
+    @Override
+    public BedrockEmbeddingModelConnection getConnection() {
+        return (BedrockEmbeddingModelConnection) super.getConnection();
     }
 }

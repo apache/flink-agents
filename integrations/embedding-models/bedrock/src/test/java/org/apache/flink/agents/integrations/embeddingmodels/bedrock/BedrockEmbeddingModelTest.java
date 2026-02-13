@@ -38,8 +38,9 @@ class BedrockEmbeddingModelTest {
     private static final BiFunction<String, ResourceType, Resource> NOOP = (a, b) -> null;
 
     private static ResourceDescriptor connDescriptor(String region) {
-        ResourceDescriptor.Builder b = ResourceDescriptor.Builder
-                .newBuilder(BedrockEmbeddingModelConnection.class.getName());
+        ResourceDescriptor.Builder b =
+                ResourceDescriptor.Builder.newBuilder(
+                        BedrockEmbeddingModelConnection.class.getName());
         if (region != null) b.addInitialArgument("region", region);
         return b.build();
     }
@@ -56,25 +57,25 @@ class BedrockEmbeddingModelTest {
     @Test
     @DisplayName("Connection constructor with explicit region and concurrency")
     void testConnectionExplicitParams() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(BedrockEmbeddingModelConnection.class.getName())
-                .addInitialArgument("region", "eu-west-1")
-                .addInitialArgument("embed_concurrency", 8)
-                .build();
-        BedrockEmbeddingModelConnection conn =
-                new BedrockEmbeddingModelConnection(desc, NOOP);
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(
+                                BedrockEmbeddingModelConnection.class.getName())
+                        .addInitialArgument("region", "eu-west-1")
+                        .addInitialArgument("embed_concurrency", 8)
+                        .build();
+        BedrockEmbeddingModelConnection conn = new BedrockEmbeddingModelConnection(desc, NOOP);
         assertNotNull(conn);
     }
 
     @Test
     @DisplayName("Setup getParameters includes model and dimensions")
     void testSetupParameters() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(BedrockEmbeddingModelSetup.class.getName())
-                .addInitialArgument("connection", "conn")
-                .addInitialArgument("model", "amazon.titan-embed-text-v2:0")
-                .addInitialArgument("dimensions", 1024)
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(BedrockEmbeddingModelSetup.class.getName())
+                        .addInitialArgument("connection", "conn")
+                        .addInitialArgument("model", "amazon.titan-embed-text-v2:0")
+                        .addInitialArgument("dimensions", 1024)
+                        .build();
         BedrockEmbeddingModelSetup setup = new BedrockEmbeddingModelSetup(desc, NOOP);
 
         Map<String, Object> params = setup.getParameters();
@@ -86,11 +87,11 @@ class BedrockEmbeddingModelTest {
     @Test
     @DisplayName("Setup getParameters omits null dimensions")
     void testSetupParametersNoDimensions() {
-        ResourceDescriptor desc = ResourceDescriptor.Builder
-                .newBuilder(BedrockEmbeddingModelSetup.class.getName())
-                .addInitialArgument("connection", "conn")
-                .addInitialArgument("model", "amazon.titan-embed-text-v2:0")
-                .build();
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(BedrockEmbeddingModelSetup.class.getName())
+                        .addInitialArgument("connection", "conn")
+                        .addInitialArgument("model", "amazon.titan-embed-text-v2:0")
+                        .build();
         BedrockEmbeddingModelSetup setup = new BedrockEmbeddingModelSetup(desc, NOOP);
 
         assertThat(setup.getParameters()).doesNotContainKey("dimensions");

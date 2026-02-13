@@ -50,32 +50,35 @@ class BedrockChatModelConnectionTest {
     @Test
     @DisplayName("Constructor creates client with default region")
     void testConstructorDefaultRegion() {
-        BedrockChatModelConnection conn = new BedrockChatModelConnection(
-                descriptor(null, "us.anthropic.claude-sonnet-4-20250514-v1:0"), NOOP);
+        BedrockChatModelConnection conn =
+                new BedrockChatModelConnection(
+                        descriptor(null, "us.anthropic.claude-sonnet-4-20250514-v1:0"), NOOP);
         assertNotNull(conn);
     }
 
     @Test
     @DisplayName("Constructor creates client with explicit region")
     void testConstructorExplicitRegion() {
-        BedrockChatModelConnection conn = new BedrockChatModelConnection(
-                descriptor("us-west-2", "us.anthropic.claude-sonnet-4-20250514-v1:0"), NOOP);
+        BedrockChatModelConnection conn =
+                new BedrockChatModelConnection(
+                        descriptor("us-west-2", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+                        NOOP);
         assertNotNull(conn);
     }
 
     @Test
     @DisplayName("Extends BaseChatModelConnection")
     void testInheritance() {
-        BedrockChatModelConnection conn = new BedrockChatModelConnection(
-                descriptor("us-east-1", "test-model"), NOOP);
+        BedrockChatModelConnection conn =
+                new BedrockChatModelConnection(descriptor("us-east-1", "test-model"), NOOP);
         assertThat(conn).isInstanceOf(BaseChatModelConnection.class);
     }
 
     @Test
     @DisplayName("Chat throws when no model specified")
     void testChatThrowsWithoutModel() {
-        BedrockChatModelConnection conn = new BedrockChatModelConnection(
-                descriptor("us-east-1", null), NOOP);
+        BedrockChatModelConnection conn =
+                new BedrockChatModelConnection(descriptor("us-east-1", null), NOOP);
         List<ChatMessage> msgs = List.of(new ChatMessage(MessageRole.USER, "hello"));
         assertThatThrownBy(() -> conn.chat(msgs, null, Collections.emptyMap()))
                 .isInstanceOf(RuntimeException.class);

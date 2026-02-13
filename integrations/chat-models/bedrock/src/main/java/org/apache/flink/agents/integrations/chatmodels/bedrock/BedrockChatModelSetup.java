@@ -15,6 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.flink.agents.integrations.chatmodels.bedrock;
 
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
@@ -31,25 +32,46 @@ import java.util.function.BiFunction;
  * Chat model setup for AWS Bedrock Converse API.
  *
  * <p>Supported parameters:
+ *
  * <ul>
- *   <li><b>connection</b> (required): name of the BedrockChatModelConnection resource</li>
- *   <li><b>model</b> (required): Bedrock model ID (e.g. us.anthropic.claude-sonnet-4-20250514-v1:0)</li>
- *   <li><b>temperature</b> (optional): sampling temperature (default 0.1)</li>
- *   <li><b>prompt</b> (optional): prompt resource name</li>
- *   <li><b>tools</b> (optional): list of tool resource names</li>
+ *   <li><b>connection</b> (required): name of the BedrockChatModelConnection resource
+ *   <li><b>model</b> (required): Bedrock model ID (e.g. us.anthropic.claude-sonnet-4-20250514-v1:0)
+ *   <li><b>temperature</b> (optional): sampling temperature (default 0.1)
+ *   <li><b>max_tokens</b> (optional): maximum tokens in the response
+ *   <li><b>prompt</b> (optional): prompt resource name
+ *   <li><b>tools</b> (optional): list of tool resource names
  * </ul>
+ *
+ * <p>Example usage:
+ *
+ * <pre>{@code
+ * @ChatModelSetup
+ * public static ResourceDescriptor bedrockModel() {
+ *     return ResourceDescriptor.Builder.newBuilder(BedrockChatModelSetup.class.getName())
+ *             .addInitialArgument("connection", "bedrockConnection")
+ *             .addInitialArgument("model", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+ *             .addInitialArgument("temperature", 0.1)
+ *             .addInitialArgument("max_tokens", 4096)
+ *             .build();
+ * }
+ * }</pre>
  */
 public class BedrockChatModelSetup extends BaseChatModelSetup {
 
     private final Double temperature;
+    private final Integer maxTokens;
 
     public BedrockChatModelSetup(
-            ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
+            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
-        this.temperature = Optional.ofNullable(descriptor.<Number>getArgument("temperature"))
-                .map(Number::doubleValue)
-                .orElse(0.1);
+        this.temperature =
+                Optional.ofNullable(descriptor.<Number>getArgument("temperature"))
+                        .map(Number::doubleValue)
+                        .orElse(0.1);
+        this.maxTokens =
+                Optional.ofNullable(descriptor.<Number>getArgument("max_tokens"))
+                        .map(Number::intValue)
+                        .orElse(null);
     }
 
     @Override
@@ -59,6 +81,9 @@ public class BedrockChatModelSetup extends BaseChatModelSetup {
             params.put("model", model);
         }
         params.put("temperature", temperature);
+        if (maxTokens != null) {
+            params.put("max_tokens", maxTokens);
+        }
         return params;
     }
 }
