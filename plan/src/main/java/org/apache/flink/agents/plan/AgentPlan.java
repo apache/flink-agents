@@ -432,18 +432,22 @@ public class AgentPlan implements Serializable {
                     JavaSerializableResourceProvider.createResourceProvider(toolName, TOOL, tool));
         }
 
-        // Call listPrompts() via reflection
-        Method listPromptsMethod = mcpServer.getClass().getMethod("listPrompts");
-        @SuppressWarnings("unchecked")
-        Iterable<? extends SerializableResource> prompts =
-                (Iterable<? extends SerializableResource>) listPromptsMethod.invoke(mcpServer);
+        // Call listPrompts() only if the server supports prompts (optional per MCP spec).
+        // MCP servers like AgentCore Gateway only support tools, not prompts.
+        Method supportsPromptsMethod = mcpServer.getClass().getMethod("supportsPrompts");
+        if ((boolean) supportsPromptsMethod.invoke(mcpServer)) {
+            Method listPromptsMethod = mcpServer.getClass().getMethod("listPrompts");
+            @SuppressWarnings("unchecked")
+            Iterable<? extends SerializableResource> prompts =
+                    (Iterable<? extends SerializableResource>) listPromptsMethod.invoke(mcpServer);
 
-        for (SerializableResource prompt : prompts) {
-            Method getNameMethod = prompt.getClass().getMethod("getName");
-            String promptName = (String) getNameMethod.invoke(prompt);
-            addResourceProvider(
-                    JavaSerializableResourceProvider.createResourceProvider(
-                            promptName, PROMPT, prompt));
+            for (SerializableResource prompt : prompts) {
+                Method getNameMethod = prompt.getClass().getMethod("getName");
+                String promptName = (String) getNameMethod.invoke(prompt);
+                addResourceProvider(
+                        JavaSerializableResourceProvider.createResourceProvider(
+                                promptName, PROMPT, prompt));
+            }
         }
 
         // Call close() via reflection
