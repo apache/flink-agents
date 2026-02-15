@@ -35,6 +35,7 @@ under the License.
         <elasticsearch.version>8.19.0</elasticsearch.version>
         <openai.version>4.8.0</openai.version>
         <anthropic.version>2.11.1</anthropic.version>
+        <aws.sdk.version>2.32.16</aws.sdk.version>
     </properties>
 
     <modules>

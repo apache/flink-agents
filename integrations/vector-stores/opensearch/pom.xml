@@ -22,17 +22,38 @@ under the License.
 
     <parent>
         <groupId>org.apache.flink</groupId>
-        <artifactId>flink-agents-integrations</artifactId>
+        <artifactId>flink-agents-integrations-vector-stores</artifactId>
         <version>0.3-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>flink-agents-integrations-embedding-models</artifactId>
-    <name>Flink Agents : Integrations: Embedding Models</name>
-    <packaging>pom</packaging>
+    <artifactId>flink-agents-integrations-vector-stores-opensearch</artifactId>
+    <name>Flink Agents : Integrations: Vector Stores: OpenSearch</name>
+    <packaging>jar</packaging>
 
-    <modules>
-        <module>bedrock</module>
-        <module>ollama</module>
-    </modules>
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>apache-client</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>auth</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.findbugs</groupId>
+            <artifactId>jsr305</artifactId>
+            <version>1.3.9</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
 
 </project>

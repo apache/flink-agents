@@ -32,6 +32,8 @@ under the License.
 
     <modules>
         <module>elasticsearch</module>
+        <module>opensearch</module>
+        <module>s3vectors</module>
     </modules>
 
 </project>
