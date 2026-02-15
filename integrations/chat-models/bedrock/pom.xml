@@ -22,17 +22,27 @@ under the License.
 
     <parent>
         <groupId>org.apache.flink</groupId>
-        <artifactId>flink-agents-integrations</artifactId>
+        <artifactId>flink-agents-integrations-chat-models</artifactId>
         <version>0.3-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>flink-agents-integrations-embedding-models</artifactId>
-    <name>Flink Agents : Integrations: Embedding Models</name>
-    <packaging>pom</packaging>
+    <artifactId>flink-agents-integrations-chat-models-bedrock</artifactId>
+    <name>Flink Agents : Integrations: Chat Models: Bedrock</name>
+    <packaging>jar</packaging>
 
-    <modules>
-        <module>bedrock</module>
-        <module>ollama</module>
-    </modules>
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>bedrockruntime</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+    </dependencies>
 
 </project>

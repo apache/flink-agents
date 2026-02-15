@@ -33,6 +33,7 @@ under the License.
     <modules>
         <module>anthropic</module>
         <module>azureai</module>
+        <module>bedrock</module>
         <module>ollama</module>
         <module>openai</module>
     </modules>
