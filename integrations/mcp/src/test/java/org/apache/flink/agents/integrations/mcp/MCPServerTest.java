@@ -243,4 +243,16 @@ class MCPServerTest {
         server.close();
         server.close(); // Calling twice should be safe
     }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("supportsPrompts method exists and is callable via reflection")
+    void testSupportsPromptsMethodExists() throws Exception {
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
+
+        // Verify the method exists (AgentPlan calls it via reflection)
+        java.lang.reflect.Method method = server.getClass().getMethod("supportsPrompts");
+        assertThat(method).isNotNull();
+        assertThat(method.getReturnType()).isEqualTo(boolean.class);
+    }
 }

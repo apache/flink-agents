@@ -258,6 +258,17 @@ public class MCPServer extends Resource {
     }
 
     /**
+     * Check if the MCP server supports prompts based on its declared capabilities.
+     *
+     * @return true if the server declared prompt capabilities during initialization
+     */
+    public boolean supportsPrompts() {
+        McpSyncClient mcpClient = getClient();
+        McpSchema.ServerCapabilities caps = mcpClient.getServerCapabilities();
+        return caps != null && caps.prompts() != null;
+    }
+
+    /**
      * List available tools from the MCP server.
      *
      * @return List of MCPTool instances
