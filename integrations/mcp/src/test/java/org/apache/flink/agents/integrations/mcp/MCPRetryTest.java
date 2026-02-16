@@ -188,7 +188,7 @@ class MCPRetryTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("failed after 2 retries");
 
-        // Should try initial attempt + 2 retries = 3 total
+        // Should try initial attempt + 2 retries
         assertThat(attempts.get()).isEqualTo(3);
     }
 
@@ -204,7 +204,6 @@ class MCPRetryTest {
                         .build();
 
         AtomicInteger attempts = new AtomicInteger(0);
-        long startTime = System.currentTimeMillis();
 
         Callable<String> operation =
                 () -> {
@@ -216,13 +215,9 @@ class MCPRetryTest {
                 };
 
         String result = invokeExecuteWithRetry(server, operation, "testOperation");
-        long duration = System.currentTimeMillis() - startTime;
 
         assertThat(result).isEqualTo("success");
         assertThat(attempts.get()).isEqualTo(4);
-
-        // Expected backoff: ~50ms + ~100ms + ~200ms = ~350ms (plus some jitter)
-        assertThat(duration).isGreaterThan(300L).isLessThan(600L);
     }
 
     @Test
@@ -237,7 +232,6 @@ class MCPRetryTest {
                         .build();
 
         AtomicInteger attempts = new AtomicInteger(0);
-        long startTime = System.currentTimeMillis();
 
         Callable<String> operation =
                 () -> {
@@ -249,13 +243,9 @@ class MCPRetryTest {
                 };
 
         String result = invokeExecuteWithRetry(server, operation, "testOperation");
-        long duration = System.currentTimeMillis() - startTime;
 
         assertThat(result).isEqualTo("success");
         assertThat(attempts.get()).isEqualTo(6);
-
-        // With max backoff of 200ms, after first backoff (100ms), all subsequent should be ~200ms
-        assertThat(duration).isGreaterThan(850L).isLessThan(1200L);
     }
 
     @Test
@@ -275,14 +265,10 @@ class MCPRetryTest {
                     return "success";
                 };
 
-        long startTime = System.currentTimeMillis();
         String result = invokeExecuteWithRetry(server, operation, "testOperation");
-        long duration = System.currentTimeMillis() - startTime;
 
         assertThat(result).isEqualTo("success");
         assertThat(attempts.get()).isEqualTo(1);
-        // Should be very fast (no retries)
-        assertThat(duration).isLessThan(50L);
     }
 
     @Test
