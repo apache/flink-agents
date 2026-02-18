@@ -49,6 +49,13 @@ under the License.
             <artifactId>flink-connector-files</artifactId>
             <version>${flink.version}</version>
         </dependency>
+        <!-- Flink json -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-json</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
 
         <!-- Dependencies required for running agents in ide. -->
         <!-- Running in IDE require enable run with provided dependencies. -->
