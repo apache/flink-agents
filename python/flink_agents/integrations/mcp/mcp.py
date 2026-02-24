@@ -27,7 +27,6 @@ import cloudpickle
 import httpx
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.exceptions import McpError
 from mcp.types import PromptArgument, TextContent
 from pydantic import (
     ConfigDict,
