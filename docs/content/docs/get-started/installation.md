@@ -191,7 +191,7 @@ For execution in IDE, enable the feature `add dependencies with provided scope t
 ```xml
 <properties>
     <flink.version>2.2</flink.version>
-    <flink-agents.version>0.2-SNAPSHOT</flink-agents.version>
+    <flink-agents.version>0.2.0</flink-agents.version>
 </properties>
 
 <dependencies>
