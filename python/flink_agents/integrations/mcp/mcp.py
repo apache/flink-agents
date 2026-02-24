@@ -272,16 +272,17 @@ class MCPServer(Resource, ABC):
 
     def list_prompts(self) -> List[MCPPrompt]:
         """List available prompts from the MCP server."""
-        try:
-            return asyncio.run(self._list_prompts_async())
-        except McpError as e:
-            if "prompts not supported" in str(e).lower():
-                return []
-            raise
+        return asyncio.run(self._list_prompts_async())
 
     async def _list_prompts_async(self) -> List[MCPPrompt]:
         """Async implementation of list_prompts."""
         async with self._get_session() as session:
+            # Check if the server supports prompts capability
+            capabilities = session.get_server_capabilities()
+            if capabilities is None or capabilities.prompts is None:
+                # Server does not support prompts
+                return []
+
             prompts_response = await session.list_prompts()
 
             prompts = []
