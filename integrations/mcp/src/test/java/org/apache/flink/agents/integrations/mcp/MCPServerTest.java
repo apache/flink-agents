@@ -243,4 +243,31 @@ class MCPServerTest {
         server.close();
         server.close(); // Calling twice should be safe
     }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("Default retry configuration")
+    void testDefaultRetryConfiguration() {
+        MCPServer server = MCPServer.builder(DEFAULT_ENDPOINT).build();
+
+        assertThat(server.getMaxRetries()).isEqualTo(3);
+        assertThat(server.getInitialBackoffMs()).isEqualTo(100);
+        assertThat(server.getMaxBackoffMs()).isEqualTo(10000);
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("Custom retry configuration via builder")
+    void testCustomRetryConfiguration() {
+        MCPServer server =
+                MCPServer.builder(DEFAULT_ENDPOINT)
+                        .maxRetries(5)
+                        .initialBackoff(Duration.ofMillis(200))
+                        .maxBackoff(Duration.ofMillis(5000))
+                        .build();
+
+        assertThat(server.getMaxRetries()).isEqualTo(5);
+        assertThat(server.getInitialBackoffMs()).isEqualTo(200);
+        assertThat(server.getMaxBackoffMs()).isEqualTo(5000);
+    }
 }

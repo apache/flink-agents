@@ -26,6 +26,7 @@ import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.spec.McpSchema;
+import org.apache.flink.agents.api.RetryExecutor;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.Resource;
@@ -37,8 +38,6 @@ import org.apache.flink.agents.integrations.mcp.auth.Auth;
 import org.apache.flink.agents.integrations.mcp.auth.BasicAuth;
 import org.apache.flink.agents.integrations.mcp.auth.BearerTokenAuth;
 
-import java.net.ConnectException;
-import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.http.HttpRequest;
 import java.time.Duration;
@@ -47,8 +46,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Random;
-import java.util.concurrent.Callable;
 import java.util.function.BiFunction;
 
 /**
@@ -81,12 +78,9 @@ import java.util.function.BiFunction;
  */
 public class MCPServer extends Resource {
 
-    private static final Random RANDOM = new Random();
-
     private static final String FIELD_ENDPOINT = "endpoint";
     private static final String FIELD_HEADERS = "headers";
     private static final String FIELD_TIMEOUT_SECONDS = "timeoutSeconds";
-    private static final String FIELD_TIMEOUT = "timeout";
     private static final String FIELD_AUTH = "auth";
     private static final String FIELD_MAX_RETRIES = "maxRetries";
     private static final String FIELD_INITIAL_BACKOFF_MS = "initialBackoffMs";
@@ -117,6 +111,8 @@ public class MCPServer extends Resource {
 
     @JsonProperty(FIELD_MAX_BACKOFF_MS)
     private final long maxBackoffMs;
+
+    @JsonIgnore private transient RetryExecutor retryExecutor;
 
     @JsonIgnore private transient McpSyncClient client;
 
@@ -190,7 +186,7 @@ public class MCPServer extends Resource {
                         descriptor.getArgument(FIELD_ENDPOINT), "endpoint cannot be null");
         Map<String, String> headers = descriptor.getArgument(FIELD_HEADERS);
         this.headers = headers != null ? new HashMap<>(headers) : new HashMap<>();
-        Object timeoutArg = descriptor.getArgument(FIELD_TIMEOUT);
+        Object timeoutArg = descriptor.getArgument(FIELD_TIMEOUT_SECONDS);
         this.timeoutSeconds =
                 timeoutArg instanceof Number
                         ? ((Number) timeoutArg).longValue()
@@ -283,6 +279,24 @@ public class MCPServer extends Resource {
     }
 
     /**
+     * Get or create the retry executor.
+     *
+     * @return The retry executor
+     */
+    @JsonIgnore
+    private synchronized RetryExecutor getRetryExecutor() {
+        if (retryExecutor == null) {
+            retryExecutor =
+                    RetryExecutor.builder()
+                            .maxRetries(maxRetries)
+                            .initialBackoffMs(initialBackoffMs)
+                            .maxBackoffMs(maxBackoffMs)
+                            .build();
+        }
+        return retryExecutor;
+    }
+
+    /**
      * Get or create a synchronized MCP client.
      *
      * @return The MCP sync client
@@ -290,7 +304,7 @@ public class MCPServer extends Resource {
     @JsonIgnore
     private synchronized McpSyncClient getClient() {
         if (client == null) {
-            client = executeWithRetry(this::createClient, "createClient");
+            client = getRetryExecutor().execute(this::createClient, "createClient");
         }
         return client;
     }
@@ -348,116 +362,34 @@ public class MCPServer extends Resource {
     }
 
     /**
-     * Execute an operation with retry logic.
-     *
-     * @param operation The operation to execute
-     * @param operationName Name of the operation for error messages
-     * @return The result of the operation
-     * @throws RuntimeException if all retries fail
-     */
-    private <T> T executeWithRetry(Callable<T> operation, String operationName) {
-        int attempt = 0;
-        long backoff = initialBackoffMs;
-        Exception lastException = null;
-
-        while (attempt <= maxRetries) {
-            try {
-                return operation.call();
-
-            } catch (Exception e) {
-                lastException = e;
-                attempt++;
-
-                if (!isRetryable(e)) {
-                    throw new RuntimeException(
-                            String.format(
-                                    "MCP operation '%s' failed: %s", operationName, e.getMessage()),
-                            e);
-                }
-
-                if (attempt > maxRetries) {
-                    break;
-                }
-
-                // Exponential backoff with jitter
-                try {
-                    long jitter = RANDOM.nextInt((int) (backoff / 10) + 1);
-                    long sleepTime = backoff + jitter;
-                    Thread.sleep(sleepTime);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException(
-                            "Interrupted while retrying MCP operation: " + operationName, ie);
-                }
-
-                backoff = Math.min(backoff * 2, maxBackoffMs);
-            }
-        }
-
-        // All retries exhausted
-        throw new RuntimeException(
-                String.format(
-                        "MCP operation '%s' failed after %d retries: %s",
-                        operationName, maxRetries, lastException.getMessage()),
-                lastException);
-    }
-
-    /**
-     * Check if an exception is retryable.
-     *
-     * @param e The exception to check
-     * @return true if the operation should be retried
-     */
-    private boolean isRetryable(Exception e) {
-        // Network-related errors are retryable
-        if (e instanceof SocketTimeoutException || e instanceof ConnectException) {
-            return true;
-        }
-        String message = e.getMessage();
-        if (message != null) {
-            if (message.contains("503")) {
-                return true;
-            }
-            if (message.contains("429")) {
-                return true;
-            }
-            // Connection reset, connection refused - retryable
-            return message.contains("Connection reset")
-                    || message.contains("Connection refused")
-                    || message.contains("Connection timed out");
-        }
-
-        return false;
-    }
-
-    /**
      * List available tools from the MCP server.
      *
      * @return List of MCPTool instances
      */
     public List<MCPTool> listTools() {
-        return executeWithRetry(
-                () -> {
-                    McpSyncClient mcpClient = getClient();
-                    McpSchema.ListToolsResult toolsResult = mcpClient.listTools();
+        return getRetryExecutor()
+                .execute(
+                        () -> {
+                            McpSyncClient mcpClient = getClient();
+                            McpSchema.ListToolsResult toolsResult = mcpClient.listTools();
 
-                    List<MCPTool> tools = new ArrayList<>();
-                    for (McpSchema.Tool toolData : toolsResult.tools()) {
-                        ToolMetadata metadata =
-                                new ToolMetadata(
-                                        toolData.name(),
-                                        toolData.description() != null
-                                                ? toolData.description()
-                                                : "",
-                                        serializeInputSchema(toolData.inputSchema()));
+                            List<MCPTool> tools = new ArrayList<>();
+                            for (McpSchema.Tool toolData : toolsResult.tools()) {
+                                ToolMetadata metadata =
+                                        new ToolMetadata(
+                                                toolData.name(),
+                                                toolData.description() != null
+                                                        ? toolData.description()
+                                                        : "",
+                                                serializeInputSchema(toolData.inputSchema()));
 
-                        MCPTool tool = new MCPTool(metadata, this);
-                        tools.add(tool);
-                    }
+                                MCPTool tool = new MCPTool(metadata, this);
+                                tools.add(tool);
+                            }
 
-                    return tools;
-                },
-                "listTools");
+                            return tools;
+                        },
+                        "listTools");
     }
 
     /**
@@ -499,22 +431,24 @@ public class MCPServer extends Resource {
      * @return The result as a list of content items
      */
     public List<Object> callTool(String toolName, Map<String, Object> arguments) {
-        return executeWithRetry(
-                () -> {
-                    McpSyncClient mcpClient = getClient();
-                    McpSchema.CallToolRequest request =
-                            new McpSchema.CallToolRequest(
-                                    toolName, arguments != null ? arguments : new HashMap<>());
-                    McpSchema.CallToolResult result = mcpClient.callTool(request);
+        return getRetryExecutor()
+                .execute(
+                        () -> {
+                            McpSyncClient mcpClient = getClient();
+                            McpSchema.CallToolRequest request =
+                                    new McpSchema.CallToolRequest(
+                                            toolName,
+                                            arguments != null ? arguments : new HashMap<>());
+                            McpSchema.CallToolResult result = mcpClient.callTool(request);
 
-                    List<Object> content = new ArrayList<>();
-                    for (var item : result.content()) {
-                        content.add(MCPContentExtractor.extractContentItem(item));
-                    }
+                            List<Object> content = new ArrayList<>();
+                            for (var item : result.content()) {
+                                content.add(MCPContentExtractor.extractContentItem(item));
+                            }
 
-                    return content;
-                },
-                "callTool:" + toolName);
+                            return content;
+                        },
+                        "callTool:" + toolName);
     }
 
     /**
@@ -523,35 +457,39 @@ public class MCPServer extends Resource {
      * @return List of MCPPrompt instances
      */
     public List<MCPPrompt> listPrompts() {
-        return executeWithRetry(
-                () -> {
-                    McpSyncClient mcpClient = getClient();
-                    McpSchema.ListPromptsResult promptsResult = mcpClient.listPrompts();
+        return getRetryExecutor()
+                .execute(
+                        () -> {
+                            McpSyncClient mcpClient = getClient();
+                            McpSchema.ListPromptsResult promptsResult = mcpClient.listPrompts();
 
-                    List<MCPPrompt> prompts = new ArrayList<>();
-                    for (McpSchema.Prompt promptData : promptsResult.prompts()) {
-                        Map<String, MCPPrompt.PromptArgument> argumentsMap = new HashMap<>();
-                        if (promptData.arguments() != null) {
-                            for (var arg : promptData.arguments()) {
-                                argumentsMap.put(
-                                        arg.name(),
-                                        new MCPPrompt.PromptArgument(
-                                                arg.name(), arg.description(), arg.required()));
+                            List<MCPPrompt> prompts = new ArrayList<>();
+                            for (McpSchema.Prompt promptData : promptsResult.prompts()) {
+                                Map<String, MCPPrompt.PromptArgument> argumentsMap =
+                                        new HashMap<>();
+                                if (promptData.arguments() != null) {
+                                    for (var arg : promptData.arguments()) {
+                                        argumentsMap.put(
+                                                arg.name(),
+                                                new MCPPrompt.PromptArgument(
+                                                        arg.name(),
+                                                        arg.description(),
+                                                        arg.required()));
+                                    }
+                                }
+
+                                MCPPrompt prompt =
+                                        new MCPPrompt(
+                                                promptData.name(),
+                                                promptData.description(),
+                                                argumentsMap,
+                                                this);
+                                prompts.add(prompt);
                             }
-                        }
 
-                        MCPPrompt prompt =
-                                new MCPPrompt(
-                                        promptData.name(),
-                                        promptData.description(),
-                                        argumentsMap,
-                                        this);
-                        prompts.add(prompt);
-                    }
-
-                    return prompts;
-                },
-                "listPrompts");
+                            return prompts;
+                        },
+                        "listPrompts");
     }
 
     /**
@@ -562,27 +500,29 @@ public class MCPServer extends Resource {
      * @return List of chat messages
      */
     public List<ChatMessage> getPrompt(String name, Map<String, Object> arguments) {
-        return executeWithRetry(
-                () -> {
-                    McpSyncClient mcpClient = getClient();
-                    McpSchema.GetPromptRequest request =
-                            new McpSchema.GetPromptRequest(
-                                    name, arguments != null ? arguments : new HashMap<>());
-                    McpSchema.GetPromptResult result = mcpClient.getPrompt(request);
+        return getRetryExecutor()
+                .execute(
+                        () -> {
+                            McpSyncClient mcpClient = getClient();
+                            McpSchema.GetPromptRequest request =
+                                    new McpSchema.GetPromptRequest(
+                                            name, arguments != null ? arguments : new HashMap<>());
+                            McpSchema.GetPromptResult result = mcpClient.getPrompt(request);
 
-                    List<ChatMessage> chatMessages = new ArrayList<>();
-                    for (var message : result.messages()) {
-                        if (message.content() instanceof McpSchema.TextContent) {
-                            var textContent = (McpSchema.TextContent) message.content();
-                            MessageRole role =
-                                    MessageRole.valueOf(message.role().name().toUpperCase());
-                            chatMessages.add(new ChatMessage(role, textContent.text()));
-                        }
-                    }
+                            List<ChatMessage> chatMessages = new ArrayList<>();
+                            for (var message : result.messages()) {
+                                if (message.content() instanceof McpSchema.TextContent) {
+                                    var textContent = (McpSchema.TextContent) message.content();
+                                    MessageRole role =
+                                            MessageRole.valueOf(
+                                                    message.role().name().toUpperCase());
+                                    chatMessages.add(new ChatMessage(role, textContent.text()));
+                                }
+                            }
 
-                    return chatMessages;
-                },
-                "getPrompt:" + name);
+                            return chatMessages;
+                        },
+                        "getPrompt:" + name);
     }
 
     /** Close the MCP client and clean up resources. */
