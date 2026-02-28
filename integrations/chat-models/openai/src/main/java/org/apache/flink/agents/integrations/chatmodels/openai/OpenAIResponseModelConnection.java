@@ -210,11 +210,6 @@ public class OpenAIResponseModelConnection extends BaseChatModelConnection {
             builder.store(true);
         }
 
-        Object previousResponseId = arguments.remove("previous_response_id");
-        if (previousResponseId instanceof String) {
-            builder.previousResponseId((String) previousResponseId);
-        }
-
         Object instructions = arguments.remove("instructions");
         if (instructions instanceof String) {
             builder.instructions((String) instructions);
@@ -268,14 +263,15 @@ public class OpenAIResponseModelConnection extends BaseChatModelConnection {
                 if (toolCalls != null && !toolCalls.isEmpty()) {
                     for (Map<String, Object> call : toolCalls) {
                         Map<String, Object> functionPayload = toMap(call.get("function"));
-                        String callId = String.valueOf(call.get("id"));
+                        String responseId = String.valueOf(call.get("id"));
+                        String callId = String.valueOf(call.get("original_id"));
                         String name = String.valueOf(functionPayload.get("name"));
                         String args = serializeArguments(functionPayload.get("arguments"));
 
                         items.add(
                                 ResponseInputItem.ofFunctionCall(
                                         ResponseFunctionToolCall.builder()
-                                                .id(callId)
+                                                .id(responseId)
                                                 .callId(callId)
                                                 .name(name)
                                                 .arguments(args)
@@ -365,7 +361,13 @@ public class OpenAIResponseModelConnection extends BaseChatModelConnection {
                             "OpenAI Responses API returned a function call without a call_id.");
                 }
 
-                callMap.put("id", callId);
+                callMap.put(
+                        "id",
+                        fc.id()
+                                .orElseThrow(
+                                        () ->
+                                                new IllegalStateException(
+                                                        "OpenAI Responses API returned a function call without an id.")));
                 callMap.put("type", "function");
 
                 Map<String, Object> functionMap = new LinkedHashMap<>();

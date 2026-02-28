@@ -84,7 +84,7 @@ public class ChatModelIntegrationAgent extends Agent {
             return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_CONNECTION)
                     .addInitialArgument("api_key", apiKey)
                     .build();
-        } else if (provider.equals("OPENAI_RESPONSES")) {
+        } else if (provider.equals("OPENAI_RESPONSE")) {
             return ResourceDescriptor.Builder.newBuilder(
                             ResourceName.ChatModel.OPENAI_RESPONSE_CONNECTION)
                     .addInitialArgument("api_key", System.getenv().get("OPENAI_API_KEY"))

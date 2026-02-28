@@ -69,7 +69,6 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
     private final Boolean strict;
     private final String reasoningEffort;
     private final Boolean store;
-    private final String previousResponseId;
     private final String instructions;
     private final Map<String, Object> additionalArguments;
 
@@ -104,10 +103,7 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
                     "reasoning_effort must be one of: low, medium, high");
         }
 
-        this.store =
-                Optional.ofNullable(descriptor.<Boolean>getArgument("store")).orElse(DEFAULT_STORE);
-
-        this.previousResponseId = descriptor.getArgument("previous_response_id");
+        this.store = Optional.ofNullable(descriptor.<Boolean>getArgument("store")).orElse(DEFAULT_STORE);
 
         this.instructions = descriptor.getArgument("instructions");
 
@@ -129,7 +125,6 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
             Boolean strict,
             String reasoningEffort,
             Boolean store,
-            String previousResponseId,
             String instructions,
             Map<String, Object> additionalArguments,
             List<String> tools,
@@ -142,7 +137,6 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
                         strict,
                         reasoningEffort,
                         store,
-                        previousResponseId,
                         instructions,
                         additionalArguments,
                         tools),
@@ -168,9 +162,6 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
         if (store) {
             parameters.put("store", store);
         }
-        if (previousResponseId != null) {
-            parameters.put("previous_response_id", previousResponseId);
-        }
         if (instructions != null) {
             parameters.put("instructions", instructions);
         }
@@ -187,7 +178,6 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
             Boolean strict,
             String reasoningEffort,
             Boolean store,
-            String previousResponseId,
             String instructions,
             Map<String, Object> additionalArguments,
             List<String> tools) {
@@ -207,9 +197,6 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
         }
         if (store != null) {
             builder.addInitialArgument("store", store);
-        }
-        if (previousResponseId != null) {
-            builder.addInitialArgument("previous_response_id", previousResponseId);
         }
         if (instructions != null) {
             builder.addInitialArgument("instructions", instructions);
