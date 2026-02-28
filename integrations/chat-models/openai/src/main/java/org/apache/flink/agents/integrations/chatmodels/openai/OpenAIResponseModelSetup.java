@@ -103,7 +103,8 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
                     "reasoning_effort must be one of: low, medium, high");
         }
 
-        this.store = Optional.ofNullable(descriptor.<Boolean>getArgument("store")).orElse(DEFAULT_STORE);
+        this.store =
+                Optional.ofNullable(descriptor.<Boolean>getArgument("store")).orElse(DEFAULT_STORE);
 
         this.instructions = descriptor.getArgument("instructions");
 
