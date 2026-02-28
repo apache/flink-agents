@@ -71,6 +71,12 @@ public final class ResourceName {
         public static final String OPENAI_SETUP =
                 "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelSetup";
 
+        // OpenAI Responses API
+        public static final String OPENAI_RESPONSE_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIResponseModelConnection";
+        public static final String OPENAI_RESPONSE_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIResponseModelSetup";
+
         // Python Wrapper
         public static final String PYTHON_WRAPPER_CONNECTION =
                 "org.apache.flink.agents.api.chat.model.python.PythonChatModelConnection";

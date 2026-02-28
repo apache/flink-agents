@@ -53,7 +53,7 @@ public class ChatModelIntegrationTest extends OllamaPreparationUtils {
     }
 
     @ParameterizedTest()
-    @ValueSource(strings = {"ANTHROPIC", "AZURE", "OLLAMA", "OPENAI"})
+    @ValueSource(strings = {"ANTHROPIC", "AZURE", "OLLAMA", "OPENAI", "OPENAI_RESPONSES"})
     public void testChatModeIntegration(String provider) throws Exception {
         Assumptions.assumeTrue(
                 (OLLAMA.equals(provider) && ollamaReady)
