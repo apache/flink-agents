@@ -87,9 +87,6 @@ public class MCPServer extends Resource {
     private static final String FIELD_MAX_BACKOFF_MS = "maxBackoffMs";
 
     private static final long DEFAULT_TIMEOUT_VALUE = 30L;
-    private static final int MAX_RETRIES_VALUE = 3;
-    private static final int INITIAL_BACKOFF_MS_VALUE = 100;
-    private static final int MAX_BACKOFF_MS_VALUE = 10000;
 
     @JsonProperty(FIELD_ENDPOINT)
     private final String endpoint;
@@ -103,14 +100,11 @@ public class MCPServer extends Resource {
     @JsonProperty(FIELD_AUTH)
     private final Auth auth;
 
-    @JsonProperty(FIELD_MAX_RETRIES)
-    private final int maxRetries;
+    private final Integer maxRetries;
 
-    @JsonProperty(FIELD_INITIAL_BACKOFF_MS)
-    private final long initialBackoffMs;
+    private final Long initialBackoffMs;
 
-    @JsonProperty(FIELD_MAX_BACKOFF_MS)
-    private final long maxBackoffMs;
+    private final Long maxBackoffMs;
 
     @JsonIgnore private transient RetryExecutor retryExecutor;
 
@@ -122,9 +116,9 @@ public class MCPServer extends Resource {
         private final Map<String, String> headers = new HashMap<>();
         private long timeoutSeconds = DEFAULT_TIMEOUT_VALUE;
         private Auth auth = null;
-        private int maxRetries = MAX_RETRIES_VALUE;
-        private long initialBackoffMs = INITIAL_BACKOFF_MS_VALUE;
-        private long maxBackoffMs = MAX_BACKOFF_MS_VALUE;
+        private Integer maxRetries;
+        private Long initialBackoffMs;
+        private Long maxBackoffMs;
 
         public Builder endpoint(String endpoint) {
             this.endpoint = endpoint;
@@ -195,21 +189,17 @@ public class MCPServer extends Resource {
 
         Object maxRetriesArg = descriptor.getArgument(FIELD_MAX_RETRIES);
         this.maxRetries =
-                maxRetriesArg instanceof Number
-                        ? ((Number) maxRetriesArg).intValue()
-                        : MAX_RETRIES_VALUE;
+                maxRetriesArg instanceof Number ? ((Number) maxRetriesArg).intValue() : null;
 
         Object initialBackoffArg = descriptor.getArgument(FIELD_INITIAL_BACKOFF_MS);
         this.initialBackoffMs =
                 initialBackoffArg instanceof Number
                         ? ((Number) initialBackoffArg).longValue()
-                        : INITIAL_BACKOFF_MS_VALUE;
+                        : null;
 
         Object maxBackoffArg = descriptor.getArgument(FIELD_MAX_BACKOFF_MS);
         this.maxBackoffMs =
-                maxBackoffArg instanceof Number
-                        ? ((Number) maxBackoffArg).longValue()
-                        : MAX_BACKOFF_MS_VALUE;
+                maxBackoffArg instanceof Number ? ((Number) maxBackoffArg).longValue() : null;
     }
 
     /**
@@ -218,7 +208,7 @@ public class MCPServer extends Resource {
      * @param endpoint The HTTP endpoint of the MCP server
      */
     public MCPServer(String endpoint) {
-        this(endpoint, new HashMap<>(), 30L, null, 3, 100L, 10000L);
+        this(endpoint, new HashMap<>(), DEFAULT_TIMEOUT_VALUE, null, null, null, null);
     }
 
     @JsonCreator
@@ -234,10 +224,9 @@ public class MCPServer extends Resource {
         this.headers = headers != null ? new HashMap<>(headers) : new HashMap<>();
         this.timeoutSeconds = timeoutSeconds != null ? timeoutSeconds : DEFAULT_TIMEOUT_VALUE;
         this.auth = auth;
-        this.maxRetries = maxRetries != null ? maxRetries : MAX_RETRIES_VALUE;
-        this.initialBackoffMs =
-                initialBackoffMs != null ? initialBackoffMs : INITIAL_BACKOFF_MS_VALUE;
-        this.maxBackoffMs = maxBackoffMs != null ? maxBackoffMs : MAX_BACKOFF_MS_VALUE;
+        this.maxRetries = maxRetries;
+        this.initialBackoffMs = initialBackoffMs;
+        this.maxBackoffMs = maxBackoffMs;
     }
 
     public static Builder builder(String endpoint) {
@@ -266,16 +255,21 @@ public class MCPServer extends Resource {
         return auth;
     }
 
+    @JsonProperty(FIELD_MAX_RETRIES)
     public int getMaxRetries() {
-        return maxRetries;
+        return maxRetries != null ? maxRetries : getRetryExecutor().getMaxRetries();
     }
 
+    @JsonProperty(FIELD_INITIAL_BACKOFF_MS)
     public long getInitialBackoffMs() {
-        return initialBackoffMs;
+        return initialBackoffMs != null
+                ? initialBackoffMs
+                : getRetryExecutor().getInitialBackoffMs();
     }
 
+    @JsonProperty(FIELD_MAX_BACKOFF_MS)
     public long getMaxBackoffMs() {
-        return maxBackoffMs;
+        return maxBackoffMs != null ? maxBackoffMs : getRetryExecutor().getMaxBackoffMs();
     }
 
     /**
@@ -286,12 +280,17 @@ public class MCPServer extends Resource {
     @JsonIgnore
     private synchronized RetryExecutor getRetryExecutor() {
         if (retryExecutor == null) {
-            retryExecutor =
-                    RetryExecutor.builder()
-                            .maxRetries(maxRetries)
-                            .initialBackoffMs(initialBackoffMs)
-                            .maxBackoffMs(maxBackoffMs)
-                            .build();
+            RetryExecutor.Builder builder = RetryExecutor.builder();
+            if (maxRetries != null) {
+                builder.maxRetries(maxRetries);
+            }
+            if (initialBackoffMs != null) {
+                builder.initialBackoffMs(initialBackoffMs);
+            }
+            if (maxBackoffMs != null) {
+                builder.maxBackoffMs(maxBackoffMs);
+            }
+            retryExecutor = builder.build();
         }
         return retryExecutor;
     }
@@ -556,9 +555,9 @@ public class MCPServer extends Resource {
         if (o == null || getClass() != o.getClass()) return false;
         MCPServer that = (MCPServer) o;
         return timeoutSeconds == that.timeoutSeconds
-                && maxRetries == that.maxRetries
-                && initialBackoffMs == that.initialBackoffMs
-                && maxBackoffMs == that.maxBackoffMs
+                && getMaxRetries() == that.getMaxRetries()
+                && getInitialBackoffMs() == that.getInitialBackoffMs()
+                && getMaxBackoffMs() == that.getMaxBackoffMs()
                 && Objects.equals(endpoint, that.endpoint)
                 && Objects.equals(headers, that.headers)
                 && Objects.equals(auth, that.auth);
@@ -571,9 +570,9 @@ public class MCPServer extends Resource {
                 headers,
                 timeoutSeconds,
                 auth,
-                maxRetries,
-                initialBackoffMs,
-                maxBackoffMs);
+                getMaxRetries(),
+                getInitialBackoffMs(),
+                getMaxBackoffMs());
     }
 
     @Override
