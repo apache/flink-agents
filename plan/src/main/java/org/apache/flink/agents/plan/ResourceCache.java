@@ -26,6 +26,7 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Lazily resolves and caches Resource instances from ResourceProviders.
@@ -34,12 +35,14 @@ import java.util.Map;
  * for subsequent lookups. Supports recursive dependency resolution — a resource can depend on other
  * resources.
  *
- * <p>This class is designed for single-threaded access within Flink's mailbox execution model.
+ * <p>Thread-safe: resource resolution can happen on async pool threads (e.g. when {@code
+ * BaseChatModelSetup.chat()} resolves connection, prompt, and tools inside a {@code
+ * durableExecuteAsync} callable).
  */
 public class ResourceCache implements AutoCloseable {
 
     private final Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
-    private final Map<ResourceType, Map<String, Resource>> cache = new HashMap<>();
+    private final Map<ResourceType, Map<String, Resource>> cache = new ConcurrentHashMap<>();
     private PythonResourceAdapter pythonResourceAdapter;
 
     public ResourceCache(Map<ResourceType, Map<String, ResourceProvider>> resourceProviders) {
@@ -92,7 +95,7 @@ public class ResourceCache implements AutoCloseable {
                             }
                         });
 
-        cache.computeIfAbsent(type, k -> new HashMap<>()).put(name, resource);
+        cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
         return resource;
     }
 
@@ -104,7 +107,7 @@ public class ResourceCache implements AutoCloseable {
      * @param resource the resource instance
      */
     public void put(String name, ResourceType type, Resource resource) {
-        cache.computeIfAbsent(type, k -> new HashMap<>()).put(name, resource);
+        cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
     }
 
     @Override
