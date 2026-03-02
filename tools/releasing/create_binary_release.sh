@@ -61,10 +61,14 @@ make_binary_release() {
   echo "Creating binary release"
 
   # Dynamically discover dist sub-modules (directories containing pom.xml)
+  # Exclude 'common' module - it's for Python wheel optimization only, not for Maven release
   DIST_MODULES=()
   for module_dir in dist/*/; do
     if [ -f "${module_dir}pom.xml" ]; then
-      DIST_MODULES+=("$(basename "${module_dir}")")
+      module_name=$(basename "${module_dir}")
+      if [ "$module_name" != "common" ]; then
+        DIST_MODULES+=("$module_name")
+      fi
     fi
   done
 

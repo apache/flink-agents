@@ -84,7 +84,47 @@
                 </executions>
             </plugin>
 
-            <!-- Shade plugin configuration inherits from the parent pom (dist/pom.xml) -->
+            <!-- Build thin jar for Python wheel (only flink-agents code) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>shade-flink-agents-thin</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadeTestJar>false</shadeTestJar>
+                            <shadedArtifactAttached>false</shadedArtifactAttached>
+                            <finalName>${project.artifactId}-${project.version}-thin</finalName>
+                            <!-- Only include flink-agents artifacts -->
+                            <artifactSet>
+                                <includes>
+                                    <include>org.apache.flink:flink-agents-*</include>
+                                </includes>
+                            </artifactSet>
+                            <filters>
+                                <!-- Only include flink-agents classes -->
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <includes>
+                                        <include>org/apache/flink/agents/**</include>
+                                    </includes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <manifestEntries>
+                                        <Multi-Release>true</Multi-Release>
+                                    </manifestEntries>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 

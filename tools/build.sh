@@ -53,8 +53,20 @@ if $build_python; then
 
   PROJECT_VERSION=$(sed -n 's/.*<version>\(.*\)<\/version>.*/\1/p' pom.xml | head -n 2 | tail -n 1)
 
-  # Automatically detect and copy all Flink version JARs from dist subdirectories
   DIST_DIR="${PROJECT_ROOT}/dist"
+
+  # Copy common JAR (shared dependencies, ~110MB)
+  echo "Processing common dependencies..."
+  mkdir -p "${PYTHON_LIB_DIR}/common"
+  common_jar="${DIST_DIR}/common/target/flink-agents-dist-common-${PROJECT_VERSION}.jar"
+  if [ -f "$common_jar" ]; then
+    cp "$common_jar" "${PYTHON_LIB_DIR}/common/"
+    echo "  Copied: flink-agents-dist-common-${PROJECT_VERSION}.jar"
+  else
+    echo "  Warning: Common JAR file not found at $common_jar"
+  fi
+
+  # Copy thin JARs for each Flink version (only flink-agents code, ~1MB each)
   for version_dir in "${DIST_DIR}"/flink-*; do
     if [ -d "$version_dir" ]; then
       version_name=$(basename "$version_dir")
@@ -63,13 +75,13 @@ if $build_python; then
       # Create corresponding lib subdirectory
       mkdir -p "${PYTHON_LIB_DIR}/${version_name}"
 
-      # Find and copy the JAR file
-      jar_file="${version_dir}/target/flink-agents-dist-${version_name}-${PROJECT_VERSION}.jar"
-      if [ -f "$jar_file" ]; then
-        cp "$jar_file" "${PYTHON_LIB_DIR}/${version_name}/"
-        echo "  Copied: flink-agents-dist-${version_name}-${PROJECT_VERSION}.jar"
+      # Find and copy the thin JAR file
+      thin_jar="${version_dir}/target/flink-agents-dist-${version_name}-${PROJECT_VERSION}-thin.jar"
+      if [ -f "$thin_jar" ]; then
+        cp "$thin_jar" "${PYTHON_LIB_DIR}/${version_name}/"
+        echo "  Copied: flink-agents-dist-${version_name}-${PROJECT_VERSION}-thin.jar"
       else
-        echo "  Warning: JAR file not found at $jar_file"
+        echo "  Warning: Thin JAR file not found at $thin_jar"
       fi
     fi
   done

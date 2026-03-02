@@ -130,9 +130,20 @@ class AgentsExecutionEnvironment(ABC):
         else:
             major_version = flink_version_manager.major_version
             if major_version:
-                # Determine the version-specific lib directory
-                version_dir = f"flink-{major_version}"
                 lib_base = files("flink_agents.lib")
+
+                # Load the common JAR (shared dependencies)
+                common_lib = lib_base / "common"
+                if common_lib.is_dir():
+                    for jar_file in common_lib.iterdir():
+                        if jar_file.is_file() and str(jar_file).endswith(".jar"):
+                            env.add_jars(f"file://{jar_file}")
+                else:
+                    err_msg = "Flink Agents common JAR not found."
+                    raise FileNotFoundError(err_msg)
+
+                # Load the version-specific thin JAR
+                version_dir = f"flink-{major_version}"
                 version_lib = lib_base / version_dir
 
                 # Check if version-specific directory exists
