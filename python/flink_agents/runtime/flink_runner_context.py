@@ -36,6 +36,7 @@ from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import AsyncExecutionResult, RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
+from flink_agents.plan.resource_cache import ResourceCache
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
 from flink_agents.runtime.memory.internal_base_long_term_memory import (
@@ -204,7 +205,10 @@ class FlinkRunnerContext(RunnerContext):
         """
         self._j_runner_context = j_runner_context
         self.__agent_plan = AgentPlan.model_validate_json(agent_plan_json)
-        self.__agent_plan.set_java_resource_adapter(j_resource_adapter)
+        self.__resource_cache = ResourceCache(
+            self.__agent_plan.resource_providers, self.__agent_plan.config
+        )
+        self.__resource_cache.set_java_resource_adapter(j_resource_adapter)
         self.executor = executor
 
     def set_long_term_memory(self, ltm: InternalBaseLongTermMemory) -> None:
@@ -237,7 +241,7 @@ class FlinkRunnerContext(RunnerContext):
 
     @override
     def get_resource(self, name: str, type: ResourceType, metric_group: MetricGroup = None) -> Resource:
-        resource = self.__agent_plan.get_resource(name, type)
+        resource = self.__resource_cache.get_resource(name, type)
         # Bind metric group to the resource
         resource.set_metric_group(metric_group or self.action_metric_group)
         return resource
@@ -503,11 +507,11 @@ class FlinkRunnerContext(RunnerContext):
         if self.long_term_memory is not None:
             self.long_term_memory.close()
 
-        if self.__agent_plan is not None:
+        if self.__resource_cache is not None:
             try:
-                self.__agent_plan.close()
+                self.__resource_cache.close()
             finally:
-                self.__agent_plan = None
+                self.__resource_cache = None
 
 
 def create_flink_runner_context(
