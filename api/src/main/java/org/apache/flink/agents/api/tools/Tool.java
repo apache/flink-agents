@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.tools;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
@@ -41,6 +42,7 @@ public abstract class Tool extends SerializableResource {
     }
 
     /** Return resource type of class. */
+    @JsonIgnore
     @Override
     public final ResourceType getResourceType() {
         return ResourceType.TOOL;
@@ -53,11 +55,13 @@ public abstract class Tool extends SerializableResource {
     public abstract ToolResponse call(ToolParameters parameters);
 
     /** Get the tool name from metadata. */
+    @JsonIgnore
     public final String getName() {
         return metadata.getName();
     }
 
     /** Get the tool description from metadata. */
+    @JsonIgnore
     public final String getDescription() {
         return metadata.getDescription();
     }
