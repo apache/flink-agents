@@ -90,11 +90,11 @@ class RunnerContext(ABC):
 
         Can be called in two ways:
 
-        1. With an Event instance (existing usage)::
+        1. With an Event instance::
 
             ctx.send_event(MyEvent(field1="test"))
 
-        2. With a string identifier and keyword arguments::
+        2. With a string identifier and arguments::
 
             ctx.send_event(identifier="MyEvent", field1="test", field2=1)
 
