@@ -24,6 +24,8 @@ from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 
+__all__ = ["AsyncExecutionResult", "RunnerContext"]
+
 if TYPE_CHECKING:
     from flink_agents.api.memory_object import MemoryObject
 
@@ -79,15 +81,51 @@ class RunnerContext(ABC):
     This context provides access to event handling.
     """
 
-    @abstractmethod
-    def send_event(self, event: Event) -> None:
+    def send_event(
+        self,
+        event: Event | None = None,
+        *,
+        identifier: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Send an event to the agent for processing.
+
+        Can be called in two ways:
+
+        1. **Object form** — pass a pre-built :class:`Event` (or subclass)::
+
+               ctx.send_event(OutputEvent(output="hi"))
+
+        2. **Shorthand form** — provide ``identifier`` and key-value attrs::
+
+               ctx.send_event(identifier="MyEvent", field1="test", field2=1)
+
+           This creates a unified ``Event(type=identifier, attributes={...})``.
 
         Parameters
         ----------
-        event : Event
-            The event to be processed by the agent system.
+        event : Event | None
+            A pre-built event object.  Mutually exclusive with *identifier*.
+        identifier : str | None
+            A type-identifier string for unified events.
+        **kwargs : Any
+            Attributes to attach to the unified event (only when using
+            *identifier*).
         """
+        if event is not None and identifier is not None:
+            msg = "Provide either 'event' or 'identifier', not both."
+            raise ValueError(msg)
+        if event is not None:
+            self._send_event(event)
+        elif identifier is not None:
+            self._send_event(Event(type=identifier, attributes=kwargs))
+        else:
+            msg = "Must provide either 'event' or 'identifier'."
+            raise ValueError(msg)
+
+    @abstractmethod
+    def _send_event(self, event: Event) -> None:
+        """Low-level event dispatch — implemented by each runner context."""
 
     @abstractmethod
     def get_resource(self, name: str, type: ResourceType, metric_group: MetricGroup = None) -> Resource:

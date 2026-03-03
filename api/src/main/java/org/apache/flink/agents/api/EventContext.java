@@ -25,25 +25,47 @@ import java.time.Instant;
 
 /** Contextual information about an event, such as its type and timestamp. */
 public class EventContext {
-    // Type of the event, the class name of the event
+    /**
+     * The routing key for the event. For subclassed events this is the FQN class name; for unified
+     * events this is the user-defined type string.
+     */
     private final String eventType;
+
+    /**
+     * The fully qualified Java class name used for deserialization. For unified events (no
+     * subclass), this is {@code "org.apache.flink.agents.api.Event"}.
+     */
+    private final String eventClass;
+
     // Timestamp of when the event occurred
     private final String timestamp;
 
     public EventContext(Event event) {
-        this(event.getClass().getName(), Instant.now().toString());
+        this(event.getType(), event.getClass().getName(), Instant.now().toString());
     }
 
+    /** Backward-compat constructor without eventClass (defaults to eventType). */
     @JsonCreator
     public EventContext(
             @JsonProperty("eventType") String eventType,
+            @JsonProperty("eventClass") String eventClass,
             @JsonProperty("timestamp") String timestamp) {
         this.eventType = eventType;
+        this.eventClass = eventClass != null ? eventClass : eventType;
         this.timestamp = timestamp;
+    }
+
+    /** Backward-compat: two-arg constructor (eventClass defaults to eventType). */
+    public EventContext(String eventType, String timestamp) {
+        this(eventType, eventType, timestamp);
     }
 
     public String getEventType() {
         return eventType;
+    }
+
+    public String getEventClass() {
+        return eventClass;
     }
 
     public String getTimestamp() {

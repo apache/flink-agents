@@ -31,23 +31,40 @@ import java.lang.annotation.Target;
  * <p>This annotation specifies which event types the action should respond to. The annotated method
  * will be triggered when any of the specified event types occur.
  *
+ * <p>Events can be specified either as concrete Event subclasses via {@link #listenEvents()}, or as
+ * plain type strings via {@link #listenEventTypes()}. At least one of the two must be non-empty.
+ *
  * <p>Example usage:
  *
  * <pre>{@code
+ * // Class-based (existing pattern)
  * @Action(listenEvents = {InputEvent.class, CustomEvent.class})
- * public void handleEvents(Event event) {
- *     // Action logic here
- * }
+ * public void handleEvents(Event event) { ... }
+ *
+ * // String-based (unified events)
+ * @Action(listenEventTypes = {"MyCustomEvent", "AnotherEvent"})
+ * public void handleUnifiedEvents(Event event) { ... }
+ *
+ * // Mixed
+ * @Action(listenEvents = {InputEvent.class}, listenEventTypes = {"MyCustomEvent"})
+ * public void handleMixed(Event event) { ... }
  * }</pre>
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Action {
     /**
-     * List of event types that this action should respond to. At least one event type must be
-     * specified.
+     * List of event classes that this action should respond to.
      *
      * @return Array of Event classes that this action listens to
      */
-    Class<? extends Event>[] listenEvents();
+    Class<? extends Event>[] listenEvents() default {};
+
+    /**
+     * List of event type strings that this action should respond to. Used for unified events that
+     * don't have a corresponding Java class.
+     *
+     * @return Array of event type strings
+     */
+    String[] listenEventTypes() default {};
 }

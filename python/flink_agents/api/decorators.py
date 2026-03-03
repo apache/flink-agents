@@ -15,35 +15,41 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Callable, Type
+from typing import Callable, Type, Union
 
 from flink_agents.api.events.event import Event
 
 
-def action(*listen_events: Type[Event]) -> Callable:
+def action(*listen_events: Union[Type[Event], str]) -> Callable:
     """Decorator for marking a function as an agent action.
+
+    Each argument can be either an :class:`Event` subclass (class-based routing)
+    or a plain ``str`` (unified-event routing by type identifier).
 
     Parameters
     ----------
-    listen_events : list[Type[Event]]
-        List of event types that this action should respond to.
+    listen_events : Type[Event] | str
+        Event classes or type-identifier strings that this action responds to.
 
-    Returns:
+    Returns
     -------
     Callable
         Decorator function that marks the target function with event listeners.
 
-    Raises:
+    Raises
     ------
     AssertionError
-        If no events are provided to listen to.
+        If no events are provided, or if an argument is neither a string nor
+        an ``Event`` subclass.
     """
     assert len(listen_events) > 0, (
         "action must have at least one event type to listen to"
     )
 
-    for event in listen_events:
-        assert issubclass(event, Event), "action must only listen to event types."
+    for evt in listen_events:
+        assert isinstance(evt, str) or (
+            isinstance(evt, type) and issubclass(evt, Event)
+        ), f"action must listen to Event subclasses or string identifiers, got {evt!r}"
 
     def decorator(func: Callable) -> Callable:
         func._listen_events = listen_events
