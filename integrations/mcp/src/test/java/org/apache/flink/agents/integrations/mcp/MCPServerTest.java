@@ -30,6 +30,7 @@ import org.junit.jupiter.api.condition.JRE;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES;
@@ -269,5 +270,15 @@ class MCPServerTest {
         assertThat(server.getMaxRetries()).isEqualTo(5);
         assertThat(server.getInitialBackoffMs()).isEqualTo(200);
         assertThat(server.getMaxBackoffMs()).isEqualTo(5000);
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("listPrompts returns empty list when server does not support prompts")
+    void testListPromptsReturnsEmptyWhenNotSupported() {
+        MCPServer server = MCPServer.builder(DEFAULT_ENDPOINT).build();
+
+        List<MCPPrompt> prompts = server.listPrompts();
+        assertThat(prompts).isEmpty();
     }
 }

@@ -42,6 +42,7 @@ import java.net.URI;
 import java.net.http.HttpRequest;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -361,6 +362,21 @@ public class MCPServer extends Resource {
     }
 
     /**
+     * Check if the MCP server supports prompts based on its declared capabilities.
+     *
+     * @return true if the server declared prompt capabilities during initialization
+     */
+    public boolean supportsPrompts() {
+        try {
+            McpSyncClient mcpClient = getClient();
+            McpSchema.ServerCapabilities caps = mcpClient.getServerCapabilities();
+            return caps != null && caps.prompts() != null;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * List available tools from the MCP server.
      *
      * @return List of MCPTool instances
@@ -456,6 +472,9 @@ public class MCPServer extends Resource {
      * @return List of MCPPrompt instances
      */
     public List<MCPPrompt> listPrompts() {
+        if (!supportsPrompts()) {
+            return Collections.emptyList();
+        }
         return getRetryExecutor()
                 .execute(
                         () -> {
