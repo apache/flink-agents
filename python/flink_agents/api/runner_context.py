@@ -109,16 +109,14 @@ class RunnerContext(ABC):
         """
         if identifier is not None:
             if event is not None:
-                raise ValueError(
-                    "Cannot provide both 'event' and 'identifier' to send_event"
-                )
+                msg = "Cannot provide both 'event' and 'identifier' to send_event"
+                raise ValueError(msg)
             from flink_agents.api.events.event import DynamicEvent
 
             event = DynamicEvent(identifier=identifier, **kwargs)
         elif event is None:
-            raise ValueError(
-                "Must provide either 'event' or 'identifier' to send_event"
-            )
+            msg = "Must provide either 'event' or 'identifier' to send_event"
+            raise ValueError(msg)
         self._send_event(event)
 
     @abstractmethod

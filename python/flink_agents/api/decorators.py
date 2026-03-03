@@ -15,17 +15,17 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Callable, Type, Union
+from typing import Callable, Type
 
 from flink_agents.api.events.event import Event
 
 
-def action(*listen_events: Union[Type[Event], str]) -> Callable:
+def action(*listen_events: Type[Event] | str) -> Callable:
     """Decorator for marking a function as an agent action.
 
     Parameters
     ----------
-    listen_events : list[Union[Type[Event], str]]
+    listen_events : list[Type[Event] | str]
         List of event types or string identifiers that this action should
         respond to. String identifiers match DynamicEvents sent via
         ``ctx.send_event(identifier="...")``.

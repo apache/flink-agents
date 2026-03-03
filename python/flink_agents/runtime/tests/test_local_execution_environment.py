@@ -131,12 +131,12 @@ class DynamicEventAgent(Agent):
 
     @action(InputEvent)
     @staticmethod
-    def on_input(event: Event, ctx: RunnerContext):  # noqa: D102
+    def on_input(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
         ctx.send_event(identifier="ProcessStep", value=event.input + 10)
 
     @action("ProcessStep")
     @staticmethod
-    def on_process(event: DynamicEvent, ctx: RunnerContext):  # noqa: D102
+    def on_process(event: DynamicEvent, ctx: RunnerContext) -> None:  # noqa: D102
         result = event.value * 2
         ctx.send_event(OutputEvent(output=result))
 
@@ -164,12 +164,12 @@ class MixedEventAgent(Agent):
 
     @action(InputEvent)
     @staticmethod
-    def on_input(event: Event, ctx: RunnerContext):  # noqa: D102
+    def on_input(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
         ctx.send_event(identifier="StepA", data=event.input)
 
     @action("StepA")
     @staticmethod
-    def on_step_a(event: DynamicEvent, ctx: RunnerContext):  # noqa: D102
+    def on_step_a(event: DynamicEvent, ctx: RunnerContext) -> None:  # noqa: D102
         ctx.send_event(OutputEvent(output=f"processed:{event.data}"))
 
 

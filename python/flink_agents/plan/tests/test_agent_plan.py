@@ -324,21 +324,21 @@ class DynamicAgent(Agent):
 
     @action(InputEvent)
     @staticmethod
-    def on_input(event: Event, ctx: RunnerContext) -> None:
+    def on_input(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
         pass
 
     @action("MyCustomEvent")
     @staticmethod
-    def on_custom(event: Event, ctx: RunnerContext) -> None:
+    def on_custom(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
         pass
 
     @action(InputEvent, "AnotherEvent")
     @staticmethod
-    def on_mixed(event: Event, ctx: RunnerContext) -> None:
+    def on_mixed(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
         pass
 
 
-def test_from_agent_with_string_identifier():
+def test_from_agent_with_string_identifier() -> None:
     """Test AgentPlan correctly handles string identifiers in actions."""
     agent = DynamicAgent()
     agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())

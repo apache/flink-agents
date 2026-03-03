@@ -234,7 +234,7 @@ class AgentPlan(BaseModel):
 
 
 
-def _resolve_event_type(event_type) -> str:
+def _resolve_event_type(event_type: type | str) -> str:
     """Resolve an event type to its string routing key.
 
     If event_type is already a string (dynamic identifier), return it as-is.
