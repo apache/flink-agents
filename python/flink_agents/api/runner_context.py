@@ -79,15 +79,51 @@ class RunnerContext(ABC):
     This context provides access to event handling.
     """
 
-    @abstractmethod
-    def send_event(self, event: Event) -> None:
+    def send_event(
+        self,
+        event: Event | None = None,
+        *,
+        identifier: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Send an event to the agent for processing.
+
+        Can be called in two ways:
+
+        1. With an Event instance (existing usage)::
+
+            ctx.send_event(MyEvent(field1="test"))
+
+        2. With a string identifier and keyword arguments::
+
+            ctx.send_event(identifier="MyEvent", field1="test", field2=1)
 
         Parameters
         ----------
-        event : Event
+        event : Event, optional
             The event to be processed by the agent system.
+        identifier : str, optional
+            String identifier for a dynamic event. Mutually exclusive with event.
+        **kwargs : Any
+            Additional fields for the dynamic event (only used with identifier).
         """
+        if identifier is not None:
+            if event is not None:
+                raise ValueError(
+                    "Cannot provide both 'event' and 'identifier' to send_event"
+                )
+            from flink_agents.api.events.event import DynamicEvent
+
+            event = DynamicEvent(identifier=identifier, **kwargs)
+        elif event is None:
+            raise ValueError(
+                "Must provide either 'event' or 'identifier' to send_event"
+            )
+        self._send_event(event)
+
+    @abstractmethod
+    def _send_event(self, event: Event) -> None:
+        """Internal method to dispatch the event. Subclasses must implement."""
 
     @abstractmethod
     def get_resource(self, name: str, type: ResourceType, metric_group: MetricGroup = None) -> Resource:

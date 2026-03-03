@@ -25,7 +25,7 @@ from typing import Any, Callable, Dict, List
 from typing_extensions import override
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent, get_event_type
 from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
 from flink_agents.api.memory_object import MemoryObject, MemoryType
 from flink_agents.api.metric_group import MetricGroup
@@ -107,7 +107,7 @@ class LocalRunnerContext(RunnerContext):
         return self.__key
 
     @override
-    def send_event(self, event: Event) -> None:
+    def _send_event(self, event: Event) -> None:
         """Send an event to the context's event queue and log it.
 
         Parameters
@@ -326,7 +326,7 @@ class LocalRunner(AgentRunner):
             if isinstance(event, OutputEvent):
                 self.__outputs.append({key: event.output})
                 continue
-            event_type = f"{event.__class__.__module__}.{event.__class__.__name__}"
+            event_type = get_event_type(event)
             for action in self.__agent_plan.get_actions(event_type):
                 logger.info("key: %s, performing action: %s", key, action.name)
                 context.action_name = action.name

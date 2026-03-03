@@ -22,7 +22,13 @@ from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import (
+    DynamicEvent,
+    Event,
+    InputEvent,
+    OutputEvent,
+    get_event_type,
+)
 
 
 def test_event_init_serializable() -> None:  # noqa D103
@@ -125,3 +131,32 @@ def test_event_with_mixed_serializable_types() -> None:
 
 def test_input_event_ignore_row_unserializable() -> None:  # noqa D103
     InputEvent(input=Row({"a": 1}))
+
+
+def test_dynamic_event_creation() -> None:
+    """Test DynamicEvent stores identifier and extra kwargs."""
+    event = DynamicEvent(identifier="MyEvent", field1="test", field2=42)
+    assert event.identifier == "MyEvent"
+    assert event.field1 == "test"
+    assert event.field2 == 42
+    assert event.id is not None
+
+
+def test_dynamic_event_serialization() -> None:
+    """Test DynamicEvent can be serialized to JSON."""
+    event = DynamicEvent(identifier="MyEvent", field1="test")
+    json_str = event.model_dump_json()
+    assert "MyEvent" in json_str
+    assert "field1" in json_str
+
+
+def test_get_event_type_dynamic() -> None:
+    """Test get_event_type returns identifier for DynamicEvent."""
+    event = DynamicEvent(identifier="MyEvent")
+    assert get_event_type(event) == "MyEvent"
+
+
+def test_get_event_type_class_based() -> None:
+    """Test get_event_type returns FQN for class-based events."""
+    event = InputEvent(input="hello")
+    assert get_event_type(event) == "flink_agents.api.events.event.InputEvent"

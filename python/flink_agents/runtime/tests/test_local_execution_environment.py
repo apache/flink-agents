@@ -21,7 +21,7 @@ import pytest
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event import DynamicEvent, Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 
@@ -124,3 +124,66 @@ def test_local_execution_environment_call_from_list_twice() -> None:  # noqa: D1
     env.from_list(input_list)
     with pytest.raises(RuntimeError):
         env.from_list(input_list)
+
+
+class DynamicEventAgent(Agent):
+    """Agent using string identifiers instead of class-based custom events."""
+
+    @action(InputEvent)
+    @staticmethod
+    def on_input(event: Event, ctx: RunnerContext):  # noqa: D102
+        ctx.send_event(identifier="ProcessStep", value=event.input + 10)
+
+    @action("ProcessStep")
+    @staticmethod
+    def on_process(event: DynamicEvent, ctx: RunnerContext):  # noqa: D102
+        result = event.value * 2
+        ctx.send_event(OutputEvent(output=result))
+
+
+def test_dynamic_event_workflow() -> None:
+    """Test full pipeline: send_event(identifier=...) → routing → action execution."""
+    env = AgentsExecutionEnvironment.get_execution_environment()
+
+    input_list = []
+    agent = DynamicEventAgent()
+
+    output_list = env.from_list(input_list).apply(agent).to_list()
+
+    input_list.append({"key": "alice", "value": 5})
+    input_list.append({"key": "bob", "value": 10})
+
+    env.execute()
+
+    # alice: (5 + 10) * 2 = 30, bob: (10 + 10) * 2 = 40
+    assert output_list == [{"alice": 30}, {"bob": 40}]
+
+
+class MixedEventAgent(Agent):
+    """Agent mixing class-based and string-identifier events."""
+
+    @action(InputEvent)
+    @staticmethod
+    def on_input(event: Event, ctx: RunnerContext):  # noqa: D102
+        ctx.send_event(identifier="StepA", data=event.input)
+
+    @action("StepA")
+    @staticmethod
+    def on_step_a(event: DynamicEvent, ctx: RunnerContext):  # noqa: D102
+        ctx.send_event(OutputEvent(output=f"processed:{event.data}"))
+
+
+def test_mixed_event_workflow() -> None:
+    """Test agent with mixed class-based and dynamic events."""
+    env = AgentsExecutionEnvironment.get_execution_environment()
+
+    input_list = []
+    agent = MixedEventAgent()
+
+    output_list = env.from_list(input_list).apply(agent).to_list()
+
+    input_list.append({"key": "user1", "value": "hello"})
+
+    env.execute()
+
+    assert output_list == [{"user1": "processed:hello"}]

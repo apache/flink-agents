@@ -25,7 +25,7 @@ import cloudpickle
 from typing_extensions import override
 
 from flink_agents.api.configuration import ReadableConfiguration
-from flink_agents.api.events.event import Event
+from flink_agents.api.events.event import Event, get_event_type
 from flink_agents.api.memory.long_term_memory import (
     BaseLongTermMemory,
     LongTermMemoryBackend,
@@ -218,7 +218,7 @@ class FlinkRunnerContext(RunnerContext):
         self.__ltm = ltm
 
     @override
-    def send_event(self, event: Event) -> None:
+    def _send_event(self, event: Event) -> None:
         """Send an event to the agent for processing.
 
         Parameters
@@ -226,7 +226,7 @@ class FlinkRunnerContext(RunnerContext):
         event : Event
             The event to be processed by the agent system.
         """
-        class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
+        class_path = get_event_type(event)
         event_bytes = cloudpickle.dumps(event)
         event_json_str = _build_event_log_string(event, class_path)
         try:

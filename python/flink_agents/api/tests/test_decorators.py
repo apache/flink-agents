@@ -62,3 +62,33 @@ def test_action_decorator_listen_non_event_type() -> None:  # noqa D103
         def forward_action(event: Event, ctx: RunnerContext) -> None:
             input = event.input
             ctx.send_event(OutputEvent(output=input))
+
+
+def test_action_decorator_with_string_identifier() -> None:
+    """Test @action accepts a string identifier for dynamic events."""
+
+    @action("MyEvent")
+    def handle_dynamic(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+    assert hasattr(handle_dynamic, "_listen_events")
+    assert handle_dynamic._listen_events == ("MyEvent",)
+
+
+def test_action_decorator_mixed_class_and_string() -> None:
+    """Test @action accepts a mix of class types and string identifiers."""
+
+    @action(InputEvent, "MyCustomEvent")
+    def handle_mixed(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+    assert handle_mixed._listen_events == (InputEvent, "MyCustomEvent")
+
+
+def test_action_decorator_rejects_non_event_non_string() -> None:
+    """Test @action rejects types that are neither Event subclasses nor strings."""
+    with pytest.raises(AssertionError):
+
+        @action(42)
+        def bad_action(event: Event, ctx: RunnerContext) -> None:
+            pass
