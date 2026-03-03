@@ -317,3 +317,51 @@ def test_add_action_and_resource_to_agent() -> None:  # noqa: D103
     actual = json.loads(json_value)
     expected = json.loads(expected_json)
     assert actual == expected
+
+
+class DynamicAgent(Agent):
+    """Agent using string identifiers for dynamic event routing."""
+
+    @action(InputEvent)
+    @staticmethod
+    def on_input(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+    @action("MyCustomEvent")
+    @staticmethod
+    def on_custom(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+    @action(InputEvent, "AnotherEvent")
+    @staticmethod
+    def on_mixed(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+
+def test_from_agent_with_string_identifier():
+    """Test AgentPlan correctly handles string identifiers in actions."""
+    agent = DynamicAgent()
+    agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())
+
+    # String identifier should be registered as-is
+    custom_actions = agent_plan.get_actions("MyCustomEvent")
+    assert len(custom_actions) == 1
+    assert custom_actions[0].name == "on_custom"
+    assert "MyCustomEvent" in custom_actions[0].listen_event_types
+
+    # Mixed action should appear under both event types
+    input_event_type = f"{InputEvent.__module__}.{InputEvent.__name__}"
+    input_actions = agent_plan.get_actions(input_event_type)
+    action_names = [a.name for a in input_actions]
+    assert "on_input" in action_names
+    assert "on_mixed" in action_names
+
+    another_actions = agent_plan.get_actions("AnotherEvent")
+    assert len(another_actions) == 1
+    assert another_actions[0].name == "on_mixed"
+
+    # Verify serialization round-trip preserves string identifiers
+    json_value = agent_plan.model_dump_json(serialize_as_any=True)
+    deserialized = AgentPlan.model_validate_json(json_value)
+    assert deserialized.get_actions("MyCustomEvent")[0].name == "on_custom"
+    assert deserialized.get_actions("AnotherEvent")[0].name == "on_mixed"
