@@ -183,7 +183,10 @@ under the License.
                                     <includes>
                                         <include>org/apache/flink/agents/**</include>
                                     </includes>
-                                    <!-- Exclude the conflict class for flink-1.20 -->
+                                </filter>
+                                <!-- Exclude the conflict class in runtime module for flink-1.20 -->
+                                <filter>
+                                    <artifact>org.apache.flink:flink-agents-runtime</artifact>
                                     <excludes>
                                         <exclude>org/apache/flink/agents/runtime/operator/OperatorUtils.class</exclude>
                                     </excludes>
