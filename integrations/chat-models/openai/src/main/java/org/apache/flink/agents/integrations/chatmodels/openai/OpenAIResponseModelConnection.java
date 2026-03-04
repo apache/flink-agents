@@ -50,15 +50,7 @@ import java.util.function.BiFunction;
  *
  * <p>Unlike {@link OpenAIChatModelConnection} which uses the Chat Completions API and works with
  * any OpenAI-compatible provider (DeepSeek, DashScope, etc.), this implementation uses OpenAI's
- * Responses API which is specific to OpenAI and offers additional capabilities:
- *
- * <ul>
- *   <li>Built-in tools (web search, file search, code interpreter)
- *   <li>Native remote MCP server support
- *   <li>Reasoning summaries for o-series models
- *   <li>Stateful multi-turn via previous_response_id
- *   <li>Response storage for later retrieval
- * </ul>
+ * Responses API which is specific to OpenAI.
  *
  * <p>For OpenAI-compatible providers that only support the Chat Completions API, use {@link
  * OpenAIChatModelConnection} instead.
@@ -92,8 +84,8 @@ import java.util.function.BiFunction;
 public class OpenAIResponseModelConnection extends BaseChatModelConnection {
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+    private static final ObjectMapper mapper = new ObjectMapper();
 
-    private final ObjectMapper mapper = new ObjectMapper();
     private final OpenAIClient client;
     private final String defaultModel;
 
