@@ -31,6 +31,7 @@ import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.ResourceCache;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
@@ -98,6 +99,7 @@ public class RunnerContextImpl implements RunnerContext {
     protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
     protected final Runnable mailboxThreadChecker;
     protected final AgentPlan agentPlan;
+    protected final ResourceCache resourceCache;
 
     protected MemoryContext memoryContext;
     protected String actionName;
@@ -110,10 +112,12 @@ public class RunnerContextImpl implements RunnerContext {
             FlinkAgentsMetricGroupImpl agentMetricGroup,
             Runnable mailboxThreadChecker,
             AgentPlan agentPlan,
+            ResourceCache resourceCache,
             String jobIdentifier) {
         this.agentMetricGroup = agentMetricGroup;
         this.mailboxThreadChecker = mailboxThreadChecker;
         this.agentPlan = agentPlan;
+        this.resourceCache = resourceCache;
 
         LongTermMemoryOptions.LongTermMemoryBackend backend =
                 this.getConfig().get(LongTermMemoryOptions.BACKEND);
@@ -221,10 +225,10 @@ public class RunnerContextImpl implements RunnerContext {
 
     @Override
     public Resource getResource(String name, ResourceType type) throws Exception {
-        if (agentPlan == null) {
-            throw new IllegalStateException("AgentPlan is not available in this context");
+        if (resourceCache == null) {
+            throw new IllegalStateException("ResourceCache is not available in this context");
         }
-        Resource resource = agentPlan.getResource(name, type);
+        Resource resource = resourceCache.getResource(name, type);
         // Set current action's metric group to the resource
         resource.setMetricGroup(getActionMetricGroup());
         return resource;
@@ -394,8 +398,6 @@ public class RunnerContextImpl implements RunnerContext {
             this.ltm.close();
             this.ltm = null;
         }
-
-        this.agentPlan.close();
     }
 
     public String getActionName() {

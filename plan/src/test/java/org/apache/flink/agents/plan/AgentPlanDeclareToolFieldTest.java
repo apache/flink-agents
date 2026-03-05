@@ -47,6 +47,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class AgentPlanDeclareToolFieldTest {
 
     private AgentPlan agentPlan;
+    private ResourceCache resourceCache;
 
     // Static methods to be wrapped by FunctionTool
     public static double calculate(
@@ -115,6 +116,7 @@ class AgentPlanDeclareToolFieldTest {
     @BeforeEach
     void setup() throws Exception {
         agentPlan = new AgentPlan(new TestAgent());
+        resourceCache = new ResourceCache(agentPlan.getResourceProviders());
     }
 
     @Test
@@ -131,7 +133,7 @@ class AgentPlanDeclareToolFieldTest {
     @Test
     @DisplayName("Retrieve FunctionTool and call with parameters")
     void callCalculator() throws Exception {
-        Tool tool = (Tool) agentPlan.getResource("calculator", ResourceType.TOOL);
+        Tool tool = (Tool) resourceCache.getResource("calculator", ResourceType.TOOL);
         assertInstanceOf(FunctionTool.class, tool);
         ToolResponse r =
                 tool.call(
@@ -148,7 +150,7 @@ class AgentPlanDeclareToolFieldTest {
     @Test
     @DisplayName("Call weather FunctionTool")
     void callWeather() throws Exception {
-        Tool tool = (Tool) agentPlan.getResource("weather", ResourceType.TOOL);
+        Tool tool = (Tool) resourceCache.getResource("weather", ResourceType.TOOL);
         assertInstanceOf(FunctionTool.class, tool);
         ToolResponse r =
                 tool.call(
@@ -165,7 +167,8 @@ class AgentPlanDeclareToolFieldTest {
     @Test
     @DisplayName("FunctionTool metadata and schema")
     void metadataSchema() throws Exception {
-        FunctionTool tool = (FunctionTool) agentPlan.getResource("calculator", ResourceType.TOOL);
+        FunctionTool tool =
+                (FunctionTool) resourceCache.getResource("calculator", ResourceType.TOOL);
         ToolMetadata md = tool.getMetadata();
         assertEquals("calculate", md.getName());
         assertEquals("Performs basic arithmetic operations", md.getDescription());
@@ -179,7 +182,7 @@ class AgentPlanDeclareToolFieldTest {
     @Test
     @DisplayName("FunctionTool error cases")
     void calculatorErrors() throws Exception {
-        Tool tool = (Tool) agentPlan.getResource("calculator", ResourceType.TOOL);
+        Tool tool = (Tool) resourceCache.getResource("calculator", ResourceType.TOOL);
         ToolResponse r =
                 tool.call(
                         new ToolParameters(

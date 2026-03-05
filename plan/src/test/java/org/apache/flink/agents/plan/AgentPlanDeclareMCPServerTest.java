@@ -66,6 +66,7 @@ class AgentPlanDeclareMCPServerTest {
     private static final String MCP_ENDPOINT = "http://127.0.0.1:8000/mcp";
 
     private AgentPlan agentPlan;
+    private ResourceCache resourceCache;
 
     /** Test agent with MCP server annotation. */
     static class TestMCPAgent extends Agent {
@@ -182,6 +183,7 @@ class AgentPlanDeclareMCPServerTest {
     @BeforeEach
     void setup() throws Exception {
         agentPlan = new AgentPlan(new TestMCPAgent());
+        resourceCache = new ResourceCache(agentPlan.getResourceProviders());
     }
 
     @AfterAll
@@ -237,7 +239,7 @@ class AgentPlanDeclareMCPServerTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Retrieve MCP tool from AgentPlan - add tool")
     void retrieveMCPToolAdd() throws Exception {
-        Tool tool = (Tool) agentPlan.getResource("add", ResourceType.TOOL);
+        Tool tool = (Tool) resourceCache.getResource("add", ResourceType.TOOL);
         assertNotNull(tool);
         assertInstanceOf(MCPTool.class, tool);
 
@@ -259,7 +261,7 @@ class AgentPlanDeclareMCPServerTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Retrieve MCP prompt from AgentPlan - ask_sum")
     void retrieveMCPPromptAskSum() throws Exception {
-        Prompt prompt = (Prompt) agentPlan.getResource("ask_sum", ResourceType.PROMPT);
+        Prompt prompt = (Prompt) resourceCache.getResource("ask_sum", ResourceType.PROMPT);
         assertNotNull(prompt);
         assertInstanceOf(MCPPrompt.class, prompt);
 
@@ -305,7 +307,7 @@ class AgentPlanDeclareMCPServerTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test metadata from MCP tool - add")
     void testMCPToolMetadata() throws Exception {
-        Tool tool = (Tool) agentPlan.getResource("add", ResourceType.TOOL);
+        Tool tool = (Tool) resourceCache.getResource("add", ResourceType.TOOL);
         ToolMetadata metadata = tool.getMetadata();
 
         assertEquals("add", metadata.getName());

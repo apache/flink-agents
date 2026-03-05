@@ -48,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentPlanDeclareToolMethodTest {
 
     private AgentPlan agentPlan;
+    private ResourceCache resourceCache;
 
     static class TestAgent extends Agent {
         @org.apache.flink.agents.api.annotation.Tool(
@@ -91,6 +92,7 @@ class AgentPlanDeclareToolMethodTest {
     @BeforeEach
     void setup() throws Exception {
         agentPlan = new AgentPlan(new TestAgent());
+        resourceCache = new ResourceCache(agentPlan.getResourceProviders());
     }
 
     @Test
@@ -104,8 +106,8 @@ class AgentPlanDeclareToolMethodTest {
         assertTrue(toolProviders.containsKey("getWeather"));
     }
 
-    void checkToolCall(AgentPlan agentPlan) throws Exception {
-        Tool calculator = (Tool) agentPlan.getResource("calculate", ResourceType.TOOL);
+    void checkToolCall(ResourceCache cache) throws Exception {
+        Tool calculator = (Tool) cache.getResource("calculate", ResourceType.TOOL);
         ToolParameters tp =
                 new ToolParameters(
                         new HashMap<>(
@@ -117,7 +119,7 @@ class AgentPlanDeclareToolMethodTest {
         assertTrue(r.isSuccess());
         assertEquals(45.0, (Double) r.getResult(), 0.001);
 
-        Tool weather = (Tool) agentPlan.getResource("getWeather", ResourceType.TOOL);
+        Tool weather = (Tool) cache.getResource("getWeather", ResourceType.TOOL);
         ToolResponse wr =
                 weather.call(
                         new ToolParameters(
@@ -133,7 +135,7 @@ class AgentPlanDeclareToolMethodTest {
     @Test
     @DisplayName("Retrieve tool and call with parameters")
     void retrieveAndCallTool() throws Exception {
-        checkToolCall(this.agentPlan);
+        checkToolCall(this.resourceCache);
     }
 
     @Test
@@ -152,13 +154,14 @@ class AgentPlanDeclareToolMethodTest {
                         Tool.fromMethod(
                                 TestAgent.class.getMethod(
                                         "getWeather", String.class, String.class)));
-        checkToolCall(new AgentPlan(agent));
+        AgentPlan addedPlan = new AgentPlan(agent);
+        checkToolCall(new ResourceCache(addedPlan.getResourceProviders()));
     }
 
     @Test
     @DisplayName("Parameter conversion and errors")
     void paramConversionAndErrors() throws Exception {
-        Tool calculator = (Tool) agentPlan.getResource("calculate", ResourceType.TOOL);
+        Tool calculator = (Tool) resourceCache.getResource("calculate", ResourceType.TOOL);
 
         ToolResponse r =
                 calculator.call(
@@ -213,7 +216,7 @@ class AgentPlanDeclareToolMethodTest {
     @Test
     @DisplayName("Metadata and schema shape")
     void metadataSchema() throws Exception {
-        Tool calculator = (Tool) agentPlan.getResource("calculate", ResourceType.TOOL);
+        Tool calculator = (Tool) resourceCache.getResource("calculate", ResourceType.TOOL);
         ToolMetadata md = calculator.getMetadata();
         assertEquals("calculate", md.getName());
         assertEquals("Performs basic arithmetic operations", md.getDescription());
@@ -230,7 +233,8 @@ class AgentPlanDeclareToolMethodTest {
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(agentPlan);
         AgentPlan restored = mapper.readValue(json, AgentPlan.class);
-        Tool calculator = (Tool) restored.getResource("calculate", ResourceType.TOOL);
+        ResourceCache restoredCache = new ResourceCache(restored.getResourceProviders());
+        Tool calculator = (Tool) restoredCache.getResource("calculate", ResourceType.TOOL);
         ToolResponse r =
                 calculator.call(
                         new ToolParameters(

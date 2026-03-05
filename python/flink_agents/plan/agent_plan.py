@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, cast
 from pydantic import BaseModel, field_serializer, model_validator
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.resource import Resource, ResourceDescriptor, ResourceType
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
 from flink_agents.plan.actions.context_retrieval_action import CONTEXT_RETRIEVAL_ACTION
@@ -59,8 +59,6 @@ class AgentPlan(BaseModel):
     actions_by_event: Dict[str, List[str]]
     resource_providers: Dict[ResourceType, Dict[str, ResourceProvider]] | None = None
     config: AgentConfiguration | None = None
-    __resources: Dict[ResourceType, Dict[str, Resource]] = {}
-    __j_resource_adapter: Any = None
 
     @field_serializer("resource_providers")
     def __serialize_resource_providers(
@@ -199,40 +197,6 @@ class AgentPlan(BaseModel):
         """
         return self.actions[action_name].config.get(key, None)
 
-    def get_resource(self, name: str, type: ResourceType) -> Resource:
-        """Get resource from agent plan.
-
-        Parameters
-        ----------
-        name : str
-            The name of the resource.
-        type : ResourceType
-            The type of the resource.
-        """
-        if type not in self.__resources:
-            self.__resources[type] = {}
-        if name not in self.__resources[type]:
-            resource_provider = self.resource_providers[type][name]
-            if isinstance(resource_provider, JavaResourceProvider):
-                resource_provider.set_java_resource_adapter(self.__j_resource_adapter)
-            resource = resource_provider.provide(
-                get_resource=self.get_resource, config=self.config
-            )
-            self.__resources[type][name] = resource
-        return self.__resources[type][name]
-
-    def set_java_resource_adapter(self, j_resource_adapter: Any) -> None:
-        """Set java resource adapter for java resource provider."""
-        self.__j_resource_adapter = j_resource_adapter
-
-    def close(self) -> None:
-        """Clean up the resources."""
-        for type in self.__resources:
-            for name in self.__resources[type]:
-                self.__resources[type][name].close()
-        self.__resources.clear()
-
-
 
 def _get_actions(agent: Agent) -> List[Action]:
     """Extract all registered agent actions from an agent.
@@ -353,7 +317,7 @@ def _get_resource_providers(agent: Agent, config: AgentConfiguration) -> List[Re
         )
 
     for name, descriptor in agent.resources[ResourceType.MCP_SERVER].items():
-        _add_mcp_server(name, resource_providers, descriptor)
+        _add_mcp_server(name, resource_providers, descriptor, config)
 
     for resource_type in [
         ResourceType.CHAT_MODEL,
@@ -382,8 +346,8 @@ def _add_mcp_server(
 
     resource_providers.append(provider)
 
-    def get_resource(name: str, descriptor: ResourceDescriptor) -> Any:
-        """Placeholder."""
+    def get_resource(name: str, type: ResourceType) -> Any:
+        """Placeholder - MCP server construction doesn't need resource resolution."""
 
     mcp_server = cast("MCPServer", provider.provide(get_resource=get_resource, config=config))
 

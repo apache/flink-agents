@@ -375,10 +375,11 @@ public class AgentPlanTest {
     public void testGetResourceNotFound() throws Exception {
         TestAgent agent = new TestAgent();
         AgentPlan agentPlan = new AgentPlan(agent);
+        ResourceCache cache = new ResourceCache(agentPlan.getResourceProviders());
 
         // Test getting non-existent resource throws exception
         try {
-            agentPlan.getResource("non-existent", ResourceType.CHAT_MODEL);
+            cache.getResource("non-existent", ResourceType.CHAT_MODEL);
             assertThat(false).as("Should have thrown IllegalArgumentException").isTrue();
         } catch (IllegalArgumentException e) {
             assertThat(e.getMessage()).contains("Resource not found: non-existent");
@@ -450,32 +451,33 @@ public class AgentPlanTest {
         // Create an agent with resource annotations
         TestAgentWithResources agent = new TestAgentWithResources();
         AgentPlan agentPlan = new AgentPlan(agent);
+        ResourceCache cache = new ResourceCache(agentPlan.getResourceProviders());
 
         // Test getting a tool resource
-        Resource myTool = agentPlan.getResource("myTool", ResourceType.TOOL);
+        Resource myTool = cache.getResource("myTool", ResourceType.TOOL);
         assertThat(myTool).isNotNull();
         assertThat(myTool).isInstanceOf(TestTool.class);
         assertThat(myTool.getResourceType()).isEqualTo(ResourceType.TOOL);
 
         // Test getting a chat model resource
-        Resource chatModel = agentPlan.getResource("chatModel", ResourceType.CHAT_MODEL);
+        Resource chatModel = cache.getResource("chatModel", ResourceType.CHAT_MODEL);
         assertThat(chatModel).isNotNull();
         assertThat(chatModel).isInstanceOf(TestSerializableChatModel.class);
         assertThat(chatModel.getResourceType()).isEqualTo(ResourceType.CHAT_MODEL);
 
-        assertThatThrownBy(() -> agentPlan.getResource("pythonChatModel", ResourceType.CHAT_MODEL))
+        assertThatThrownBy(() -> cache.getResource("pythonChatModel", ResourceType.CHAT_MODEL))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("PythonResourceAdapter is not set");
 
-        agentPlan.setPythonResourceAdapter(new TestPythonResourceAdapter());
-        Resource pythonChatModel =
-                agentPlan.getResource("pythonChatModel", ResourceType.CHAT_MODEL);
+        PythonResourceBridge.discoverPythonMCPResources(
+                agentPlan.getResourceProviders(), new TestPythonResourceAdapter(), cache);
+        Resource pythonChatModel = cache.getResource("pythonChatModel", ResourceType.CHAT_MODEL);
         assertThat(pythonChatModel).isNotNull();
         assertThat(pythonChatModel).isInstanceOf(PythonChatModelSetup.class);
         assertThat(pythonChatModel.getResourceType()).isEqualTo(ResourceType.CHAT_MODEL);
 
         // Test that resources are cached (should be the same instance)
-        Resource myToolAgain = agentPlan.getResource("myTool", ResourceType.TOOL);
+        Resource myToolAgain = cache.getResource("myTool", ResourceType.TOOL);
         assertThat(myTool).isSameAs(myToolAgain);
     }
 }
