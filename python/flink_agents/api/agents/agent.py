@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC
-from typing import Any, Callable, Dict, List, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Tuple, Type
 
 from flink_agents.api.events.event import Event
 from flink_agents.api.resource import (
@@ -86,7 +86,7 @@ class Agent(ABC):
     """
 
     _actions: Dict[
-        str, Tuple[List[Union[Type[Event], str]], Callable, Dict[str, Any]]
+        str, Tuple[List[Type[Event] | str], Callable, Dict[str, Any]]
     ]
     _resources: Dict[ResourceType, Dict[str, Any]]
 
@@ -100,7 +100,7 @@ class Agent(ABC):
     @property
     def actions(
         self,
-    ) -> Dict[str, Tuple[List[Union[Type[Event], str]], Callable, Dict[str, Any]]]:
+    ) -> Dict[str, Tuple[List[Type[Event] | str], Callable, Dict[str, Any]]]:
         """Get added actions."""
         return self._actions
 
@@ -112,7 +112,7 @@ class Agent(ABC):
     def add_action(
         self,
         name: str,
-        events: List[Union[Type[Event], str]],
+        events: List[Type[Event] | str],
         func: Callable,
         **config: Any,
     ) -> "Agent":
@@ -129,7 +129,7 @@ class Agent(ABC):
         **config : Any
             Key named arguments can be used by this action in runtime.
 
-        Returns
+        Returns:
         -------
         Agent
             The modified Agent instance.

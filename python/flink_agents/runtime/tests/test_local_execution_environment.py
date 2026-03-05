@@ -160,7 +160,7 @@ def test_unified_event_workflow() -> None:
     assert output_list == [{"alice": "processed:hello"}]
 
 
-class MixedEventAgent(Agent):  # noqa: D101
+class MixedEventAgent(Agent):
     """Agent mixing class-based and string-based event routing."""
 
     class Step1Event(Event):

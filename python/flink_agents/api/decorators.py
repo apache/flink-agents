@@ -15,12 +15,12 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Callable, Type, Union
+from typing import Callable, Type
 
 from flink_agents.api.events.event import Event
 
 
-def action(*listen_events: Union[Type[Event], str]) -> Callable:
+def action(*listen_events: Type[Event] | str) -> Callable:
     """Decorator for marking a function as an agent action.
 
     Each argument can be either an :class:`Event` subclass (class-based routing)
@@ -31,12 +31,12 @@ def action(*listen_events: Union[Type[Event], str]) -> Callable:
     listen_events : Type[Event] | str
         Event classes or type-identifier strings that this action responds to.
 
-    Returns
+    Returns:
     -------
     Callable
         Decorator function that marks the target function with event listeners.
 
-    Raises
+    Raises:
     ------
     AssertionError
         If no events are provided, or if an argument is neither a string nor

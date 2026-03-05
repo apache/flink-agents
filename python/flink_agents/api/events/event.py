@@ -133,12 +133,12 @@ class Event(BaseModel, extra="allow"):
         json_str : str
             JSON string containing at least a ``type`` field.
 
-        Returns
+        Returns:
         -------
         Event
             The deserialized event.
 
-        Raises
+        Raises:
         ------
         ValueError
             If the ``type`` field is missing or empty.
