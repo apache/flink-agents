@@ -34,7 +34,7 @@ import java.util.function.BiFunction;
  *
  * <p>Responsible for providing per-chat configuration such as model, temperature, max tokens, tool
  * bindings, and Responses API-specific parameters. The setup delegates execution to {@link
- * OpenAIResponseModelConnection}.
+ * OpenAIResponsesModelConnection}.
  *
  * <p>Example usage:
  *
@@ -42,8 +42,8 @@ import java.util.function.BiFunction;
  * public class MyAgent extends Agent {
  *   @ChatModelSetup
  *   public static ResourceDesc openAIResponses() {
- *     return ResourceDescriptor.Builder.newBuilder(OpenAIResponseModelSetup.class.getName())
- *             .addInitialArgument("connection", "myOpenAIResponseConnection")
+ *     return ResourceDescriptor.Builder.newBuilder(OpenAIResponsesModelSetup.class.getName())
+ *             .addInitialArgument("connection", "myOpenAIResponsesConnection")
  *             .addInitialArgument("model", "gpt-4o")
  *             .addInitialArgument("temperature", 0.3d)
  *             .addInitialArgument("max_tokens", 2048)
@@ -56,7 +56,7 @@ import java.util.function.BiFunction;
  * }
  * }</pre>
  */
-public class OpenAIResponseModelSetup extends BaseChatModelSetup {
+public class OpenAIResponsesModelSetup extends BaseChatModelSetup {
 
     private static final String DEFAULT_MODEL = "gpt-4o";
     private static final double DEFAULT_TEMPERATURE = 0.1d;
@@ -72,7 +72,7 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
     private final String instructions;
     private final Map<String, Object> additionalArguments;
 
-    public OpenAIResponseModelSetup(
+    public OpenAIResponsesModelSetup(
             ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
 
@@ -119,7 +119,7 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
         }
     }
 
-    public OpenAIResponseModelSetup(
+    public OpenAIResponsesModelSetup(
             String model,
             double temperature,
             Integer maxTokens,
@@ -183,7 +183,7 @@ public class OpenAIResponseModelSetup extends BaseChatModelSetup {
             Map<String, Object> additionalArguments,
             List<String> tools) {
         ResourceDescriptor.Builder builder =
-                ResourceDescriptor.Builder.newBuilder(OpenAIResponseModelSetup.class.getName())
+                ResourceDescriptor.Builder.newBuilder(OpenAIResponsesModelSetup.class.getName())
                         .addInitialArgument("model", model)
                         .addInitialArgument("temperature", temperature);
 

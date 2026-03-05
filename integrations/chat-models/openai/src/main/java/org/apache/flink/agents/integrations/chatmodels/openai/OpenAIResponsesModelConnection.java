@@ -72,7 +72,7 @@ import java.util.function.BiFunction;
  * public class MyAgent extends Agent {
  *   @ChatModelConnection
  *   public static ResourceDesc openAIResponses() {
- *     return ResourceDescriptor.Builder.newBuilder(OpenAIResponseModelConnection.class.getName())
+ *     return ResourceDescriptor.Builder.newBuilder(OpenAIResponsesModelConnection.class.getName())
  *             .addInitialArgument("api_key", System.getenv("OPENAI_API_KEY"))
  *             .addInitialArgument("timeout", 120)
  *             .addInitialArgument("max_retries", 3)
@@ -81,7 +81,7 @@ import java.util.function.BiFunction;
  * }
  * }</pre>
  */
-public class OpenAIResponseModelConnection extends BaseChatModelConnection {
+public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
     private static final ObjectMapper mapper = new ObjectMapper();
@@ -89,7 +89,7 @@ public class OpenAIResponseModelConnection extends BaseChatModelConnection {
     private final OpenAIClient client;
     private final String defaultModel;
 
-    public OpenAIResponseModelConnection(
+    public OpenAIResponsesModelConnection(
             ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
 
