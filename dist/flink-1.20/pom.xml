@@ -138,7 +138,7 @@ under the License.
                 </executions>
             </plugin>
 
-            <!-- Extend parent's shade plugin with flink-1.20 specific exclusions -->
+            <!-- Extend parent's shade plugin with flink-1.20 specific configurations -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -146,16 +146,6 @@ under the License.
                     <execution>
                         <id>shade-flink-agents</id>
                         <configuration>
-                            <!-- Append flink-1.20 specific filter to parent's filters -->
-                            <filters combine.children="append">
-                                <!-- Exclude the conflict classes of the runtime module, using version flink-1.20. -->
-                                <filter>
-                                    <artifact>org.apache.flink:flink-agents-runtime</artifact>
-                                    <excludes>
-                                        <exclude>org/apache/flink/agents/runtime/operator/OperatorUtils.class</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                         </configuration>
                     </execution>
@@ -183,13 +173,6 @@ under the License.
                                     <includes>
                                         <include>org/apache/flink/agents/**</include>
                                     </includes>
-                                </filter>
-                                <!-- Exclude the conflict class in runtime module for flink-1.20 -->
-                                <filter>
-                                    <artifact>org.apache.flink:flink-agents-runtime</artifact>
-                                    <excludes>
-                                        <exclude>org/apache/flink/agents/runtime/operator/OperatorUtils.class</exclude>
-                                    </excludes>
                                 </filter>
                             </filters>
                             <transformers>
