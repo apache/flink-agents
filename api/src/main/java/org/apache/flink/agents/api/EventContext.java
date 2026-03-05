@@ -44,7 +44,6 @@ public class EventContext {
         this(event.getType(), event.getClass().getName(), Instant.now().toString());
     }
 
-    /** Backward-compat constructor without eventClass (defaults to eventType). */
     @JsonCreator
     public EventContext(
             @JsonProperty("eventType") String eventType,
@@ -55,7 +54,6 @@ public class EventContext {
         this.timestamp = timestamp;
     }
 
-    /** Backward-compat: two-arg constructor (eventClass defaults to eventType). */
     public EventContext(String eventType, String timestamp) {
         this(eventType, eventType, timestamp);
     }

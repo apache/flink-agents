@@ -38,7 +38,7 @@ import java.io.IOException;
  *   <li>Deserializing the EventContext normally (contains eventType, eventClass, and timestamp)
  *   <li>Using the {@code eventClass} from context to determine the concrete Event class for
  *       deserialization
- *   <li>Falling back to {@code eventType} if {@code eventClass} is not present (backward compat)
+ *   <li>Falling back to {@code eventType} if {@code eventClass} is not present
  * </ul>
  */
 public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRecord> {
@@ -109,16 +109,11 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
         return eventTypeNode.asText();
     }
 
-    /**
-     * Gets the eventClass from the event node, falling back to eventType for backward
-     * compatibility.
-     */
     private static String getEventClass(JsonNode eventNode, String eventType) {
         JsonNode eventClassNode = eventNode.get("eventClass");
         if (eventClassNode != null && eventClassNode.isTextual()) {
             return eventClassNode.asText();
         }
-        // Backward compat: old logs don't have eventClass, fall back to eventType
         return eventType;
     }
 
