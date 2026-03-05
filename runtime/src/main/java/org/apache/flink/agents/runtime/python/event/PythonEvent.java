@@ -69,6 +69,16 @@ public class PythonEvent extends Event {
     }
 
     /**
+     * Returns the Python event type for routing. Overrides the base {@link Event#getType()} so that
+     * both {@code getEventType()} and {@code getType()} return the same value. This makes routing
+     * consistent across all event types.
+     */
+    @Override
+    public String getType() {
+        return eventType;
+    }
+
+    /**
      * Returns the JSON string representation of this event.
      *
      * <p>This string is generated on the Python side when the event is created and is primarily

@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 import hashlib
-from abc import ABC
+import json
 from typing import Any, Dict
 
 try:
@@ -30,8 +30,16 @@ from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
 
-class Event(BaseModel, ABC, extra="allow"):
+class Event(BaseModel, extra="allow"):
     """Base class for all event types in the system.
+
+    This class serves dual purposes:
+
+    - **Unified events**: Instantiated directly with a user-defined ``type``
+      string and arbitrary key-value ``attributes``.  No subclassing required.
+    - **Subclassed events**: Traditional usage where concrete subclasses (e.g.,
+      :class:`InputEvent`) extend this class.  The ``type`` defaults to the
+      fully qualified class name.
 
     Event allows extra properties, but these must be BaseModel instances or JSON
     serializable.
@@ -40,11 +48,17 @@ class Event(BaseModel, ABC, extra="allow"):
     ----------
     id : UUID
         Unique identifier for the event, generated deterministically based on
-        event content. This ensures events with identical content have the same
-        ID, which is critical for ActionStateStore divergence detection.
+        event content.
+    type : str | None
+        User-defined event type for routing.  When *None*, :meth:`get_type`
+        falls back to the fully qualified class name.
+    attributes : Dict[str, Any]
+        Arbitrary key-value properties for unified events.
     """
 
     id: UUID = Field(default=None)
+    type: str | None = Field(default=None)
+    attributes: Dict[str, Any] = Field(default_factory=dict)
 
     @staticmethod
     def __serialize_unknown(field: Any) -> Dict[str, Any]:
@@ -90,6 +104,51 @@ class Event(BaseModel, ABC, extra="allow"):
         # Regenerate ID if content changed (but not if setting 'id' itself)
         if name != "id":
             object.__setattr__(self, "id", self._generate_content_based_id())
+
+    def get_type(self) -> str:
+        """Return the event type used for routing.
+
+        For unified events (where ``type`` is explicitly set), returns the
+        user-defined type string.  For subclasses, defaults to the fully
+        qualified class name (``module.ClassName``).
+        """
+        if self.type is not None:
+            return self.type
+        return f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+
+    def get_attr(self, name: str) -> Any:
+        """Get an attribute value from the attributes map."""
+        return self.attributes.get(name)
+
+    def set_attr(self, name: str, value: Any) -> None:
+        """Set an attribute value in the attributes map."""
+        self.attributes[name] = value
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "Event":
+        """Deserialize a unified event from a JSON string.
+
+        Parameters
+        ----------
+        json_str : str
+            JSON string containing at least a ``type`` field.
+
+        Returns:
+        -------
+        Event
+            The deserialized event.
+
+        Raises:
+        ------
+        ValueError
+            If the ``type`` field is missing or empty.
+        """
+        data = json.loads(json_str)
+        event = cls.model_validate(data)
+        if event.type is None or event.type == "":
+            msg = "Event JSON must contain a 'type' field."
+            raise ValueError(msg)
+        return event
 
 
 class InputEvent(Event):

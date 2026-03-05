@@ -24,9 +24,10 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
-import org.apache.flink.util.Preconditions;
 
 import javax.annotation.concurrent.NotThreadSafe;
+
+import java.io.IOException;
 
 /** A specialized {@link RunnerContext} that is specifically used when executing Python actions. */
 @NotThreadSafe
@@ -48,14 +49,28 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
 
     @Override
     public void sendEvent(Event event) {
-        Preconditions.checkState(
-                event instanceof PythonEvent, "PythonRunnerContext only accept Python event.");
+        // Accept both PythonEvent (legacy class-based) and plain Event (unified events).
         super.sendEvent(event);
     }
 
+    /** Legacy path: invoked by PythonActionExecutor for class-based Python events. */
     public void sendEvent(String type, byte[] event, String eventJsonStr) {
-        // this method will be invoked by PythonActionExecutor's python interpreter.
         sendEvent(new PythonEvent(event, type, eventJsonStr));
+    }
+
+    /**
+     * Sends a unified event from Python to Java.
+     *
+     * <p>Invoked by PythonActionExecutor's interpreter when a Python action sends a unified event
+     * (base Event with a {@code type} string and {@code attributes} map). The event is passed as a
+     * JSON string, deserialized into a Java {@link Event}, and dispatched normally.
+     *
+     * @param eventJson JSON string with at least a {@code "type"} field
+     * @throws IOException if JSON parsing fails
+     */
+    public void sendUnifiedEvent(String eventJson) throws IOException {
+        Event event = Event.fromJson(eventJson);
+        sendEvent(event);
     }
 
     public String getPythonAwaitableRef() {

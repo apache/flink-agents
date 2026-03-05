@@ -45,7 +45,7 @@ def test_event_setattr_non_serializable() -> None:  # noqa D103
         event.c = Type[InputEvent]
 
 
-def test_input_event_ignore_row_unserializable() -> None:  # noqa D103
+def test_input_event_ignore_row_unserializable_basic() -> None:  # noqa D103
     InputEvent(input=Row({"a": 1}))
 
 
@@ -123,5 +123,72 @@ def test_event_with_mixed_serializable_types() -> None:
     assert parsed["input"]["nested_row"]["inner"]["type"] == "Row"
 
 
-def test_input_event_ignore_row_unserializable() -> None:  # noqa D103
+def test_input_event_ignore_row_unserializable_duplicate() -> None:  # noqa D103
     InputEvent(input=Row({"a": 1}))
+
+
+# ── Unified Event tests ──────────────────────────────────────────────────
+
+
+def test_unified_event_creation() -> None:
+    """Test creating a unified event with type and attributes."""
+    event = Event(type="MyEvent", attributes={"field1": "test", "field2": 42})
+    assert event.type == "MyEvent"
+    assert event.attributes == {"field1": "test", "field2": 42}
+    assert event.get_type() == "MyEvent"
+
+
+def test_unified_event_get_type_falls_back_to_class_name() -> None:
+    """Test that get_type() falls back to FQN class name for subclasses."""
+    event = InputEvent(input="hello")
+    assert event.type is None
+    assert event.get_type() == (
+        f"{InputEvent.__module__}.{InputEvent.__qualname__}"
+    )
+
+
+def test_unified_event_base_get_type_no_type_set() -> None:
+    """Test that get_type() returns FQN class name for base Event without type."""
+    event = Event(a=1)
+    assert event.type is None
+    assert event.get_type() == f"{Event.__module__}.{Event.__qualname__}"
+
+
+def test_unified_event_get_attr_set_attr() -> None:
+    """Test get_attr and set_attr convenience methods."""
+    event = Event(type="TestEvent")
+    event.set_attr("key", "value")
+    assert event.get_attr("key") == "value"
+    assert event.get_attr("missing") is None
+
+
+def test_unified_event_from_json() -> None:
+    """Test deserializing a unified event from JSON."""
+    import json
+
+    data = {"type": "MyEvent", "attributes": {"x": 1}}
+    event = Event.from_json(json.dumps(data))
+    assert event.type == "MyEvent"
+    assert event.attributes == {"x": 1}
+
+
+def test_unified_event_from_json_missing_type() -> None:
+    """Test that from_json raises ValueError when type is missing."""
+    import json
+
+    with pytest.raises(ValueError, match="type"):
+        Event.from_json(json.dumps({"attributes": {}}))
+
+
+def test_unified_event_serialization_roundtrip() -> None:
+    """Test that unified events survive JSON serialization/deserialization."""
+    import json
+
+    original = Event(type="RoundTrip", attributes={"a": 1, "b": "two"})
+    json_str = original.model_dump_json()
+    parsed = json.loads(json_str)
+    assert parsed["type"] == "RoundTrip"
+    assert parsed["attributes"] == {"a": 1, "b": "two"}
+    restored = Event.model_validate(parsed)
+    assert restored.type == "RoundTrip"
+    assert restored.attributes == {"a": 1, "b": "two"}

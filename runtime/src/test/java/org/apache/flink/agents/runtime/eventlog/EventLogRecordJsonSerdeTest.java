@@ -195,6 +195,79 @@ class EventLogRecordJsonSerdeTest {
         assertEquals(originalInputEvent.getInput(), deserializedEvent.getInput());
     }
 
+    @Test
+    void testSerializeUnifiedEvent() throws Exception {
+        // Given - a unified event with user-defined type
+        java.util.Map<String, Object> attrs = new java.util.HashMap<>();
+        attrs.put("msg", "hello");
+        Event unifiedEvent = new Event("MyCustomEvent", attrs);
+        EventContext context = new EventContext(unifiedEvent);
+        EventLogRecord record = new EventLogRecord(context, unifiedEvent);
+
+        // When
+        String json = objectMapper.writeValueAsString(record);
+
+        // Then
+        JsonNode jsonNode = objectMapper.readTree(json);
+        JsonNode eventNode = jsonNode.get("event");
+
+        // eventType should be the user-defined type string
+        assertEquals("MyCustomEvent", eventNode.get("eventType").asText());
+        // eventClass should be the base Event class
+        assertEquals("org.apache.flink.agents.api.Event", eventNode.get("eventClass").asText());
+        // attributes should be present
+        assertEquals("hello", eventNode.get("attributes").get("msg").asText());
+    }
+
+    @Test
+    void testDeserializeUnifiedEvent() throws Exception {
+        // Given - a unified event serialized via the EventLogRecord serializer
+        java.util.Map<String, Object> attrs = new java.util.HashMap<>();
+        attrs.put("key", "value");
+        attrs.put("count", 42);
+        Event originalEvent = new Event("CustomType", attrs);
+        EventContext originalContext = new EventContext(originalEvent);
+        EventLogRecord originalRecord = new EventLogRecord(originalContext, originalEvent);
+        String json = objectMapper.writeValueAsString(originalRecord);
+
+        // When
+        EventLogRecord deserializedRecord = objectMapper.readValue(json, EventLogRecord.class);
+
+        // Then
+        EventContext deserializedContext = deserializedRecord.getContext();
+        // eventType is the routing key (user-defined string)
+        assertEquals("CustomType", deserializedContext.getEventType());
+        // eventClass is the deserialization class
+        assertEquals("org.apache.flink.agents.api.Event", deserializedContext.getEventClass());
+
+        // The event should be deserialized as a base Event with the type field set
+        Event deserializedEvent = deserializedRecord.getEvent();
+        assertEquals("CustomType", deserializedEvent.getType());
+        assertEquals("CustomType", deserializedEvent.getRawType());
+    }
+
+    @Test
+    void testRoundTripUnifiedEvent() throws Exception {
+        // Given
+        java.util.Map<String, Object> attrs = new java.util.HashMap<>();
+        attrs.put("x", 1);
+        attrs.put("y", "two");
+        Event originalEvent = new Event("RoundTripEvent", attrs);
+        EventContext context = new EventContext(originalEvent);
+        EventLogRecord record = new EventLogRecord(context, originalEvent);
+
+        // When - serialize and deserialize
+        String json = objectMapper.writeValueAsString(record);
+        EventLogRecord deserialized = objectMapper.readValue(json, EventLogRecord.class);
+
+        // Then
+        assertEquals("RoundTripEvent", deserialized.getContext().getEventType());
+        assertEquals(
+                "org.apache.flink.agents.api.Event", deserialized.getContext().getEventClass());
+        Event event = deserialized.getEvent();
+        assertEquals("RoundTripEvent", event.getType());
+    }
+
     /** Custom test event class for testing polymorphic serialization. */
     public static class CustomTestEvent extends Event {
         private String customData;

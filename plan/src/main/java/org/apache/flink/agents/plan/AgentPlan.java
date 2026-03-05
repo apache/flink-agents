@@ -296,12 +296,25 @@ public class AgentPlan implements Serializable {
     }
 
     private void extractActions(
-            Class<? extends Event>[] listenEventTypes, Method method, Map<String, Object> config)
+            Class<? extends Event>[] listenEventClasses,
+            String[] listenEventTypeStrings,
+            Method method,
+            Map<String, Object> config)
             throws Exception {
         // Convert event types to string names
         List<String> eventTypeNames = new ArrayList<>();
-        for (Class<? extends Event> eventType : listenEventTypes) {
+        for (Class<? extends Event> eventType : listenEventClasses) {
             eventTypeNames.add(eventType.getName());
+        }
+        for (String eventTypeString : listenEventTypeStrings) {
+            eventTypeNames.add(eventTypeString);
+        }
+
+        if (eventTypeNames.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Action method "
+                            + method.getName()
+                            + " must specify at least one event type via listenEvents or listenEventTypes.");
         }
 
         // Create a JavaFunction for this method
@@ -344,18 +357,19 @@ public class AgentPlan implements Serializable {
                 org.apache.flink.agents.api.annotation.Action actionAnnotation =
                         method.getAnnotation(org.apache.flink.agents.api.annotation.Action.class);
 
-                // Get the event types this action listens to
-                Class<? extends Event>[] listenEventTypes =
+                // Get the event types this action listens to (class-based + string-based)
+                Class<? extends Event>[] listenEventClasses =
                         Objects.requireNonNull(actionAnnotation).listenEvents();
+                String[] listenEventTypeStrings = actionAnnotation.listenEventTypes();
 
-                extractActions(listenEventTypes, method, null);
+                extractActions(listenEventClasses, listenEventTypeStrings, method, null);
             }
         }
 
         for (Map.Entry<String, Tuple3<Class<? extends Event>[], Method, Map<String, Object>>>
                 action : agent.getActions().entrySet()) {
             Tuple3<Class<? extends Event>[], Method, Map<String, Object>> tuple = action.getValue();
-            extractActions(tuple.f0, tuple.f1, tuple.f2);
+            extractActions(tuple.f0, new String[0], tuple.f1, tuple.f2);
         }
     }
 
