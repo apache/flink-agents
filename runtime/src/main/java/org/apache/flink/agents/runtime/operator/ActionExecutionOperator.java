@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.listener.EventListener;
+import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerFactory;
@@ -100,6 +101,9 @@ import java.util.Optional;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LOG_LEVEL;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LOG_LEVELS;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LOG_MAX_FIELD_LENGTH;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
@@ -1110,6 +1114,44 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (baseLogDir != null && !baseLogDir.trim().isEmpty()) {
             loggerConfigBuilder.property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, baseLogDir);
         }
+
+        // Parse default log level (default is "STANDARD" via ConfigOption, null check kept
+        // defensively in case a custom Configuration returns null)
+        String defaultLevelStr = agentPlan.getConfig().get(EVENT_LOG_LEVEL);
+        if (defaultLevelStr != null && !defaultLevelStr.trim().isEmpty()) {
+            try {
+                loggerConfigBuilder.defaultLogLevel(
+                        EventLogLevel.valueOf(defaultLevelStr.trim().toUpperCase()));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "Invalid eventLogLevel: '"
+                                + defaultLevelStr
+                                + "'. Valid values: OFF, STANDARD, VERBOSE",
+                        e);
+            }
+        }
+
+        // Parse per-event-type log level overrides
+        String perTypeLevels = agentPlan.getConfig().get(EVENT_LOG_LEVELS);
+        if (perTypeLevels != null && !perTypeLevels.trim().isEmpty()) {
+            try {
+                loggerConfigBuilder.eventLogLevels(EventLogLevel.parseLogLevels(perTypeLevels));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "Invalid eventLogLevels: '"
+                                + perTypeLevels
+                                + "'. Expected format: EventTypeName=LEVEL,EventTypeName=LEVEL"
+                                + " where LEVEL is OFF, STANDARD, or VERBOSE",
+                        e);
+            }
+        }
+
+        // Parse max field length for STANDARD level truncation
+        Integer maxFieldLength = agentPlan.getConfig().get(EVENT_LOG_MAX_FIELD_LENGTH);
+        if (maxFieldLength != null) {
+            loggerConfigBuilder.maxFieldLength(maxFieldLength);
+        }
+
         return EventLoggerFactory.createLogger(loggerConfigBuilder.build());
     }
 

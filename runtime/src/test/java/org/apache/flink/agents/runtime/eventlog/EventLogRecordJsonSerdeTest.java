@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -193,6 +194,140 @@ class EventLogRecordJsonSerdeTest {
         InputEvent deserializedEvent = (InputEvent) deserializedRecord.getEvent();
         InputEvent originalInputEvent = (InputEvent) originalRecord.getEvent();
         assertEquals(originalInputEvent.getInput(), deserializedEvent.getInput());
+    }
+
+    @Test
+    void testSerializeLogLevel() throws Exception {
+        // Given
+        InputEvent inputEvent = new InputEvent("test");
+        EventContext context = new EventContext(inputEvent);
+        EventLogRecord record = new EventLogRecord(context, inputEvent, EventLogLevel.VERBOSE);
+
+        // When
+        String json = objectMapper.writeValueAsString(record);
+
+        // Then
+        JsonNode jsonNode = objectMapper.readTree(json);
+        assertTrue(jsonNode.has("logLevel"));
+        assertEquals("VERBOSE", jsonNode.get("logLevel").asText());
+    }
+
+    @Test
+    void testDeserializeLogLevel() throws Exception {
+        // Given
+        InputEvent inputEvent = new InputEvent("test");
+        EventContext context = new EventContext(inputEvent);
+        EventLogRecord record = new EventLogRecord(context, inputEvent, EventLogLevel.VERBOSE);
+        String json = objectMapper.writeValueAsString(record);
+
+        // When
+        EventLogRecord deserialized = objectMapper.readValue(json, EventLogRecord.class);
+
+        // Then
+        assertEquals(EventLogLevel.VERBOSE, deserialized.getLogLevel());
+    }
+
+    @Test
+    void testDeserializeMissingLogLevelDefaultsToStandard() throws Exception {
+        // Given - JSON without logLevel field (backward compatibility)
+        String json =
+                "{\"timestamp\":\"2024-01-15T10:30:00Z\","
+                        + "\"event\":{\"eventType\":\"org.apache.flink.agents.api.InputEvent\","
+                        + "\"id\":\"00000000-0000-0000-0000-000000000000\","
+                        + "\"attributes\":{},\"input\":\"test\"}}";
+
+        // When
+        EventLogRecord deserialized = objectMapper.readValue(json, EventLogRecord.class);
+
+        // Then - should default to STANDARD
+        assertEquals(EventLogLevel.STANDARD, deserialized.getLogLevel());
+        assertInstanceOf(InputEvent.class, deserialized.getEvent());
+    }
+
+    @Test
+    void testRoundTripWithLogLevel() throws Exception {
+        // Given
+        InputEvent inputEvent = new InputEvent("round trip");
+        EventContext context = new EventContext(inputEvent);
+        EventLogRecord original = new EventLogRecord(context, inputEvent, EventLogLevel.VERBOSE);
+
+        // When
+        String json = objectMapper.writeValueAsString(original);
+        EventLogRecord deserialized = objectMapper.readValue(json, EventLogRecord.class);
+
+        // Then
+        assertEquals(original.getLogLevel(), deserialized.getLogLevel());
+        assertEquals(
+                original.getContext().getEventType(), deserialized.getContext().getEventType());
+        assertInstanceOf(InputEvent.class, deserialized.getEvent());
+    }
+
+    @Test
+    void testDefaultLogLevelIsStandard() throws Exception {
+        // Given - record created with 2-arg constructor
+        InputEvent inputEvent = new InputEvent("test");
+        EventContext context = new EventContext(inputEvent);
+        EventLogRecord record = new EventLogRecord(context, inputEvent);
+
+        // When
+        String json = objectMapper.writeValueAsString(record);
+        JsonNode jsonNode = objectMapper.readTree(json);
+
+        // Then
+        assertEquals("STANDARD", jsonNode.get("logLevel").asText());
+    }
+
+    @Test
+    void testTopLevelEventType() throws Exception {
+        // Given
+        InputEvent inputEvent = new InputEvent("test");
+        EventContext context = new EventContext(inputEvent);
+        EventLogRecord record = new EventLogRecord(context, inputEvent);
+
+        // When
+        String json = objectMapper.writeValueAsString(record);
+        JsonNode jsonNode = objectMapper.readTree(json);
+
+        // Then - eventType should appear both at top level and in event object
+        assertTrue(jsonNode.has("eventType"), "Should have top-level eventType");
+        assertEquals("org.apache.flink.agents.api.InputEvent", jsonNode.get("eventType").asText());
+        assertEquals(
+                "org.apache.flink.agents.api.InputEvent",
+                jsonNode.get("event").get("eventType").asText());
+    }
+
+    @Test
+    void testStandardTruncatesLongStrings() throws Exception {
+        // Given - STANDARD level with maxFieldLength
+        String longData = "x".repeat(200);
+        InputEvent inputEvent = new InputEvent(longData);
+        EventContext context = new EventContext(inputEvent);
+        EventLogRecord record = new EventLogRecord(context, inputEvent, EventLogLevel.STANDARD, 50);
+
+        // When
+        String json = objectMapper.writeValueAsString(record);
+        JsonNode jsonNode = objectMapper.readTree(json);
+
+        // Then - input field should be truncated
+        String inputField = jsonNode.get("event").get("input").asText();
+        assertTrue(inputField.contains("... [truncated, 200 chars total]"));
+        assertTrue(inputField.startsWith("x".repeat(50)));
+    }
+
+    @Test
+    void testVerboseDoesNotTruncate() throws Exception {
+        // Given - VERBOSE level with maxFieldLength
+        String longData = "y".repeat(200);
+        InputEvent inputEvent = new InputEvent(longData);
+        EventContext context = new EventContext(inputEvent);
+        EventLogRecord record = new EventLogRecord(context, inputEvent, EventLogLevel.VERBOSE, 50);
+
+        // When
+        String json = objectMapper.writeValueAsString(record);
+        JsonNode jsonNode = objectMapper.readTree(json);
+
+        // Then - input field should NOT be truncated
+        assertEquals(longData, jsonNode.get("event").get("input").asText());
     }
 
     /** Custom test event class for testing polymorphic serialization. */

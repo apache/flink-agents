@@ -26,6 +26,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
+import org.apache.flink.agents.api.logger.EventLogLevel;
 
 import java.io.IOException;
 
@@ -58,17 +59,34 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
             throw new IOException("Missing 'timestamp' field in EventLogRecord JSON");
         }
 
-        // Deserialize event using eventType from event node
+        // Deserialize event using eventType - prefer top-level, fall back to nested
         JsonNode eventNode = rootNode.get("event");
         if (eventNode == null) {
             throw new IOException("Missing 'event' field in EventLogRecord JSON");
         }
-        String eventType = getEventType(eventNode);
+        String eventType;
+        JsonNode topLevelEventType = rootNode.get("eventType");
+        if (topLevelEventType != null && topLevelEventType.isTextual()) {
+            eventType = topLevelEventType.asText();
+        } else {
+            eventType = getEventType(eventNode);
+        }
+
+        // Deserialize logLevel (backward compatible: defaults to STANDARD if missing)
+        EventLogLevel logLevel = EventLogLevel.STANDARD;
+        JsonNode logLevelNode = rootNode.get("logLevel");
+        if (logLevelNode != null && logLevelNode.isTextual()) {
+            try {
+                logLevel = EventLogLevel.valueOf(logLevelNode.asText().toUpperCase());
+            } catch (IllegalArgumentException ignored) {
+                // Fall back to STANDARD for unrecognized values
+            }
+        }
 
         Event event = deserializeEvent(mapper, stripEventType(eventNode), eventType);
         EventContext eventContext = new EventContext(eventType, timestampNode.asText());
 
-        return new EventLogRecord(eventContext, event);
+        return new EventLogRecord(eventContext, event, logLevel);
     }
 
     /**

@@ -23,8 +23,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 
 import java.io.IOException;
@@ -38,8 +41,9 @@ import java.util.Map;
  * for structured logging. The serialization includes:
  *
  * <ul>
- *   <li>Top-level timestamp
+ *   <li>Top-level timestamp, logLevel, and eventType
  *   <li>Event data serialized as a standard JSON object
+ *   <li>String field truncation at STANDARD level when maxFieldLength is configured
  * </ul>
  *
  * <p>The resulting JSON structure is:
@@ -47,6 +51,8 @@ import java.util.Map;
  * <pre>{@code
  * {
  *   "timestamp": "2024-01-15T10:30:00Z",
+ *   "logLevel": "STANDARD",
+ *   "eventType": "org.apache.flink.agents.api.InputEvent",
  *   "event": {
  *     "eventType": "org.apache.flink.agents.api.InputEvent"
  *     // Event-specific fields serialized normally
@@ -67,6 +73,8 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
 
         gen.writeStartObject();
         gen.writeStringField("timestamp", record.getContext().getTimestamp());
+        gen.writeStringField("logLevel", record.getLogLevel().name());
+        gen.writeStringField("eventType", record.getContext().getEventType());
 
         gen.writeFieldName("event");
         JsonNode eventNode = buildEventNode(record.getEvent(), mapper);
@@ -75,6 +83,12 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
                     "Event log payload must be a JSON object, but was: " + eventNode.getNodeType());
         }
         eventNode = reorderEventFields((ObjectNode) eventNode, record.getEvent(), mapper);
+
+        // Apply truncation for STANDARD level
+        if (record.getLogLevel() == EventLogLevel.STANDARD && record.getMaxFieldLength() > 0) {
+            eventNode = truncateStringFields((ObjectNode) eventNode, record.getMaxFieldLength());
+        }
+
         gen.writeTree(eventNode);
         gen.writeEndObject();
     }
@@ -158,5 +172,61 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
         }
 
         return ordered;
+    }
+
+    /**
+     * Truncates string fields in the JSON node that exceed the max length.
+     *
+     * <p>Traverses the object recursively. Text values longer than maxLength are replaced with a
+     * truncated version plus a marker indicating the original length.
+     */
+    private ObjectNode truncateStringFields(ObjectNode node, int maxLength) {
+        ObjectNode result = node.deepCopy();
+        truncateRecursive(result, maxLength);
+        return result;
+    }
+
+    private void truncateRecursive(ObjectNode node, int maxLength) {
+        Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            JsonNode value = entry.getValue();
+            if (value.isTextual()) {
+                String text = value.asText();
+                if (text.length() > maxLength) {
+                    String truncated =
+                            text.substring(0, maxLength)
+                                    + "... [truncated, "
+                                    + text.length()
+                                    + " chars total]";
+                    node.set(entry.getKey(), new TextNode(truncated));
+                }
+            } else if (value.isObject()) {
+                truncateRecursive((ObjectNode) value, maxLength);
+            } else if (value.isArray()) {
+                truncateArrayRecursive((ArrayNode) value, maxLength);
+            }
+        }
+    }
+
+    private void truncateArrayRecursive(ArrayNode array, int maxLength) {
+        for (int i = 0; i < array.size(); i++) {
+            JsonNode element = array.get(i);
+            if (element.isTextual()) {
+                String text = element.asText();
+                if (text.length() > maxLength) {
+                    String truncated =
+                            text.substring(0, maxLength)
+                                    + "... [truncated, "
+                                    + text.length()
+                                    + " chars total]";
+                    array.set(i, new TextNode(truncated));
+                }
+            } else if (element.isObject()) {
+                truncateRecursive((ObjectNode) element, maxLength);
+            } else if (element.isArray()) {
+                truncateArrayRecursive((ArrayNode) element, maxLength);
+            }
+        }
     }
 }

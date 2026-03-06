@@ -21,10 +21,12 @@ package org.apache.flink.agents.runtime.eventlog;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.EventFilter;
+import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;
@@ -32,6 +34,7 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
 
 /**
  * A file-based event logger that logs events to files with structured names in a flat directory.
@@ -75,6 +78,9 @@ import java.nio.file.Paths;
  * </pre>
  */
 public class FileEventLogger implements EventLogger {
+
+    private static final Logger LOG = LoggerFactory.getLogger(FileEventLogger.class);
+
     public static final String BASE_LOG_DIR_PROPERTY_KEY = "baseLogDir";
     // The default base log directory if not specified in the configuration
     private static final String DEFAULT_BASE_LOG_DIR =
@@ -83,12 +89,10 @@ public class FileEventLogger implements EventLogger {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final EventLoggerConfig config;
-    private final EventFilter eventFilter;
     private PrintWriter writer;
 
     public FileEventLogger(EventLoggerConfig config) {
         this.config = config;
-        this.eventFilter = config.getEventFilter();
     }
 
     @Override
@@ -101,6 +105,9 @@ public class FileEventLogger implements EventLogger {
         }
         // Create writer in append mode
         writer = new PrintWriter(new BufferedWriter(new FileWriter(logFilePath, true)));
+
+        // Warn about unrecognized event type names in per-type log level config
+        validateEventTypeNames();
     }
 
     private String generateSubTaskLogFilePath(EventLoggerOpenParams params) {
@@ -120,18 +127,50 @@ public class FileEventLogger implements EventLogger {
         return Paths.get(baseLogDir, fileName).toString();
     }
 
+    private void validateEventTypeNames() {
+        Map<String, EventLogLevel> levels = config.getEventLogLevels();
+        if (levels.isEmpty()) {
+            return;
+        }
+        String eventPackage = "org.apache.flink.agents.api";
+        for (String typeName : levels.keySet()) {
+            boolean found = false;
+            // Try fully qualified name first, then common packages
+            String[] candidates = {
+                typeName, eventPackage + "." + typeName, eventPackage + ".event." + typeName,
+            };
+            for (String candidate : candidates) {
+                try {
+                    Class.forName(candidate, false, Thread.currentThread().getContextClassLoader());
+                    found = true;
+                    break;
+                } catch (ClassNotFoundException ignored) {
+                    // Try next candidate
+                }
+            }
+            if (!found) {
+                LOG.warn(
+                        "Configured event log level for '{}' but no matching event class was found."
+                                + " Check for typos in the eventLogLevels configuration.",
+                        typeName);
+            }
+        }
+    }
+
     @Override
     public void append(EventContext context, Event event) throws Exception {
         if (writer == null) {
             throw new IllegalStateException("FileEventLogger not initialized. Call open() first.");
         }
 
-        // Apply event filter
-        if (!eventFilter.accept(event, context)) {
-            return; // Skip this event
+        // Check log level and event filter (single lookup)
+        EventLogLevel effectiveLevel = config.getEffectiveLogLevel(event);
+        if (!effectiveLevel.isEnabled() || !config.getEventFilter().accept(event, context)) {
+            return;
         }
 
-        EventLogRecord record = new EventLogRecord(context, event);
+        EventLogRecord record =
+                new EventLogRecord(context, event, effectiveLevel, config.getMaxFieldLength());
         // All events should be JSON serializable, since we check it when sending events to context:
         // RunnerContextImpl.sendEvent
         writer.println(MAPPER.writeValueAsString(record));
