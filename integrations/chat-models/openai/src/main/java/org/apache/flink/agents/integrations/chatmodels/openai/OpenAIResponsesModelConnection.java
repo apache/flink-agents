@@ -48,12 +48,12 @@ import java.util.function.BiFunction;
 /**
  * A <b>dedicated</b> OpenAI chat model integration using the Responses API.
  *
- * <p>Unlike {@link OpenAIChatModelConnection} which uses the Chat Completions API and works with
+ * <p>Unlike {@link OpenAICompletionsConnection} which uses the Chat Completions API and works with
  * any OpenAI-compatible provider (DeepSeek, DashScope, etc.), this implementation uses OpenAI's
  * Responses API which is specific to OpenAI.
  *
  * <p>For OpenAI-compatible providers that only support the Chat Completions API, use {@link
- * OpenAIChatModelConnection} instead.
+ * OpenAICompletionsConnection} instead.
  *
  * <p>Supported connection parameters:
  *

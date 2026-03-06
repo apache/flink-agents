@@ -34,7 +34,7 @@ import java.util.function.BiFunction;
  *
  * <p>Responsible for providing per-chat configuration such as model, temperature, tool bindings,
  * and additional OpenAI parameters. The setup delegates execution to {@link
- * OpenAIChatModelConnection}.
+ * OpenAICompletionsConnection}.
  *
  * <p>Example usage:
  *
@@ -42,7 +42,7 @@ import java.util.function.BiFunction;
  * public class MyAgent extends Agent {
  *   @ChatModelSetup
  *   public static ResourceDesc openAI() {
- *     return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelSetup.class.getName())
+ *     return ResourceDescriptor.Builder.newBuilder(OpenAICompletionsSetup.class.getName())
  *             .addInitialArgument("connection", "myOpenAIConnection")
  *             .addInitialArgument("model", "gpt-4o-mini")
  *             .addInitialArgument("temperature", 0.3d)
@@ -58,7 +58,7 @@ import java.util.function.BiFunction;
  * }
  * }</pre>
  */
-public class OpenAIChatModelSetup extends BaseChatModelSetup {
+public class OpenAICompletionsSetup extends BaseChatModelSetup {
 
     private static final String DEFAULT_MODEL = "gpt-3.5-turbo";
     private static final double DEFAULT_TEMPERATURE = 0.1d;
@@ -74,7 +74,7 @@ public class OpenAIChatModelSetup extends BaseChatModelSetup {
     private final String reasoningEffort;
     private final Map<String, Object> additionalArguments;
 
-    public OpenAIChatModelSetup(
+    public OpenAICompletionsSetup(
             ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
         this.temperature =
@@ -126,7 +126,7 @@ public class OpenAIChatModelSetup extends BaseChatModelSetup {
         }
     }
 
-    public OpenAIChatModelSetup(
+    public OpenAICompletionsSetup(
             String model,
             double temperature,
             Integer maxTokens,
@@ -188,7 +188,7 @@ public class OpenAIChatModelSetup extends BaseChatModelSetup {
             Map<String, Object> additionalArguments,
             List<String> tools) {
         ResourceDescriptor.Builder builder =
-                ResourceDescriptor.Builder.newBuilder(OpenAIChatModelSetup.class.getName())
+                ResourceDescriptor.Builder.newBuilder(OpenAICompletionsSetup.class.getName())
                         .addInitialArgument("model", model)
                         .addInitialArgument("temperature", temperature);
 

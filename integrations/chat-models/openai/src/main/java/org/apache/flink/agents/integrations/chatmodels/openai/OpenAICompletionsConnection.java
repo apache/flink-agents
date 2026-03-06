@@ -80,7 +80,7 @@ import java.util.stream.Collectors;
  * public class MyAgent extends Agent {
  *   @ChatModelConnection
  *   public static ResourceDesc openAI() {
- *     return ResourceDescriptor.Builder.newBuilder(OpenAIChatModelConnection.class.getName())
+ *     return ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
  *             .addInitialArgument("api_key", System.getenv("OPENAI_API_KEY"))
  *             .addInitialArgument("api_base_url", "https://api.openai.com/v1")
  *             .addInitialArgument("timeout", 120)
@@ -91,7 +91,7 @@ import java.util.stream.Collectors;
  * }
  * }</pre>
  */
-public class OpenAIChatModelConnection extends BaseChatModelConnection {
+public class OpenAICompletionsConnection extends BaseChatModelConnection {
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
@@ -99,7 +99,7 @@ public class OpenAIChatModelConnection extends BaseChatModelConnection {
     private final OpenAIClient client;
     private final String defaultModel;
 
-    public OpenAIChatModelConnection(
+    public OpenAICompletionsConnection(
             ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
 

@@ -67,9 +67,9 @@ public final class ResourceName {
 
         // OpenAI
         public static final String OPENAI_COMPLETIONS_CONNECTION =
-                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelConnection";
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAICompletionsConnection";
         public static final String OPENAI_COMPLETIONS_SETUP =
-                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelSetup";
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAICompletionsSetup";
 
         // OpenAI Responses API
         public static final String OPENAI_RESPONSES_CONNECTION =

@@ -272,8 +272,8 @@ class ResourceName:
             OLLAMA_SETUP = "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup"
 
             # OpenAI Completions
-            OPENAI_COMPLETIONS_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelConnection"
-            OPENAI_COMPLETIONS_SETUP = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelSetup"
+            OPENAI_COMPLETIONS_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAICompletionsConnection"
+            OPENAI_COMPLETIONS_SETUP = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAICompletionsSetup"
 
             OPENAI_RESPONSES_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIResponsesModelConnection"
             OPENAI_RESPONSES_SETUP = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIResponsesModelSetup"
