@@ -81,8 +81,14 @@ public class ChatModelIntegrationAgent extends Agent {
                     .build();
         } else if (provider.equals("OPENAI")) {
             String apiKey = System.getenv().get("OPENAI_API_KEY");
-            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_CONNECTION)
+            return ResourceDescriptor.Builder.newBuilder(
+                            ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION)
                     .addInitialArgument("api_key", apiKey)
+                    .build();
+        } else if (provider.equals("OPENAI_RESPONSES")) {
+            return ResourceDescriptor.Builder.newBuilder(
+                            ResourceName.ChatModel.OPENAI_RESPONSES_CONNECTION)
+                    .addInitialArgument("api_key", System.getenv().get("OPENAI_API_KEY"))
                     .build();
         } else if (provider.equals("ANTHROPIC")) {
             String apiKey = System.getenv().get("ANTHROPIC_API_KEY");
@@ -126,7 +132,17 @@ public class ChatModelIntegrationAgent extends Agent {
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
                     .build();
         } else if (provider.equals("OPENAI")) {
-            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_SETUP)
+            return ResourceDescriptor.Builder.newBuilder(
+                            ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP)
+                    .addInitialArgument("connection", "chatModelConnection")
+                    .addInitialArgument("model", "gpt-4o-mini")
+                    .addInitialArgument(
+                            "tools",
+                            List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+                    .build();
+        } else if (provider.equals("OPENAI_RESPONSES")) {
+            return ResourceDescriptor.Builder.newBuilder(
+                            ResourceName.ChatModel.OPENAI_RESPONSES_SETUP)
                     .addInitialArgument("connection", "chatModelConnection")
                     .addInitialArgument("model", "gpt-4o-mini")
                     .addInitialArgument(

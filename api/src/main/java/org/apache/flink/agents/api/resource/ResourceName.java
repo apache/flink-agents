@@ -66,10 +66,16 @@ public final class ResourceName {
                 "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup";
 
         // OpenAI
-        public static final String OPENAI_CONNECTION =
-                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelConnection";
-        public static final String OPENAI_SETUP =
-                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelSetup";
+        public static final String OPENAI_COMPLETIONS_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAICompletionsConnection";
+        public static final String OPENAI_COMPLETIONS_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAICompletionsSetup";
+
+        // OpenAI Responses API
+        public static final String OPENAI_RESPONSES_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIResponsesModelConnection";
+        public static final String OPENAI_RESPONSES_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIResponsesModelSetup";
 
         // Python Wrapper
         public static final String PYTHON_WRAPPER_CONNECTION =
@@ -99,9 +105,9 @@ public final class ResourceName {
                     "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup";
 
             // OpenAI
-            public static final String OPENAI_CONNECTION =
+            public static final String OPENAI_COMPLETIONS_CONNECTION =
                     "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelConnection";
-            public static final String OPENAI_SETUP =
+            public static final String OPENAI_COMPLETIONS_SETUP =
                     "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup";
 
             // Tongyi
