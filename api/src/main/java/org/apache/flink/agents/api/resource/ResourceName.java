@@ -55,9 +55,9 @@ public final class ResourceName {
 
         // Azure
         public static final String AZURE_CONNECTION =
-                "org.apache.flink.agents.integrations.chatmodels.anthropic.AzureAIChatModelConnection";
+                "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelConnection";
         public static final String AZURE_SETUP =
-                "org.apache.flink.agents.integrations.chatmodels.anthropic.AzureAIChatModelSetup";
+                "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup";
 
         // Ollama
         public static final String OLLAMA_CONNECTION =
