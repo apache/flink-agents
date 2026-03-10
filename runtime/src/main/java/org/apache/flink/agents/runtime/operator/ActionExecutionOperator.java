@@ -33,7 +33,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
-import org.apache.flink.agents.plan.PythonResourceBridge;
+import org.apache.flink.agents.plan.PythonMCPResourceDiscovery;
 import org.apache.flink.agents.plan.ResourceCache;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
@@ -691,7 +691,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         pythonInterpreter,
                         javaResourceAdapter);
         pythonResourceAdapter.open();
-        PythonResourceBridge.discoverPythonMCPResources(
+        PythonMCPResourceDiscovery.discoverPythonMCPResources(
                 agentPlan.getResourceProviders(), pythonResourceAdapter, resourceCache);
     }
 
@@ -709,6 +709,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     @Override
     public void close() throws Exception {
+        // Must close before pythonInterpreter since cached resources may hold Python references.
+        if (resourceCache != null) {
+            resourceCache.close();
+        }
         if (runnerContext != null) {
             try {
                 runnerContext.close();
@@ -730,9 +734,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
         if (actionStateStore != null) {
             actionStateStore.close();
-        }
-        if (resourceCache != null) {
-            resourceCache.close();
         }
         if (continuationActionExecutor != null) {
             continuationActionExecutor.close();

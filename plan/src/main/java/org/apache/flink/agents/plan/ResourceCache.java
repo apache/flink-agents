@@ -43,7 +43,7 @@ public class ResourceCache implements AutoCloseable {
 
     private final Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
     private final Map<ResourceType, Map<String, Resource>> cache = new ConcurrentHashMap<>();
-    private PythonResourceAdapter pythonResourceAdapter;
+    private volatile PythonResourceAdapter pythonResourceAdapter;
 
     public ResourceCache(Map<ResourceType, Map<String, ResourceProvider>> resourceProviders) {
         // Defensive copy: the cache must not be affected by later mutations to the source map.
@@ -66,7 +66,7 @@ public class ResourceCache implements AutoCloseable {
      * @return the resource instance
      * @throws Exception if the resource cannot be found or created
      */
-    public Resource getResource(String name, ResourceType type) throws Exception {
+    public synchronized Resource getResource(String name, ResourceType type) throws Exception {
         Map<String, Resource> typed = cache.get(type);
         if (typed != null) {
             Resource cached = typed.get(name);

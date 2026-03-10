@@ -377,13 +377,9 @@ public class AgentPlanTest {
         AgentPlan agentPlan = new AgentPlan(agent);
         ResourceCache cache = new ResourceCache(agentPlan.getResourceProviders());
 
-        // Test getting non-existent resource throws exception
-        try {
-            cache.getResource("non-existent", ResourceType.CHAT_MODEL);
-            assertThat(false).as("Should have thrown IllegalArgumentException").isTrue();
-        } catch (IllegalArgumentException e) {
-            assertThat(e.getMessage()).contains("Resource not found: non-existent");
-        }
+        assertThatThrownBy(() -> cache.getResource("non-existent", ResourceType.CHAT_MODEL))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Resource not found: non-existent");
     }
 
     @Test
@@ -469,7 +465,7 @@ public class AgentPlanTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("PythonResourceAdapter is not set");
 
-        PythonResourceBridge.discoverPythonMCPResources(
+        PythonMCPResourceDiscovery.discoverPythonMCPResources(
                 agentPlan.getResourceProviders(), new TestPythonResourceAdapter(), cache);
         Resource pythonChatModel = cache.getResource("pythonChatModel", ResourceType.CHAT_MODEL);
         assertThat(pythonChatModel).isNotNull();

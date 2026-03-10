@@ -37,7 +37,7 @@ import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
  *
  * <p>Called once during operator initialization after the Python interpreter is available.
  */
-public class PythonResourceBridge {
+public class PythonMCPResourceDiscovery {
 
     /**
      * Initializes Python MCP servers from the resource providers, extracts their tools and prompts,
