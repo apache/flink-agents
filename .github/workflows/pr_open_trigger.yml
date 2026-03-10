@@ -15,19 +15,17 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Add 'priority/major' label to any changes within the entire repository
-priority/major:
-  - changed-files:
-      - any-glob-to-any-file: '**'
+name: PR-Open-Trigger
+on:
+  pull_request:
+    types: [opened]
+    branches:
+      - main
+      - release-*
 
-# Add 'fixVersion/0.3.0' label to any PR that is opened against the `main` branch
-fixVersion/0.3.0:
-  - base-branch: 'main'
-
-# Add 'fixVersion/0.2.1' label to any PR that is opened against the `release-0.2` branch
-fixVersion/0.2.1:
-  - base-branch: 'release-0.2'
-
-# Add 'fixVersion/0.1.1' label to any PR that is opened against the `release-0.1` branch
-fixVersion/0.1.1:
-  - base-branch: 'release-0.1'
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Do nothing. Just triggers corresponding workflow."
+        run: echo
