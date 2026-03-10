@@ -15,19 +15,17 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "Pull Request Labeler"
-
+name: PR-Edit-Trigger
 on:
-  pull_request_target:
-    types:
-      - opened
+  pull_request:
+    types: [edited]
+    branches:
+      - main
+      - release-*
+
 jobs:
-  triage:
-    if: (github.repository == 'apache/flink-agents')
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
+  label:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/labeler@v5
+      - name: "Do nothing. Just triggers corresponding workflow."
+        run: echo
