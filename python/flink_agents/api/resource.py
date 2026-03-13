@@ -264,8 +264,8 @@ class ResourceName:
             ANTHROPIC_SETUP = "org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelSetup"
 
             # Azure
-            AZURE_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.anthropic.AzureAIChatModelConnection"
-            AZURE_SETUP = "org.apache.flink.agents.integrations.chatmodels.anthropic.AzureAIChatModelSetup"
+            AZURE_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelConnection"
+            AZURE_SETUP = "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup"
 
             # Ollama
             OLLAMA_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection"
