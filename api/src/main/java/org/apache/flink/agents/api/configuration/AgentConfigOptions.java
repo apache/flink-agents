@@ -24,6 +24,13 @@ public class AgentConfigOptions {
     public static final ConfigOption<String> BASE_LOG_DIR =
             new ConfigOption<>("baseLogDir", String.class, null);
 
+    /**
+     * The config parameter determines whether to enable pretty-printed JSON format for FileEvent
+     * logs.
+     */
+    public static final ConfigOption<Boolean> PRETTY_PRINT =
+            new ConfigOption<>("prettyPrint", Boolean.class, false);
+
     /** The config parameter specifies the backend for action state store. */
     public static final ConfigOption<String> ACTION_STATE_STORE_BACKEND =
             new ConfigOption<>("actionStateStoreBackend", String.class, null);
