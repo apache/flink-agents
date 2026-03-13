@@ -264,9 +264,9 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         msg = "RemoteExecutionEnvironment does not support from_list."
         raise NotImplementedError(msg)
 
-    def execute(self) -> None:
+    def execute(self, job_name: str | None = None) -> None:
         """Execute agent."""
-        self.__env.execute()
+        self.__env.execute(job_name=job_name)
 
 
     def __load_config_from_flink_conf_dir(self) -> None:

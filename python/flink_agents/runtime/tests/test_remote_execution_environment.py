@@ -173,6 +173,32 @@ def test_remote_execution_environment_prioritizes_legacy_config() -> None:
                 os.environ["FLINK_CONF_DIR"] = original_env
 
 
+def test_execute_with_job_name() -> None:
+    """Test that execute() passes job_name to the underlying StreamExecutionEnvironment."""
+    mock_stream_env = MagicMock()
+
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+    ):
+        remote_env = RemoteExecutionEnvironment(env=mock_stream_env)
+        remote_env.execute(job_name="my-test-job")
+
+    mock_stream_env.execute.assert_called_once_with(job_name="my-test-job")
+
+
+def test_execute_without_job_name() -> None:
+    """Test that execute() passes None to the underlying StreamExecutionEnvironment when job_name is omitted."""
+    mock_stream_env = MagicMock()
+
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+    ):
+        remote_env = RemoteExecutionEnvironment(env=mock_stream_env)
+        remote_env.execute()
+
+    mock_stream_env.execute.assert_called_once_with(job_name=None)
+
+
 def _verify_config(config: AgentConfiguration) -> None:
     assert config.get_str("database.host") == "localhost"
     assert config.get_int("database.port") == 5432

@@ -119,7 +119,7 @@ class LocalExecutionEnvironment(AgentsExecutionEnvironment):
         self.__runner = runner
         self.__output = output
 
-    def execute(self) -> None:
+    def execute(self, job_name: str | None = None) -> None:
         """Execute agent individually."""
         if self.__executed:
             err_msg = (
