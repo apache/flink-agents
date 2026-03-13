@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.EventFilter;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.api.common.JobID;
@@ -492,6 +493,38 @@ class FileEventLoggerTest {
 
         EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
         assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
+    }
+
+    @Test
+    void testPrettyPrintOutputsFormattedJson() throws Exception {
+        // Given - config with prettyPrint enabled
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
+                        .property(AgentConfigOptions.PRETTY_PRINT.getKey(), true)
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("test input");
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.flush();
+
+        // Then - output should be valid JSON spanning multiple lines (pretty-printed)
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        // Pretty-printed JSON for a single event record spans multiple lines
+        assertTrue(lines.size() > 1, "Pretty-printed JSON should span multiple lines");
+        // Each line after the first should be indented
+        assertTrue(
+                lines.subList(1, lines.size()).stream().anyMatch(line -> line.startsWith("  ")),
+                "Pretty-printed JSON lines should be indented");
+        // The entire content should still be valid JSON
+        String content = String.join("\n", lines);
+        assertDoesNotThrow(
+                () -> objectMapper.readValue(content, EventLogRecord.class),
+                "Pretty-printed output should be valid JSON deserializable to EventLogRecord");
     }
 
     private Path getExpectedLogFilePath() {
