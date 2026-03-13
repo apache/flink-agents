@@ -1,0 +1,36 @@
+{
+  "maven_base_url": "https://repo1.maven.org/maven2",
+  "group_id": "org.apache.flink",
+  "version": "0.3-SNAPSHOT",
+  "jars": [
+    {
+      "artifact_id": "flink-agents-dist-common",
+      "dest": "flink_agents/lib/common/",
+      "sha256": "PLACEHOLDER"
+    },
+    {
+      "artifact_id": "flink-agents-dist-flink-1.20",
+      "classifier": "thin",
+      "dest": "flink_agents/lib/flink-1.20/",
+      "sha256": "PLACEHOLDER"
+    },
+    {
+      "artifact_id": "flink-agents-dist-flink-2.0",
+      "classifier": "thin",
+      "dest": "flink_agents/lib/flink-2.0/",
+      "sha256": "PLACEHOLDER"
+    },
+    {
+      "artifact_id": "flink-agents-dist-flink-2.1",
+      "classifier": "thin",
+      "dest": "flink_agents/lib/flink-2.1/",
+      "sha256": "PLACEHOLDER"
+    },
+    {
+      "artifact_id": "flink-agents-dist-flink-2.2",
+      "classifier": "thin",
+      "dest": "flink_agents/lib/flink-2.2/",
+      "sha256": "PLACEHOLDER"
+    }
+  ]
+}

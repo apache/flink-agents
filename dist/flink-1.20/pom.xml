@@ -158,8 +158,8 @@ under the License.
                         </goals>
                         <configuration>
                             <shadeTestJar>false</shadeTestJar>
-                            <shadedArtifactAttached>false</shadedArtifactAttached>
-                            <finalName>${project.artifactId}-${project.version}-thin</finalName>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>thin</shadedClassifierName>
                             <!-- Only include flink-agents artifacts -->
                             <artifactSet>
                                 <includes>
