@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.ResourceCache;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
@@ -38,9 +39,10 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             FlinkAgentsMetricGroupImpl agentMetricGroup,
             Runnable mailboxThreadChecker,
             AgentPlan agentPlan,
+            ResourceCache resourceCache,
             String jobIdentifier,
             ContinuationActionExecutor continuationExecutor) {
-        super(agentMetricGroup, mailboxThreadChecker, agentPlan, jobIdentifier);
+        super(agentMetricGroup, mailboxThreadChecker, agentPlan, resourceCache, jobIdentifier);
         this.continuationExecutor = continuationExecutor;
     }
 

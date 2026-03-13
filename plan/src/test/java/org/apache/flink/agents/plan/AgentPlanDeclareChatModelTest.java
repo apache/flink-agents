@@ -50,6 +50,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class AgentPlanDeclareChatModelTest {
 
     private AgentPlan agentPlan;
+    private ResourceCache resourceCache;
 
     public static class MockChatModel extends BaseChatModelSetup {
         public MockChatModel(
@@ -91,6 +92,7 @@ class AgentPlanDeclareChatModelTest {
     @BeforeEach
     void setup() throws Exception {
         agentPlan = new AgentPlan(new ChatAgent());
+        resourceCache = new ResourceCache(agentPlan.getResourceProviders());
     }
 
     @Test
@@ -108,7 +110,7 @@ class AgentPlanDeclareChatModelTest {
     void retrieveAndChat() throws Exception {
         BaseChatModelSetup model =
                 (BaseChatModelSetup)
-                        agentPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                        resourceCache.getResource("testChatModel", ResourceType.CHAT_MODEL);
         assertNotNull(model);
 
         Prompt prompt = Prompt.fromText("Hello world");
@@ -124,9 +126,11 @@ class AgentPlanDeclareChatModelTest {
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(agentPlan);
         AgentPlan restored = mapper.readValue(json, AgentPlan.class);
+        ResourceCache restoredCache = new ResourceCache(restored.getResourceProviders());
 
         BaseChatModelSetup model =
-                (BaseChatModelSetup) restored.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                (BaseChatModelSetup)
+                        restoredCache.getResource("testChatModel", ResourceType.CHAT_MODEL);
         ChatMessage reply =
                 model.chat(Prompt.fromText("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
         assertEquals("ok:Hi", reply.getContent());
@@ -146,12 +150,13 @@ class AgentPlanDeclareChatModelTest {
                         .addInitialArgument("tools", List.of("calculate"))
                         .build());
         AgentPlan actualPlan = new AgentPlan(agent);
+        ResourceCache actualCache = new ResourceCache(actualPlan.getResourceProviders());
         BaseChatModelSetup actualChatModel =
                 (BaseChatModelSetup)
-                        actualPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                        actualCache.getResource("testChatModel", ResourceType.CHAT_MODEL);
         BaseChatModelSetup expectedChatModel =
                 (BaseChatModelSetup)
-                        agentPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                        resourceCache.getResource("testChatModel", ResourceType.CHAT_MODEL);
         Assertions.assertEquals(expectedChatModel.getClass(), actualChatModel.getClass());
         Assertions.assertEquals(expectedChatModel.getConnection(), actualChatModel.getConnection());
         Assertions.assertEquals(expectedChatModel.getModel(), actualChatModel.getModel());

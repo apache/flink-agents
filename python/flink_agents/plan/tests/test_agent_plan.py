@@ -45,6 +45,7 @@ from flink_agents.api.vector_stores.vector_store import (
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.resource_cache import ResourceCache
 
 
 class AgentForTest(Agent):  # noqa D101
@@ -255,7 +256,8 @@ def test_agent_plan_deserialize(agent_plan: AgentPlan) -> None:  # noqa: D103
 
 def test_get_resource() -> None:  # noqa: D103
     agent_plan = AgentPlan.from_agent(MyAgent(), AgentConfiguration())
-    mock = agent_plan.get_resource("mock", ResourceType.CHAT_MODEL)
+    cache = ResourceCache(agent_plan.resource_providers, agent_plan.config)
+    mock = cache.get_resource("mock", ResourceType.CHAT_MODEL)
     assert (
         mock.chat(ChatMessage(role=MessageRole.USER, content="")).content
         == "8.8.8.8 mock resource just for testing."

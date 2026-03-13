@@ -28,7 +28,6 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.plan.actions.Action;
@@ -60,7 +59,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
@@ -86,17 +84,11 @@ public class AgentPlan implements Serializable {
 
     private AgentConfiguration config;
 
-    private transient PythonResourceAdapter pythonResourceAdapter;
-
-    /** Cache for instantiated resources. */
-    private transient Map<ResourceType, Map<String, Resource>> resourceCache;
-
     public AgentPlan(Map<String, Action> actions, Map<String, List<Action>> actionsByEvent) {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = new HashMap<>();
         this.config = new AgentConfiguration();
-        this.resourceCache = new ConcurrentHashMap<>();
     }
 
     public AgentPlan(
@@ -106,7 +98,6 @@ public class AgentPlan implements Serializable {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = resourceProviders;
-        this.resourceCache = new ConcurrentHashMap<>();
         this.config = new AgentConfiguration();
     }
 
@@ -118,7 +109,6 @@ public class AgentPlan implements Serializable {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = resourceProviders;
-        this.resourceCache = new ConcurrentHashMap<>();
         this.config = config;
     }
 
@@ -138,62 +128,6 @@ public class AgentPlan implements Serializable {
         extractActionsFromAgent(agent);
         extractResourceProvidersFromAgent(agent);
         this.config = config;
-    }
-
-    public void setPythonResourceAdapter(PythonResourceAdapter adapter) throws Exception {
-        this.pythonResourceAdapter = adapter;
-        Map<String, ResourceProvider> servers = resourceProviders.get(MCP_SERVER);
-        if (servers == null) {
-            return;
-        }
-        servers.values().stream()
-                .filter(PythonResourceProvider.class::isInstance)
-                .map(PythonResourceProvider.class::cast)
-                .forEach(
-                        provider -> {
-                            provider.setPythonResourceAdapter(adapter);
-
-                            // Get tools and prompts from server
-                            try {
-                                PythonMCPServer server =
-                                        (PythonMCPServer)
-                                                provider.provide(
-                                                        (String anotherName,
-                                                                ResourceType anotherType) -> {
-                                                            try {
-                                                                return this.getResource(
-                                                                        anotherName, anotherType);
-                                                            } catch (Exception e) {
-                                                                throw new RuntimeException(e);
-                                                            }
-                                                        });
-
-                                // Add tools to cache
-                                server.listTools()
-                                        .forEach(
-                                                tool ->
-                                                        resourceCache
-                                                                .computeIfAbsent(
-                                                                        TOOL,
-                                                                        k ->
-                                                                                new ConcurrentHashMap<>())
-                                                                .put(tool.getName(), tool));
-
-                                // Add prompts to cache
-                                server.listPrompts()
-                                        .forEach(
-                                                prompt ->
-                                                        resourceCache
-                                                                .computeIfAbsent(
-                                                                        PROMPT,
-                                                                        k ->
-                                                                                new ConcurrentHashMap<>())
-                                                                .put(prompt.getName(), prompt));
-                            } catch (Exception e) {
-                                throw new RuntimeException(
-                                        "Failed to process Python MCP server in Java", e);
-                            }
-                        });
     }
 
     public Map<String, Action> getActions() {
@@ -220,64 +154,12 @@ public class AgentPlan implements Serializable {
         return actionsByEvent.get(eventType);
     }
 
-    /**
-     * Get resource from agent plan.
-     *
-     * @param name the resource name
-     * @param type the resource type
-     * @return the resource instance
-     * @throws Exception if the resource cannot be found or created
-     */
-    public Resource getResource(String name, ResourceType type) throws Exception {
-        // Check cache first
-        if (resourceCache.containsKey(type) && resourceCache.get(type).containsKey(name)) {
-            return resourceCache.get(type).get(name);
-        }
-
-        // Get resource provider
-        if (!resourceProviders.containsKey(type)
-                || !resourceProviders.get(type).containsKey(name)) {
-            throw new IllegalArgumentException("Resource not found: " + name + " of type " + type);
-        }
-
-        ResourceProvider provider = resourceProviders.get(type).get(name);
-
-        if (pythonResourceAdapter != null && provider instanceof PythonResourceProvider) {
-            ((PythonResourceProvider) provider).setPythonResourceAdapter(pythonResourceAdapter);
-        }
-
-        // Create resource using provider
-        Resource resource =
-                provider.provide(
-                        (String anotherName, ResourceType anotherType) -> {
-                            try {
-                                return this.getResource(anotherName, anotherType);
-                            } catch (Exception e) {
-                                throw new RuntimeException(e);
-                            }
-                        });
-
-        // Cache the resource
-        resourceCache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
-
-        return resource;
-    }
-
     public AgentConfiguration getConfig() {
         return config;
     }
 
     public Map<String, Object> getConfigData() {
         return config.getConfData();
-    }
-
-    public void close() throws Exception {
-        for (Map<String, Resource> resources : resourceCache.values()) {
-            for (Resource resource : resources.values()) {
-                resource.close();
-            }
-        }
-        resourceCache.clear();
     }
 
     private void writeObject(ObjectOutputStream out) throws IOException {
@@ -292,7 +174,6 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = agentPlan.getActionsByEvent();
         this.resourceProviders = agentPlan.getResourceProviders();
         this.config = agentPlan.getConfig();
-        this.resourceCache = new ConcurrentHashMap<>();
     }
 
     private void extractActions(

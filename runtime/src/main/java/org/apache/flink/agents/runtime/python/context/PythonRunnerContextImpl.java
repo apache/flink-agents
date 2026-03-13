@@ -21,6 +21,7 @@ package org.apache.flink.agents.runtime.python.context;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.ResourceCache;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
@@ -42,8 +43,9 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
             FlinkAgentsMetricGroupImpl agentMetricGroup,
             Runnable mailboxThreadChecker,
             AgentPlan agentPlan,
+            ResourceCache resourceCache,
             String jobIdentifier) {
-        super(agentMetricGroup, mailboxThreadChecker, agentPlan, jobIdentifier);
+        super(agentMetricGroup, mailboxThreadChecker, agentPlan, resourceCache, jobIdentifier);
     }
 
     @Override
