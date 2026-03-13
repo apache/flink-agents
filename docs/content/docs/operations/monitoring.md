@@ -141,7 +141,50 @@ We can check the log result in the WebUI of Flink Job:
 
 ## Event Log
 
-Currently, the system supports **File-based Event Log** as the default implementation. Future releases will introduce support for additional types of event logs and provide configuration options to let users choose their preferred logging mechanism.
+The event log captures every event flowing through an agent for debugging, auditing, and observability. Currently, the system supports **File-based Event Log** as the default implementation.
+
+### Log Levels
+
+Each event type can be configured with its own log level:
+
+| Level | Behavior |
+|-------|----------|
+| `OFF` | Event is not logged |
+| `STANDARD` | Event is logged with string fields truncated to `eventLogMaxFieldLength` (default 1024 characters) |
+| `VERBOSE` | Event is logged with full content, no truncation |
+
+Configure levels via `eventLogLevel` (global default) and `eventLogLevels` (per-type overrides):
+
+{{< tabs "Event Log Level Configuration" >}}
+
+{{< tab "Python" >}}
+```python
+config = agents_env.get_configuration()
+config.set_str("eventLogLevel", "STANDARD")
+config.set_str("eventLogLevels", "ChatRequestEvent=VERBOSE,ContextRetrievalRequestEvent=OFF")
+config.set_int("eventLogMaxFieldLength", 2048)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+Configuration config = agentsEnv.getConfig();
+config.setString("eventLogLevel", "STANDARD");
+config.setString("eventLogLevels", "ChatRequestEvent=VERBOSE,ContextRetrievalRequestEvent=OFF");
+config.setInt("eventLogMaxFieldLength", 2048);
+```
+{{< /tab >}}
+
+{{< tab "config.yaml" >}}
+```yaml
+agent:
+  eventLogLevel: STANDARD
+  eventLogLevels: "ChatRequestEvent=VERBOSE,ContextRetrievalRequestEvent=OFF"
+  eventLogMaxFieldLength: 2048
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ### File Event Log
 
@@ -159,3 +202,23 @@ The log files follow a naming convention consistent with Flink's logging standar
 ```
 
 By default, all File-based Event Logs are stored in the `flink-agents` subdirectory under the system temporary directory (`java.io.tmpdir`). You can override the base log directory with the `agent.baseLogDir` setting in Flink `config.yaml`.
+
+#### JSON Format
+
+Each line in the log file is a JSON object with the following structure:
+
+```json
+{
+  "timestamp": "2024-01-15T10:30:00Z",
+  "logLevel": "STANDARD",
+  "eventType": "org.apache.flink.agents.api.event.ChatRequestEvent",
+  "event": {
+    "eventType": "org.apache.flink.agents.api.event.ChatRequestEvent",
+    "id": "...",
+    "attributes": {},
+    ...
+  }
+}
+```
+
+The top-level `eventType` and `logLevel` fields allow filtering log records without parsing the nested `event` object.

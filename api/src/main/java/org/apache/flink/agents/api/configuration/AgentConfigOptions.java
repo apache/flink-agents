@@ -47,4 +47,34 @@ public class AgentConfigOptions {
     /** The config parameter specifies the unique identifier of job. */
     public static final ConfigOption<String> JOB_IDENTIFIER =
             new ConfigOption<>("job-identifier", String.class, null);
+
+    /**
+     * The default event log level applied to all event types unless overridden.
+     *
+     * <p>Valid values: "OFF", "STANDARD", "VERBOSE". Defaults to "STANDARD".
+     */
+    public static final ConfigOption<String> EVENT_LOG_LEVEL =
+            new ConfigOption<>("eventLogLevel", String.class, "STANDARD");
+
+    /**
+     * Per-event-type log level overrides as a comma-separated string.
+     *
+     * <p>Format: {@code "EventTypeName=LEVEL,EventTypeName=LEVEL"}.
+     *
+     * <p>Example: {@code "ChatRequestEvent=VERBOSE,ContextRetrievalRequestEvent=OFF"}
+     */
+    public static final ConfigOption<String> EVENT_LOG_LEVELS =
+            new ConfigOption<>("eventLogLevels", String.class, null);
+
+    /**
+     * Maximum character length for string fields in STANDARD log level output.
+     *
+     * <p>String fields exceeding this limit are truncated with a {@code "... [truncated, N chars
+     * total]"} marker. VERBOSE level ignores this setting and logs full content. A value of 0 or
+     * negative disables truncation.
+     *
+     * <p>Defaults to 1024.
+     */
+    public static final ConfigOption<Integer> EVENT_LOG_MAX_FIELD_LENGTH =
+            new ConfigOption<>("eventLogMaxFieldLength", Integer.class, 1024);
 }

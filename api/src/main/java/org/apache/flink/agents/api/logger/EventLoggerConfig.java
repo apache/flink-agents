@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.api.logger;
 
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.EventFilter;
 
 import java.util.Collections;
@@ -40,6 +42,14 @@ import java.util.Objects;
  *     .loggerType("file")
  *     .property("baseLogDir", "/tmp/logs")
  *     .build();
+ *
+ * // Configure per-event-type log levels
+ * EventLoggerConfig levelConfig = EventLoggerConfig.builder()
+ *     .loggerType("file")
+ *     .defaultLogLevel(EventLogLevel.STANDARD)
+ *     .eventLogLevel(ChatRequestEvent.class, EventLogLevel.VERBOSE)
+ *     .eventLogLevel(ContextRetrievalRequestEvent.class, EventLogLevel.OFF)
+ *     .build();
  * }</pre>
  */
 public final class EventLoggerConfig {
@@ -47,13 +57,27 @@ public final class EventLoggerConfig {
     private final String loggerType;
     private final EventFilter eventFilter;
     private final Map<String, Object> properties;
+    private final EventLogLevel defaultLogLevel;
+    private final Map<String, EventLogLevel> eventLogLevels;
+    private final int maxFieldLength;
+
+    /** Default maximum character length for string fields at STANDARD level. */
+    public static final int DEFAULT_MAX_FIELD_LENGTH = 1024;
 
     /** Private constructor - use {@link #builder()} to create instances. */
     private EventLoggerConfig(
-            String loggerType, EventFilter eventFilter, Map<String, Object> properties) {
+            String loggerType,
+            EventFilter eventFilter,
+            Map<String, Object> properties,
+            EventLogLevel defaultLogLevel,
+            Map<String, EventLogLevel> eventLogLevels,
+            int maxFieldLength) {
         this.loggerType = Objects.requireNonNull(loggerType, "Logger type cannot be null");
         this.eventFilter = eventFilter == null ? EventFilter.ACCEPT_ALL : eventFilter;
         this.properties = Collections.unmodifiableMap(new HashMap<>(properties));
+        this.defaultLogLevel = defaultLogLevel;
+        this.eventLogLevels = Collections.unmodifiableMap(new HashMap<>(eventLogLevels));
+        this.maxFieldLength = maxFieldLength;
     }
 
     /**
@@ -107,6 +131,64 @@ public final class EventLoggerConfig {
         return properties;
     }
 
+    /**
+     * Gets the default log level for events that do not have a per-type override.
+     *
+     * @return the default log level
+     */
+    public EventLogLevel getDefaultLogLevel() {
+        return defaultLogLevel;
+    }
+
+    /**
+     * Gets the per-event-type log level overrides.
+     *
+     * @return an unmodifiable map of simple event type names to log levels
+     */
+    public Map<String, EventLogLevel> getEventLogLevels() {
+        return eventLogLevels;
+    }
+
+    /**
+     * Gets the maximum character length for string fields at STANDARD level.
+     *
+     * <p>A value of 0 or negative means no truncation.
+     *
+     * @return the max field length
+     */
+    public int getMaxFieldLength() {
+        return maxFieldLength;
+    }
+
+    /**
+     * Determines the effective log level for the given event.
+     *
+     * <p>Looks up the event's simple class name in the per-type overrides map. If no override is
+     * found, falls back to the default log level.
+     *
+     * @param event the event to determine the log level for
+     * @return the effective log level for this event
+     */
+    public EventLogLevel getEffectiveLogLevel(Event event) {
+        String simpleName = event.getClass().getSimpleName();
+        return eventLogLevels.getOrDefault(simpleName, defaultLogLevel);
+    }
+
+    /**
+     * Determines whether an event should be logged based on both its log level and the event
+     * filter.
+     *
+     * <p>An event is logged only if its effective log level is enabled (not {@link
+     * EventLogLevel#OFF}) and the event filter accepts it.
+     *
+     * @param event the event to check
+     * @param context the event context
+     * @return {@code true} if the event should be logged
+     */
+    public boolean shouldLog(Event event, EventContext context) {
+        return getEffectiveLogLevel(event).isEnabled() && eventFilter.accept(event, context);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -114,12 +196,21 @@ public final class EventLoggerConfig {
         EventLoggerConfig that = (EventLoggerConfig) o;
         return Objects.equals(loggerType, that.loggerType)
                 && Objects.equals(eventFilter, that.eventFilter)
-                && Objects.equals(properties, that.properties);
+                && Objects.equals(properties, that.properties)
+                && defaultLogLevel == that.defaultLogLevel
+                && Objects.equals(eventLogLevels, that.eventLogLevels)
+                && maxFieldLength == that.maxFieldLength;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(loggerType, eventFilter, properties);
+        return Objects.hash(
+                loggerType,
+                eventFilter,
+                properties,
+                defaultLogLevel,
+                eventLogLevels,
+                maxFieldLength);
     }
 
     @Override
@@ -132,6 +223,12 @@ public final class EventLoggerConfig {
                 + eventFilter
                 + ", properties="
                 + properties
+                + ", defaultLogLevel="
+                + defaultLogLevel
+                + ", eventLogLevels="
+                + eventLogLevels
+                + ", maxFieldLength="
+                + maxFieldLength
                 + '}';
     }
 
@@ -145,6 +242,9 @@ public final class EventLoggerConfig {
         private String loggerType = "file"; // Default to file logger
         private EventFilter eventFilter = EventFilter.ACCEPT_ALL; // Default to accept all
         private final Map<String, Object> properties = new HashMap<>();
+        private EventLogLevel defaultLogLevel = EventLogLevel.STANDARD;
+        private final Map<String, EventLogLevel> eventLogLevels = new HashMap<>();
+        private int maxFieldLength = DEFAULT_MAX_FIELD_LENGTH;
 
         private Builder() {}
 
@@ -208,12 +308,72 @@ public final class EventLoggerConfig {
         }
 
         /**
+         * Sets the default log level for all event types.
+         *
+         * @param level the default log level
+         * @return this Builder instance for method chaining
+         */
+        public Builder defaultLogLevel(EventLogLevel level) {
+            this.defaultLogLevel =
+                    Objects.requireNonNull(level, "Default log level cannot be null");
+            return this;
+        }
+
+        /**
+         * Sets the log level for a specific event type.
+         *
+         * @param eventClass the event class to configure
+         * @param level the log level for this event type
+         * @return this Builder instance for method chaining
+         */
+        public Builder eventLogLevel(Class<? extends Event> eventClass, EventLogLevel level) {
+            Objects.requireNonNull(eventClass, "Event class cannot be null");
+            Objects.requireNonNull(level, "Log level cannot be null");
+            this.eventLogLevels.put(eventClass.getSimpleName(), level);
+            return this;
+        }
+
+        /**
+         * Sets per-event-type log level overrides from a pre-parsed map.
+         *
+         * <p>Keys are simple event type names (e.g., "ChatRequestEvent").
+         *
+         * @param levels the map of event type names to log levels
+         * @return this Builder instance for method chaining
+         */
+        public Builder eventLogLevels(Map<String, EventLogLevel> levels) {
+            Objects.requireNonNull(levels, "Event log levels map cannot be null");
+            this.eventLogLevels.putAll(levels);
+            return this;
+        }
+
+        /**
+         * Sets the maximum character length for string fields at STANDARD level.
+         *
+         * <p>String fields exceeding this limit are truncated. VERBOSE ignores this setting. A
+         * value of 0 or negative disables truncation.
+         *
+         * @param maxFieldLength the maximum field length in characters
+         * @return this Builder instance for method chaining
+         */
+        public Builder maxFieldLength(int maxFieldLength) {
+            this.maxFieldLength = maxFieldLength;
+            return this;
+        }
+
+        /**
          * Builds and returns an immutable EventLoggerConfig instance.
          *
          * @return a new EventLoggerConfig instance
          */
         public EventLoggerConfig build() {
-            return new EventLoggerConfig(loggerType, eventFilter, properties);
+            return new EventLoggerConfig(
+                    loggerType,
+                    eventFilter,
+                    properties,
+                    defaultLogLevel,
+                    eventLogLevels,
+                    maxFieldLength);
         }
     }
 }

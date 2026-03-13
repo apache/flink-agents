@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.EventFilter;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.api.common.JobID;
@@ -492,6 +493,297 @@ class FileEventLoggerTest {
 
         EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
         assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
+    }
+
+    @Test
+    void testLogLevelOffEventsNotWritten() throws Exception {
+        // Given - config with InputEvent set to OFF
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .defaultLogLevel(EventLogLevel.STANDARD)
+                        .eventLogLevel(InputEvent.class, EventLogLevel.OFF)
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("should not be logged");
+        OutputEvent outputEvent = new OutputEvent("should be logged");
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.flush();
+
+        // Then - only OutputEvent should be logged
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size(), "Only OutputEvent should be logged");
+
+        EventLogRecord record = objectMapper.readValue(lines.get(0), EventLogRecord.class);
+        assertInstanceOf(OutputEvent.class, record.getEvent());
+    }
+
+    @Test
+    void testLogLevelVerboseRecordedInJson() throws Exception {
+        // Given - config with InputEvent set to VERBOSE
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .defaultLogLevel(EventLogLevel.STANDARD)
+                        .eventLogLevel(InputEvent.class, EventLogLevel.VERBOSE)
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("verbose input");
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.flush();
+
+        // Then - logLevel should be VERBOSE in JSON
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size());
+
+        JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+        assertEquals("VERBOSE", jsonNode.get("logLevel").asText());
+    }
+
+    @Test
+    void testDefaultLogLevelOff() throws Exception {
+        // Given - config with default OFF
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .defaultLogLevel(EventLogLevel.OFF)
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("input data");
+        OutputEvent outputEvent = new OutputEvent("output data");
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.flush();
+
+        // Then - no events should be logged
+        Path logFile = getExpectedLogFilePath();
+        assertTrue(
+                !Files.exists(logFile) || Files.readAllLines(logFile).isEmpty(),
+                "No events should be logged when default is OFF");
+    }
+
+    @Test
+    void testLogLevelAndFilterComposition() throws Exception {
+        // Given - config with VERBOSE level for InputEvent but a filter that rejects InputEvent
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .defaultLogLevel(EventLogLevel.STANDARD)
+                        .eventLogLevel(InputEvent.class, EventLogLevel.VERBOSE)
+                        .eventFilter(EventFilter.byEventType(OutputEvent.class))
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("should not be logged");
+        OutputEvent outputEvent = new OutputEvent("should be logged");
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.flush();
+
+        // Then - only OutputEvent should be logged (filter rejects InputEvent)
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size(), "Only OutputEvent should pass both level and filter");
+
+        EventLogRecord record = objectMapper.readValue(lines.get(0), EventLogRecord.class);
+        assertInstanceOf(OutputEvent.class, record.getEvent());
+    }
+
+    @Test
+    void testLogLevelOffOverridesAcceptingFilter() throws Exception {
+        // Given - InputEvent is OFF but filter accepts all
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .defaultLogLevel(EventLogLevel.STANDARD)
+                        .eventLogLevel(InputEvent.class, EventLogLevel.OFF)
+                        .eventFilter(EventFilter.ACCEPT_ALL)
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("should not be logged");
+        OutputEvent outputEvent = new OutputEvent("should be logged");
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.flush();
+
+        // Then - OFF level should prevent logging even when filter accepts
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size(), "OFF should override accepting filter");
+
+        EventLogRecord record = objectMapper.readValue(lines.get(0), EventLogRecord.class);
+        assertInstanceOf(OutputEvent.class, record.getEvent());
+    }
+
+    @Test
+    void testBackwardCompatDefaultLogLevel() throws Exception {
+        // Given - config built without explicit log level (should default to STANDARD)
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("test");
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.flush();
+
+        // Then - event should be logged with STANDARD level
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size());
+
+        JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+        assertEquals("STANDARD", jsonNode.get("logLevel").asText());
+    }
+
+    @Test
+    void testStandardLevelTruncatesLongFields() throws Exception {
+        // Given - config with small max field length
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .defaultLogLevel(EventLogLevel.STANDARD)
+                        .maxFieldLength(20)
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        String longInput = "a]".repeat(50); // 100 chars
+        InputEvent inputEvent = new InputEvent(longInput);
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.flush();
+
+        // Then - the input field should be truncated
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size());
+
+        JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+        String inputField = jsonNode.get("event").get("input").asText();
+        assertTrue(inputField.contains("... [truncated, 100 chars total]"));
+        assertTrue(inputField.startsWith(longInput.substring(0, 20)));
+    }
+
+    @Test
+    void testVerboseLevelDoesNotTruncate() throws Exception {
+        // Given - config with small max field length but VERBOSE level
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .defaultLogLevel(EventLogLevel.VERBOSE)
+                        .maxFieldLength(20)
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        String longInput = "a".repeat(100);
+        InputEvent inputEvent = new InputEvent(longInput);
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.flush();
+
+        // Then - the input field should NOT be truncated
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size());
+
+        JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+        String inputField = jsonNode.get("event").get("input").asText();
+        assertEquals(longInput, inputField);
+    }
+
+    @Test
+    void testTopLevelEventTypeInJson() throws Exception {
+        // Given
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("test");
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.flush();
+
+        // Then - eventType should appear at top level
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+
+        assertTrue(jsonNode.has("eventType"), "Should have top-level eventType");
+        assertEquals("org.apache.flink.agents.api.InputEvent", jsonNode.get("eventType").asText());
+        // Should also still be in the event object
+        assertEquals(
+                "org.apache.flink.agents.api.InputEvent",
+                jsonNode.get("event").get("eventType").asText());
+    }
+
+    @Test
+    void testZeroMaxFieldLengthDisablesTruncation() throws Exception {
+        // Given - maxFieldLength of 0 disables truncation
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property("baseLogDir", tempDir.toString())
+                        .defaultLogLevel(EventLogLevel.STANDARD)
+                        .maxFieldLength(0)
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        String longInput = "b".repeat(5000);
+        InputEvent inputEvent = new InputEvent(longInput);
+
+        // When
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.flush();
+
+        // Then - should not be truncated
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+        assertEquals(longInput, jsonNode.get("event").get("input").asText());
     }
 
     private Path getExpectedLogFilePath() {
