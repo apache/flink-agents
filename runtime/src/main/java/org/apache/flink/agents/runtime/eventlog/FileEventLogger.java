@@ -76,6 +76,7 @@ import java.nio.file.Paths;
  */
 public class FileEventLogger implements EventLogger {
     public static final String BASE_LOG_DIR_PROPERTY_KEY = "baseLogDir";
+    public static final String PRETTY_PRINT_PROPERTY_KEY = "prettyPrint";
     // The default base log directory if not specified in the configuration
     private static final String DEFAULT_BASE_LOG_DIR =
             Paths.get(System.getProperty("java.io.tmpdir"), "flink-agents").toString();
@@ -84,6 +85,7 @@ public class FileEventLogger implements EventLogger {
 
     private final EventLoggerConfig config;
     private final EventFilter eventFilter;
+    private boolean prettyPrint;
     private PrintWriter writer;
 
     public FileEventLogger(EventLoggerConfig config) {
@@ -101,6 +103,8 @@ public class FileEventLogger implements EventLogger {
         }
         // Create writer in append mode
         writer = new PrintWriter(new BufferedWriter(new FileWriter(logFilePath, true)));
+        prettyPrint =
+                (Boolean) config.getProperties().getOrDefault(PRETTY_PRINT_PROPERTY_KEY, false);
     }
 
     private String generateSubTaskLogFilePath(EventLoggerOpenParams params) {
@@ -134,7 +138,11 @@ public class FileEventLogger implements EventLogger {
         EventLogRecord record = new EventLogRecord(context, event);
         // All events should be JSON serializable, since we check it when sending events to context:
         // RunnerContextImpl.sendEvent
-        writer.println(MAPPER.writeValueAsString(record));
+        String json =
+                prettyPrint
+                        ? MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(record)
+                        : MAPPER.writeValueAsString(record);
+        writer.println(json);
     }
 
     @Override
