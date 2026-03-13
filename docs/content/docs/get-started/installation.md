@@ -170,6 +170,15 @@ After building:
 - The Python package is installed and ready to use
 - The distribution JAR is located at: `dist/flink-${FLINK_VERSION%.*}/target/flink-agents-dist-*.jar`
 
+### Build Environment Variables
+
+The following environment variables can be used to control how JARs are resolved during `pip install flink-agents` (from sdist) or `python -m build`:
+
+| Variable | Description |
+|----------|-------------|
+| `FLINK_AGENTS_SKIP_JAR_DOWNLOAD` | Set to `1`, `true`, `yes`, or `on` to skip downloading JARs from Maven Central. Useful when building from source with `tools/build.sh`, which copies JARs from the local Maven build. |
+| `FLINK_AGENTS_MAVEN_MIRROR` | Override the Maven repository base URL for JAR downloads. Defaults to `https://repo1.maven.org/maven2`. Useful for environments with restricted network access or internal mirrors. |
+
 ## Maven Dependencies (For Java)
 
 For developing Flink Agents applications in Java, add the following dependencies to your `pom.xml`:

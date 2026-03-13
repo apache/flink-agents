@@ -56,7 +56,6 @@ under the License.
             </plugin>
 
             <!-- Build thin jar for Python wheel (only flink-agents code) -->
-            <!-- Not attached as Maven artifact to avoid deployment -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -69,8 +68,8 @@ under the License.
                         </goals>
                         <configuration>
                             <shadeTestJar>false</shadeTestJar>
-                            <shadedArtifactAttached>false</shadedArtifactAttached>
-                            <finalName>${project.artifactId}-${project.version}-thin</finalName>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>thin</shadedClassifierName>
                             <!-- Only include flink-agents artifacts -->
                             <artifactSet>
                                 <includes>

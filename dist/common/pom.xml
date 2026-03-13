@@ -38,15 +38,6 @@ under the License.
 
     <build>
         <plugins>
-            <!-- Skip deployment - this module is for Python wheel optimization only -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-deploy-plugin</artifactId>
-                <configuration>
-                    <skip>true</skip>
-                </configuration>
-            </plugin>
-
             <!-- Copy the shared LICENSE/NOTICE files from parent -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
