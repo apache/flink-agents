@@ -35,13 +35,11 @@ import java.io.IOException;
  * <p>This deserializer reconstructs EventLogRecord instances from JSON format by:
  *
  * <ul>
- *   <li>Deserializing the EventContext normally (contains eventType and timestamp)
- *   <li>Using the eventType from context to determine the concrete Event class
- *   <li>Deserializing the event JSON to the appropriate concrete Event type
+ *   <li>Deserializing the EventContext normally (contains eventType, eventClass, and timestamp)
+ *   <li>Using the {@code eventClass} from context to determine the concrete Event class for
+ *       deserialization
+ *   <li>Falling back to {@code eventType} if {@code eventClass} is not present
  * </ul>
- *
- * <p>This approach leverages the eventType information stored in EventContext to handle polymorphic
- * Event deserialization without requiring type annotations on the Event objects themselves.
  */
 public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRecord> {
 
@@ -58,47 +56,48 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
             throw new IOException("Missing 'timestamp' field in EventLogRecord JSON");
         }
 
-        // Deserialize event using eventType from event node
+        // Deserialize event using eventType/eventClass from event node
         JsonNode eventNode = rootNode.get("event");
         if (eventNode == null) {
             throw new IOException("Missing 'event' field in EventLogRecord JSON");
         }
         String eventType = getEventType(eventNode);
+        String eventClass = getEventClass(eventNode, eventType);
 
-        Event event = deserializeEvent(mapper, stripEventType(eventNode), eventType);
-        EventContext eventContext = new EventContext(eventType, timestampNode.asText());
+        Event event = deserializeEvent(mapper, stripMetaFields(eventNode), eventClass);
+        EventContext eventContext = new EventContext(eventType, eventClass, timestampNode.asText());
 
         return new EventLogRecord(eventContext, event);
     }
 
     /**
-     * Deserializes an Event from JSON using the provided event type.
+     * Deserializes an Event from JSON using the eventClass.
      *
      * @param mapper the ObjectMapper to use for deserialization
      * @param eventNode the JSON node containing the event data
-     * @param eventType the fully qualified class name of the event type
-     * @return the deserialized Event instance, or base Event if deserialization fails
+     * @param eventClass the fully qualified Java class name to deserialize into
+     * @return the deserialized Event instance
      */
-    private Event deserializeEvent(ObjectMapper mapper, JsonNode eventNode, String eventType)
+    private Event deserializeEvent(ObjectMapper mapper, JsonNode eventNode, String eventClass)
             throws IOException {
         try {
             // Load the concrete event class
-            Class<?> eventClass =
-                    Class.forName(eventType, true, Thread.currentThread().getContextClassLoader());
+            Class<?> clazz =
+                    Class.forName(eventClass, true, Thread.currentThread().getContextClassLoader());
 
-            // Verify it's actually an Event subclass
-            if (!Event.class.isAssignableFrom(eventClass)) {
+            // Verify it's actually an Event subclass (or Event itself)
+            if (!Event.class.isAssignableFrom(clazz)) {
                 throw new IOException(
-                        String.format("Class '%s' is not a subclass of Event", eventType));
+                        String.format("Class '%s' is not a subclass of Event", eventClass));
             }
 
             // Deserialize to the concrete event type
             @SuppressWarnings("unchecked")
-            Class<? extends Event> concreteEventClass = (Class<? extends Event>) eventClass;
+            Class<? extends Event> concreteEventClass = (Class<? extends Event>) clazz;
             return mapper.treeToValue(eventNode, concreteEventClass);
         } catch (Exception e) {
             throw new IOException(
-                    String.format("Failed to deserialize event of type '%s'", eventType), e);
+                    String.format("Failed to deserialize event of class '%s'", eventClass), e);
         }
     }
 
@@ -110,10 +109,19 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
         return eventTypeNode.asText();
     }
 
-    private static JsonNode stripEventType(JsonNode eventNode) {
+    private static String getEventClass(JsonNode eventNode, String eventType) {
+        JsonNode eventClassNode = eventNode.get("eventClass");
+        if (eventClassNode != null && eventClassNode.isTextual()) {
+            return eventClassNode.asText();
+        }
+        return eventType;
+    }
+
+    private static JsonNode stripMetaFields(JsonNode eventNode) {
         if (eventNode.isObject()) {
             ObjectNode copy = ((ObjectNode) eventNode).deepCopy();
             copy.remove("eventType");
+            copy.remove("eventClass");
             return copy;
         }
         return eventNode;

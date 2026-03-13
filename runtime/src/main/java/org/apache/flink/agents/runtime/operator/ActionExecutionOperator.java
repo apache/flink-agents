@@ -832,11 +832,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private List<Action> getActionsTriggeredBy(Event event) {
-        if (event instanceof PythonEvent) {
-            return agentPlan.getActionsTriggeredBy(((PythonEvent) event).getEventType());
-        } else {
-            return agentPlan.getActionsTriggeredBy(event.getClass().getName());
-        }
+        // event.getType() is polymorphic:
+        //   - PythonEvent: returns the Python event type string
+        //   - Unified Event: returns the user-defined type string
+        //   - Subclassed Event: returns the FQN class name
+        return agentPlan.getActionsTriggeredBy(event.getType());
     }
 
     private MailboxProcessor getMailboxProcessor() throws Exception {

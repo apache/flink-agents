@@ -218,22 +218,45 @@ class FlinkRunnerContext(RunnerContext):
         self.__ltm = ltm
 
     @override
-    def send_event(self, event: Event) -> None:
+    def _send_event(self, event: Event) -> None:
         """Send an event to the agent for processing.
+
+        Unified events (where ``event.type`` is set) are serialized as JSON and
+        sent via ``sendUnifiedEvent`` so that Java can reconstruct them without
+        cloudpickle.  Subclassed events use the legacy cloudpickle path.
 
         Parameters
         ----------
         event : Event
             The event to be processed by the agent system.
         """
-        class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
-        event_bytes = cloudpickle.dumps(event)
-        event_json_str = _build_event_log_string(event, class_path)
-        try:
-            self._j_runner_context.sendEvent(class_path, event_bytes, event_json_str)
-        except Exception as e:
-            err_msg = "Failed to send event " + class_path + " to runner context"
-            raise RuntimeError(err_msg) from e
+        if event.type is not None:
+            # Unified event — send as JSON to Java
+            event_json = event.model_dump_json()
+            try:
+                self._j_runner_context.sendUnifiedEvent(event_json)
+            except Exception as e:
+                err_msg = (
+                    "Failed to send unified event '"
+                    + event.type
+                    + "' to runner context"
+                )
+                raise RuntimeError(err_msg) from e
+        else:
+            class_path = (
+                f"{event.__class__.__module__}.{event.__class__.__qualname__}"
+            )
+            event_bytes = cloudpickle.dumps(event)
+            event_json_str = _build_event_log_string(event, class_path)
+            try:
+                self._j_runner_context.sendEvent(
+                    class_path, event_bytes, event_json_str
+                )
+            except Exception as e:
+                err_msg = (
+                    "Failed to send event " + class_path + " to runner context"
+                )
+                raise RuntimeError(err_msg) from e
 
     @override
     def get_resource(self, name: str, type: ResourceType, metric_group: MetricGroup = None) -> Resource:

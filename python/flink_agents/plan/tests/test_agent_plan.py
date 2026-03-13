@@ -317,3 +317,32 @@ def test_add_action_and_resource_to_agent() -> None:  # noqa: D103
     actual = json.loads(json_value)
     expected = json.loads(expected_json)
     assert actual == expected
+
+
+# ── String identifier tests ──────────────────────────────────────────────
+
+
+class StringIdAgent(Agent):
+    """Agent with actions listening to string identifiers."""
+
+    @action("CustomEvent")
+    @staticmethod
+    def handle_custom(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
+        ctx.send_event(OutputEvent(output=event.get_attr("msg")))
+
+
+def test_from_agent_with_string_identifier() -> None:
+    """Test that AgentPlan correctly handles string identifiers."""
+    agent = StringIdAgent()
+    agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())
+
+    # The string identifier should be preserved as-is
+    actions = agent_plan.get_actions("CustomEvent")
+    assert len(actions) == 1
+    assert actions[0].name == "handle_custom"
+    assert "CustomEvent" in actions[0].listen_event_types
+
+    # Verify serialization roundtrip preserves the string identifier
+    json_str = agent_plan.model_dump_json(serialize_as_any=True)
+    restored = AgentPlan.model_validate_json(json_str)
+    assert restored.get_actions("CustomEvent")[0].name == "handle_custom"

@@ -234,6 +234,17 @@ class AgentPlan(BaseModel):
 
 
 
+def _resolve_event_type(evt: Any) -> str:
+    """Convert a listen-event entry to a routing-key string.
+
+    If *evt* is a string, it is passed through as-is (unified-event identifier).
+    If *evt* is a class, its fully qualified name is returned.
+    """
+    if isinstance(evt, str):
+        return evt
+    return f"{evt.__module__}.{evt.__qualname__}"
+
+
 def _get_actions(agent: Agent) -> List[Action]:
     """Extract all registered agent actions from an agent.
 
@@ -255,8 +266,8 @@ def _get_actions(agent: Agent) -> List[Action]:
                     name=name,
                     exec=PythonFunction.from_callable(value.__func__),
                     listen_event_types=[
-                        f"{event_type.__module__}.{event_type.__name__}"
-                        for event_type in value._listen_events
+                        _resolve_event_type(et)
+                        for et in value._listen_events
                     ],
                 )
             )
@@ -266,21 +277,21 @@ def _get_actions(agent: Agent) -> List[Action]:
                     name=name,
                     exec=PythonFunction.from_callable(value),
                     listen_event_types=[
-                        f"{event_type.__module__}.{event_type.__name__}"
-                        for event_type in value._listen_events
+                        _resolve_event_type(et)
+                        for et in value._listen_events
                     ],
                 )
             )
-    for name, action in agent.actions.items():
+    for name, action_tuple in agent.actions.items():
         actions.append(
             Action(
                 name=name,
-                exec=PythonFunction.from_callable(action[1]),
+                exec=PythonFunction.from_callable(action_tuple[1]),
                 listen_event_types=[
-                    f"{event_type.__module__}.{event_type.__name__}"
-                    for event_type in action[0]
+                    _resolve_event_type(et)
+                    for et in action_tuple[0]
                 ],
-                config=action[2],
+                config=action_tuple[2],
             )
         )
     return actions

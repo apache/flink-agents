@@ -124,3 +124,78 @@ def test_local_execution_environment_call_from_list_twice() -> None:  # noqa: D1
     env.from_list(input_list)
     with pytest.raises(RuntimeError):
         env.from_list(input_list)
+
+
+# ── Unified event E2E tests ──────────────────────────────────────────────
+
+
+class UnifiedEventAgent(Agent):  # noqa: D101
+    @action(InputEvent)
+    @staticmethod
+    def on_input(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
+        ctx.send_event(
+            identifier="Intermediate", msg=event.input
+        )
+
+    @action("Intermediate")
+    @staticmethod
+    def on_intermediate(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
+        ctx.send_event(
+            OutputEvent(output=f"processed:{event.get_attr('msg')}")
+        )
+
+
+def test_unified_event_workflow() -> None:
+    """End-to-end: InputEvent → unified 'Intermediate' → OutputEvent."""
+    env = AgentsExecutionEnvironment.get_execution_environment()
+
+    input_list = []
+    agent = UnifiedEventAgent()
+
+    output_list = env.from_list(input_list).apply(agent).to_list()
+
+    input_list.append({"key": "alice", "value": "hello"})
+    env.execute()
+
+    assert output_list == [{"alice": "processed:hello"}]
+
+
+class MixedEventAgent(Agent):
+    """Agent mixing class-based and string-based event routing."""
+
+    class Step1Event(Event):
+        """Custom class-based event."""
+
+        data: str
+
+    @action(InputEvent)
+    @staticmethod
+    def start(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
+        ctx.send_event(MixedEventAgent.Step1Event(data=str(event.input)))
+
+    @action(Step1Event)
+    @staticmethod
+    def on_step1(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
+        ctx.send_event(identifier="Step2", value=event.data)
+
+    @action("Step2")
+    @staticmethod
+    def on_step2(event: Event, ctx: RunnerContext) -> None:  # noqa: D102
+        ctx.send_event(
+            OutputEvent(output=f"done:{event.get_attr('value')}")
+        )
+
+
+def test_mixed_event_workflow() -> None:
+    """E2E: InputEvent → class Step1Event → unified 'Step2' → OutputEvent."""
+    env = AgentsExecutionEnvironment.get_execution_environment()
+
+    input_list = []
+    agent = MixedEventAgent()
+
+    output_list = env.from_list(input_list).apply(agent).to_list()
+
+    input_list.append({"key": "bob", "value": 42})
+    env.execute()
+
+    assert output_list == [{"bob": "done:42"}]
