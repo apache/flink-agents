@@ -198,6 +198,20 @@ public abstract class AgentsExecutionEnvironment {
     public abstract void execute() throws Exception;
 
     /**
+     * Execute agent pipeline with a given job name.
+     *
+     * <p>This method triggers the execution of the configured agent pipeline with the specified job
+     * name. For remote environments, the job name is passed to the underlying Flink execution
+     * environment. The default implementation ignores the job name and delegates to {@link
+     * #execute()}.
+     *
+     * @param jobName The name for the Flink job.
+     */
+    public void execute(String jobName) throws Exception {
+        execute();
+    }
+
+    /**
      * Register resource to agents execution environment.
      *
      * @param name The name indicate the resource.
