@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.EventFilter;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.api.common.JobID;
@@ -492,6 +493,28 @@ class FileEventLoggerTest {
 
         EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
         assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
+    }
+
+    @Test
+    void testPrettyPrintOutputsFormattedJson() throws Exception {
+        // Given - config with prettyPrint enabled
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
+                        .property(AgentConfigOptions.PRETTY_PRINT.getKey(), true)
+                        .build();
+        logger = new FileEventLogger(config);
+
+        logger.open(openParams);
+        InputEvent inputEvent = new InputEvent("test input");
+        logger.append(new EventContext(inputEvent), inputEvent);
+        logger.flush();
+
+        // Then - output should span multiple lines (pretty-printed)
+        Path logFile = getExpectedLogFilePath();
+        String content = Files.readString(logFile);
+        assertTrue(content.contains("\n  "), "Pretty-printed JSON should contain indented lines");
     }
 
     private Path getExpectedLogFilePath() {

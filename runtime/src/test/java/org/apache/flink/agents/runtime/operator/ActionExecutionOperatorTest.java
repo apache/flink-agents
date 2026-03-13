@@ -234,6 +234,7 @@ public class ActionExecutionOperatorTest {
         String baseLogDir = "/tmp/flink-agents-test";
         AgentConfiguration config = new AgentConfiguration();
         config.set(AgentConfigOptions.BASE_LOG_DIR, baseLogDir);
+        config.set(AgentConfigOptions.PRETTY_PRINT, true);
         AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
@@ -259,6 +260,7 @@ public class ActionExecutionOperatorTest {
                     (Map<String, Object>) propertiesField.get(loggerConfig);
             assertThat(properties.get(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY))
                     .isEqualTo(baseLogDir);
+            assertThat(properties.get(FileEventLogger.PRETTY_PRINT_PROPERTY_KEY)).isEqualTo(true);
         }
     }
 
