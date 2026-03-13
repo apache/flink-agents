@@ -233,7 +233,7 @@ class AgentsExecutionEnvironment(ABC):
         """
 
     @abstractmethod
-    def execute(self) -> None:
+    def execute(self, job_name: str | None = None) -> None:
         """Execute agent individually."""
 
     def add_resource(

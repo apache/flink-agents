@@ -98,6 +98,11 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         env.execute();
     }
 
+    @Override
+    public void execute(String jobName) throws Exception {
+        env.execute(jobName);
+    }
+
     @SuppressWarnings("unchecked")
     public static AgentConfiguration loadAgentConfiguration(String configDir) {
         try {
