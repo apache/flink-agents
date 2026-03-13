@@ -66,6 +66,8 @@ cd ..
 #change version of flink-agents
 cd python
 perl -pi -e "s#^version = \".*\"#version = \"${NEW_VERSION}\"#" pyproject.toml
+# Update jar_manifest.json version to match the Maven release version
+perl -pi -e "s#\"version\": \".*\"#\"version\": \"${NEW_VERSION}\"#" jar_manifest.json
 cd ..
 
 git commit -am "Commit for release $NEW_VERSION"

@@ -19,4 +19,5 @@ python/build/
 python/dist
 python/flink_agents.egg-info/
 python/flink_agents/flink_agents.egg-info/
+python/flink_agents/lib/
 python/uv.lock

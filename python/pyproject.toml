@@ -19,9 +19,9 @@
 # Minimum requirements for the build system to execute.
 requires = [
     "setuptools>=75.3,<82",
-    "wheel",
 ]
-build-backend = "setuptools.build_meta"
+build-backend = "backend"
+backend-path = ["_build_backend"]
 
 [project]
 name = "flink-agents"
@@ -63,6 +63,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = [""]
+exclude = ["_build_backend*"]
 
 [tool.setuptools.package-data]
 "flink_agents.lib" = ["**/*.jar"]
@@ -180,6 +181,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "dependencies.py" = ["ICN001"]
 "tests/**/*.py" = ["ANN001", "ANN201", "D100", "D102", "D103", "B018", "FBT001"]
+"_build_backend/tests/**/*.py" = ["ANN001", "ANN201", "D100", "D102", "D103", "B018", "FBT001"]
 
 [tool.ruff.lint.pycodestyle]
 max-doc-length = 88
