@@ -174,7 +174,7 @@ def test_remote_execution_environment_prioritizes_legacy_config() -> None:
 
 
 def test_execute_with_job_name() -> None:
-    """Test that execute() passes job_name to the underlying StreamExecutionEnvironment."""
+    """Test that execute() passes job_name to StreamExecutionEnvironment."""
     mock_stream_env = MagicMock()
 
     with patch(
@@ -187,7 +187,7 @@ def test_execute_with_job_name() -> None:
 
 
 def test_execute_without_job_name() -> None:
-    """Test that execute() passes None to the underlying StreamExecutionEnvironment when job_name is omitted."""
+    """Test execute() passes None to StreamExecutionEnvironment when no job_name."""
     mock_stream_env = MagicMock()
 
     with patch(
