@@ -511,10 +511,20 @@ class FileEventLoggerTest {
         logger.append(new EventContext(inputEvent), inputEvent);
         logger.flush();
 
-        // Then - output should span multiple lines (pretty-printed)
+        // Then - output should be valid JSON spanning multiple lines (pretty-printed)
         Path logFile = getExpectedLogFilePath();
-        String content = Files.readString(logFile);
-        assertTrue(content.contains("\n  "), "Pretty-printed JSON should contain indented lines");
+        List<String> lines = Files.readAllLines(logFile);
+        // Pretty-printed JSON for a single event record spans multiple lines
+        assertTrue(lines.size() > 1, "Pretty-printed JSON should span multiple lines");
+        // Each line after the first should be indented
+        assertTrue(
+                lines.subList(1, lines.size()).stream().anyMatch(line -> line.startsWith("  ")),
+                "Pretty-printed JSON lines should be indented");
+        // The entire content should still be valid JSON
+        String content = String.join("\n", lines);
+        assertDoesNotThrow(
+                () -> objectMapper.readValue(content, EventLogRecord.class),
+                "Pretty-printed output should be valid JSON deserializable to EventLogRecord");
     }
 
     private Path getExpectedLogFilePath() {

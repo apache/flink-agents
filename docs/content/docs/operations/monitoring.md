@@ -145,7 +145,9 @@ Currently, the system supports **File-based Event Log** as the default implement
 
 ### File Event Log
 
-The **File Event Log** is a file-based event logging system that stores events in structured files within a flat directory. Each event is recorded in **JSON Lines (JSONL)** format, with one JSON object per line.
+The **File Event Log** is a file-based event logging system that stores events in structured files within a flat directory. 
+
+By default, each event is recorded in **JSON Lines (JSONL)** format, with one JSON object per line. When [`prettyPrint`]({{< ref "docs/operations/configuration#core-options" >}}) is enabled, each event is written as formatted multi-line JSON instead, and the log file is no longer in valid JSONL format.
 
 #### File Structure
 
