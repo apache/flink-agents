@@ -39,31 +39,12 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: "Get PR number from the original trigger of the run"
-        id: source-run-info
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const runId = ${{ github.event.workflow_run.id }};
-            const { data: run } = await github.rest.actions.getWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: runId,
-            });
-            const prNumber = run.pull_requests?.[0]?.number;
-            if (!prNumber) {
-              core.setFailed(`No pull request found for workflow run ${runId}`);
-              return;
-            }
-            core.setOutput('pullRequestNumber', prNumber);
-            core.info(`Found PR #${prNumber} from workflow run ${runId}`);
-      - name: "Add labels to pull request"
+      - name: "Label pull request"
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const script = require('./.github/workflows/pr_labeler.js');
-            const prNumber = parseInt('${{ steps.source-run-info.outputs.pullRequestNumber }}');
+            const workflowRunId = ${{ github.event.workflow_run.id }};
             const triggerWorkflow = '${{ github.event.workflow_run.name }}';
-            await script({ github, context, core, prNumber, triggerWorkflow });
+            await script({ github, context, core, workflowRunId, triggerWorkflow });

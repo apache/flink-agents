@@ -15,11 +15,19 @@
  * limitations under the License.
  */
 
-module.exports = async ({ github, context, core, prNumber, triggerWorkflow }) => {
+module.exports = async ({ github, context, core, workflowRunId, triggerWorkflow }) => {
+  // Retrieve the PR number from the workflow run that triggered this job
+  const { data: run } = await github.rest.actions.getWorkflowRun({
+    owner: context.repo.owner,
+    repo: context.repo.repo,
+    run_id: workflowRunId,
+  });
+  const prNumber = run.pull_requests?.[0]?.number;
   if (!prNumber) {
-    core.warning('No PR number found, skipping labeling.');
+    core.setFailed(`No pull request found for workflow run ${workflowRunId}`);
     return;
   }
+  core.info(`Found PR #${prNumber} from workflow run ${workflowRunId}`);
 
   const { data: pr } = await github.rest.pulls.get({
     owner: context.repo.owner,
