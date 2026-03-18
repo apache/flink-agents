@@ -48,3 +48,4 @@ jobs:
             const workflowRunId = ${{ github.event.workflow_run.id }};
             const triggerWorkflow = '${{ github.event.workflow_run.name }}';
             await script({ github, context, core, workflowRunId, triggerWorkflow });
+
