@@ -33,7 +33,6 @@ permissions:
 
 jobs:
   label:
-    if: github.repository == 'apache/flink-agents'
     runs-on: ubuntu-latest
     steps:
       - name: "Checkout ${{ github.ref }} ( ${{ github.sha }} )"
