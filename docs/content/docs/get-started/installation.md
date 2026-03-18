@@ -176,7 +176,7 @@ The following environment variables can be used to control how JARs are resolved
 
 | Variable | Description |
 |----------|-------------|
-| `FLINK_AGENTS_SKIP_JAR_DOWNLOAD` | Set to `1`, `true`, `yes`, or `on` to skip downloading JARs from Maven Central. Useful when building from source with `tools/build.sh`, which copies JARs from the local Maven build. |
+| `FLINK_AGENTS_SKIP_JAR_DOWNLOAD` | Set to `1`, `true`, `yes`, or `on` (case-insensitive) to skip downloading JARs from Maven Central. Useful when building from source with `tools/build.sh`, which copies JARs from the local Maven build. |
 | `FLINK_AGENTS_MAVEN_MIRROR` | Override the Maven repository base URL for JAR downloads. Defaults to `https://repo1.maven.org/maven2`. Useful for environments with restricted network access or internal mirrors. |
 
 ## Maven Dependencies (For Java)
