@@ -22,6 +22,8 @@
 ##
 SKIP_GPG=${SKIP_GPG:-false}
 MVN=${MVN:-mvn}
+PYTHON_BIN=${PYTHON_BIN:-python3}
+UV=${UV:-uv}
 
 if [ -z "${RELEASE_VERSION:-}" ]; then
     echo "RELEASE_VERSION was not set."
@@ -31,6 +33,7 @@ fi
 # fail immediately
 set -o errexit
 set -o nounset
+set -o pipefail
 # print command before executing
 set -o xtrace
 
@@ -60,8 +63,9 @@ make_binary_release() {
 
   echo "Creating binary release"
 
-  # Dynamically discover dist sub-modules (directories containing pom.xml)
-  # Exclude 'common' module - it's for Python wheel optimization only, not for Maven release
+  # Dynamically discover dist sub-modules (directories containing pom.xml).
+  # Exclude 'common' because it is published to Maven Central for Python installs,
+  # not distributed as a convenience binary.
   DIST_MODULES=()
   for module_dir in dist/*/; do
     if [ -f "${module_dir}pom.xml" ]; then
@@ -99,29 +103,66 @@ make_binary_release() {
 
 make_python_release() {
   FLINK_AGENTS_VERSION=${RELEASE_VERSION/-SNAPSHOT/.dev0}
-  cd python/dist
+  PYTHON_SDIST="flink_agents-${FLINK_AGENTS_VERSION}.tar.gz"
 
-  # Need to move the downloaded wheel packages from Azure CI to the directory flink-python/dist manually.
-  for wheel_file in *.whl; do
-    if [[ ! ${wheel_file} =~ ^flink_agents-$FLINK_AGENTS_VERSION- ]]; then
-        echo -e "\033[31;1mThe file name of the python package: ${wheel_file} is not consistent with given release version: ${FLINK_AGENTS_VERSION}!\033[0m"
-        exit 1
-    fi
-    cp ${wheel_file} "${PYTHON_RELEASE_DIR}/${wheel_file}"
-  done
+  ${PYTHON_BIN} - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+manifest_path = Path("python/jar_manifest.json")
+manifest = json.loads(manifest_path.read_text())
+release_version = os.environ["RELEASE_VERSION"]
+
+if manifest["version"] != release_version:
+    print(
+        f"jar_manifest.json version mismatch: expected {release_version}, found {manifest['version']}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+missing_sha256 = [
+    jar["artifact_id"]
+    for jar in manifest["jars"]
+    if not jar.get("sha256") or jar["sha256"] == "PLACEHOLDER"
+]
+if missing_sha256:
+    print(
+        "jar_manifest.json still contains placeholder SHA-256 values for: "
+        + ", ".join(missing_sha256),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+
+  cd python
+
+  if command -v "${UV}" >/dev/null 2>&1; then
+    "${UV}" run --with build "${PYTHON_BIN}" -m build --sdist
+  else
+    "${PYTHON_BIN}" -m build --version >/dev/null 2>&1 || {
+      echo "Neither '${UV}' nor '${PYTHON_BIN} -m build' is available to build the Python sdist."
+      exit 1
+    }
+    "${PYTHON_BIN}" -m build --sdist
+  fi
+
+  if [ ! -f "dist/${PYTHON_SDIST}" ] ; then
+    echo -e "\033[31;1mExpected Python sdist dist/${PYTHON_SDIST} was not produced.\033[0m"
+    exit 1
+  fi
+
+  cp "dist/${PYTHON_SDIST}" "${PYTHON_RELEASE_DIR}/${PYTHON_SDIST}"
 
   cd ${PYTHON_RELEASE_DIR}
 
-  # Sign sha the tgz and wheel packages
+  # Sign and hash the Python sdist.
   if [ "$SKIP_GPG" == "false" ] ; then
-    for wheel_file in *.whl; do
-      gpg --armor --detach-sig "${wheel_file}"
-    done
+    gpg --armor --detach-sig "${PYTHON_SDIST}"
   fi
 
-  for wheel_file in *.whl; do
-    $SHASUM "${wheel_file}" > "${wheel_file}.sha512"
-  done
+  $SHASUM "${PYTHON_SDIST}" > "${PYTHON_SDIST}.sha512"
 
   cd ${FLINK_AGENTS_DIR}
 }
