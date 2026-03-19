@@ -1,7 +1,7 @@
 {
   "maven_base_url": "https://repo1.maven.org/maven2",
   "group_id": "org.apache.flink",
-  "version": "0.2-SNAPSHOT",
+  "version": "0.2.1",
   "jars": [
     {
       "artifact_id": "flink-agents-dist-common",
