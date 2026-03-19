@@ -86,6 +86,8 @@ build = [
 # Test dependencies
 test = [
     "pytest==8.4.0",
+    "apache-flink>=1.20",
+    "cloudpickle",
 ]
 
 # Lint dependencies

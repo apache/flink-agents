@@ -47,6 +47,10 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Check code style
         run: ./tools/lint.sh -c
+      - name: Check ResourceName consistency (Java vs Python)
+        run: |
+          cd python && uv sync --extra test && cd ..
+          python tools/check_resource_consistency.py
 
   build_backend_tests:
     name: ut-build-backend
