@@ -648,7 +648,9 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 1. Create an account at [OpenAI Platform](https://platform.openai.com/)
 2. Navigate to [API Keys](https://platform.openai.com/api-keys) and create a new secret key
 
-#### OpenAICompletionsConnection Parameters
+#### Completions API
+
+##### OpenAICompletionsConnection Parameters
 
 {{< tabs "OpenAICompletionsConnection Parameters" >}}
 
@@ -680,7 +682,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 {{< /tabs >}}
 
-#### OpenAICompletionsSetup Parameters
+##### OpenAICompletionsSetup Parameters
 
 {{< tabs "OpenAICompletionsSetup Parameters" >}}
 
@@ -722,9 +724,9 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 {{< /tabs >}}
 
-#### Usage Example
+##### Usage Example
 
-{{< tabs "OpenAI Usage Example" >}}
+{{< tabs "OpenAI Chat Completions Usage Example" >}}
 
 {{< tab "Python" >}}
 ```python
@@ -786,28 +788,13 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
-#### Available Models
-
-Visit the [OpenAI Models documentation](https://platform.openai.com/docs/models) for the complete and up-to-date list of available chat models.
-
-Some popular options include:
-- **GPT-5** series (GPT-5, GPT-5 mini, GPT-5 nano)
-- **GPT-4.1**
-- **gpt-oss** series (gpt-oss-120b, gpt-oss-10b)
-
-{{< hint warning >}}
-Model availability and specifications may change. Always check the official OpenAI documentation for the latest information before implementing in production.
-{{< /hint >}}
-
-### OpenAI Responses API
-
-OpenAI provides the Responses API as an alternative to Chat Completions, with support for additional features like `store` and `instructions`.
+#### Responses API
 
 {{< hint info >}}
-OpenAI Responses API is only supported in Java currently. To use OpenAI Responses API from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+Responses API is only supported in Java currently. To use OpenAI Responses API from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
 
-#### OpenAIResponsesModelConnection Parameters
+##### OpenAIResponsesModelConnection Parameters
 
 {{< tabs "OpenAIResponsesModelConnection Parameters" >}}
 
@@ -826,7 +813,7 @@ OpenAI Responses API is only supported in Java currently. To use OpenAI Response
 
 {{< /tabs >}}
 
-#### OpenAIResponsesModelSetup Parameters
+##### OpenAIResponsesModelSetup Parameters
 
 {{< tabs "OpenAIResponsesModelSetup Parameters" >}}
 
@@ -850,7 +837,7 @@ OpenAI Responses API is only supported in Java currently. To use OpenAI Response
 
 {{< /tabs >}}
 
-#### Usage Example
+##### Usage Example
 
 {{< tabs "OpenAI Responses API Usage Example" >}}
 
