@@ -648,9 +648,9 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 1. Create an account at [OpenAI Platform](https://platform.openai.com/)
 2. Navigate to [API Keys](https://platform.openai.com/api-keys) and create a new secret key
 
-#### OpenAIChatModelConnection Parameters
+#### OpenAICompletionsConnection Parameters
 
-{{< tabs "OpenAIChatModelConnection Parameters" >}}
+{{< tabs "OpenAICompletionsConnection Parameters" >}}
 
 {{< tab "Python" >}}
 
@@ -680,9 +680,9 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 {{< /tabs >}}
 
-#### OpenAIChatModelSetup Parameters
+#### OpenAICompletionsSetup Parameters
 
-{{< tabs "OpenAIChatModelSetup Parameters" >}}
+{{< tabs "OpenAICompletionsSetup Parameters" >}}
 
 {{< tab "Python" >}}
 
@@ -761,7 +761,7 @@ class MyAgent(Agent):
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor openaiConnection() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
                 .addInitialArgument("api_base_url", "https://api.openai.com/v1")
                 .addInitialArgument("timeout", 60)
@@ -771,11 +771,118 @@ public class MyAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor openaiChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP)
                 .addInitialArgument("connection", "openaiConnection")
                 .addInitialArgument("model", "gpt-4")
                 .addInitialArgument("temperature", 0.7d)
                 .addInitialArgument("max_tokens", 1000)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Visit the [OpenAI Models documentation](https://platform.openai.com/docs/models) for the complete and up-to-date list of available chat models.
+
+Some popular options include:
+- **GPT-5** series (GPT-5, GPT-5 mini, GPT-5 nano)
+- **GPT-4.1**
+- **gpt-oss** series (gpt-oss-120b, gpt-oss-10b)
+
+{{< hint warning >}}
+Model availability and specifications may change. Always check the official OpenAI documentation for the latest information before implementing in production.
+{{< /hint >}}
+
+### OpenAI Responses API
+
+OpenAI Responses API is a core agentic API primitive, combining the simplicity of Chat Completions with the ability to do more agentic tasks. Compared with Chat Completions, the Responses API supports additional features like `store` and `instructions`.
+
+{{< hint info >}}
+OpenAI Responses API is only supported in Java currently. To use OpenAI Responses API from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint warning >}}
+**OpenAI Responses API vs OpenAI (Chat Completions):** The Responses API is OpenAI-specific and recommended by OpenAI for new projects. The [OpenAI](#openai) integration uses the Chat Completions API and is compatible with any OpenAI-compatible provider (DeepSeek, DashScope, etc.).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. Create an account at [OpenAI Platform](https://platform.openai.com/)
+2. Navigate to [API Keys](https://platform.openai.com/api-keys) and create a new secret key
+
+#### OpenAIResponsesModelConnection Parameters
+
+{{< tabs "OpenAIResponsesModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | OpenAI API key for authentication |
+| `api_base_url` | String | None | Base URL for OpenAI API (useful for proxies) |
+| `max_retries` | int | `2` | Maximum number of API retry attempts |
+| `timeout` | int | None | Timeout in seconds for API requests |
+| `default_headers` | Map<String, String> | None | Default headers for API requests |
+| `model` | String | None | Default model to use if not specified in setup |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### OpenAIResponsesModelSetup Parameters
+
+{{< tabs "OpenAIResponsesModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"gpt-4o"` | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `strict` | boolean | `false` | Enable strict mode for tool calling schemas |
+| `reasoning_effort` | String | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
+| `store` | boolean | `false` | Whether to store the response for later retrieval |
+| `instructions` | String | None | System-level instructions for the model |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Responses API parameters |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "OpenAI Responses API Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor openaiResponsesConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_RESPONSES_CONNECTION)
+                .addInitialArgument("api_key", "<your-api-key>")
+                .addInitialArgument("timeout", 120)
+                .addInitialArgument("max_retries", 3)
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor openaiResponsesChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_RESPONSES_SETUP)
+                .addInitialArgument("connection", "openaiResponsesConnection")
+                .addInitialArgument("model", "gpt-4o")
+                .addInitialArgument("temperature", 0.3d)
+                .addInitialArgument("max_tokens", 2048)
+                .addInitialArgument("store", true)
                 .build();
     }
 
