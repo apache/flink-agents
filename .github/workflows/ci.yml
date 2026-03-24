@@ -42,9 +42,9 @@ jobs:
         with:
           python-version: 3.12
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Check code style
         run: ./tools/lint.sh -c
 
@@ -58,9 +58,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Run build-backend tests
         working-directory: python
         run: |
@@ -89,9 +89,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Install Python dependencies for MCP tests
         run: |
           cd python
@@ -125,9 +125,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Run Python Tests
         env:  
           LOG_LEVEL: INFO
@@ -164,9 +164,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Install flink-agents
         run: bash tools/build.sh
       - name: Install ollama
@@ -256,9 +256,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Build flink-agents
         run: bash tools/build.sh
       - name: Install ollama
