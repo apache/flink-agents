@@ -801,20 +801,11 @@ Model availability and specifications may change. Always check the official Open
 
 ### OpenAI Responses API
 
-OpenAI Responses API is a core agentic API primitive, combining the simplicity of Chat Completions with the ability to do more agentic tasks. Compared with Chat Completions, the Responses API supports additional features like `store` and `instructions`.
+OpenAI provides the Responses API as an alternative to Chat Completions, with support for additional features like `store` and `instructions`.
 
 {{< hint info >}}
 OpenAI Responses API is only supported in Java currently. To use OpenAI Responses API from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
-
-{{< hint warning >}}
-**OpenAI Responses API vs OpenAI (Chat Completions):** The Responses API is OpenAI-specific and recommended by OpenAI for new projects. The [OpenAI](#openai) integration uses the Chat Completions API and is compatible with any OpenAI-compatible provider (DeepSeek, DashScope, etc.).
-{{< /hint >}}
-
-#### Prerequisites
-
-1. Create an account at [OpenAI Platform](https://platform.openai.com/)
-2. Navigate to [API Keys](https://platform.openai.com/api-keys) and create a new secret key
 
 #### OpenAIResponsesModelConnection Parameters
 
