@@ -187,7 +187,7 @@ class MCPPromptTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test PromptArgument defaults required to false when null")
     void testPromptArgumentDefaultsRequiredToFalseWhenNull() {
-        MCPPrompt.PromptArgument arg = new MCPPrompt.PromptArgument("nickname", "Optional nickname", null);
+        MCPPrompt.PromptArgument arg = new MCPPrompt.PromptArgument("name", "Name", null);
 
         // Required should default to false when null
         assertThat(arg.isRequired()).isFalse();
