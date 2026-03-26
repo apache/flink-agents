@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-"""Verify that the Python class path defined in ResourceName corresponds to a class that exists"""
+"""Verify ResourceName Python paths resolve to existing, importable classes."""
 from __future__ import annotations
 
 import importlib
@@ -61,20 +61,22 @@ def _class_exists(full_class_path: str) -> tuple[bool, str]:
             return False, f"module {module_path!r} Attribute does not exist {class_name!r}"
         if not inspect.isclass(cls):
             return False, f"{full_class_path!r} is not a class"
-        return True, ""
     except Exception as e:
         return False, f"import error: {type(e).__name__}: {e}"
+    else:
+        return True, ""
 
 
 _RESOURCE_PATHS = _collect_python_class_paths()
 
 
 @pytest.mark.parametrize(
-    "path_name,full_path",
+    ("path_name", "full_path"),
     _RESOURCE_PATHS,
     ids=[p[0] for p in _RESOURCE_PATHS],
 )
 def test_resource_name_python_classes_exist(path_name: str, full_path: str) -> None:
+    """Each parameterized path must import as a class."""
     exists, err_msg = _class_exists(full_path)
     assert exists, (
         f"ResourceName.{path_name} = {full_path!r} The corresponding class does not exist: {err_msg} "
