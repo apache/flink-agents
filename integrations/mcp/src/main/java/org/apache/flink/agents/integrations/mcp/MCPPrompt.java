@@ -65,16 +65,16 @@ public class MCPPrompt extends Prompt {
         private final String description;
 
         @JsonProperty("required")
-        private final boolean required;
+        private final Boolean required;
 
         @JsonCreator
         public PromptArgument(
                 @JsonProperty("name") String name,
                 @JsonProperty("description") String description,
-                @JsonProperty("required") boolean required) {
+                @JsonProperty("required") Boolean required) {
             this.name = Objects.requireNonNull(name, "name cannot be null");
             this.description = description;
-            this.required = required;
+            this.required = required != null && required;
         }
 
         public String getName() {
@@ -85,7 +85,7 @@ public class MCPPrompt extends Prompt {
             return description;
         }
 
-        public boolean isRequired() {
+        public Boolean isRequired() {
             return required;
         }
 
@@ -94,9 +94,9 @@ public class MCPPrompt extends Prompt {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             PromptArgument that = (PromptArgument) o;
-            return required == that.required
-                    && Objects.equals(name, that.name)
-                    && Objects.equals(description, that.description);
+            return Objects.equals(name, that.name)
+                    && Objects.equals(description, that.description)
+                    && Objects.equals(required, that.required);
         }
 
         @Override
@@ -193,7 +193,7 @@ public class MCPPrompt extends Prompt {
         Map<String, Object> result = new HashMap<>();
 
         for (PromptArgument arg : promptArguments.values()) {
-            if (arg.isRequired()) {
+            if (Boolean.TRUE.equals(arg.isRequired())) {
                 if (arguments == null || !arguments.containsKey(arg.getName())) {
                     throw new IllegalArgumentException(
                             "Missing required argument: " + arg.getName());
