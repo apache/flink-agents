@@ -42,7 +42,8 @@ public class ResourceCheckTest {
         collectAndCheckJavaClasses(ResourceName.class, "", false, missing);
 
         if (missing.isEmpty()) {
-            System.out.println("Success: The Java class referenced by ResourceName has passed validation without any missing or conflicting elements.");
+            System.out.println(
+                    "Success: The Java class referenced by ResourceName has passed validation without any missing or conflicting elements.");
         }
 
         assertThat(missing)
