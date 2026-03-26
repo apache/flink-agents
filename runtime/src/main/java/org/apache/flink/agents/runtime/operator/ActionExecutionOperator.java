@@ -68,6 +68,8 @@ import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.python.env.PythonDependencyInfo;
+import org.apache.flink.runtime.state.KeyGroupRange;
+import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.runtime.state.StateInitializationContext;
 import org.apache.flink.runtime.state.StateSnapshotContext;
 import org.apache.flink.runtime.state.VoidNamespace;
@@ -916,7 +918,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void tryResumeProcessActionTasks() throws Exception {
         Iterable<Object> keys = currentProcessingKeysOpState.get();
         if (keys != null) {
+            int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
+            KeyGroupRange currentSubtaskKeyGroupRange =
+                    getCurrentSubtaskKeyGroupRange(maxParallelism);
             for (Object key : keys) {
+                if (!isKeyOwnedByCurrentSubtask(key, maxParallelism, currentSubtaskKeyGroupRange)) {
+                    continue;
+                }
                 keySegmentQueue.addKeyToLastSegment(key);
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key), "process action task");
@@ -1123,6 +1131,19 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             LOG.info("Using Kafka as backend of action state store.");
             actionStateStore = new KafkaActionStateStore(agentPlan.getConfig());
         }
+    }
+
+    private KeyGroupRange getCurrentSubtaskKeyGroupRange(int maxParallelism) {
+        int parallelism = getRuntimeContext().getTaskInfo().getNumberOfParallelSubtasks();
+        int subtaskIndex = getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
+        return KeyGroupRangeAssignment.computeKeyGroupRangeForOperatorIndex(
+                maxParallelism, parallelism, subtaskIndex);
+    }
+
+    private boolean isKeyOwnedByCurrentSubtask(
+            Object key, int maxParallelism, KeyGroupRange currentSubtaskKeyGroupRange) {
+        int keyGroup = KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism);
+        return currentSubtaskKeyGroupRange.contains(keyGroup);
     }
 
     /** Failed to execute Action task. */

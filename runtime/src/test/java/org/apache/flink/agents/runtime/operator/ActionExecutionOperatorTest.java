@@ -33,9 +33,12 @@ import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
+import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.mailbox.TaskMailbox;
+import org.apache.flink.streaming.util.AbstractStreamOperatorTestHarness;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.Test;
@@ -148,6 +151,71 @@ public class ActionExecutionOperatorTest {
             assertThat(recordOutput.size()).isEqualTo(2);
             assertThat(recordOutput.get(0).getValue()).isEqualTo(2L);
             assertThat(recordOutput.get(1).getValue()).isEqualTo(4L);
+        }
+    }
+
+    @Test
+    void testRestoreOnlyResumesKeysOwnedByCurrentSubtask() throws Exception {
+        final int maxParallelism = 4;
+        final int oldParallelism = 1;
+        final int newParallelism = 2;
+        final long key = 1L;
+
+        OperatorSubtaskState snapshot;
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class),
+                        maxParallelism,
+                        oldParallelism,
+                        0)) {
+            testHarness.open();
+            testHarness.processElement(new StreamRecord<>(key));
+            assertThat(testHarness.getTaskMailbox().size()).isEqualTo(1);
+            snapshot = testHarness.snapshot(1L, 1L);
+        }
+
+        int ownerSubtask =
+                KeyGroupRangeAssignment.computeOperatorIndexForKeyGroup(
+                        maxParallelism,
+                        newParallelism,
+                        KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism));
+        int nonOwnerSubtask = 1 - ownerSubtask;
+
+        OperatorSubtaskState ownerState =
+                AbstractStreamOperatorTestHarness.repartitionOperatorState(
+                        snapshot, maxParallelism, oldParallelism, newParallelism, ownerSubtask);
+        OperatorSubtaskState nonOwnerState =
+                AbstractStreamOperatorTestHarness.repartitionOperatorState(
+                        snapshot, maxParallelism, oldParallelism, newParallelism, nonOwnerSubtask);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> ownerHarness =
+                        new KeyedOneInputStreamOperatorTestHarness<>(
+                                new ActionExecutionOperatorFactory(
+                                        TestAgent.getAgentPlan(false), true),
+                                (KeySelector<Long, Long>) value -> value,
+                                TypeInformation.of(Long.class),
+                                maxParallelism,
+                                newParallelism,
+                                ownerSubtask);
+                KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> nonOwnerHarness =
+                        new KeyedOneInputStreamOperatorTestHarness<>(
+                                new ActionExecutionOperatorFactory(
+                                        TestAgent.getAgentPlan(false), true),
+                                (KeySelector<Long, Long>) value -> value,
+                                TypeInformation.of(Long.class),
+                                maxParallelism,
+                                newParallelism,
+                                nonOwnerSubtask)) {
+            ownerHarness.initializeState(ownerState);
+            nonOwnerHarness.initializeState(nonOwnerState);
+
+            ownerHarness.open();
+            nonOwnerHarness.open();
+
+            assertThat(ownerHarness.getTaskMailbox().size()).isEqualTo(1);
+            assertThat(nonOwnerHarness.getTaskMailbox().size()).isZero();
         }
     }
 
