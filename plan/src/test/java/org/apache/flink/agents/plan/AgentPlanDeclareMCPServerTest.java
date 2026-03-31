@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -66,7 +67,6 @@ class AgentPlanDeclareMCPServerTest {
     private static final String MCP_ENDPOINT = "http://127.0.0.1:8000/mcp";
 
     private AgentPlan agentPlan;
-    private ResourceCache resourceCache;
 
     /** Test agent with MCP server annotation. */
     static class TestMCPAgent extends Agent {
@@ -183,7 +183,18 @@ class AgentPlanDeclareMCPServerTest {
     @BeforeEach
     void setup() throws Exception {
         agentPlan = new AgentPlan(new TestMCPAgent());
-        resourceCache = new ResourceCache(agentPlan.getResourceProviders());
+    }
+
+    /** Resolves a resource directly from its provider. */
+    private Resource resolveResource(String name, ResourceType type) throws Exception {
+        return agentPlan
+                .getResourceProviders()
+                .get(type)
+                .get(name)
+                .provide(
+                        (n, t) -> {
+                            throw new UnsupportedOperationException("No dependencies expected");
+                        });
     }
 
     @AfterAll
@@ -239,7 +250,7 @@ class AgentPlanDeclareMCPServerTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Retrieve MCP tool from AgentPlan - add tool")
     void retrieveMCPToolAdd() throws Exception {
-        Tool tool = (Tool) resourceCache.getResource("add", ResourceType.TOOL);
+        Tool tool = (Tool) resolveResource("add", ResourceType.TOOL);
         assertNotNull(tool);
         assertInstanceOf(MCPTool.class, tool);
 
@@ -261,7 +272,7 @@ class AgentPlanDeclareMCPServerTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Retrieve MCP prompt from AgentPlan - ask_sum")
     void retrieveMCPPromptAskSum() throws Exception {
-        Prompt prompt = (Prompt) resourceCache.getResource("ask_sum", ResourceType.PROMPT);
+        Prompt prompt = (Prompt) resolveResource("ask_sum", ResourceType.PROMPT);
         assertNotNull(prompt);
         assertInstanceOf(MCPPrompt.class, prompt);
 
@@ -307,7 +318,7 @@ class AgentPlanDeclareMCPServerTest {
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Test metadata from MCP tool - add")
     void testMCPToolMetadata() throws Exception {
-        Tool tool = (Tool) resourceCache.getResource("add", ResourceType.TOOL);
+        Tool tool = (Tool) resolveResource("add", ResourceType.TOOL);
         ToolMetadata metadata = tool.getMetadata();
 
         assertEquals("add", metadata.getName());

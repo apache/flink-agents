@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -48,7 +49,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentPlanDeclareToolMethodTest {
 
     private AgentPlan agentPlan;
-    private ResourceCache resourceCache;
 
     static class TestAgent extends Agent {
         @org.apache.flink.agents.api.annotation.Tool(
@@ -92,7 +92,18 @@ class AgentPlanDeclareToolMethodTest {
     @BeforeEach
     void setup() throws Exception {
         agentPlan = new AgentPlan(new TestAgent());
-        resourceCache = new ResourceCache(agentPlan.getResourceProviders());
+    }
+
+    /** Resolves a resource directly from its provider, bypassing ResourceCache. */
+    private Resource resolveResource(String name, ResourceType type) throws Exception {
+        return agentPlan
+                .getResourceProviders()
+                .get(type)
+                .get(name)
+                .provide(
+                        (n, t) -> {
+                            throw new UnsupportedOperationException("No dependencies expected");
+                        });
     }
 
     @Test
@@ -106,8 +117,17 @@ class AgentPlanDeclareToolMethodTest {
         assertTrue(toolProviders.containsKey("getWeather"));
     }
 
-    void checkToolCall(ResourceCache cache) throws Exception {
-        Tool calculator = (Tool) cache.getResource("calculate", ResourceType.TOOL);
+    void checkToolCall(AgentPlan plan) throws Exception {
+        Tool calculator =
+                (Tool)
+                        plan.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("calculate")
+                                .provide(
+                                        (n, t) -> {
+                                            throw new UnsupportedOperationException(
+                                                    "No dependencies expected");
+                                        });
         ToolParameters tp =
                 new ToolParameters(
                         new HashMap<>(
@@ -119,7 +139,16 @@ class AgentPlanDeclareToolMethodTest {
         assertTrue(r.isSuccess());
         assertEquals(45.0, (Double) r.getResult(), 0.001);
 
-        Tool weather = (Tool) cache.getResource("getWeather", ResourceType.TOOL);
+        Tool weather =
+                (Tool)
+                        plan.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("getWeather")
+                                .provide(
+                                        (n, t) -> {
+                                            throw new UnsupportedOperationException(
+                                                    "No dependencies expected");
+                                        });
         ToolResponse wr =
                 weather.call(
                         new ToolParameters(
@@ -135,7 +164,7 @@ class AgentPlanDeclareToolMethodTest {
     @Test
     @DisplayName("Retrieve tool and call with parameters")
     void retrieveAndCallTool() throws Exception {
-        checkToolCall(this.resourceCache);
+        checkToolCall(this.agentPlan);
     }
 
     @Test
@@ -155,13 +184,13 @@ class AgentPlanDeclareToolMethodTest {
                                 TestAgent.class.getMethod(
                                         "getWeather", String.class, String.class)));
         AgentPlan addedPlan = new AgentPlan(agent);
-        checkToolCall(new ResourceCache(addedPlan.getResourceProviders()));
+        checkToolCall(addedPlan);
     }
 
     @Test
     @DisplayName("Parameter conversion and errors")
     void paramConversionAndErrors() throws Exception {
-        Tool calculator = (Tool) resourceCache.getResource("calculate", ResourceType.TOOL);
+        Tool calculator = (Tool) resolveResource("calculate", ResourceType.TOOL);
 
         ToolResponse r =
                 calculator.call(
@@ -216,7 +245,7 @@ class AgentPlanDeclareToolMethodTest {
     @Test
     @DisplayName("Metadata and schema shape")
     void metadataSchema() throws Exception {
-        Tool calculator = (Tool) resourceCache.getResource("calculate", ResourceType.TOOL);
+        Tool calculator = (Tool) resolveResource("calculate", ResourceType.TOOL);
         ToolMetadata md = calculator.getMetadata();
         assertEquals("calculate", md.getName());
         assertEquals("Performs basic arithmetic operations", md.getDescription());
@@ -233,8 +262,16 @@ class AgentPlanDeclareToolMethodTest {
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(agentPlan);
         AgentPlan restored = mapper.readValue(json, AgentPlan.class);
-        ResourceCache restoredCache = new ResourceCache(restored.getResourceProviders());
-        Tool calculator = (Tool) restoredCache.getResource("calculate", ResourceType.TOOL);
+        Tool calculator =
+                (Tool)
+                        restored.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("calculate")
+                                .provide(
+                                        (n, t) -> {
+                                            throw new UnsupportedOperationException(
+                                                    "No dependencies expected");
+                                        });
         ToolResponse r =
                 calculator.call(
                         new ToolParameters(

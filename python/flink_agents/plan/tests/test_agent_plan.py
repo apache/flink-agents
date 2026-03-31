@@ -45,7 +45,7 @@ from flink_agents.api.vector_stores.vector_store import (
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
-from flink_agents.plan.resource_cache import ResourceCache
+from flink_agents.runtime.resource_cache import ResourceCache
 
 
 class AgentForTest(Agent):  # noqa D101

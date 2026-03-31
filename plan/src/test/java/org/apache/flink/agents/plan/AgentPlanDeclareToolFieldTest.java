@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -47,7 +48,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class AgentPlanDeclareToolFieldTest {
 
     private AgentPlan agentPlan;
-    private ResourceCache resourceCache;
 
     // Static methods to be wrapped by FunctionTool
     public static double calculate(
@@ -116,7 +116,18 @@ class AgentPlanDeclareToolFieldTest {
     @BeforeEach
     void setup() throws Exception {
         agentPlan = new AgentPlan(new TestAgent());
-        resourceCache = new ResourceCache(agentPlan.getResourceProviders());
+    }
+
+    /** Resolves a resource directly from its provider, bypassing ResourceCache. */
+    private Resource resolveResource(String name, ResourceType type) throws Exception {
+        return agentPlan
+                .getResourceProviders()
+                .get(type)
+                .get(name)
+                .provide(
+                        (n, t) -> {
+                            throw new UnsupportedOperationException("No dependencies expected");
+                        });
     }
 
     @Test
@@ -133,7 +144,7 @@ class AgentPlanDeclareToolFieldTest {
     @Test
     @DisplayName("Retrieve FunctionTool and call with parameters")
     void callCalculator() throws Exception {
-        Tool tool = (Tool) resourceCache.getResource("calculator", ResourceType.TOOL);
+        Tool tool = (Tool) resolveResource("calculator", ResourceType.TOOL);
         assertInstanceOf(FunctionTool.class, tool);
         ToolResponse r =
                 tool.call(
@@ -150,7 +161,7 @@ class AgentPlanDeclareToolFieldTest {
     @Test
     @DisplayName("Call weather FunctionTool")
     void callWeather() throws Exception {
-        Tool tool = (Tool) resourceCache.getResource("weather", ResourceType.TOOL);
+        Tool tool = (Tool) resolveResource("weather", ResourceType.TOOL);
         assertInstanceOf(FunctionTool.class, tool);
         ToolResponse r =
                 tool.call(
@@ -167,8 +178,7 @@ class AgentPlanDeclareToolFieldTest {
     @Test
     @DisplayName("FunctionTool metadata and schema")
     void metadataSchema() throws Exception {
-        FunctionTool tool =
-                (FunctionTool) resourceCache.getResource("calculator", ResourceType.TOOL);
+        FunctionTool tool = (FunctionTool) resolveResource("calculator", ResourceType.TOOL);
         ToolMetadata md = tool.getMetadata();
         assertEquals("calculate", md.getName());
         assertEquals("Performs basic arithmetic operations", md.getDescription());
@@ -182,7 +192,7 @@ class AgentPlanDeclareToolFieldTest {
     @Test
     @DisplayName("FunctionTool error cases")
     void calculatorErrors() throws Exception {
-        Tool tool = (Tool) resourceCache.getResource("calculator", ResourceType.TOOL);
+        Tool tool = (Tool) resolveResource("calculator", ResourceType.TOOL);
         ToolResponse r =
                 tool.call(
                         new ToolParameters(

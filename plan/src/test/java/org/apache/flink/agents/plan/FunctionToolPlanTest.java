@@ -89,9 +89,17 @@ class FunctionToolPlanTest {
     @DisplayName("FunctionTool via AgentPlan: JavaFunction success, PythonFunction error")
     void functionToolAgentPlan() throws Exception {
         AgentPlan plan = new AgentPlan(new TestAgent());
-        ResourceCache cache = new ResourceCache(plan.getResourceProviders());
 
-        FunctionTool javaTool = (FunctionTool) cache.getResource("javaTool", ResourceType.TOOL);
+        FunctionTool javaTool =
+                (FunctionTool)
+                        plan.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("javaTool")
+                                .provide(
+                                        (n, t) -> {
+                                            throw new UnsupportedOperationException(
+                                                    "No dependencies expected");
+                                        });
         ToolResponse ok =
                 javaTool.call(
                         new ToolParameters(
@@ -103,7 +111,16 @@ class FunctionToolPlanTest {
         assertTrue(ok.isSuccess());
         assertEquals(36.0, (Double) ok.getResult(), 1e-9);
 
-        FunctionTool pyTool = (FunctionTool) cache.getResource("pyTool", ResourceType.TOOL);
+        FunctionTool pyTool =
+                (FunctionTool)
+                        plan.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("pyTool")
+                                .provide(
+                                        (n, t) -> {
+                                            throw new UnsupportedOperationException(
+                                                    "No dependencies expected");
+                                        });
         ToolResponse err = pyTool.call(new ToolParameters(new HashMap<>(Map.of("x", 1))));
         assertFalse(err.isSuccess());
     }

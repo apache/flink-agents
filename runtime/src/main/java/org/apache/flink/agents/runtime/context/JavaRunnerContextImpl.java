@@ -19,7 +19,7 @@ package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.plan.AgentPlan;
-import org.apache.flink.agents.plan.ResourceCache;
+import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;

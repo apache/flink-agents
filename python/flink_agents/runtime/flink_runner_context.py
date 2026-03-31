@@ -36,7 +36,7 @@ from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import AsyncExecutionResult, RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
-from flink_agents.plan.resource_cache import ResourceCache
+from flink_agents.runtime.resource_cache import ResourceCache
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
 from flink_agents.runtime.memory.internal_base_long_term_memory import (

@@ -50,7 +50,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class AgentPlanDeclareChatModelTest {
 
     private AgentPlan agentPlan;
-    private ResourceCache resourceCache;
 
     public static class MockChatModel extends BaseChatModelSetup {
         public MockChatModel(
@@ -92,7 +91,18 @@ class AgentPlanDeclareChatModelTest {
     @BeforeEach
     void setup() throws Exception {
         agentPlan = new AgentPlan(new ChatAgent());
-        resourceCache = new ResourceCache(agentPlan.getResourceProviders());
+    }
+
+    /** Resolves a resource directly from its provider. */
+    private Resource resolveResource(String name, ResourceType type) throws Exception {
+        return agentPlan
+                .getResourceProviders()
+                .get(type)
+                .get(name)
+                .provide(
+                        (n, t) -> {
+                            throw new UnsupportedOperationException("No dependencies expected");
+                        });
     }
 
     @Test
@@ -109,8 +119,7 @@ class AgentPlanDeclareChatModelTest {
     @DisplayName("Retrieve chat model and invoke chat(Prompt)")
     void retrieveAndChat() throws Exception {
         BaseChatModelSetup model =
-                (BaseChatModelSetup)
-                        resourceCache.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                (BaseChatModelSetup) resolveResource("testChatModel", ResourceType.CHAT_MODEL);
         assertNotNull(model);
 
         Prompt prompt = Prompt.fromText("Hello world");
@@ -126,11 +135,17 @@ class AgentPlanDeclareChatModelTest {
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(agentPlan);
         AgentPlan restored = mapper.readValue(json, AgentPlan.class);
-        ResourceCache restoredCache = new ResourceCache(restored.getResourceProviders());
 
         BaseChatModelSetup model =
                 (BaseChatModelSetup)
-                        restoredCache.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                        restored.getResourceProviders()
+                                .get(ResourceType.CHAT_MODEL)
+                                .get("testChatModel")
+                                .provide(
+                                        (n, t) -> {
+                                            throw new UnsupportedOperationException(
+                                                    "No dependencies expected");
+                                        });
         ChatMessage reply =
                 model.chat(Prompt.fromText("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
         assertEquals("ok:Hi", reply.getContent());
@@ -150,13 +165,19 @@ class AgentPlanDeclareChatModelTest {
                         .addInitialArgument("tools", List.of("calculate"))
                         .build());
         AgentPlan actualPlan = new AgentPlan(agent);
-        ResourceCache actualCache = new ResourceCache(actualPlan.getResourceProviders());
         BaseChatModelSetup actualChatModel =
                 (BaseChatModelSetup)
-                        actualCache.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                        actualPlan
+                                .getResourceProviders()
+                                .get(ResourceType.CHAT_MODEL)
+                                .get("testChatModel")
+                                .provide(
+                                        (n, t) -> {
+                                            throw new UnsupportedOperationException(
+                                                    "No dependencies expected");
+                                        });
         BaseChatModelSetup expectedChatModel =
-                (BaseChatModelSetup)
-                        resourceCache.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                (BaseChatModelSetup) resolveResource("testChatModel", ResourceType.CHAT_MODEL);
         Assertions.assertEquals(expectedChatModel.getClass(), actualChatModel.getClass());
         Assertions.assertEquals(expectedChatModel.getConnection(), actualChatModel.getConnection());
         Assertions.assertEquals(expectedChatModel.getModel(), actualChatModel.getModel());
