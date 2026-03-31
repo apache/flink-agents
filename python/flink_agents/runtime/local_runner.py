@@ -33,9 +33,9 @@ from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import AsyncExecutionResult, RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
-from flink_agents.runtime.resource_cache import ResourceCache
 from flink_agents.runtime.agent_runner import AgentRunner
 from flink_agents.runtime.local_memory_object import LocalMemoryObject
+from flink_agents.runtime.resource_cache import ResourceCache
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
