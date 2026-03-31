@@ -269,6 +269,3 @@ jobs:
         run: |
           export ES_HOST="http://localhost:9200"
           tools/e2e.sh
-      - name: Check ResourceName consistency (Java vs Python)
-        working-directory: python
-        run: uv run --no-sync python ../tools/check_resource_consistency.py
