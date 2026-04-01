@@ -26,10 +26,19 @@ import java.util.UUID;
 public class ChatResponseEvent extends Event {
     private final UUID requestId;
     private final ChatMessage response;
+    private final int retryCount;
+    private final int totalRetryWaitSec;
 
     public ChatResponseEvent(UUID requestId, ChatMessage response) {
+        this(requestId, response, 0, 0);
+    }
+
+    public ChatResponseEvent(
+            UUID requestId, ChatMessage response, int retryCount, int totalRetryWaitSec) {
         this.requestId = requestId;
         this.response = response;
+        this.retryCount = retryCount;
+        this.totalRetryWaitSec = totalRetryWaitSec;
     }
 
     public UUID getRequestId() {
@@ -38,5 +47,13 @@ public class ChatResponseEvent extends Event {
 
     public ChatMessage getResponse() {
         return response;
+    }
+
+    public int getRetryCount() {
+        return retryCount;
+    }
+
+    public int getTotalRetryWaitSec() {
+        return totalRetryWaitSec;
     }
 }

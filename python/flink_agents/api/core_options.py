@@ -107,6 +107,12 @@ class AgentExecutionOptions:
         default=3,
     )
 
+    RETRY_WAIT_INTERVAL = ConfigOption(
+        key="retry-wait-interval",
+        config_type=int,
+        default=1,
+    )
+
     NUM_ASYNC_THREADS = ConfigOption(
         key="num-async-threads",
         config_type=int,

@@ -30,6 +30,9 @@ public class AgentExecutionOptions {
     public static final ConfigOption<Integer> MAX_RETRIES =
             new ConfigOption<>("max-retries", Integer.class, 3);
 
+    public static final ConfigOption<Integer> RETRY_WAIT_INTERVAL =
+            new ConfigOption<>("retry-wait-interval", Integer.class, 1);
+
     public static final ConfigOption<Integer> NUM_ASYNC_THREADS =
             new ConfigOption<>(
                     "num-async-threads",

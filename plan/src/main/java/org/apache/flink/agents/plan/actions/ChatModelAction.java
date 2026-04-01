@@ -34,6 +34,7 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -57,6 +58,9 @@ public class ChatModelAction {
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
     private static final String MODEL = "model";
     private static final String OUTPUT_SCHEMA = "outputSchema";
+    private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
+    private static final String TOTAL_RETRY_COUNT = "totalRetryCount";
+    private static final String TOTAL_RETRY_WAIT_SEC = "totalRetryWaitSec";
 
     private static final ObjectMapper mapper = new ObjectMapper();
 
@@ -127,6 +131,50 @@ public class ChatModelAction {
         Map<UUID, Object> toolRequestEventContext =
                 (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
         return (Map<String, Object>) toolRequestEventContext.remove(requestId);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void accumulateRetryStats(
+            MemoryObject sensoryMem, UUID initialRequestId, int retryCount, int retryWaitSec)
+            throws Exception {
+        Map<UUID, Map<String, Long>> retryStatsContext;
+        if (sensoryMem.isExist(RETRY_STATS_CONTEXT)) {
+            retryStatsContext =
+                    (Map<UUID, Map<String, Long>>) sensoryMem.get(RETRY_STATS_CONTEXT).getValue();
+        } else {
+            retryStatsContext = new HashMap<>();
+        }
+        Map<String, Long> stats = retryStatsContext.getOrDefault(initialRequestId, new HashMap<>());
+        stats.put(TOTAL_RETRY_COUNT, stats.getOrDefault(TOTAL_RETRY_COUNT, 0L) + retryCount);
+        stats.put(
+                TOTAL_RETRY_WAIT_SEC, stats.getOrDefault(TOTAL_RETRY_WAIT_SEC, 0L) + retryWaitSec);
+        retryStatsContext.put(initialRequestId, stats);
+        sensoryMem.set(RETRY_STATS_CONTEXT, retryStatsContext);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Long> getRetryStats(MemoryObject sensoryMem, UUID initialRequestId)
+            throws Exception {
+        if (!sensoryMem.isExist(RETRY_STATS_CONTEXT)) {
+            return Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_SEC, 0L);
+        }
+        Map<UUID, Map<String, Long>> retryStatsContext =
+                (Map<UUID, Map<String, Long>>) sensoryMem.get(RETRY_STATS_CONTEXT).getValue();
+        return retryStatsContext.getOrDefault(
+                initialRequestId, Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_SEC, 0L));
+    }
+
+    private static void recordRetryMetrics(
+            RunnerContext ctx, String model, int retryCount, int totalRetryWaitSec) {
+        if (retryCount <= 0) {
+            return;
+        }
+        FlinkAgentsMetricGroup metricGroup = ctx.getActionMetricGroup();
+        if (metricGroup != null) {
+            FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup(model);
+            modelGroup.getCounter("retryCount").inc(retryCount);
+            modelGroup.getCounter("retryWaitSec").inc(totalRetryWaitSec);
+        }
     }
 
     private static void handleToolCalls(
@@ -206,14 +254,21 @@ public class ChatModelAction {
         Agent.ErrorHandlingStrategy strategy =
                 ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
         int numRetries = 0;
+        int retryWaitIntervalSec = 0;
         if (strategy == Agent.ErrorHandlingStrategy.RETRY) {
             numRetries =
                     ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES) > 0
                             ? ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES)
                             : 0;
+            retryWaitIntervalSec =
+                    ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL) > 0
+                            ? ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
+                            : 0;
         }
 
         ChatMessage response = null;
+        int actualRetryCount = 0;
+        int totalWaitTimeSec = 0;
 
         DurableCallable<ChatMessage> callable =
                 new DurableCallable<>() {
@@ -253,12 +308,19 @@ public class ChatModelAction {
                     if (attempt == numRetries) {
                         throw e;
                     }
+                    actualRetryCount = attempt + 1;
+                    int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
                     LOG.warn(
-                            "Chat request {} failed with error: {}, retrying {} / {}.",
+                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {} s.",
                             initialRequestId,
                             e,
-                            attempt,
-                            numRetries);
+                            actualRetryCount,
+                            numRetries,
+                            currentWaitSec);
+                    if (currentWaitSec > 0) {
+                        Thread.sleep(currentWaitSec * 1000L);
+                        totalWaitTimeSec += currentWaitSec;
+                    }
                 } else {
                     LOG.debug(
                             "Chat request {} failed, the input chat messages are {}.",
@@ -269,10 +331,23 @@ public class ChatModelAction {
             }
         }
 
+        if (actualRetryCount > 0) {
+            accumulateRetryStats(
+                    ctx.getSensoryMemory(), initialRequestId, actualRetryCount, totalWaitTimeSec);
+        }
+
         if (!Objects.requireNonNull(response).getToolCalls().isEmpty()) {
             handleToolCalls(response, initialRequestId, model, messages, outputSchema, ctx);
         } else {
-            ctx.sendEvent(new ChatResponseEvent(initialRequestId, response));
+            Map<String, Long> retryStats = getRetryStats(ctx.getSensoryMemory(), initialRequestId);
+            int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
+            int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
+
+            recordRetryMetrics(ctx, chatModel.getConnection(), totalRetryCount, totalRetryWaitSec);
+
+            ctx.sendEvent(
+                    new ChatResponseEvent(
+                            initialRequestId, response, totalRetryCount, totalRetryWaitSec));
         }
     }
 

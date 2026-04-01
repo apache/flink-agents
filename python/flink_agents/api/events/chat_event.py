@@ -50,7 +50,13 @@ class ChatResponseEvent(Event):
         The id of the request event.
     response : ChatMessage
         The response from the chat model.
+    retry_count : int
+        The total number of retries across all tool call rounds.
+    total_retry_wait_sec : int
+        The total time spent waiting during retries in seconds.
     """
 
     request_id: UUID
     response: ChatMessage
+    retry_count: int = 0
+    total_retry_wait_sec: int = 0

@@ -18,6 +18,7 @@
 import copy
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Dict, List, cast
 from uuid import UUID
 
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
 
 _TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
 _TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT"
+_RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT"
 
 _logger = logging.getLogger(__name__)
 
@@ -109,6 +111,49 @@ def _get_tool_request_event_context(
     context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
     removed_context = context.pop(request_id, {})
     return removed_context
+
+
+def _accumulate_retry_stats(
+    sensory_memory: MemoryObject,
+    initial_request_id: UUID,
+    retry_count: int,
+    retry_wait_sec: int,
+) -> None:
+    """Accumulate retry stats for a given initial request across tool call rounds."""
+    retry_stats_context = sensory_memory.get(_RETRY_STATS_CONTEXT) or {}
+    stats = retry_stats_context.get(initial_request_id, {
+        "total_retry_count": 0,
+        "total_retry_wait_sec": 0,
+    })
+    stats["total_retry_count"] += retry_count
+    stats["total_retry_wait_sec"] += retry_wait_sec
+    retry_stats_context[initial_request_id] = stats
+    sensory_memory.set(_RETRY_STATS_CONTEXT, retry_stats_context)
+
+
+def _get_retry_stats(
+    sensory_memory: MemoryObject,
+    initial_request_id: UUID,
+) -> dict:
+    """Get accumulated retry stats for a given initial request."""
+    retry_stats_context = sensory_memory.get(_RETRY_STATS_CONTEXT) or {}
+    return retry_stats_context.get(initial_request_id, {
+        "total_retry_count": 0,
+        "total_retry_wait_sec": 0,
+    })
+
+
+def _record_retry_metrics(
+    ctx: RunnerContext, model: str, retry_count: int, total_retry_wait_sec: int
+) -> None:
+    """Record retry metrics under the connection name if retries occurred."""
+    if retry_count <= 0:
+        return
+    metric_group = ctx.action_metric_group
+    if metric_group is not None:
+        model_group = metric_group.get_sub_group(model)
+        model_group.get_counter("retryCount").inc(retry_count)
+        model_group.get_counter("retryWaitSec").inc(total_retry_wait_sec)
 
 
 def _handle_tool_calls(
@@ -185,10 +230,20 @@ async def chat(
 
     error_handling_strategy = ctx.config.get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY)
     num_retries = 0
+    retry_wait_interval_sec = 0
     if error_handling_strategy == ErrorHandlingStrategy.RETRY:
         num_retries = max(0, ctx.config.get(AgentExecutionOptions.MAX_RETRIES))
+        retry_wait_interval_config = ctx.config.get(
+            AgentExecutionOptions.RETRY_WAIT_INTERVAL
+        )
+        retry_wait_interval_sec = (
+            max(0, retry_wait_interval_config) if retry_wait_interval_config else 0
+        )
 
     response = None
+    actual_retry_count = 0
+    total_wait_time_sec = 0
+
     for attempt in range(num_retries + 1):
         try:
             if chat_async:
@@ -210,14 +265,28 @@ async def chat(
             elif error_handling_strategy == ErrorHandlingStrategy.RETRY:
                 if attempt == num_retries:
                     raise
-                _logger.warning(
-                    f"Chat request {initial_request_id} failed with error: {e}, retrying {attempt} / {num_retries}."
+                actual_retry_count = attempt + 1
+                current_wait_sec = retry_wait_interval_sec * (
+                    1 << (actual_retry_count - 1)
                 )
+                _logger.warning(
+                    f"Chat request {initial_request_id} failed with error: {e}, "
+                    f"retrying {actual_retry_count} / {num_retries}, "
+                    f"waiting {current_wait_sec} s."
+                )
+                if current_wait_sec > 0:
+                    time.sleep(current_wait_sec)
+                    total_wait_time_sec += current_wait_sec
             else:
                 _logger.debug(
                     f"Chat request {initial_request_id} failed, the input chat messages are {messages}."
                 )
                 raise
+
+    if actual_retry_count > 0:
+        _accumulate_retry_stats(
+            ctx.sensory_memory, initial_request_id, actual_retry_count, total_wait_time_sec
+        )
 
     if (
         len(response.tool_calls) > 0
@@ -226,10 +295,18 @@ async def chat(
             response, initial_request_id, model, messages, output_schema, ctx
         )
     else:  # if there is no tool call generated, return chat response directly
+        retry_stats = _get_retry_stats(ctx.sensory_memory, initial_request_id)
+        total_retry_count = retry_stats["total_retry_count"]
+        total_retry_wait_sec = retry_stats["total_retry_wait_sec"]
+
+        _record_retry_metrics(ctx, chat_model.connection, total_retry_count, total_retry_wait_sec)
+
         ctx.send_event(
             ChatResponseEvent(
                 request_id=initial_request_id,
                 response=response,
+                retry_count=total_retry_count,
+                total_retry_wait_sec=total_retry_wait_sec,
             )
         )
 
