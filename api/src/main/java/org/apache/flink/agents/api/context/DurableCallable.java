@@ -17,6 +17,10 @@
  */
 package org.apache.flink.agents.api.context;
 
+import javax.annotation.Nullable;
+
+import java.util.concurrent.Callable;
+
 /**
  * A callable interface for durable execution that requires a stable identifier.
  *
@@ -46,4 +50,34 @@ public interface DurableCallable<T> {
      * must be JSON-serializable.
      */
     T call() throws Exception;
+
+    /**
+     * Returns an optional callable used to reconcile an in-flight durable call during recovery.
+     *
+     * <p>Returning {@code null} disables reconcile and preserves the existing completion-only
+     * durable execution semantics.
+     *
+     * <p>If a reconcile callable is provided, it is invoked only when recovery revisits a matching
+     * {@code PENDING} slot for this durable call.
+     *
+     * <p>The reconcile callable should follow these rules:
+     *
+     * <ul>
+     *   <li>Return a result when recovery can determine that the durable call already succeeded.
+     *       The runtime will finalize the current slot as succeeded and replay that result.
+     *   <li>Throw the terminal business exception when recovery can determine that the durable call
+     *       already failed. The runtime will finalize the current slot as failed and replay that
+     *       exception.
+     *   <li>Throw {@link ReconcileFallbackException} when recovery cannot determine a terminal
+     *       state. The runtime will continue by executing the original {@link #call()}.
+     * </ul>
+     *
+     * <p>If reconcile logic encounters query failures, temporary external-system unavailability, or
+     * any other condition where it cannot determine a terminal state, it should wrap that
+     * underlying exception in {@link ReconcileFallbackException} rather than surfacing it as a
+     * terminal failure.
+     */
+    default @Nullable Callable<T> reconcile() {
+        return null;
+    }
 }
