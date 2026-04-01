@@ -169,24 +169,26 @@ class RunnerContext(ABC):
 
     @property
     @abstractmethod
-    def agent_metric_group(self) -> MetricGroup:
+    def agent_metric_group(self) -> MetricGroup | None:
         """Get the metric group for flink agents.
 
         Returns:
         -------
-        MetricGroup
+        MetricGroup | None
             The metric group shared across all actions.
+            May return None when not running on Flink.
         """
 
     @property
     @abstractmethod
-    def action_metric_group(self) -> MetricGroup:
+    def action_metric_group(self) -> MetricGroup | None:
         """Get the individual metric group dedicated for each action.
 
         Returns:
         -------
-        MetricGroup
+        MetricGroup | None
             The individual metric group specific to the current action.
+            May return None when not running on Flink.
         """
 
     @abstractmethod

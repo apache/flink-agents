@@ -167,17 +167,19 @@ class LocalRunnerContext(RunnerContext):
 
     @property
     @override
-    def agent_metric_group(self) -> MetricGroup:
+    def agent_metric_group(self) -> None:
         # TODO: Support metric mechanism for local agent execution.
         err_msg = "Metric mechanism is not supported for local agent execution yet."
-        raise NotImplementedError(err_msg)
+        logger.warning(err_msg)
+        return
 
     @property
     @override
-    def action_metric_group(self) -> MetricGroup:
+    def action_metric_group(self) -> None:
         # TODO: Support metric mechanism for local agent execution.
         err_msg = "Metric mechanism is not supported for local agent execution yet."
-        raise NotImplementedError(err_msg)
+        logger.warning(err_msg)
+        return
 
     @override
     def durable_execute(
