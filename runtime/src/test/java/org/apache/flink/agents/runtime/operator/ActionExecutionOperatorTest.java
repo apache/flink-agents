@@ -17,18 +17,21 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.ReconcileFallbackException;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -41,6 +44,7 @@ import org.apache.flink.streaming.runtime.tasks.mailbox.TaskMailbox;
 import org.apache.flink.streaming.util.AbstractStreamOperatorTestHarness;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.apache.flink.util.ExceptionUtils;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
@@ -48,6 +52,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -58,6 +63,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorTest {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    @BeforeEach
+    void resetReconcilableFixtures() {
+        TestAgent.resetReconcilableRecoveryFixture();
+        TestAgent.resetMixedRecoveryFixture();
+    }
 
     @Test
     void testExecuteAgent() throws Exception {
@@ -1029,6 +1042,225 @@ public class ActionExecutionOperatorTest {
                 .contains("Async operation failed");
     }
 
+    @Test
+    void testDurableExecuteReconcilableRecoverySuccess() throws Exception {
+        AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        long key = 1L;
+        long input = 1L;
+        TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.SUCCESS;
+        TestAgent.RECONCILABLE_RECOVERY_RESULT = 42L;
+
+        seedActionState(
+                actionStateStore,
+                key,
+                input,
+                agentPlan,
+                "durableReconcilableAction",
+                actionStateWithCallResults(CallResult.pending("reconcilable-call", "")));
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(input));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(42L);
+        }
+
+        assertThat(TestAgent.RECONCILABLE_CALL_COUNTER.get()).isZero();
+        assertThat(TestAgent.RECONCILABLE_RECONCILE_COUNTER.get()).isEqualTo(1);
+
+        ActionState persistedState =
+                getStoredActionState(
+                        actionStateStore, key, input, agentPlan, "durableReconcilableAction");
+        assertThat(persistedState.isCompleted()).isTrue();
+        assertThat(persistedState.getCallResults()).isEmpty();
+    }
+
+    @Test
+    void testDurableExecuteReconcilableRecoveryFailure() throws Exception {
+        AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        long key = 2L;
+        long input = 2L;
+        TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.FAILURE;
+        TestAgent.RECONCILABLE_FAILURE_MESSAGE = "reconcile failed";
+
+        seedActionState(
+                actionStateStore,
+                key,
+                input,
+                agentPlan,
+                "durableReconcilableAction",
+                actionStateWithCallResults(CallResult.pending("reconcilable-call", "")));
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(input));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo("ERROR:reconcile failed");
+        }
+
+        assertThat(TestAgent.RECONCILABLE_CALL_COUNTER.get()).isZero();
+        assertThat(TestAgent.RECONCILABLE_RECONCILE_COUNTER.get()).isEqualTo(1);
+
+        ActionState persistedState =
+                getStoredActionState(
+                        actionStateStore, key, input, agentPlan, "durableReconcilableAction");
+        assertThat(persistedState.isCompleted()).isTrue();
+        assertThat(persistedState.getCallResults()).isEmpty();
+    }
+
+    @Test
+    void testDurableExecuteReconcilableRecoveryFallback() throws Exception {
+        AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        long key = 3L;
+        long input = 3L;
+        TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.FALLBACK;
+
+        seedActionState(
+                actionStateStore,
+                key,
+                input,
+                agentPlan,
+                "durableReconcilableAction",
+                actionStateWithCallResults(CallResult.pending("reconcilable-call", "")));
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(input));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(15L);
+        }
+
+        assertThat(TestAgent.RECONCILABLE_CALL_COUNTER.get()).isEqualTo(1);
+        assertThat(TestAgent.RECONCILABLE_RECONCILE_COUNTER.get()).isEqualTo(1);
+    }
+
+    void testDurableExecuteReconcilableRecoveryMismatchStartsNewCall() throws Exception {
+        AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        long key = 4L;
+        long input = 4L;
+
+        seedActionState(
+                actionStateStore,
+                key,
+                input,
+                agentPlan,
+                "durableReconcilableAction",
+                actionStateWithCallResults(CallResult.pending("stale-call", "")));
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(input));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(30L);
+        }
+
+        assertThat(TestAgent.RECONCILABLE_CALL_COUNTER.get()).isEqualTo(1);
+        assertThat(TestAgent.RECONCILABLE_RECONCILE_COUNTER.get()).isZero();
+
+        ActionState persistedState =
+                getStoredActionState(
+                        actionStateStore, key, input, agentPlan, "durableReconcilableAction");
+        assertThat(persistedState.isCompleted()).isTrue();
+        assertThat(persistedState.getCallResults()).isEmpty();
+    }
+
+    @Test
+    void testDurableExecuteRecoveryMixedCompletionOnlyAndReconcilableCalls() throws Exception {
+        AgentPlan agentPlan = TestAgent.getDurableMixedRecoveryAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        long key = 1L;
+        long input = 1L;
+        TestAgent.MIXED_RECONCILE_BEHAVIOR = TestAgent.ReconcileBehavior.SUCCESS;
+        TestAgent.MIXED_RECONCILE_RESULT = 50L;
+
+        seedActionState(
+                actionStateStore,
+                key,
+                input,
+                agentPlan,
+                "durableMixedRecoveryAction",
+                actionStateWithCallResults(
+                        new CallResult(
+                                "mixed-legacy-call", "", OBJECT_MAPPER.writeValueAsBytes(11L)),
+                        CallResult.pending("mixed-reconcilable-call", "")));
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(input));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(61L);
+        }
+
+        assertThat(TestAgent.MIXED_LEGACY_CALL_COUNTER.get()).isZero();
+        assertThat(TestAgent.MIXED_RECONCILABLE_CALL_COUNTER.get()).isZero();
+        assertThat(TestAgent.MIXED_RECONCILE_COUNTER.get()).isEqualTo(1);
+
+        ActionState persistedState =
+                getStoredActionState(
+                        actionStateStore, key, input, agentPlan, "durableMixedRecoveryAction");
+        assertThat(persistedState.isCompleted()).isTrue();
+        assertThat(persistedState.getCallResults()).isEmpty();
+    }
+
     public static class TestAgent {
 
         /** Counter to track how many times the durable supplier is executed. */
@@ -1083,32 +1315,70 @@ public class ActionExecutionOperatorTest {
             }
         }
 
+        private static <T> DurableCallable<T> durableCallable(
+                String id, Class<T> resultClass, Callable<T> callSupplier) {
+            return new DurableCallable<T>() {
+                @Override
+                public String getId() {
+                    return id;
+                }
+
+                @Override
+                public Class<T> getResultClass() {
+                    return resultClass;
+                }
+
+                @Override
+                public T call() throws Exception {
+                    return callSupplier.call();
+                }
+            };
+        }
+
+        private static <T> DurableCallable<T> reconcilableDurableCallable(
+                String id,
+                Class<T> resultClass,
+                Callable<T> callSupplier,
+                Callable<T> reconcileSupplier) {
+            return new DurableCallable<T>() {
+                @Override
+                public String getId() {
+                    return id;
+                }
+
+                @Override
+                public Class<T> getResultClass() {
+                    return resultClass;
+                }
+
+                @Override
+                public T call() throws Exception {
+                    return callSupplier.call();
+                }
+
+                @Override
+                public Callable<T> reconcile() {
+                    return reconcileSupplier;
+                }
+            };
+        }
+
         public static void asyncAction1(InputEvent event, RunnerContext context) {
             Long inputData = (Long) event.getInput();
             try {
                 Long result =
                         context.durableExecuteAsync(
-                                new DurableCallable<Long>() {
-                                    @Override
-                                    public String getId() {
-                                        return "async-multiply";
-                                    }
-
-                                    @Override
-                                    public Class<Long> getResultClass() {
-                                        return Long.class;
-                                    }
-
-                                    @Override
-                                    public Long call() {
-                                        try {
-                                            Thread.sleep(50);
-                                        } catch (InterruptedException e) {
-                                            Thread.currentThread().interrupt();
-                                        }
-                                        return inputData * 10;
-                                    }
-                                });
+                                durableCallable(
+                                        "async-multiply",
+                                        Long.class,
+                                        () -> {
+                                            try {
+                                                Thread.sleep(50);
+                                            } catch (InterruptedException e) {
+                                                Thread.currentThread().interrupt();
+                                            }
+                                            return inputData * 10;
+                                        }));
 
                 MemoryObject mem = context.getShortTermMemory();
                 mem.set("tmp", result);
@@ -1123,51 +1393,31 @@ public class ActionExecutionOperatorTest {
             try {
                 Long result1 =
                         context.durableExecuteAsync(
-                                new DurableCallable<Long>() {
-                                    @Override
-                                    public String getId() {
-                                        return "async-add";
-                                    }
-
-                                    @Override
-                                    public Class<Long> getResultClass() {
-                                        return Long.class;
-                                    }
-
-                                    @Override
-                                    public Long call() {
-                                        try {
-                                            Thread.sleep(30);
-                                        } catch (InterruptedException e) {
-                                            Thread.currentThread().interrupt();
-                                        }
-                                        return inputData + 100;
-                                    }
-                                });
+                                durableCallable(
+                                        "async-add",
+                                        Long.class,
+                                        () -> {
+                                            try {
+                                                Thread.sleep(30);
+                                            } catch (InterruptedException e) {
+                                                Thread.currentThread().interrupt();
+                                            }
+                                            return inputData + 100;
+                                        }));
 
                 Long result2 =
                         context.durableExecuteAsync(
-                                new DurableCallable<Long>() {
-                                    @Override
-                                    public String getId() {
-                                        return "async-multiply";
-                                    }
-
-                                    @Override
-                                    public Class<Long> getResultClass() {
-                                        return Long.class;
-                                    }
-
-                                    @Override
-                                    public Long call() {
-                                        try {
-                                            Thread.sleep(30);
-                                        } catch (InterruptedException e) {
-                                            Thread.currentThread().interrupt();
-                                        }
-                                        return result1 * 2;
-                                    }
-                                });
+                                durableCallable(
+                                        "async-multiply",
+                                        Long.class,
+                                        () -> {
+                                            try {
+                                                Thread.sleep(30);
+                                            } catch (InterruptedException e) {
+                                                Thread.currentThread().interrupt();
+                                            }
+                                            return result1 * 2;
+                                        }));
 
                 MemoryObject mem = context.getShortTermMemory();
                 mem.set("multiAsyncResult", result2);
@@ -1182,23 +1432,13 @@ public class ActionExecutionOperatorTest {
             try {
                 Long result =
                         context.durableExecute(
-                                new DurableCallable<Long>() {
-                                    @Override
-                                    public String getId() {
-                                        return "sync-compute";
-                                    }
-
-                                    @Override
-                                    public Class<Long> getResultClass() {
-                                        return Long.class;
-                                    }
-
-                                    @Override
-                                    public Long call() {
-                                        DURABLE_CALL_COUNTER.incrementAndGet();
-                                        return inputData * 3;
-                                    }
-                                });
+                                durableCallable(
+                                        "sync-compute",
+                                        Long.class,
+                                        () -> {
+                                            DURABLE_CALL_COUNTER.incrementAndGet();
+                                            return inputData * 3;
+                                        }));
 
                 context.sendEvent(new OutputEvent(result));
             } catch (Exception e) {
@@ -1209,29 +1449,138 @@ public class ActionExecutionOperatorTest {
         public static final java.util.concurrent.atomic.AtomicInteger EXCEPTION_CALL_COUNTER =
                 new java.util.concurrent.atomic.AtomicInteger(0);
 
+        public enum ReconcileBehavior {
+            SUCCESS,
+            FAILURE,
+            FALLBACK
+        }
+
+        public static final java.util.concurrent.atomic.AtomicInteger RECONCILABLE_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+        public static final java.util.concurrent.atomic.AtomicInteger
+                RECONCILABLE_RECONCILE_COUNTER = new java.util.concurrent.atomic.AtomicInteger(0);
+        public static volatile ReconcileBehavior RECONCILABLE_RECOVERY_BEHAVIOR =
+                ReconcileBehavior.SUCCESS;
+        public static volatile long RECONCILABLE_RECOVERY_RESULT = 42L;
+        public static volatile String RECONCILABLE_FAILURE_MESSAGE = "reconcile failed";
+
+        public static final java.util.concurrent.atomic.AtomicInteger MIXED_LEGACY_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+        public static final java.util.concurrent.atomic.AtomicInteger
+                MIXED_RECONCILABLE_CALL_COUNTER = new java.util.concurrent.atomic.AtomicInteger(0);
+        public static final java.util.concurrent.atomic.AtomicInteger MIXED_RECONCILE_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+        public static volatile ReconcileBehavior MIXED_RECONCILE_BEHAVIOR =
+                ReconcileBehavior.SUCCESS;
+        public static volatile long MIXED_RECONCILE_RESULT = 50L;
+
         public static void durableExceptionAction(InputEvent event, RunnerContext context) {
             try {
                 context.durableExecute(
-                        new DurableCallable<String>() {
-                            @Override
-                            public String getId() {
-                                return "exception-action";
-                            }
-
-                            @Override
-                            public Class<String> getResultClass() {
-                                return String.class;
-                            }
-
-                            @Override
-                            public String call() {
-                                EXCEPTION_CALL_COUNTER.incrementAndGet();
-                                throw new RuntimeException("Test exception from durableExecute");
-                            }
-                        });
+                        durableCallable(
+                                "exception-action",
+                                String.class,
+                                () -> {
+                                    EXCEPTION_CALL_COUNTER.incrementAndGet();
+                                    throw new RuntimeException(
+                                            "Test exception from durableExecute");
+                                }));
             } catch (Exception e) {
                 context.sendEvent(new OutputEvent("ERROR:" + e.getMessage()));
             }
+        }
+
+        public static void durableReconcilableAction(InputEvent event, RunnerContext context) {
+            Long inputData = (Long) event.getInput();
+            try {
+                Long result =
+                        context.durableExecute(
+                                reconcilableDurableCallable(
+                                        "reconcilable-call",
+                                        Long.class,
+                                        () -> {
+                                            RECONCILABLE_CALL_COUNTER.incrementAndGet();
+                                            return inputData * 5;
+                                        },
+                                        () -> {
+                                            RECONCILABLE_RECONCILE_COUNTER.incrementAndGet();
+                                            switch (RECONCILABLE_RECOVERY_BEHAVIOR) {
+                                                case SUCCESS:
+                                                    return RECONCILABLE_RECOVERY_RESULT;
+                                                case FAILURE:
+                                                    throw new IllegalStateException(
+                                                            RECONCILABLE_FAILURE_MESSAGE);
+                                                case FALLBACK:
+                                                    throw new ReconcileFallbackException(
+                                                            new IllegalStateException(
+                                                                    "reconcile unavailable"));
+                                            }
+                                            throw new IllegalStateException(
+                                                    "Unsupported reconcile behavior");
+                                        }));
+                context.sendEvent(new OutputEvent(result));
+            } catch (Exception e) {
+                context.sendEvent(new OutputEvent("ERROR:" + e.getMessage()));
+            }
+        }
+
+        public static void durableMixedRecoveryAction(InputEvent event, RunnerContext context) {
+            Long inputData = (Long) event.getInput();
+            try {
+                Long firstResult =
+                        context.durableExecute(
+                                durableCallable(
+                                        "mixed-legacy-call",
+                                        Long.class,
+                                        () -> {
+                                            MIXED_LEGACY_CALL_COUNTER.incrementAndGet();
+                                            return inputData + 10;
+                                        }));
+                Long secondResult =
+                        context.durableExecute(
+                                reconcilableDurableCallable(
+                                        "mixed-reconcilable-call",
+                                        Long.class,
+                                        () -> {
+                                            MIXED_RECONCILABLE_CALL_COUNTER.incrementAndGet();
+                                            return firstResult * 2;
+                                        },
+                                        () -> {
+                                            MIXED_RECONCILE_COUNTER.incrementAndGet();
+                                            switch (MIXED_RECONCILE_BEHAVIOR) {
+                                                case SUCCESS:
+                                                    return MIXED_RECONCILE_RESULT;
+                                                case FAILURE:
+                                                    throw new IllegalStateException(
+                                                            "mixed reconcile failed");
+                                                case FALLBACK:
+                                                    throw new ReconcileFallbackException(
+                                                            new IllegalStateException(
+                                                                    "mixed reconcile unavailable"));
+                                            }
+                                            throw new IllegalStateException(
+                                                    "Unsupported reconcile behavior");
+                                        }));
+                context.sendEvent(new OutputEvent(firstResult + secondResult));
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+        }
+
+        public static void resetReconcilableRecoveryFixture() {
+            RECONCILABLE_CALL_COUNTER.set(0);
+            RECONCILABLE_RECONCILE_COUNTER.set(0);
+            RECONCILABLE_RECOVERY_BEHAVIOR = ReconcileBehavior.SUCCESS;
+            RECONCILABLE_RECOVERY_RESULT = 42L;
+            RECONCILABLE_FAILURE_MESSAGE = "reconcile failed";
+        }
+
+        public static void resetMixedRecoveryFixture() {
+            MIXED_LEGACY_CALL_COUNTER.set(0);
+            MIXED_RECONCILABLE_CALL_COUNTER.set(0);
+            MIXED_RECONCILE_COUNTER.set(0);
+            MIXED_RECONCILE_BEHAVIOR = ReconcileBehavior.SUCCESS;
+            MIXED_RECONCILE_RESULT = 50L;
         }
 
         public static AgentPlan getAgentPlan(boolean testMemoryAccessOutOfMailbox) {
@@ -1375,6 +1724,54 @@ public class ActionExecutionOperatorTest {
             return null;
         }
 
+        public static AgentPlan getDurableReconcilableAgentPlan() {
+            try {
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                Map<String, Action> actions = new HashMap<>();
+
+                Action reconcilableAction =
+                        new Action(
+                                "durableReconcilableAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "durableReconcilableAction",
+                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.class.getName()));
+                actionsByEvent.put(
+                        InputEvent.class.getName(), Collections.singletonList(reconcilableAction));
+                actions.put(reconcilableAction.getName(), reconcilableAction);
+
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getDurableMixedRecoveryAgentPlan() {
+            try {
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                Map<String, Action> actions = new HashMap<>();
+
+                Action mixedRecoveryAction =
+                        new Action(
+                                "durableMixedRecoveryAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "durableMixedRecoveryAction",
+                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.class.getName()));
+                actionsByEvent.put(
+                        InputEvent.class.getName(), Collections.singletonList(mixedRecoveryAction));
+                actions.put(mixedRecoveryAction.getName(), mixedRecoveryAction);
+
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
         public static AgentPlan getDurableExceptionAgentPlan() {
             try {
                 Map<String, List<Action>> actionsByEvent = new HashMap<>();
@@ -1415,24 +1812,14 @@ public class ActionExecutionOperatorTest {
         public static void durableExceptionUncaughtAction(InputEvent event, RunnerContext context) {
             try {
                 context.durableExecute(
-                        new DurableCallable<String>() {
-                            @Override
-                            public String getId() {
-                                return "uncaught-exception-action";
-                            }
-
-                            @Override
-                            public Class<String> getResultClass() {
-                                return String.class;
-                            }
-
-                            @Override
-                            public String call() {
-                                UNCAUGHT_EXCEPTION_CALL_COUNTER.incrementAndGet();
-                                throw new IllegalStateException(
-                                        "Simulated LLM failure: Connection timeout");
-                            }
-                        });
+                        durableCallable(
+                                "uncaught-exception-action",
+                                String.class,
+                                () -> {
+                                    UNCAUGHT_EXCEPTION_CALL_COUNTER.incrementAndGet();
+                                    throw new IllegalStateException(
+                                            "Simulated LLM failure: Connection timeout");
+                                }));
             } catch (Exception e) {
                 // Re-throw without wrapping - simulates built-in action behavior
                 ExceptionUtils.rethrow(e);
@@ -1453,23 +1840,13 @@ public class ActionExecutionOperatorTest {
         public static void durableAsyncExceptionAction(InputEvent event, RunnerContext context) {
             try {
                 context.durableExecuteAsync(
-                        new DurableCallable<String>() {
-                            @Override
-                            public String getId() {
-                                return "async-exception-action";
-                            }
-
-                            @Override
-                            public Class<String> getResultClass() {
-                                return String.class;
-                            }
-
-                            @Override
-                            public String call() {
-                                ASYNC_EXCEPTION_CALL_COUNTER.incrementAndGet();
-                                throw new RuntimeException("Async operation failed: API error");
-                            }
-                        });
+                        durableCallable(
+                                "async-exception-action",
+                                String.class,
+                                () -> {
+                                    ASYNC_EXCEPTION_CALL_COUNTER.incrementAndGet();
+                                    throw new RuntimeException("Async operation failed: API error");
+                                }));
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -1522,6 +1899,39 @@ public class ActionExecutionOperatorTest {
             }
             return null;
         }
+    }
+
+    private static ActionState actionStateWithCallResults(CallResult... callResults) {
+        ActionState actionState = new ActionState(null);
+        for (CallResult callResult : callResults) {
+            actionState.addCallResult(callResult);
+        }
+        return actionState;
+    }
+
+    private static void seedActionState(
+            InMemoryActionStateStore actionStateStore,
+            long key,
+            long input,
+            AgentPlan agentPlan,
+            String actionName,
+            ActionState actionState)
+            throws Exception {
+        InputEvent event = new InputEvent(input);
+        Action action = agentPlan.getActions().get(actionName);
+        actionStateStore.put(key, 0L, action, event, actionState);
+    }
+
+    private static ActionState getStoredActionState(
+            InMemoryActionStateStore actionStateStore,
+            long key,
+            long input,
+            AgentPlan agentPlan,
+            String actionName)
+            throws Exception {
+        InputEvent event = new InputEvent(input);
+        Action action = agentPlan.getActions().get(actionName);
+        return actionStateStore.get(key, 0L, action, event);
     }
 
     private static void assertMailboxSizeAndRun(TaskMailbox mailbox, int expectedSize)
