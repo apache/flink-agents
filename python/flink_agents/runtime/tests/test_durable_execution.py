@@ -18,10 +18,12 @@
 """Tests for durable execution helper functions."""
 
 import cloudpickle
+import pytest
 
-from flink_agents.runtime.flink_runner_context import (
+from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
+    _validate_reconcile_callable,
 )
 
 
@@ -46,6 +48,19 @@ class SampleClass:
     def class_method(cls, x: int) -> int:
         """A class method."""
         return x * 4
+
+
+class ReconcileCallables:
+    """Helpers for reconcile callable validation tests."""
+
+    def __init__(self, prefix: str) -> None:
+        self.prefix = prefix
+
+    def bound_no_arg(self) -> str:
+        return f"bound:{self.prefix}"
+
+    def requires_arg(self, value: int) -> str:
+        return f"{self.prefix}:{value}"
 
 
 def test_compute_function_id_for_function() -> None:
@@ -125,6 +140,44 @@ def test_compute_args_digest_kwargs_vs_args() -> None:
     digest1 = _compute_args_digest((1,), {"y": 2})
     digest2 = _compute_args_digest((1, 2), {})
     assert digest1 != digest2
+
+
+def test_validate_reconcile_callable_accepts_none() -> None:
+    assert _validate_reconcile_callable(None) is None
+
+
+def test_validate_reconcile_callable_accepts_zero_arg_function() -> None:
+    def reconcile() -> str:
+        return "ok"
+
+    validated = _validate_reconcile_callable(reconcile)
+
+    assert validated is reconcile
+    assert validated() == "ok"
+
+
+def test_validate_reconcile_callable_accepts_bound_zero_arg_method() -> None:
+    callables = ReconcileCallables("client")
+    bound_method = callables.bound_no_arg
+
+    validated = _validate_reconcile_callable(bound_method)
+
+    assert validated is bound_method
+    assert validated() == "bound:client"
+
+
+def test_validate_reconcile_callable_requires_callable() -> None:
+    with pytest.raises(TypeError, match="reconcile must be callable"):
+        _validate_reconcile_callable(1)  # type: ignore[arg-type]
+
+
+def test_validate_reconcile_callable_requires_zero_args() -> None:
+    callables = ReconcileCallables("client")
+
+    with pytest.raises(
+        TypeError, match="reconcile must be a callable that takes no arguments"
+    ):
+        _validate_reconcile_callable(callables.requires_arg)
 
 
 def test_cloudpickle_serialization() -> None:
@@ -216,4 +269,3 @@ def test_cloudpickle_none_exception_message() -> None:
     assert isinstance(deserialized, RuntimeError)
     # str() of an exception with None message is "None"
     assert str(deserialized) == "None"
-

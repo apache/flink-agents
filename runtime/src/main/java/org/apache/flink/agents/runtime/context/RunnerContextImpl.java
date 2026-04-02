@@ -441,6 +441,24 @@ public class RunnerContextImpl implements RunnerContext {
         }
     }
 
+    /**
+     * Returns the current durable call result as an array of fields for bridge consumers, or null
+     * if no persisted slot exists at the current call index.
+     */
+    public Object[] getCurrentCallResultFields() {
+        CallResult current = getCurrentCallResult();
+        if (current == null) {
+            return null;
+        }
+        return new Object[] {
+            current.getFunctionId(),
+            current.getArgsDigest(),
+            current.getStatus().name(),
+            current.getResultPayload(),
+            current.getExceptionPayload()
+        };
+    }
+
     protected CallResult getCurrentCallResult() {
         mailboxThreadChecker.run();
         if (durableExecutionContext != null) {
