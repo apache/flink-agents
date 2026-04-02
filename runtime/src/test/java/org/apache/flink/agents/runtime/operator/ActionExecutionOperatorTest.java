@@ -310,6 +310,62 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
+    void testDoesNotPruneBeforeCheckpointComplete() throws Exception {
+        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
+        RecordingActionStateStore actionStateStore = new RecordingActionStateStore();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(
+                                agentPlanWithStateStore, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(5L));
+            operator.waitInFlightEventsFinished();
+            assertThat(actionStateStore.getPrunedSeqNums()).isEmpty();
+
+            testHarness.snapshot(1L, 1L);
+            assertThat(actionStateStore.getPrunedSeqNums()).isEmpty();
+            testHarness.notifyOfCompletedCheckpoint(1L);
+
+            assertThat(actionStateStore.getPrunedSeqNums()).containsExactly(0L);
+        }
+    }
+
+    @Test
+    void testDoesNotPruneSeqsInFlight() throws Exception {
+        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
+        RecordingActionStateStore actionStateStore = new RecordingActionStateStore();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(
+                                agentPlanWithStateStore, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(5L));
+            operator.waitInFlightEventsFinished();
+            actionStateStore.clearPruneCalls();
+
+            testHarness.processElement(new StreamRecord<>(5L));
+            assertThat(testHarness.getTaskMailbox().size()).isEqualTo(1);
+
+            testHarness.snapshot(1L, 1L);
+            testHarness.notifyOfCompletedCheckpoint(1L);
+
+            assertThat(actionStateStore.getPrunedSeqNums()).containsExactly(0L);
+        }
+    }
+
+    @Test
     void testEventLogBaseDirFromAgentConfig() throws Exception {
         String baseLogDir = "/tmp/flink-agents-test";
         AgentConfiguration config = new AgentConfiguration();
@@ -473,7 +529,7 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
-    void testActionStateStoreCleanupAfterOutputEvent() throws Exception {
+    void testActionStateStoreCleanupAfterCheckpointComplete() throws Exception {
         AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
@@ -508,7 +564,63 @@ public class ActionExecutionOperatorTest {
             actionStateStoreField.setAccessible(true);
             InMemoryActionStateStore actionStateStore =
                     (InMemoryActionStateStore) actionStateStoreField.get(operator);
+            assertThat(actionStateStore.getKeyedActionStates()).isNotEmpty();
+
+            testHarness.snapshot(1L, 1L);
+            testHarness.notifyOfCompletedCheckpoint(1L);
+
             assertThat(actionStateStore.getKeyedActionStates()).isEmpty();
+        }
+    }
+
+    @Test
+    void testEarlierCheckpointReplayKeepsDurableState() throws Exception {
+        AgentPlan agentPlan = TestAgent.getDurableSyncAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(true);
+        OperatorSubtaskState snapshot;
+
+        TestAgent.DURABLE_CALL_COUNTER.set(0);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Simulate failure recovery from a checkpoint taken before this input was processed.
+            snapshot = testHarness.snapshot(1L, 1L);
+
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(TestAgent.DURABLE_CALL_COUNTER.get()).isEqualTo(1);
+            assertThat(actionStateStore.getKeyedActionStates()).isNotEmpty();
+        }
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.initializeState(snapshot);
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Replay the same input after restoring from the earlier checkpoint.
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(21L);
+            assertThat(TestAgent.DURABLE_CALL_COUNTER.get())
+                    .as("Durable supplier should not be re-executed during replay")
+                    .isEqualTo(1);
         }
     }
 
@@ -1885,6 +1997,27 @@ public class ActionExecutionOperatorTest {
         InputEvent event = new InputEvent(input);
         Action action = agentPlan.getActions().get(actionName);
         return actionStateStore.get(key, 0L, action, event);
+    }
+
+    private static class RecordingActionStateStore extends InMemoryActionStateStore {
+        private final List<Long> prunedSeqNums = new java.util.ArrayList<>();
+
+        private RecordingActionStateStore() {
+            super(false);
+        }
+
+        @Override
+        public void pruneState(Object key, long seqNum) {
+            prunedSeqNums.add(seqNum);
+        }
+
+        private void clearPruneCalls() {
+            prunedSeqNums.clear();
+        }
+
+        private List<Long> getPrunedSeqNums() {
+            return prunedSeqNums;
+        }
     }
 
     private static void assertMailboxSizeAndRun(TaskMailbox mailbox, int expectedSize)

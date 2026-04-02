@@ -134,6 +134,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private static final String RECOVERY_MARKER_STATE_NAME = "recoveryMarker";
     private static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
+    private static final String LAST_COMPLETED_SEQUENCE_NUMBER_STATE_NAME =
+            "lastCompletedSequenceNumber";
     private static final String PENDING_INPUT_EVENT_STATE_NAME = "pendingInputEvents";
 
     private final AgentPlan agentPlan;
@@ -203,6 +205,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient ActionStateStore actionStateStore;
     private transient ValueState<Long> sequenceNumberKState;
+    private transient ValueState<Long> lastCompletedSequenceNumberKState;
     private transient ListState<Object> recoveryMarkerOpState;
     private transient Map<Long, Map<Object, Long>> checkpointIdToSeqNums;
 
@@ -302,6 +305,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .getState(
                                 new ValueStateDescriptor<>(
                                         MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class));
+        lastCompletedSequenceNumberKState =
+                getRuntimeContext()
+                        .getState(
+                                new ValueStateDescriptor<>(
+                                        LAST_COMPLETED_SEQUENCE_NUMBER_STATE_NAME, Long.class));
 
         // init agent processing related state
         actionTasksKState =
@@ -592,11 +600,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (currentInputEventFinished) {
             // Clean up sensory memory when a single run finished.
             actionTask.getRunnerContext().clearSensoryMemory();
+            lastCompletedSequenceNumberKState.update(sequenceNumber);
 
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.
             int removedCount = removeFromListState(currentProcessingKeysOpState, key);
-            maybePruneState(key, sequenceNumber);
             checkState(
                     removedCount == 1,
                     "Current processing key count for key "
@@ -860,8 +868,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 .applyToAllKeys(
                         VoidNamespace.INSTANCE,
                         VoidNamespaceSerializer.INSTANCE,
-                        new ValueStateDescriptor<>(MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class),
-                        (key, state) -> keyToSeqNum.put(key, state.value()));
+                        new ValueStateDescriptor<>(
+                                LAST_COMPLETED_SEQUENCE_NUMBER_STATE_NAME, Long.class),
+                        (key, state) -> {
+                            Long completedSequenceNumber = state.value();
+                            if (completedSequenceNumber != null) {
+                                keyToSeqNum.put(key, completedSequenceNumber);
+                            }
+                        });
         checkpointIdToSeqNums.put(context.getCheckpointId(), keyToSeqNum);
 
         super.snapshotState(context);
@@ -1135,12 +1149,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         } catch (Exception e) {
             LOG.error("Failed to persist ActionState", e);
             throw new RuntimeException("Failed to persist ActionState", e);
-        }
-    }
-
-    private void maybePruneState(Object key, long sequenceNum) throws Exception {
-        if (actionStateStore != null) {
-            actionStateStore.pruneState(key, sequenceNum);
         }
     }
 
