@@ -23,7 +23,7 @@ import pytest
 from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
-    _validate_reconcile_callable,
+    _validate_reconciler_callable,
 )
 
 
@@ -50,8 +50,8 @@ class SampleClass:
         return x * 4
 
 
-class ReconcileCallables:
-    """Helpers for reconcile callable validation tests."""
+class ReconcilerCallables:
+    """Helpers for reconciler callable validation tests."""
 
     def __init__(self, prefix: str) -> None:
         self.prefix = prefix
@@ -142,42 +142,42 @@ def test_compute_args_digest_kwargs_vs_args() -> None:
     assert digest1 != digest2
 
 
-def test_validate_reconcile_callable_accepts_none() -> None:
-    assert _validate_reconcile_callable(None) is None
+def test_validate_reconciler_callable_accepts_none() -> None:
+    assert _validate_reconciler_callable(None) is None
 
 
-def test_validate_reconcile_callable_accepts_zero_arg_function() -> None:
-    def reconcile() -> str:
+def test_validate_reconciler_callable_accepts_zero_arg_function() -> None:
+    def reconciler() -> str:
         return "ok"
 
-    validated = _validate_reconcile_callable(reconcile)
+    validated = _validate_reconciler_callable(reconciler)
 
-    assert validated is reconcile
+    assert validated is reconciler
     assert validated() == "ok"
 
 
-def test_validate_reconcile_callable_accepts_bound_zero_arg_method() -> None:
-    callables = ReconcileCallables("client")
+def test_validate_reconciler_callable_accepts_bound_zero_arg_method() -> None:
+    callables = ReconcilerCallables("client")
     bound_method = callables.bound_no_arg
 
-    validated = _validate_reconcile_callable(bound_method)
+    validated = _validate_reconciler_callable(bound_method)
 
     assert validated is bound_method
     assert validated() == "bound:client"
 
 
-def test_validate_reconcile_callable_requires_callable() -> None:
-    with pytest.raises(TypeError, match="reconcile must be callable"):
-        _validate_reconcile_callable(1)  # type: ignore[arg-type]
+def test_validate_reconciler_callable_requires_callable() -> None:
+    with pytest.raises(TypeError, match="reconciler must be callable"):
+        _validate_reconciler_callable(1)  # type: ignore[arg-type]
 
 
-def test_validate_reconcile_callable_requires_zero_args() -> None:
-    callables = ReconcileCallables("client")
+def test_validate_reconciler_callable_requires_zero_args() -> None:
+    callables = ReconcilerCallables("client")
 
     with pytest.raises(
-        TypeError, match="reconcile must be a callable that takes no arguments"
+        TypeError, match="reconciler must be a callable that takes no arguments"
     ):
-        _validate_reconcile_callable(callables.requires_arg)
+        _validate_reconciler_callable(callables.requires_arg)
 
 
 def test_cloudpickle_serialization() -> None:

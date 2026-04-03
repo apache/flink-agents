@@ -28,22 +28,6 @@ if TYPE_CHECKING:
     from flink_agents.api.memory_object import MemoryObject
 
 
-class ReconcileFallbackException(Exception):
-    """Signal that reconcile could not recover a terminal outcome.
-
-    Raising this exception from a reconcile callable tells the runtime to fall back
-    to the original durable call instead of treating the reconcile failure as a
-    terminal outcome.
-    """
-
-    def __init__(self, cause: BaseException) -> None:
-        if not isinstance(cause, BaseException):
-            err_msg = "ReconcileFallbackException requires a BaseException cause"
-            raise TypeError(err_msg)
-        super().__init__(str(cause))
-        self.cause = cause
-
-
 class AsyncExecutionResult:
     """This class wraps an asynchronous task that will be submitted to a thread pool
     only when awaited. This ensures lazy submission and serial execution semantics.
@@ -212,7 +196,7 @@ class RunnerContext(ABC):
         self,
         func: Callable[[Any], Any],
         *args: Any,
-        reconcile: Callable[[], Any] | None = None,
+        reconciler: Callable[[], Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Synchronously execute the provided function with durable execution support.
@@ -229,15 +213,15 @@ class RunnerContext(ABC):
         will always make the durable_execute call with the same arguments and in the
         same order during job recovery. Otherwise, the behavior is undefined.
 
-        If `reconcile` is provided, it is used only when recovery resumes from a
-        `PENDING` durable call result. The reconcile callable should:
+        If `reconciler` is provided, it is used only during recovery when the
+        previous durable invocation has not yet produced a persisted terminal
+        outcome. The reconciler may:
 
-        * return the recovered terminal result when the previous invocation
-          succeeded
-        * raise the recovered terminal business exception when the previous
-          invocation failed
-        * raise `ReconcileFallbackException` when it cannot determine a terminal
-          outcome and the runtime should execute `func`
+        * return a result to provide the recovered successful outcome for this
+          durable call
+        * raise an exception if it cannot provide a successful outcome; the
+          exception is propagated to the caller and no recovered terminal
+          outcome is persisted for this durable call
 
         Usage::
 
@@ -251,8 +235,8 @@ class RunnerContext(ABC):
             The function to be executed.
         *args : Any
             Positional arguments to pass to the function.
-        reconcile : Callable[[], Any] | None
-            Optional zero-argument reconcile callable used only during recovery.
+        reconciler : Callable[[], Any] | None
+            Optional zero-argument reconciler callable used only during recovery.
             This is a reserved keyword-only parameter and is not forwarded to
             `func`.
         **kwargs : Any
@@ -269,7 +253,7 @@ class RunnerContext(ABC):
         self,
         func: Callable[[Any], Any],
         *args: Any,
-        reconcile: Callable[[], Any] | None = None,
+        reconciler: Callable[[], Any] | None = None,
         **kwargs: Any,
     ) -> "AsyncExecutionResult":
         """Asynchronously execute the provided function with durable execution support.
@@ -283,15 +267,15 @@ class RunnerContext(ABC):
         will always make the durable_execute_async call with the same arguments and in
         the same order during job recovery. Otherwise, the behavior is undefined.
 
-        If `reconcile` is provided, it is used only when recovery resumes from a
-        `PENDING` durable call result. The reconcile callable should:
+        If `reconciler` is provided, it is used only during recovery when the
+        previous durable invocation has not yet produced a persisted terminal
+        outcome. The reconciler may:
 
-        * return the recovered terminal result when the previous invocation
-          succeeded
-        * raise the recovered terminal business exception when the previous
-          invocation failed
-        * raise `ReconcileFallbackException` when it cannot determine a terminal
-          outcome and the runtime should execute `func`
+        * return a result to provide the recovered successful outcome for this
+          durable call
+        * raise an exception if it cannot provide a successful outcome; the
+          exception is propagated to the caller and no recovered terminal
+          outcome is persisted for this durable call
 
         Usage::
 
@@ -309,8 +293,8 @@ class RunnerContext(ABC):
             The function to be executed asynchronously.
         *args : Any
             Positional arguments to pass to the function.
-        reconcile : Callable[[], Any] | None
-            Optional zero-argument reconcile callable used only during recovery.
+        reconciler : Callable[[], Any] | None
+            Optional zero-argument reconciler callable used only during recovery.
             This is a reserved keyword-only parameter and is not forwarded to
             `func`.
         **kwargs : Any

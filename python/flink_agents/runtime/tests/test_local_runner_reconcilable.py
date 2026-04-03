@@ -28,45 +28,47 @@ def _create_local_runner_context() -> LocalRunnerContext:
     return LocalRunnerContext.__new__(LocalRunnerContext)
 
 
-def test_local_runner_context_reconcile_durable_execute_degrades() -> None:
+def test_local_runner_context_reconciler_durable_execute_degrades() -> None:
     ctx = _create_local_runner_context()
-    reconcile_called = False
+    reconciler_called = False
 
-    def reconcile() -> int:
-        nonlocal reconcile_called
-        reconcile_called = True
+    def reconciler() -> int:
+        nonlocal reconciler_called
+        reconciler_called = True
         return 999
 
-    result = ctx.durable_execute(reconciled_add, 5, 10, reconcile=reconcile)
+    result = ctx.durable_execute(reconciled_add, 5, 10, reconciler=reconciler)
 
     assert result == 15
-    assert reconcile_called is False
+    assert reconciler_called is False
 
 
-def test_local_runner_context_reconcile_durable_execute_async_degrades() -> None:
+def test_local_runner_context_reconciler_durable_execute_async_degrades() -> None:
     ctx = _create_local_runner_context()
-    reconcile_called = False
+    reconciler_called = False
 
-    def reconcile() -> int:
-        nonlocal reconcile_called
-        reconcile_called = True
+    def reconciler() -> int:
+        nonlocal reconciler_called
+        reconciler_called = True
         return 999
 
-    async_result = ctx.durable_execute_async(reconciled_add, 5, 10, reconcile=reconcile)
+    async_result = ctx.durable_execute_async(
+        reconciled_add, 5, 10, reconciler=reconciler
+    )
 
     async def _await_result():
         return await async_result
 
     assert asyncio.run(_await_result()) == 15
-    assert reconcile_called is False
+    assert reconciler_called is False
 
 
-def test_local_runner_context_reconcile_kwarg_is_not_forwarded() -> None:
+def test_local_runner_context_reconciler_kwarg_is_not_forwarded() -> None:
     ctx = _create_local_runner_context()
 
     def collect_kwargs(**kwargs):
         return kwargs
 
-    result = ctx.durable_execute(collect_kwargs, reconcile=lambda: "unused")
+    result = ctx.durable_execute(collect_kwargs, reconciler=lambda: "unused")
 
     assert result == {}

@@ -22,7 +22,6 @@ from dataclasses import dataclass
 import cloudpickle
 import pytest
 
-from flink_agents.api.runner_context import ReconcileFallbackException
 from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
@@ -163,28 +162,28 @@ def _call_value(value: str) -> str:
     return f"call:{value}"
 
 
-def test_flink_runner_context_sync_with_reconcile_callable_executes_original_call() -> None:
+def test_flink_runner_context_sync_with_reconciler_executes_original_call() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     ctx = _create_runner_context(j_runner_context)
-    reconcile_called = False
+    reconciler_called = False
 
-    def reconcile() -> str:
-        nonlocal reconcile_called
-        reconcile_called = True
+    def reconciler() -> str:
+        nonlocal reconciler_called
+        reconciler_called = True
         return "reconciled:order-1"
 
     try:
-        result = ctx.durable_execute(_call_value, "order-1", reconcile=reconcile)
+        result = ctx.durable_execute(_call_value, "order-1", reconciler=reconciler)
     finally:
         _close_runner_context(ctx)
 
     assert result == "call:order-1"
-    assert reconcile_called is False
+    assert reconciler_called is False
     assert j_runner_context.operations == ["peek", "append_pending", "finalize"]
     assert j_runner_context.call_results[0].status == "SUCCEEDED"
 
 
-def test_flink_runner_context_sync_reconcile_success() -> None:
+def test_flink_runner_context_sync_reconciler_success() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -200,7 +199,7 @@ def test_flink_runner_context_sync_reconcile_success() -> None:
         result = ctx.durable_execute(
             tracked_call,
             "order-1",
-            reconcile=lambda: "reconciled:order-1",
+            reconciler=lambda: "reconciled:order-1",
         )
     finally:
         _close_runner_context(ctx)
@@ -213,7 +212,7 @@ def test_flink_runner_context_sync_reconcile_success() -> None:
     )
 
 
-def test_flink_runner_context_sync_reconcile_failure() -> None:
+def test_flink_runner_context_sync_reconciler_exception_propagates() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -225,61 +224,36 @@ def test_flink_runner_context_sync_reconcile_failure() -> None:
     _preload_pending(j_runner_context, tracked_call, "order-1")
     ctx = _create_runner_context(j_runner_context)
 
-    def reconcile() -> str:
+    def reconciler() -> str:
         raise ValueError("failed:order-1")
 
     try:
         with pytest.raises(ValueError, match="failed:order-1"):
-            ctx.durable_execute(tracked_call, "order-1", reconcile=reconcile)
+            ctx.durable_execute(tracked_call, "order-1", reconciler=reconciler)
     finally:
         _close_runner_context(ctx)
 
     assert call_count == 0
-    assert j_runner_context.operations == ["peek", "finalize"]
-    assert j_runner_context.call_results[0].status == "FAILED"
-
-
-def test_flink_runner_context_sync_reconcile_fallback_executes_original_call() -> None:
-    j_runner_context = _FakeJavaRunnerContext()
-    call_count = 0
-
-    def tracked_call(value: str) -> str:
-        nonlocal call_count
-        call_count += 1
-        return _call_value(value)
-
-    _preload_pending(j_runner_context, tracked_call, "order-1")
-    ctx = _create_runner_context(j_runner_context)
-
-    def reconcile() -> str:
-        raise ReconcileFallbackException(RuntimeError("reconcile unavailable"))
-
-    try:
-        result = ctx.durable_execute(tracked_call, "order-1", reconcile=reconcile)
-    finally:
-        _close_runner_context(ctx)
-
-    assert result == "call:order-1"
-    assert call_count == 1
-    assert j_runner_context.operations == ["peek", "finalize"]
-    assert j_runner_context.call_results[0].status == "SUCCEEDED"
+    assert j_runner_context.operations == ["peek"]
+    assert j_runner_context.call_results[0].status == "PENDING"
+    assert j_runner_context.current_call_index == 0
 
 
 def test_flink_runner_context_async_writes_pending_on_await() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     ctx = _create_runner_context(j_runner_context)
-    reconcile_called = False
+    reconciler_called = False
 
-    def reconcile() -> str:
-        nonlocal reconcile_called
-        reconcile_called = True
+    def reconciler() -> str:
+        nonlocal reconciler_called
+        reconciler_called = True
         return "reconciled:order-1"
 
     try:
         async_result = ctx.durable_execute_async(
             _call_value,
             "order-1",
-            reconcile=reconcile,
+            reconciler=reconciler,
         )
         assert j_runner_context.call_results == []
         result = _run_async(async_result)
@@ -287,12 +261,12 @@ def test_flink_runner_context_async_writes_pending_on_await() -> None:
         _close_runner_context(ctx)
 
     assert result == "call:order-1"
-    assert reconcile_called is False
+    assert reconciler_called is False
     assert j_runner_context.operations == ["peek", "append_pending", "finalize"]
     assert j_runner_context.call_results[0].status == "SUCCEEDED"
 
 
-def test_flink_runner_context_async_reconcile_success() -> None:
+def test_flink_runner_context_async_reconciler_success() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -308,7 +282,7 @@ def test_flink_runner_context_async_reconcile_success() -> None:
         async_result = ctx.durable_execute_async(
             tracked_call,
             "order-1",
-            reconcile=lambda: "reconciled:order-1",
+            reconciler=lambda: "reconciled:order-1",
         )
         result = _run_async(async_result)
     finally:
@@ -319,7 +293,7 @@ def test_flink_runner_context_async_reconcile_success() -> None:
     assert j_runner_context.operations == ["peek", "finalize"]
 
 
-def test_flink_runner_context_async_reconcile_fallback_executes_original_call() -> None:
+def test_flink_runner_context_async_reconciler_exception_propagates() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -331,25 +305,27 @@ def test_flink_runner_context_async_reconcile_fallback_executes_original_call() 
     _preload_pending(j_runner_context, tracked_call, "order-1")
     ctx = _create_runner_context(j_runner_context)
 
-    def reconcile() -> str:
-        raise ReconcileFallbackException(RuntimeError("reconcile unavailable"))
+    def reconciler() -> str:
+        raise RuntimeError("reconcile unavailable")
 
     try:
         async_result = ctx.durable_execute_async(
             tracked_call,
             "order-1",
-            reconcile=reconcile,
+            reconciler=reconciler,
         )
-        result = _run_async(async_result)
+        with pytest.raises(RuntimeError, match="reconcile unavailable"):
+            _run_async(async_result)
     finally:
         _close_runner_context(ctx)
 
-    assert result == "call:order-1"
-    assert call_count == 1
-    assert j_runner_context.operations == ["peek", "finalize"]
+    assert call_count == 0
+    assert j_runner_context.operations == ["peek"]
+    assert j_runner_context.call_results[0].status == "PENDING"
+    assert j_runner_context.current_call_index == 0
 
 
-def test_flink_runner_context_reconcile_kwarg_is_not_forwarded() -> None:
+def test_flink_runner_context_reconciler_kwarg_is_not_forwarded() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     ctx = _create_runner_context(j_runner_context)
 
@@ -357,7 +333,7 @@ def test_flink_runner_context_reconcile_kwarg_is_not_forwarded() -> None:
         return kwargs
 
     try:
-        result = ctx.durable_execute(collect_kwargs, reconcile=lambda: "unused")
+        result = ctx.durable_execute(collect_kwargs, reconciler=lambda: "unused")
     finally:
         _close_runner_context(ctx)
 

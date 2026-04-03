@@ -36,7 +36,6 @@ from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import (
     AsyncExecutionResult,
-    ReconcileFallbackException,
     RunnerContext,
 )
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
@@ -44,7 +43,7 @@ from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
 from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
-    _validate_reconcile_callable,
+    _validate_reconciler_callable,
 )
 from flink_agents.runtime.memory.internal_base_long_term_memory import (
     InternalBaseLongTermMemory,
@@ -71,7 +70,7 @@ class _PersistedCallResult:
 
 
 @dataclass(frozen=True)
-class _ReconcileCallResolution:
+class _ReconcilerCallResolution:
     kind: str
     result: Any = None
     exception: BaseException | None = None
@@ -182,8 +181,8 @@ class _DurableAsyncExecutionResult(AsyncExecutionResult):
             return result
 
 
-class _ReconcileDurableAsyncExecutionResult(AsyncExecutionResult):
-    """An AsyncExecutionResult that resolves reconcile state on await."""
+class _ReconcilerDurableAsyncExecutionResult(AsyncExecutionResult):
+    """An AsyncExecutionResult that resolves reconciler state on await."""
 
     def __init__(
         self,
@@ -191,18 +190,18 @@ class _ReconcileDurableAsyncExecutionResult(AsyncExecutionResult):
         executor: Any,
         func: Callable,
         args: tuple,
-        reconcile: Callable[[], Any],
+        reconciler: Callable[[], Any],
         kwargs: dict,
     ) -> None:
         super().__init__(executor, func, args, kwargs)
         self._ctx = ctx
-        self._reconcile = reconcile
+        self._reconciler = reconciler
 
     def __await__(self) -> Any:
-        resolution = self._ctx._resolve_reconcile_call(
+        resolution = self._ctx._resolve_reconciler_call(
             self._func,
             self._args,
-            self._reconcile,
+            self._reconciler,
             self._kwargs,
         )
 
@@ -224,14 +223,7 @@ class _ReconcileDurableAsyncExecutionResult(AsyncExecutionResult):
                 yield
             return resolution.result
 
-        if resolution.kind == "finalize_failure":
-            self._ctx._finalize_current_call(
-                self._func,
-                self._args,
-                self._kwargs,
-                None,
-                resolution.exception,
-            )
+        if resolution.kind == "raise":
             raise resolution.exception
 
         future = self._executor.submit(self._func, *self._args, **self._kwargs)
@@ -552,47 +544,38 @@ class FlinkRunnerContext(RunnerContext):
             raise RuntimeError(err_msg)
         return cached_result
 
-    def _resolve_reconcile_call(
+    def _resolve_reconciler_call(
         self,
         func: Callable,
         args: tuple,
-        reconcile: Callable[[], Any],
+        reconciler: Callable[[], Any],
         kwargs: dict,
-    ) -> _ReconcileCallResolution:
+    ) -> _ReconcilerCallResolution:
         function_id = _compute_function_id(func)
         args_digest = _compute_args_digest(args, kwargs)
         current = self._peek_current_call_result()
 
         if current is None:
             self._append_pending_call(func, args, kwargs)
-            return _ReconcileCallResolution("execute")
+            return _ReconcilerCallResolution("execute")
 
         if current.function_id != function_id or current.args_digest != args_digest:
             self._clear_call_results_from_current_index_and_persist()
             self._append_pending_call(func, args, kwargs)
-            return _ReconcileCallResolution("execute")
+            return _ReconcilerCallResolution("execute")
 
         if current.status != "PENDING":
-            return _ReconcileCallResolution("replay")
+            return _ReconcilerCallResolution("replay")
 
         try:
-            result = reconcile()
-        except ReconcileFallbackException:
-            logger.warning(
-                "Reconcile fell back for Python durable call function_id=%s, args_digest=%s. "
-                "Falling back to re-execution.",
-                function_id,
-                args_digest,
-                exc_info=True,
-            )
-            return _ReconcileCallResolution("execute")
+            result = reconciler()
         except Exception as exception:
-            return _ReconcileCallResolution(
-                "finalize_failure",
+            return _ReconcilerCallResolution(
+                "raise",
                 exception=exception,
             )
 
-        return _ReconcileCallResolution("finalize_success", result=result)
+        return _ReconcilerCallResolution("finalize_success", result=result)
 
     def _execute_current_pending_call(
         self,
@@ -642,7 +625,7 @@ class FlinkRunnerContext(RunnerContext):
         self,
         func: Callable[[Any], Any],
         *args: Any,
-        reconcile: Callable[[], Any] | None = None,
+        reconciler: Callable[[], Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Synchronously execute the provided function with durable execution support.
@@ -655,13 +638,13 @@ class FlinkRunnerContext(RunnerContext):
         The function is executed synchronously in the current thread, blocking
         the operator until completion.
         """
-        validated_reconcile = _validate_reconcile_callable(reconcile)
+        validated_reconciler = _validate_reconciler_callable(reconciler)
 
-        if validated_reconcile is not None:
-            resolution = self._resolve_reconcile_call(
+        if validated_reconciler is not None:
+            resolution = self._resolve_reconciler_call(
                 func,
                 args,
-                validated_reconcile,
+                validated_reconciler,
                 kwargs,
             )
             if resolution.kind == "replay":
@@ -669,14 +652,7 @@ class FlinkRunnerContext(RunnerContext):
             if resolution.kind == "finalize_success":
                 self._finalize_current_call(func, args, kwargs, resolution.result, None)
                 return resolution.result
-            if resolution.kind == "finalize_failure":
-                self._finalize_current_call(
-                    func,
-                    args,
-                    kwargs,
-                    None,
-                    resolution.exception,
-                )
+            if resolution.kind == "raise":
                 raise resolution.exception
             return self._execute_current_pending_call(func, args, kwargs)
 
@@ -705,7 +681,7 @@ class FlinkRunnerContext(RunnerContext):
         self,
         func: Callable[[Any], Any],
         *args: Any,
-        reconcile: Callable[[], Any] | None = None,
+        reconciler: Callable[[], Any] | None = None,
         **kwargs: Any,
     ) -> AsyncExecutionResult:
         """Asynchronously execute the provided function with durable execution support.
@@ -719,15 +695,15 @@ class FlinkRunnerContext(RunnerContext):
         is awaited. Fire-and-forget calls (not awaiting the result) will NOT be
         recorded and cannot be recovered.
         """
-        validated_reconcile = _validate_reconcile_callable(reconcile)
+        validated_reconciler = _validate_reconciler_callable(reconciler)
 
-        if validated_reconcile is not None:
-            return _ReconcileDurableAsyncExecutionResult(
+        if validated_reconciler is not None:
+            return _ReconcilerDurableAsyncExecutionResult(
                 self,
                 self.executor,
                 func,
                 args,
-                validated_reconcile,
+                validated_reconciler,
                 kwargs,
             )
 

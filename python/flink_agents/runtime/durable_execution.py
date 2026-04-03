@@ -56,19 +56,19 @@ def _can_bind_call(
         return False
 
 
-def _validate_reconcile_callable(
-    reconcile: Callable[[], Any] | None,
+def _validate_reconciler_callable(
+    reconciler: Callable[[], Any] | None,
 ) -> Callable[[], Any] | None:
-    """Validate that the reconcile callable is either absent or zero-argument."""
-    if reconcile is None:
+    """Validate that the reconciler callable is either absent or zero-argument."""
+    if reconciler is None:
         return None
 
-    if not callable(reconcile):
-        err_msg = "reconcile must be callable"
+    if not callable(reconciler):
+        err_msg = "reconciler must be callable"
         raise TypeError(err_msg)
 
-    if not _can_bind_call(reconcile):
-        err_msg = "reconcile must be a callable that takes no arguments"
+    if not _can_bind_call(reconciler):
+        err_msg = "reconciler must be a callable that takes no arguments"
         raise TypeError(err_msg)
 
-    return reconcile
+    return reconciler

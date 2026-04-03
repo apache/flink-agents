@@ -453,7 +453,7 @@ public class RunnerContextImpl implements RunnerContext {
         return new Object[] {
             current.getFunctionId(),
             current.getArgsDigest(),
-            current.getStatus().name(),
+            current.isPending() ? "PENDING" : current.isFailure() ? "FAILED" : "SUCCEEDED",
             current.getResultPayload(),
             current.getExceptionPayload()
         };
