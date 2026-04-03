@@ -54,30 +54,25 @@ public interface DurableCallable<T> {
     /**
      * Returns an optional callable used to reconcile an in-flight durable call during recovery.
      *
-     * <p>Returning {@code null} disables reconcile and preserves the existing completion-only
-     * durable execution semantics.
+     * <p>Return {@code null} to disable reconcile for this durable call and fall back to the
+     * existing durable execution behavior. During recovery, the runtime replays a previously
+     * completed durable result when one is available; otherwise it executes the original {@link
+     * #call()}.
      *
-     * <p>If a reconcile callable is provided, it is invoked only when recovery revisits a matching
-     * {@code PENDING} slot for this durable call.
+     * <p>If a reconcile callable is provided, the runtime invokes it only when recovery revisits
+     * this durable call and finds that the original execution result has not yet been persisted.
      *
      * <p>The reconcile callable should follow these rules:
      *
      * <ul>
-     *   <li>Return a result when recovery can determine that the durable call already succeeded.
-     *       The runtime will finalize the current slot as succeeded and replay that result.
-     *   <li>Throw the terminal business exception when recovery can determine that the durable call
-     *       already failed. The runtime will finalize the current slot as failed and replay that
-     *       exception.
-     *   <li>Throw {@link ReconcileFallbackException} when recovery cannot determine a terminal
-     *       state. The runtime will continue by executing the original {@link #call()}.
+     *   <li>Return the result to provide the recovered successful outcome for this durable call.
+     *       The runtime persists and replays that recovered result.
+     *   <li>Throw an exception if reconcile cannot provide a successful outcome. The exception is
+     *       propagated to the caller, and the runtime does not persist a recovered terminal outcome
+     *       for this durable call.
      * </ul>
-     *
-     * <p>If reconcile logic encounters query failures, temporary external-system unavailability, or
-     * any other condition where it cannot determine a terminal state, it should wrap that
-     * underlying exception in {@link ReconcileFallbackException} rather than surfacing it as a
-     * terminal failure.
      */
-    default @Nullable Callable<T> reconcile() {
+    default @Nullable Callable<T> reconciler() {
         return null;
     }
 }

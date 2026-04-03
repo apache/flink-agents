@@ -152,7 +152,7 @@ public class ActionStateSerdeTest {
         // Add call results
         CallResult result1 = new CallResult("module.func1", "digest1", "result1".getBytes());
         CallResult result2 =
-                CallResult.ofException("module.func2", "digest2", "exception".getBytes());
+                new CallResult("module.func2", "digest2", null, "exception".getBytes());
         originalState.addCallResult(result1);
         originalState.addCallResult(result2);
 
@@ -170,8 +170,6 @@ public class ActionStateSerdeTest {
         assertEquals("digest1", deserializedResult1.getArgsDigest());
         assertArrayEquals("result1".getBytes(), deserializedResult1.getResultPayload());
         assertNull(deserializedResult1.getExceptionPayload());
-        assertEquals(CallResult.Status.SUCCEEDED, deserializedResult1.getStatus());
-        assertEquals(CallResult.Status.SUCCEEDED, deserializedResult1.getEffectiveStatus());
         assertTrue(deserializedResult1.isSuccess());
 
         CallResult deserializedResult2 = deserializedState.getCallResult(1);
@@ -179,9 +177,7 @@ public class ActionStateSerdeTest {
         assertEquals("digest2", deserializedResult2.getArgsDigest());
         assertNull(deserializedResult2.getResultPayload());
         assertArrayEquals("exception".getBytes(), deserializedResult2.getExceptionPayload());
-        assertEquals(CallResult.Status.FAILED, deserializedResult2.getStatus());
-        assertEquals(CallResult.Status.FAILED, deserializedResult2.getEffectiveStatus());
-        assertFalse(deserializedResult2.isSuccess());
+        assertTrue(deserializedResult2.isFailure());
     }
 
     @Test
@@ -197,8 +193,6 @@ public class ActionStateSerdeTest {
 
         assertEquals(1, deserializedState.getCallResultCount());
         CallResult result = deserializedState.getCallResult(0);
-        assertEquals(CallResult.Status.PENDING, result.getStatus());
-        assertEquals(CallResult.Status.PENDING, result.getEffectiveStatus());
         assertTrue(result.isPending());
         assertNull(result.getResultPayload());
         assertNull(result.getExceptionPayload());
@@ -278,8 +272,7 @@ public class ActionStateSerdeTest {
         assertEquals("digest", result.getArgsDigest());
         assertNull(result.getResultPayload());
         assertNull(result.getExceptionPayload());
-        assertEquals(CallResult.Status.SUCCEEDED, result.getStatus());
-        assertEquals(CallResult.Status.SUCCEEDED, result.getEffectiveStatus());
+        assertTrue(result.isSuccess());
     }
 
     @Test
@@ -324,15 +317,11 @@ public class ActionStateSerdeTest {
         assertEquals(2, deserializedState.getCallResultCount());
 
         CallResult legacySuccess = deserializedState.getCallResult(0);
-        assertNull(legacySuccess.getStatus());
-        assertEquals(CallResult.Status.SUCCEEDED, legacySuccess.getEffectiveStatus());
         assertTrue(legacySuccess.isSuccess());
         assertArrayEquals(
                 "result".getBytes(StandardCharsets.UTF_8), legacySuccess.getResultPayload());
 
         CallResult legacyFailure = deserializedState.getCallResult(1);
-        assertNull(legacyFailure.getStatus());
-        assertEquals(CallResult.Status.FAILED, legacyFailure.getEffectiveStatus());
         assertTrue(legacyFailure.isFailure());
         assertArrayEquals(
                 "exception".getBytes(StandardCharsets.UTF_8), legacyFailure.getExceptionPayload());

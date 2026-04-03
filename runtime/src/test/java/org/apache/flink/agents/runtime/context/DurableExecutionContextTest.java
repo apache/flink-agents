@@ -180,7 +180,7 @@ class DurableExecutionContextTest {
     @Test
     void testRecoveryWithExceptionPayload() {
         byte[] exceptionPayload = "exception_data".getBytes(StandardCharsets.UTF_8);
-        actionState.addCallResult(CallResult.ofException("funcA", "digestA", exceptionPayload));
+        actionState.addCallResult(new CallResult("funcA", "digestA", null, exceptionPayload));
 
         RunnerContextImpl.DurableExecutionContext context = createContext();
 

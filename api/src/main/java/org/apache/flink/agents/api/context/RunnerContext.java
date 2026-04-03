@@ -115,9 +115,8 @@ public interface RunnerContext {
      * <p>The result will be stored and returned from cache during job recovery. The callable is
      * executed synchronously, blocking the operator until completion.
      *
-     * <p>If the callable provides a reconcile callable via {@link DurableCallable#reconcile()},
-     * recovery may reconcile an in-flight durable call before deciding whether to replay the
-     * terminal state or execute the call again.
+     * <p>If the callable provides a reconcile callable via {@link DurableCallable#reconciler()},
+     * recovery may invoke it for an in-flight durable call.
      *
      * <p>Access to memory and sendEvent are prohibited within the callable.
      */
@@ -132,9 +131,8 @@ public interface RunnerContext {
      *
      * <p>The result will be stored and returned from cache during job recovery.
      *
-     * <p>If the callable provides a reconcile callable via {@link DurableCallable#reconcile()},
-     * recovery may reconcile an in-flight durable call before deciding whether to replay the
-     * terminal state or execute the call again.
+     * <p>If the callable provides a reconcile callable via {@link DurableCallable#reconciler()},
+     * recovery may invoke it for an in-flight durable call.
      *
      * <p>Access to memory and sendEvent are prohibited within the callable.
      */

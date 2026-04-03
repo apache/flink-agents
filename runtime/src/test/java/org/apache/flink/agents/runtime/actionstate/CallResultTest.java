@@ -36,10 +36,7 @@ public class CallResultTest {
         assertEquals(argsDigest, result.getArgsDigest());
         assertArrayEquals(resultPayload, result.getResultPayload());
         assertNull(result.getExceptionPayload());
-        assertEquals(CallResult.Status.SUCCEEDED, result.getStatus());
-        assertEquals(CallResult.Status.SUCCEEDED, result.getEffectiveStatus());
         assertTrue(result.isSuccess());
-        assertFalse(result.isPending());
     }
 
     @Test
@@ -48,15 +45,12 @@ public class CallResultTest {
         String argsDigest = "abc123";
         byte[] exceptionPayload = "exception".getBytes();
 
-        CallResult result = CallResult.ofException(functionId, argsDigest, exceptionPayload);
+        CallResult result = new CallResult(functionId, argsDigest, null, exceptionPayload);
 
         assertEquals(functionId, result.getFunctionId());
         assertEquals(argsDigest, result.getArgsDigest());
         assertNull(result.getResultPayload());
         assertArrayEquals(exceptionPayload, result.getExceptionPayload());
-        assertEquals(CallResult.Status.FAILED, result.getStatus());
-        assertEquals(CallResult.Status.FAILED, result.getEffectiveStatus());
-        assertFalse(result.isSuccess());
         assertTrue(result.isFailure());
     }
 
@@ -73,7 +67,6 @@ public class CallResultTest {
         assertEquals(argsDigest, result.getArgsDigest());
         assertArrayEquals(resultPayload, result.getResultPayload());
         assertNull(result.getExceptionPayload());
-        assertEquals(CallResult.Status.SUCCEEDED, result.getStatus());
         assertTrue(result.isSuccess());
     }
 
@@ -81,29 +74,21 @@ public class CallResultTest {
     public void testPendingCallResult() {
         CallResult result = CallResult.pending("my_module.my_function", "abc123");
 
-        assertEquals(CallResult.Status.PENDING, result.getStatus());
-        assertEquals(CallResult.Status.PENDING, result.getEffectiveStatus());
         assertNull(result.getResultPayload());
         assertNull(result.getExceptionPayload());
-        assertFalse(result.isSuccess());
-        assertFalse(result.isFailure());
         assertTrue(result.isPending());
     }
 
     @Test
     public void testLegacyStatusInference() {
         CallResult success =
-                new CallResult("my_module.my_function", "abc123", "result".getBytes(), null, null);
+                CallResult.ofNullStatus(
+                        "my_module.my_function", "abc123", "result".getBytes(), null);
         CallResult failure =
-                new CallResult(
-                        "my_module.my_function", "abc123", null, "exception".getBytes(), null);
+                CallResult.ofNullStatus(
+                        "my_module.my_function", "abc123", null, "exception".getBytes());
 
-        assertNull(success.getStatus());
-        assertEquals(CallResult.Status.SUCCEEDED, success.getEffectiveStatus());
         assertTrue(success.isSuccess());
-
-        assertNull(failure.getStatus());
-        assertEquals(CallResult.Status.FAILED, failure.getEffectiveStatus());
         assertTrue(failure.isFailure());
     }
 
@@ -190,7 +175,6 @@ public class CallResultTest {
         assertNull(result.getArgsDigest());
         assertNull(result.getResultPayload());
         assertNull(result.getExceptionPayload());
-        assertNull(result.getStatus());
         assertTrue(result.isSuccess()); // exceptionPayload is null
     }
 }

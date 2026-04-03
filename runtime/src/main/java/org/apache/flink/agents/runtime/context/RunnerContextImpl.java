@@ -25,7 +25,6 @@ import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
-import org.apache.flink.agents.api.context.ReconcileFallbackException;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
@@ -54,7 +53,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
-import java.util.function.Supplier;
 
 /**
  * The implementation class of {@link RunnerContext}, which serves as the execution context for
@@ -254,72 +252,38 @@ public class RunnerContextImpl implements RunnerContext {
     @Override
     public <T> T durableExecute(DurableCallable<T> callable) throws Exception {
         if (durableExecutionContext != null) {
-            Callable<T> reconcileCallable = callable.reconcile();
+            Callable<T> reconcileCallable = callable.reconciler();
             if (reconcileCallable != null) {
-                return durableExecuteWithReconcileSync(callable, reconcileCallable);
+                return durableExecuteSyncWithReconcile(callable, reconcileCallable);
             }
         }
-        return durableExecuteCompletionOnly(callable);
+        return durableExecuteCompletionOnly(callable, callable::call);
     }
 
     @Override
     public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
-        if (durableExecutionContext != null) {
-            Callable<T> reconcileCallable = callable.reconcile();
-            if (reconcileCallable != null) {
-                return durableExecuteWithReconcile(callable, reconcileCallable, callable::call);
-            }
-        }
-
-        String functionId = callable.getId();
-        // argsDigest is empty because DurableCallable encapsulates all arguments internally
-        String argsDigest = "";
-
-        Optional<T> cachedResult =
-                tryGetCachedResult(functionId, argsDigest, callable.getResultClass());
-        if (cachedResult.isPresent()) {
-            return cachedResult.get();
-        }
-
-        Supplier<T> wrappedSupplier =
-                () -> {
-                    T innerResult = null;
-                    Exception innerException = null;
-                    try {
-                        innerResult = callable.call();
-                    } catch (Exception e) {
-                        innerException = e;
-                    }
-
-                    if (innerException != null) {
-                        throw new DurableExecutionRuntimeException(innerException);
-                    }
-                    return innerResult;
-                };
-
-        T result = null;
-        Exception originalException = null;
-        try {
-            result = wrappedSupplier.get();
-        } catch (DurableExecutionRuntimeException e) {
-            originalException = (Exception) e.getCause();
-        }
-
-        recordDurableCompletion(functionId, argsDigest, result, originalException);
-
-        if (originalException != null) {
-            throw originalException;
-        }
-        return result;
+        LOG.debug(
+                "Async durable execution is not supported in RunnerContextImpl; falling back to durableExecute for {}",
+                callable.getId());
+        return durableExecute(callable);
     }
 
-    private <T> T durableExecuteCompletionOnly(DurableCallable<T> callable) throws Exception {
-        String functionId = callable.getId();
+    /**
+     * Executes a durable call using the completion-only state machine.
+     *
+     * @param durableCallable durable call that provides the durable execution identity and result
+     *     metadata
+     * @param executionCallable concrete execution boundary for the current path, such as direct
+     *     sync execution or Java-specific async execution
+     */
+    protected <T> T durableExecuteCompletionOnly(
+            DurableCallable<T> durableCallable, Callable<T> executionCallable) throws Exception {
+        String functionId = durableCallable.getId();
         // argsDigest is empty because DurableCallable encapsulates all arguments internally
         String argsDigest = "";
 
         Optional<T> cachedResult =
-                tryGetCachedResult(functionId, argsDigest, callable.getResultClass());
+                tryGetCachedResult(functionId, argsDigest, durableCallable.getResultClass());
         if (cachedResult.isPresent()) {
             return cachedResult.get();
         }
@@ -327,7 +291,7 @@ public class RunnerContextImpl implements RunnerContext {
         T result = null;
         Exception exception = null;
         try {
-            result = callable.call();
+            result = executionCallable.call();
         } catch (Exception e) {
             exception = e;
         }
@@ -340,7 +304,7 @@ public class RunnerContextImpl implements RunnerContext {
         return result;
     }
 
-    private <T> T durableExecuteWithReconcileSync(
+    private <T> T durableExecuteSyncWithReconcile(
             DurableCallable<T> callable, Callable<T> reconcileCallable) throws Exception {
         return durableExecuteWithReconcile(callable, reconcileCallable, callable::call);
     }
@@ -512,10 +476,22 @@ public class RunnerContextImpl implements RunnerContext {
         recordCallCompletion(functionId, argsDigest, resultPayload, exceptionPayload);
     }
 
+    /**
+     * Executes a durable call using the reconcile-enabled state machine.
+     *
+     * @param durableCallable durable call that provides the durable execution identity and result
+     *     metadata
+     * @param reconcileCallable reconcile boundary used to recover a successful outcome from a
+     *     pending durable call
+     * @param executionCallable concrete execution boundary for the current path when recovery
+     *     starts or restarts the original durable call
+     */
     protected <T> T durableExecuteWithReconcile(
-            DurableCallable<T> callable, Callable<T> reconcileCallable, Callable<T> callSupplier)
+            DurableCallable<T> durableCallable,
+            Callable<T> reconcileCallable,
+            Callable<T> executionCallable)
             throws Exception {
-        String functionId = callable.getId();
+        String functionId = durableCallable.getId();
         String argsDigest = "";
         Preconditions.checkState(
                 durableExecutionContext != null, "durableExecutionContext must not be null");
@@ -524,18 +500,18 @@ public class RunnerContextImpl implements RunnerContext {
 
         if (current == null) {
             appendPendingCall(functionId, argsDigest);
-            return executeAndFinalizeCurrentCall(functionId, argsDigest, callSupplier);
+            return executeAndFinalizeCurrentCall(functionId, argsDigest, executionCallable);
         }
 
         if (!current.matches(functionId, argsDigest)) {
             clearCallResultsFromCurrentIndexAndPersist();
             appendPendingCall(functionId, argsDigest);
-            return executeAndFinalizeCurrentCall(functionId, argsDigest, callSupplier);
+            return executeAndFinalizeCurrentCall(functionId, argsDigest, executionCallable);
         }
 
         if (!current.isPending()) {
             Optional<T> cachedResult =
-                    tryGetCachedResult(functionId, argsDigest, callable.getResultClass());
+                    tryGetCachedResult(functionId, argsDigest, durableCallable.getResultClass());
             if (cachedResult.isPresent()) {
                 return cachedResult.get();
             }
@@ -546,18 +522,9 @@ public class RunnerContextImpl implements RunnerContext {
                             durableExecutionContext.getCurrentCallIndex(), functionId, argsDigest));
         }
 
-        try {
-            T reconcileResult = reconcileCallable.call();
-            finalizeCurrentCall(
-                    functionId, argsDigest, serializeDurableResult(reconcileResult), null);
-            return reconcileResult;
-        } catch (ReconcileFallbackException fallbackException) {
-            return executeAndFinalizeCurrentCall(functionId, argsDigest, callSupplier);
-        } catch (Exception reconcileException) {
-            finalizeCurrentCall(
-                    functionId, argsDigest, null, serializeDurableException(reconcileException));
-            throw reconcileException;
-        }
+        T reconcileResult = reconcileCallable.call();
+        finalizeCurrentCall(functionId, argsDigest, serializeDurableResult(reconcileResult), null);
+        return reconcileResult;
     }
 
     protected <T> T executeAndFinalizeCurrentCall(
@@ -731,7 +698,7 @@ public class RunnerContextImpl implements RunnerContext {
         }
 
         /**
-         * Appends and persists a {@link CallResult.Status#PENDING} slot for the current call index.
+         * Appends and persists a pending slot for the current call index.
          *
          * <p>This reserves the current slot for a reconcilable durable call but does not advance
          * {@code currentCallIndex}.

@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.actionstate;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -35,7 +36,7 @@ import java.util.Objects;
 public class CallResult {
 
     /** Persisted status of the durable call. */
-    public enum Status {
+    private enum Status {
         PENDING,
         SUCCEEDED,
         FAILED
@@ -54,6 +55,7 @@ public class CallResult {
     private final byte[] exceptionPayload;
 
     /** Persisted status of the durable call. Null indicates legacy state written before status. */
+    @JsonProperty("status")
     private final Status status;
 
     /** Default constructor for deserialization. */
@@ -107,7 +109,7 @@ public class CallResult {
      * @param exceptionPayload the serialized exception (null if call succeeded or pending)
      * @param status the persisted call status
      */
-    public CallResult(
+    private CallResult(
             String functionId,
             String argsDigest,
             byte[] resultPayload,
@@ -118,19 +120,6 @@ public class CallResult {
         this.resultPayload = resultPayload;
         this.exceptionPayload = exceptionPayload;
         this.status = status;
-    }
-
-    /**
-     * Creates a CallResult for a failed function call.
-     *
-     * @param functionId the function identifier
-     * @param argsDigest the digest of serialized arguments
-     * @param exceptionPayload the serialized exception
-     * @return a new CallResult representing a failed call
-     */
-    public static CallResult ofException(
-            String functionId, String argsDigest, byte[] exceptionPayload) {
-        return new CallResult(functionId, argsDigest, null, exceptionPayload, Status.FAILED);
     }
 
     /**
@@ -161,22 +150,16 @@ public class CallResult {
         return exceptionPayload;
     }
 
-    public Status getStatus() {
-        return status;
-    }
-
     /**
-     * Returns the effective status of the call result.
+     * Validates if this CallResult matches the given function identifier and arguments digest.
      *
-     * <p>For legacy states written before {@code status} existed, the effective status is inferred
-     * from {@code exceptionPayload}.
+     * @param functionId the function identifier to match
+     * @param argsDigest the arguments digest to match
+     * @return true if both functionId and argsDigest match, false otherwise
      */
-    @JsonIgnore
-    public Status getEffectiveStatus() {
-        if (status != null) {
-            return status;
-        }
-        return exceptionPayload == null ? Status.SUCCEEDED : Status.FAILED;
+    public boolean matches(String functionId, String argsDigest) {
+        return Objects.equals(this.functionId, functionId)
+                && Objects.equals(this.argsDigest, argsDigest);
     }
 
     /**
@@ -202,15 +185,27 @@ public class CallResult {
     }
 
     /**
-     * Validates if this CallResult matches the given function identifier and arguments digest.
+     * Creates a CallResult matching legacy persisted data where {@code status} was absent.
      *
-     * @param functionId the function identifier to match
-     * @param argsDigest the arguments digest to match
-     * @return true if both functionId and argsDigest match, false otherwise
+     * <p>Used by backward-compatibility tests for legacy serialized state.
      */
-    public boolean matches(String functionId, String argsDigest) {
-        return Objects.equals(this.functionId, functionId)
-                && Objects.equals(this.argsDigest, argsDigest);
+    static CallResult ofNullStatus(
+            String functionId, String argsDigest, byte[] resultPayload, byte[] exceptionPayload) {
+        return new CallResult(functionId, argsDigest, resultPayload, exceptionPayload, null);
+    }
+
+    /**
+     * Returns the effective status of the call result.
+     *
+     * <p>For legacy states written before {@code status} existed, the effective status is inferred
+     * from {@code exceptionPayload}.
+     */
+    @JsonIgnore
+    private Status getEffectiveStatus() {
+        if (status != null) {
+            return status;
+        }
+        return exceptionPayload == null ? Status.SUCCEEDED : Status.FAILED;
     }
 
     @Override

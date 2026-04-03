@@ -61,38 +61,12 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
     @Override
     public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
         if (durableExecutionContext != null) {
-            Callable<T> reconcileCallable = callable.reconcile();
+            Callable<T> reconcileCallable = callable.reconciler();
             if (reconcileCallable != null) {
                 return durableExecuteAsyncWithReconcile(callable, reconcileCallable);
             }
         }
-        return durableExecuteAsyncCompletionOnly(callable);
-    }
-
-    private <T> T durableExecuteAsyncCompletionOnly(DurableCallable<T> callable) throws Exception {
-        String functionId = callable.getId();
-        String argsDigest = "";
-
-        java.util.Optional<T> cachedResult =
-                tryGetCachedResult(functionId, argsDigest, callable.getResultClass());
-        if (cachedResult.isPresent()) {
-            return cachedResult.get();
-        }
-
-        T result = null;
-        Exception originalException = null;
-        try {
-            result = executeAsyncCallable(callable);
-        } catch (Exception e) {
-            originalException = e;
-        }
-
-        recordDurableCompletion(functionId, argsDigest, result, originalException);
-
-        if (originalException != null) {
-            throw originalException;
-        }
-        return result;
+        return durableExecuteCompletionOnly(callable, () -> executeAsyncCallable(callable));
     }
 
     private <T> T durableExecuteAsyncWithReconcile(

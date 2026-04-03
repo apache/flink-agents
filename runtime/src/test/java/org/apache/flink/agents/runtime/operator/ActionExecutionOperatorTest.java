@@ -24,7 +24,6 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
-import org.apache.flink.agents.api.context.ReconcileFallbackException;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -1088,13 +1087,13 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
-    void testDurableExecuteReconcilableRecoveryFailure() throws Exception {
+    void testDurableExecuteReconcilableRecoveryException() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
         InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
         long key = 2L;
         long input = 2L;
-        TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.FAILURE;
-        TestAgent.RECONCILABLE_FAILURE_MESSAGE = "reconcile failed";
+        TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.EXCEPTION;
+        TestAgent.RECONCILABLE_EXCEPTION_MESSAGE = "reconcile unavailable";
 
         seedActionState(
                 actionStateStore,
@@ -1119,7 +1118,7 @@ public class ActionExecutionOperatorTest {
             List<StreamRecord<Object>> recordOutput =
                     (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(recordOutput).hasSize(1);
-            assertThat(recordOutput.get(0).getValue()).isEqualTo("ERROR:reconcile failed");
+            assertThat(recordOutput.get(0).getValue()).isEqualTo("ERROR:reconcile unavailable");
         }
 
         assertThat(TestAgent.RECONCILABLE_CALL_COUNTER.get()).isZero();
@@ -1133,43 +1132,6 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
-    void testDurableExecuteReconcilableRecoveryFallback() throws Exception {
-        AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
-        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
-        long key = 3L;
-        long input = 3L;
-        TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.FALLBACK;
-
-        seedActionState(
-                actionStateStore,
-                key,
-                input,
-                agentPlan,
-                "durableReconcilableAction",
-                actionStateWithCallResults(CallResult.pending("reconcilable-call", "")));
-
-        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
-                new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
-                        (KeySelector<Long, Long>) value -> value,
-                        TypeInformation.of(Long.class))) {
-            testHarness.open();
-            ActionExecutionOperator<Long, Object> operator =
-                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
-
-            testHarness.processElement(new StreamRecord<>(input));
-            operator.waitInFlightEventsFinished();
-
-            List<StreamRecord<Object>> recordOutput =
-                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
-            assertThat(recordOutput).hasSize(1);
-            assertThat(recordOutput.get(0).getValue()).isEqualTo(15L);
-        }
-
-        assertThat(TestAgent.RECONCILABLE_CALL_COUNTER.get()).isEqualTo(1);
-        assertThat(TestAgent.RECONCILABLE_RECONCILE_COUNTER.get()).isEqualTo(1);
-    }
-
     void testDurableExecuteReconcilableRecoveryMismatchStartsNewCall() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
         InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
@@ -1199,7 +1161,7 @@ public class ActionExecutionOperatorTest {
             List<StreamRecord<Object>> recordOutput =
                     (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(recordOutput).hasSize(1);
-            assertThat(recordOutput.get(0).getValue()).isEqualTo(30L);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(20L);
         }
 
         assertThat(TestAgent.RECONCILABLE_CALL_COUNTER.get()).isEqualTo(1);
@@ -1357,7 +1319,7 @@ public class ActionExecutionOperatorTest {
                 }
 
                 @Override
-                public Callable<T> reconcile() {
+                public Callable<T> reconciler() {
                     return reconcileSupplier;
                 }
             };
@@ -1451,8 +1413,7 @@ public class ActionExecutionOperatorTest {
 
         public enum ReconcileBehavior {
             SUCCESS,
-            FAILURE,
-            FALLBACK
+            EXCEPTION
         }
 
         public static final java.util.concurrent.atomic.AtomicInteger RECONCILABLE_CALL_COUNTER =
@@ -1462,7 +1423,7 @@ public class ActionExecutionOperatorTest {
         public static volatile ReconcileBehavior RECONCILABLE_RECOVERY_BEHAVIOR =
                 ReconcileBehavior.SUCCESS;
         public static volatile long RECONCILABLE_RECOVERY_RESULT = 42L;
-        public static volatile String RECONCILABLE_FAILURE_MESSAGE = "reconcile failed";
+        public static volatile String RECONCILABLE_EXCEPTION_MESSAGE = "reconcile unavailable";
 
         public static final java.util.concurrent.atomic.AtomicInteger MIXED_LEGACY_CALL_COUNTER =
                 new java.util.concurrent.atomic.AtomicInteger(0);
@@ -1507,13 +1468,9 @@ public class ActionExecutionOperatorTest {
                                             switch (RECONCILABLE_RECOVERY_BEHAVIOR) {
                                                 case SUCCESS:
                                                     return RECONCILABLE_RECOVERY_RESULT;
-                                                case FAILURE:
+                                                case EXCEPTION:
                                                     throw new IllegalStateException(
-                                                            RECONCILABLE_FAILURE_MESSAGE);
-                                                case FALLBACK:
-                                                    throw new ReconcileFallbackException(
-                                                            new IllegalStateException(
-                                                                    "reconcile unavailable"));
+                                                            RECONCILABLE_EXCEPTION_MESSAGE);
                                             }
                                             throw new IllegalStateException(
                                                     "Unsupported reconcile behavior");
@@ -1550,13 +1507,9 @@ public class ActionExecutionOperatorTest {
                                             switch (MIXED_RECONCILE_BEHAVIOR) {
                                                 case SUCCESS:
                                                     return MIXED_RECONCILE_RESULT;
-                                                case FAILURE:
+                                                case EXCEPTION:
                                                     throw new IllegalStateException(
                                                             "mixed reconcile failed");
-                                                case FALLBACK:
-                                                    throw new ReconcileFallbackException(
-                                                            new IllegalStateException(
-                                                                    "mixed reconcile unavailable"));
                                             }
                                             throw new IllegalStateException(
                                                     "Unsupported reconcile behavior");
@@ -1572,7 +1525,7 @@ public class ActionExecutionOperatorTest {
             RECONCILABLE_RECONCILE_COUNTER.set(0);
             RECONCILABLE_RECOVERY_BEHAVIOR = ReconcileBehavior.SUCCESS;
             RECONCILABLE_RECOVERY_RESULT = 42L;
-            RECONCILABLE_FAILURE_MESSAGE = "reconcile failed";
+            RECONCILABLE_EXCEPTION_MESSAGE = "reconcile unavailable";
         }
 
         public static void resetMixedRecoveryFixture() {

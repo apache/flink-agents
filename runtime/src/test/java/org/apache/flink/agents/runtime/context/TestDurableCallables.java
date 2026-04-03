@@ -93,7 +93,7 @@ class TestReconcilableCallable<T> implements DurableCallable<T> {
     }
 
     @Override
-    public Callable<T> reconcile() {
+    public Callable<T> reconciler() {
         return () -> {
             reconcileCount++;
             return reconcileSupplier.call();

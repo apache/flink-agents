@@ -20,7 +20,6 @@ package org.apache.flink.agents.runtime.context;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.context.ReconcileFallbackException;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
@@ -72,7 +71,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals(1, persistCallCount.get());
         CallResult persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
-        assertEquals(CallResult.Status.SUCCEEDED, persisted.getStatus());
+        assertTrue(persisted.isSuccess());
         assertSame(context.getDurableExecutionContext().getActionState(), lastPersistedState);
     }
 
@@ -105,7 +104,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals(2, persistCallCount.get());
         CallResult persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
-        assertEquals(CallResult.Status.SUCCEEDED, persisted.getStatus());
+        assertTrue(persisted.isSuccess());
     }
 
     @Test
@@ -153,74 +152,11 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals(1, persistCallCount.get());
         CallResult persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
-        assertEquals(CallResult.Status.SUCCEEDED, persisted.getStatus());
+        assertTrue(persisted.isSuccess());
     }
 
     @Test
-    void testDurableExecuteAsyncReconcilableReconcileFailure() {
-        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
-        ActionState actionState = new ActionState(null);
-        actionState.addCallResult(CallResult.pending("recon-async", ""));
-        JavaRunnerContextImpl context = createContext(actionState, executor);
-        IllegalStateException failure = new IllegalStateException("recovered failed");
-        TestReconcilableCallable<String> callable =
-                new TestReconcilableCallable<>(
-                        "recon-async",
-                        String.class,
-                        () -> fail("call should not be executed"),
-                        () -> {
-                            throw failure;
-                        });
-
-        IllegalStateException thrown =
-                assertThrows(
-                        IllegalStateException.class, () -> context.durableExecuteAsync(callable));
-
-        assertSame(failure, thrown);
-        assertEquals(0, callable.getCallCount());
-        assertEquals(1, callable.getReconcileCount());
-        assertEquals(0, executor.getExecuteAsyncCallCount());
-        assertEquals(1, persistCallCount.get());
-        CallResult persisted =
-                context.getDurableExecutionContext().getActionState().getCallResults().get(0);
-        assertEquals(CallResult.Status.FAILED, persisted.getStatus());
-    }
-
-    @Test
-    void testDurableExecuteAsyncReconcilableReconcileFallback() throws Exception {
-        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
-        ActionState actionState = new ActionState(null);
-        actionState.addCallResult(CallResult.pending("recon-async", ""));
-        JavaRunnerContextImpl context = createContext(actionState, executor);
-        executor.setBeforeExecute(
-                () -> {
-                    CallResult current =
-                            context.getDurableExecutionContext().getCurrentCallResult();
-                    assertNotNull(current);
-                    assertTrue(current.isPending());
-                    assertEquals(0, persistCallCount.get());
-                });
-        TestReconcilableCallable<String> callable =
-                new TestReconcilableCallable<>(
-                        "recon-async",
-                        String.class,
-                        () -> "retried",
-                        () -> {
-                            throw new ReconcileFallbackException(
-                                    new IllegalStateException("reconcile unavailable"));
-                        });
-
-        String result = context.durableExecuteAsync(callable);
-
-        assertEquals("retried", result);
-        assertEquals(1, callable.getCallCount());
-        assertEquals(1, callable.getReconcileCount());
-        assertEquals(1, executor.getExecuteAsyncCallCount());
-        assertEquals(1, persistCallCount.get());
-    }
-
-    @Test
-    void testDurableExecuteAsyncReconcilableReconcileThrows() throws Exception {
+    void testDurableExecuteAsyncReconcilableReconcileExceptionPropagates() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         ActionState actionState = new ActionState(null);
         actionState.addCallResult(CallResult.pending("recon-async", ""));
@@ -252,10 +188,11 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals(0, callable.getCallCount());
         assertEquals(1, callable.getReconcileCount());
         assertEquals(0, executor.getExecuteAsyncCallCount());
-        assertEquals(1, persistCallCount.get());
+        assertEquals(0, persistCallCount.get());
         CallResult persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
-        assertEquals(CallResult.Status.FAILED, persisted.getStatus());
+        assertTrue(persisted.isPending());
+        assertEquals(0, context.getDurableExecutionContext().getCurrentCallIndex());
     }
 
     private JavaRunnerContextImpl createContext(
@@ -265,6 +202,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         metricGroup,
                         () -> {},
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
+                        null,
                         "test-job",
                         executor);
         context.setContinuationContext(new ContinuationContext());
