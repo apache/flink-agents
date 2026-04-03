@@ -212,22 +212,10 @@ _PYTHON_ONLY_NAMES = frozenset({
     "JAVA_WRAPPER_CONNECTION", "JAVA_WRAPPER_SETUP",
     "JAVA_WRAPPER_VECTOR_STORE", "JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE",
 })
-_NAME_ALIASES = {
-    ("OPENAI_COMPLETIONS_CONNECTION", "OPENAI_CONNECTION"),
-    ("OPENAI_COMPLETIONS_SETUP", "OPENAI_SETUP"),
-}
 
 
 def _find_python_name_for_value(impls: dict, value: str, java_name: str) -> str | None:
-    if java_name in impls and impls[java_name] == value:
-        return java_name
-    for jname, pname in _NAME_ALIASES:
-        if jname == java_name and pname in impls and impls[pname] == value:
-            return pname
-    for pname, pval in impls.items():
-        if pval == value:
-            return pname
-    return None
+    return java_name if impls.get(java_name) == value else None
 
 
 def check_consistency(
@@ -298,7 +286,7 @@ def check_consistency(
 
 
 def main() -> int:
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parent.parent.parent
     java_path = root / "api/src/main/java/org/apache/flink/agents/api/resource/ResourceName.java"
     python_path = root / "python/flink_agents/api/resource.py"
 

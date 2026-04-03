@@ -245,8 +245,8 @@ class ResourceName:
         OLLAMA_SETUP = "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup"
 
         # OpenAI
-        OPENAI_CONNECTION = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelConnection"
-        OPENAI_SETUP = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup"
+        OPENAI_COMPLETIONS_CONNECTION = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelConnection"
+        OPENAI_COMPLETIONS_SETUP = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup"
 
         # Tongyi
         TONGYI_CONNECTION = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelConnection"

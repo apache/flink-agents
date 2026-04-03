@@ -42,7 +42,7 @@ class ChatModelTestAgent(Agent):
     def openai_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for openai model service connection."""
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OPENAI_CONNECTION, api_key=os.environ.get("OPENAI_API_KEY")
+            clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION, api_key=os.environ.get("OPENAI_API_KEY")
         )
 
     @chat_model_connection
@@ -92,7 +92,7 @@ class ChatModelTestAgent(Agent):
             )
         elif model_provider == "OpenAI":
             return ResourceDescriptor(
-                clazz=ResourceName.ChatModel.OPENAI_SETUP,
+                clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP,
                 connection="openai_connection",
                 model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo"),
                 tools=["add"],
@@ -128,7 +128,7 @@ class ChatModelTestAgent(Agent):
             )
         elif model_provider == "OpenAI":
             return ResourceDescriptor(
-                clazz=ResourceName.ChatModel.OPENAI_SETUP,
+                clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP,
                 connection="openai_connection",
                 model=os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo"),
             )

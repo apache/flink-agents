@@ -90,7 +90,7 @@ function run_resource_name_consistency_check {
     return 1
   fi
 
-  cd "$python_dir" && uv run --no-sync python ../tools/check_resource_consistency.py
+  cd "$python_dir" && uv run --no-sync python ../e2e-test/test-scripts/check_resource_consistency.py
 }
 
 export TOTAL=0
