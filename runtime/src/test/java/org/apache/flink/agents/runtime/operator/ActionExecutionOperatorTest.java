@@ -310,9 +310,7 @@ public class ActionExecutionOperatorTest {
             testHarness.open();
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
-            Field eventLoggerField = ActionExecutionOperator.class.getDeclaredField("eventLogger");
-            eventLoggerField.setAccessible(true);
-            Object eventLogger = eventLoggerField.get(operator);
+            Object eventLogger = operator.getEventRouter().getEventLogger();
             assertThat(eventLogger).isInstanceOf(FileEventLogger.class);
 
             Field configField = FileEventLogger.class.getDeclaredField("config");
