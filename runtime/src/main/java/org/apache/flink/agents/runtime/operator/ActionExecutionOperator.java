@@ -39,16 +39,15 @@ import org.apache.flink.agents.runtime.PythonMCPResourceDiscovery;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
-import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
-import org.apache.flink.agents.runtime.context.ActionStatePersister;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
@@ -63,11 +62,18 @@ import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
+import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.python.env.PythonDependencyInfo;
 import org.apache.flink.runtime.state.KeyGroupRange;
+import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.runtime.state.StateInitializationContext;
 import org.apache.flink.runtime.state.StateSnapshotContext;
+import org.apache.flink.runtime.state.VoidNamespace;
+import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.BoundedOneInput;
@@ -94,10 +100,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.PRETTY_PRINT;
-import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
+import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -111,13 +117,14 @@ import static org.apache.flink.util.Preconditions.checkState;
  * and the resulting output event is collected for further processing.
  */
 public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT>
-        implements OneInputStreamOperator<IN, OUT>, BoundedOneInput, ActionStatePersister {
+        implements OneInputStreamOperator<IN, OUT>, BoundedOneInput {
 
     private static final long serialVersionUID = 1L;
 
     private static final Logger LOG = LoggerFactory.getLogger(ActionExecutionOperator.class);
 
-    private static final String RECOVERY_MARKER_STATE_NAME = "recoveryMarker";
+    private static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
+    private static final String PENDING_INPUT_EVENT_STATE_NAME = "pendingInputEvents";
 
     private final AgentPlan agentPlan;
 
@@ -126,6 +133,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final Boolean inputIsJava;
 
     private transient StreamRecord<OUT> reusedStreamRecord;
+
+    private transient MapState<String, MemoryObjectImpl.MemoryItem> sensoryMemState;
+
+    private transient MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState;
 
     private transient PythonEnvironmentManager pythonEnvironmentManager;
 
@@ -161,28 +172,37 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // to obtain the MailboxProcessor instance and make the determination.
     private transient MailboxProcessor mailboxProcessor;
 
-    private final transient OperatorStateManager stateManager;
+    // An action will be split into one or more ActionTask objects. We use a state to store the
+    // pending ActionTasks that are waiting to be executed.
+    private transient ListState<ActionTask> actionTasksKState;
+
+    // To avoid processing different InputEvents with the same key, we use a state to store pending
+    // InputEvents that are waiting to be processed.
+    private transient ListState<Event> pendingInputEventsKState;
+
+    // An operator state is used to track the currently processing keys. This is useful when
+    // receiving an EndOfInput signal, as we need to wait until all related events are fully
+    // processed.
+    private transient ListState<Object> currentProcessingKeysOpState;
 
     private final transient EventLogger eventLogger;
     private final transient List<EventListener> eventListeners;
 
-    private transient ActionStateStore actionStateStore;
-    private transient ListState<Object> recoveryMarkerOpState;
-    private transient Map<Long, Map<Object, Long>> checkpointIdToSeqNums;
+    private transient ValueState<Long> sequenceNumberKState;
+
+    private final transient DurableExecutionManager durableExecManager;
 
     // This in memory map keep track of the runner context for the async action task that having
     // been finished
     private final transient Map<ActionTask, RunnerContextImpl.MemoryContext>
             actionTaskMemoryContexts;
 
-    // This in memory map keeps track of the durable execution context for async action tasks
-    // that have not been finished, allowing recovery of currentCallIndex across invocations
-    private final transient Map<ActionTask, RunnerContextImpl.DurableExecutionContext>
-            actionTaskDurableContexts;
-
-    private final transient Map<ActionTask, ContinuationContext> continuationContexts;
-
-    private final transient Map<ActionTask, String> pythonAwaitableRefs;
+    // Each job can only have one identifier and this identifier must be consistent across restarts.
+    // We cannot use job id as the identifier here because user may change job id by
+    // creating a savepoint, stop the job and then resume from savepoint.
+    // We use this identifier to control the visibility for long-term memory.
+    // Inspired by Apache Paimon.
+    private transient String jobIdentifier;
 
     private transient ContinuationActionExecutor continuationActionExecutor;
 
@@ -196,15 +216,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.inputIsJava = inputIsJava;
         this.processingTimeService = processingTimeService;
         this.mailboxExecutor = mailboxExecutor;
-        this.stateManager = new OperatorStateManager();
         this.eventLogger = createEventLogger(agentPlan);
         this.eventListeners = new ArrayList<>();
-        this.actionStateStore = actionStateStore;
-        this.checkpointIdToSeqNums = new HashMap<>();
+        this.durableExecManager = new DurableExecutionManager(actionStateStore);
         this.actionTaskMemoryContexts = new HashMap<>();
-        this.actionTaskDurableContexts = new HashMap<>();
-        this.continuationContexts = new HashMap<>();
-        this.pythonAwaitableRefs = new HashMap<>();
         OperatorUtils.setChainStrategy(this, ChainingStrategy.ALWAYS);
     }
 
@@ -220,9 +235,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void open() throws Exception {
         super.open();
         reusedStreamRecord = new StreamRecord<>(null);
+        // init sensoryMemState
+        MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> sensoryMemStateDescriptor =
+                new MapStateDescriptor<>(
+                        "sensoryMemory",
+                        TypeInformation.of(String.class),
+                        TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
+        sensoryMemState = getRuntimeContext().getMapState(sensoryMemStateDescriptor);
 
-        stateManager.initializeKeyedStates(getRuntimeContext());
-        stateManager.initializeOperatorStates(getOperatorStateBackend());
+        // init shortTermMemState
+        MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> shortTermMemStateDescriptor =
+                new MapStateDescriptor<>(
+                        "shortTermMemory",
+                        TypeInformation.of(String.class),
+                        TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
+        shortTermMemState = getRuntimeContext().getMapState(shortTermMemStateDescriptor);
 
         resourceCache = new ResourceCache(agentPlan.getResourceProviders());
 
@@ -231,17 +258,36 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         keySegmentQueue = new SegmentedQueue();
 
-        maybeInitActionStateStore();
+        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig());
+        durableExecManager.initRecoveryMarkerState(getOperatorStateBackend());
+        // init sequence number state for per key message ordering
+        sequenceNumberKState =
+                getRuntimeContext()
+                        .getState(
+                                new ValueStateDescriptor<>(
+                                        MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class));
 
-        if (actionStateStore != null) {
-            // init recovery marker state for recovery marker persistence
-            recoveryMarkerOpState =
-                    getOperatorStateBackend()
-                            .getUnionListState(
-                                    new ListStateDescriptor<>(
-                                            RECOVERY_MARKER_STATE_NAME,
-                                            TypeInformation.of(Object.class)));
-        }
+        // init agent processing related state
+        actionTasksKState =
+                getRuntimeContext()
+                        .getListState(
+                                new ListStateDescriptor<>(
+                                        "actionTasks", TypeInformation.of(ActionTask.class)));
+        pendingInputEventsKState =
+                getRuntimeContext()
+                        .getListState(
+                                new ListStateDescriptor<>(
+                                        PENDING_INPUT_EVENT_STATE_NAME,
+                                        TypeInformation.of(Event.class)));
+        // We use UnionList here to ensure that the task can access all keys after parallelism
+        // modifications.
+        // Subsequent steps {@link #tryResumeProcessActionTasks} will then filter out keys that do
+        // not belong to the key range of current task.
+        currentProcessingKeysOpState =
+                getOperatorStateBackend()
+                        .getUnionListState(
+                                new ListStateDescriptor<>(
+                                        "currentProcessingKeys", TypeInformation.of(Object.class)));
 
         // init PythonActionExecutor and PythonResourceAdapter
         initPythonEnvironment();
@@ -289,11 +335,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         keySegmentQueue.addKeyToLastSegment(getCurrentKey());
 
-        if (stateManager.hasMoreActionTasks()) {
+        if (currentKeyHasMoreActionTask()) {
             // If there are already actions being processed for the current key, the newly incoming
             // event should be queued and processed later. Therefore, we add it to
             // pendingInputEventsState.
-            stateManager.addPendingInputEvent(inputEvent);
+            pendingInputEventsKState.add(inputEvent);
         } else {
             // Otherwise, the new event is processed immediately.
             processEvent(getCurrentKey(), inputEvent);
@@ -320,15 +366,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         } else {
             if (isInputEvent) {
                 // If the event is an InputEvent, we mark that the key is currently being processed.
-                stateManager.addProcessingKey(key);
-                stateManager.initOrIncSequenceNumber();
+                currentProcessingKeysOpState.add(key);
+                initOrIncSequenceNumber();
             }
             // We then obtain the triggered action and add ActionTasks to the waiting processing
             // queue.
             List<Action> triggerActions = getActionsTriggeredBy(event);
             if (triggerActions != null && !triggerActions.isEmpty()) {
                 for (Action triggerAction : triggerActions) {
-                    stateManager.addActionTask(createActionTask(key, triggerAction, event));
+                    actionTasksKState.add(createActionTask(key, triggerAction, event));
                 }
             }
         }
@@ -375,9 +421,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // 1. Get an action task for the key.
         setCurrentKey(key);
 
-        ActionTask actionTask = stateManager.pollNextActionTask();
+        ActionTask actionTask = pollFromListState(actionTasksKState);
         if (actionTask == null) {
-            int removedCount = stateManager.removeProcessingKey(key);
+            int removedCount = removeFromListState(currentProcessingKeysOpState, key);
             checkState(
                     removedCount == 1,
                     "Current processing key count for key "
@@ -394,12 +440,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // 2. Invoke the action task.
         createAndSetRunnerContext(actionTask, key);
 
-        long sequenceNumber = stateManager.getSequenceNumber();
+        long sequenceNumber = sequenceNumberKState.value();
         boolean isFinished;
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt = Optional.empty();
         ActionState actionState =
-                maybeGetActionState(key, sequenceNumber, actionTask.action, actionTask.event);
+                durableExecManager.maybeGetActionState(
+                        key, sequenceNumber, actionTask.action, actionTask.event);
 
         // Check if action is already completed
         if (actionState != null && actionState.isCompleted()) {
@@ -426,14 +473,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         } else {
             // Initialize ActionState if not exists, or use existing one for recovery
             if (actionState == null) {
-                maybeInitActionState(key, sequenceNumber, actionTask.action, actionTask.event);
+                durableExecManager.maybeInitActionState(
+                        key, sequenceNumber, actionTask.action, actionTask.event);
                 actionState =
-                        maybeGetActionState(
+                        durableExecManager.maybeGetActionState(
                                 key, sequenceNumber, actionTask.action, actionTask.event);
             }
 
             // Set up durable execution context for fine-grained recovery
-            setupDurableExecutionContext(actionTask, actionState);
+            durableExecManager.setupDurableExecutionContext(
+                    actionTask, actionState, sequenceNumber);
 
             ActionTask.ActionTaskResult actionTaskResult =
                     actionTask.invoke(
@@ -444,10 +493,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // back later if the action task has a generated action task, meaning it is not
             // finished.
             actionTaskMemoryContexts.remove(actionTask);
-            actionTaskDurableContexts.remove(actionTask);
-            continuationContexts.remove(actionTask);
-            pythonAwaitableRefs.remove(actionTask);
-            maybePersistTaskResult(
+            durableExecManager.removeDurableContext(actionTask);
+            durableExecManager.removeContinuationContext(actionTask);
+            durableExecManager.removePythonAwaitableRef(actionTask);
+            durableExecManager.maybePersistTaskResult(
                     key,
                     sequenceNumber,
                     actionTask.action,
@@ -466,7 +515,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         boolean currentInputEventFinished = false;
         if (isFinished) {
             builtInMetrics.markActionExecuted(actionTask.action.getName());
-            currentInputEventFinished = !stateManager.hasMoreActionTasks();
+            currentInputEventFinished = !currentKeyHasMoreActionTask();
 
             // Persist memory to the Flink state when the action task is finished.
             actionTask.getRunnerContext().persistMemory();
@@ -486,10 +535,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             RunnerContextImpl.DurableExecutionContext durableContext =
                     actionTask.getRunnerContext().getDurableExecutionContext();
             if (durableContext != null) {
-                actionTaskDurableContexts.put(generatedActionTask, durableContext);
+                durableExecManager.putDurableContext(generatedActionTask, durableContext);
             }
             if (actionTask.getRunnerContext() instanceof JavaRunnerContextImpl) {
-                continuationContexts.put(
+                durableExecManager.putContinuationContext(
                         generatedActionTask,
                         ((JavaRunnerContextImpl) actionTask.getRunnerContext())
                                 .getContinuationContext());
@@ -499,11 +548,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         ((PythonRunnerContextImpl) actionTask.getRunnerContext())
                                 .getPythonAwaitableRef();
                 if (awaitableRef != null) {
-                    pythonAwaitableRefs.put(generatedActionTask, awaitableRef);
+                    durableExecManager.putPythonAwaitableRef(generatedActionTask, awaitableRef);
                 }
             }
 
-            stateManager.addActionTask(generatedActionTask);
+            actionTasksKState.add(generatedActionTask);
         }
 
         // 3. Process the next InputEvent or next action task
@@ -513,8 +562,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.
-            int removedCount = stateManager.removeProcessingKey(key);
-            maybePruneState(key, sequenceNumber);
+            int removedCount = removeFromListState(currentProcessingKeysOpState, key);
+            durableExecManager.maybePruneState(key, sequenceNumber);
             checkState(
                     removedCount == 1,
                     "Current processing key count for key "
@@ -525,11 +574,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     keySegmentQueue.removeKey(key),
                     "Current key" + key + " is missing from the segmentedQueue.");
             processEligibleWatermarks();
-            Event pendingInputEvent = stateManager.pollNextPendingInputEvent();
+            Event pendingInputEvent = pollFromListState(pendingInputEventsKState);
             if (pendingInputEvent != null) {
                 processEvent(key, pendingInputEvent);
             }
-        } else if (stateManager.hasMoreActionTasks()) {
+        } else if (currentKeyHasMoreActionTask()) {
             // If the current key has additional action tasks remaining, we should submit a new mail
             // to continue processing them.
             mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
@@ -584,7 +633,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             this::checkMailboxThread,
                             this.agentPlan,
                             this.resourceCache,
-                            stateManager.getJobIdentifier());
+                            this.jobIdentifier);
 
             javaResourceAdapter = new JavaResourceAdapter(this::getResource, pythonInterpreter);
             if (containPythonResource) {
@@ -603,7 +652,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         agentPlan,
                         javaResourceAdapter,
                         pythonRunnerContext,
-                        stateManager.getJobIdentifier());
+                        jobIdentifier);
         pythonActionExecutor.open();
     }
 
@@ -631,7 +680,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     @VisibleForTesting
     public void waitInFlightEventsFinished() throws Exception {
-        while (stateManager.hasProcessingKeys()) {
+        while (listStateNotEmpty(currentProcessingKeysOpState)) {
             mailboxExecutor.yield();
         }
     }
@@ -661,8 +710,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (eventLogger != null) {
             eventLogger.close();
         }
-        if (actionStateStore != null) {
-            actionStateStore.close();
+        if (durableExecManager != null) {
+            durableExecManager.close();
         }
         if (continuationActionExecutor != null) {
             continuationActionExecutor.close();
@@ -675,58 +724,39 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
 
-        maybeInitActionStateStore();
+        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig());
+        durableExecManager.handleRecovery(getOperatorStateBackend());
 
-        if (actionStateStore != null) {
-            List<Object> markers = new ArrayList<>();
-
-            // We use UnionList here to ensure that the task can access all the recovery marker
-            // after
-            // parallelism modifications.
-            // The ActionStateStore will decide how to use the recovery markers.
-            ListState<Object> recoveryMarkerOpState =
-                    getOperatorStateBackend()
-                            .getUnionListState(
-                                    new ListStateDescriptor<>(
-                                            RECOVERY_MARKER_STATE_NAME,
-                                            TypeInformation.of(Object.class)));
-
-            Iterable<Object> recoveryMarkers = recoveryMarkerOpState.get();
-            if (recoveryMarkers != null) {
-                recoveryMarkers.forEach(markers::add);
-            }
-            LOG.info("Rebuilding action state from {} recovery markers", markers.size());
-            actionStateStore.rebuildState(markers);
+        // Get job identifier from user configuration.
+        // If not configured, get from state.
+        jobIdentifier = agentPlan.getConfig().get(JOB_IDENTIFIER);
+        if (jobIdentifier == null) {
+            String initialJobIdentifier = getRuntimeContext().getJobInfo().getJobId().toString();
+            jobIdentifier =
+                    StateUtils.getSingleValueFromState(
+                            context, "identifier_state", String.class, initialJobIdentifier);
         }
-
-        stateManager.initJobIdentifier(context, agentPlan, getRuntimeContext());
     }
 
     @Override
     public void snapshotState(StateSnapshotContext context) throws Exception {
-        if (actionStateStore != null) {
-            Object recoveryMarker = actionStateStore.getRecoveryMarker();
-            if (recoveryMarker != null) {
-                recoveryMarkerOpState.update(List.of(recoveryMarker));
-            }
-        }
+        durableExecManager.snapshotRecoveryMarker();
 
-        stateManager.snapshotSequenceNumbers(
-                getKeyedStateBackend(), checkpointIdToSeqNums, context.getCheckpointId());
+        HashMap<Object, Long> keyToSeqNum = new HashMap<>();
+        getKeyedStateBackend()
+                .applyToAllKeys(
+                        VoidNamespace.INSTANCE,
+                        VoidNamespaceSerializer.INSTANCE,
+                        new ValueStateDescriptor<>(MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class),
+                        (key, state) -> keyToSeqNum.put(key, state.value()));
+        durableExecManager.recordCheckpointSequenceNumbers(context.getCheckpointId(), keyToSeqNum);
 
         super.snapshotState(context);
     }
 
     @Override
     public void notifyCheckpointComplete(long checkpointId) throws Exception {
-        if (actionStateStore != null) {
-            Map<Object, Long> keyToSeqNum =
-                    checkpointIdToSeqNums.getOrDefault(checkpointId, new HashMap<>());
-            for (Map.Entry<Object, Long> entry : keyToSeqNum.entrySet()) {
-                actionStateStore.pruneState(entry.getKey(), entry.getValue());
-            }
-            checkpointIdToSeqNums.remove(checkpointId);
-        }
+        durableExecManager.notifyCheckpointComplete(checkpointId);
         super.notifyCheckpointComplete(checkpointId);
     }
 
@@ -805,8 +835,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         } else {
             memoryContext =
                     new RunnerContextImpl.MemoryContext(
-                            new CachedMemoryStore(stateManager.getSensoryMemState()),
-                            new CachedMemoryStore(stateManager.getShortTermMemState()));
+                            new CachedMemoryStore(sensoryMemState),
+                            new CachedMemoryStore(shortTermMemState));
         }
 
         runnerContext.switchActionContext(
@@ -814,10 +844,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         if (runnerContext instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;
-            if (continuationContexts.containsKey(actionTask)) {
+            if (durableExecManager.hasContinuationContext(actionTask)) {
                 // action task for async execution action, should retrieve intermediate results from
                 // map.
-                continuationContext = continuationContexts.get(actionTask);
+                continuationContext = durableExecManager.getContinuationContext(actionTask);
             } else {
                 continuationContext = new ContinuationContext();
             }
@@ -826,22 +856,24 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (runnerContext instanceof PythonRunnerContextImpl) {
             // Get the awaitable ref from the transient map. After checkpoint restore, this will be
             // null, signaling that the awaitable was lost and needs re-execution.
-            String awaitableRef = pythonAwaitableRefs.get(actionTask);
+            String awaitableRef = durableExecManager.getPythonAwaitableRef(actionTask);
             ((PythonRunnerContextImpl) runnerContext).setPythonAwaitableRef(awaitableRef);
         }
         actionTask.setRunnerContext(runnerContext);
     }
 
+    private boolean currentKeyHasMoreActionTask() throws Exception {
+        return listStateNotEmpty(actionTasksKState);
+    }
+
     private void tryResumeProcessActionTasks() throws Exception {
-        Iterable<Object> keys = stateManager.getProcessingKeys();
+        Iterable<Object> keys = currentProcessingKeysOpState.get();
         if (keys != null) {
             int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
             KeyGroupRange currentSubtaskKeyGroupRange =
-                    stateManager.getCurrentSubtaskKeyGroupRange(
-                            maxParallelism, getRuntimeContext());
+                    getCurrentSubtaskKeyGroupRange(maxParallelism);
             for (Object key : keys) {
-                if (!stateManager.isKeyOwnedByCurrentSubtask(
-                        key, maxParallelism, currentSubtaskKeyGroupRange)) {
+                if (!isKeyOwnedByCurrentSubtask(key, maxParallelism, currentSubtaskKeyGroupRange)) {
                     continue;
                 }
                 keySegmentQueue.addKeyToLastSegment(key);
@@ -850,129 +882,25 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
         }
 
-        stateManager.forEachPendingInputEventKey(
-                getKeyedStateBackend(),
-                (key, state) ->
-                        state.get().forEach(event -> keySegmentQueue.addKeyToLastSegment(key)));
+        getKeyedStateBackend()
+                .applyToAllKeys(
+                        VoidNamespace.INSTANCE,
+                        VoidNamespaceSerializer.INSTANCE,
+                        new ListStateDescriptor<>(
+                                PENDING_INPUT_EVENT_STATE_NAME, TypeInformation.of(Event.class)),
+                        (key, state) ->
+                                state.get()
+                                        .forEach(
+                                                event -> keySegmentQueue.addKeyToLastSegment(key)));
     }
 
-    private ActionState maybeGetActionState(
-            Object key, long sequenceNum, Action action, Event event) throws Exception {
-        return actionStateStore == null
-                ? null
-                : actionStateStore.get(key.toString(), sequenceNum, action, event);
-    }
-
-    private void maybeInitActionState(Object key, long sequenceNum, Action action, Event event)
-            throws Exception {
-        if (actionStateStore != null) {
-            // Initialize the action state if it does not exist. It will exist when the action is an
-            // async action and
-            // has been persisted before the action task is finished.
-            if (actionStateStore.get(key, sequenceNum, action, event) == null) {
-                actionStateStore.put(key, sequenceNum, action, event, new ActionState(event));
-            }
-        }
-    }
-
-    private void maybePersistTaskResult(
-            Object key,
-            long sequenceNum,
-            Action action,
-            Event event,
-            RunnerContextImpl context,
-            ActionTask.ActionTaskResult actionTaskResult)
-            throws Exception {
-        if (actionStateStore == null) {
-            return;
-        }
-
-        // if the task is not finished, we skip the persistence for now and wait until it is
-        // finished.
-        if (!actionTaskResult.isFinished()) {
-            return;
-        }
-
-        ActionState actionState = actionStateStore.get(key, sequenceNum, action, event);
-
-        for (MemoryUpdate memoryUpdate : context.getSensoryMemoryUpdates()) {
-            actionState.addSensoryMemoryUpdate(memoryUpdate);
-        }
-
-        for (MemoryUpdate memoryUpdate : context.getShortTermMemoryUpdates()) {
-            actionState.addShortTermMemoryUpdate(memoryUpdate);
-        }
-
-        for (Event outputEvent : actionTaskResult.getOutputEvents()) {
-            actionState.addEvent(outputEvent);
-        }
-
-        // Mark the action as completed and clear call records
-        // This indicates that recovery should skip the entire action
-        actionState.markCompleted();
-
-        actionStateStore.put(key, sequenceNum, action, event, actionState);
-
-        // Clear durable execution context
-        context.clearDurableExecutionContext();
-    }
-
-    /**
-     * Sets up the durable execution context for fine-grained recovery.
-     *
-     * <p>This method initializes the runner context with a {@link
-     * RunnerContextImpl.DurableExecutionContext}, which enables execute/execute_async calls to:
-     *
-     * <ul>
-     *   <li>Skip re-execution for already completed calls during recovery
-     *   <li>Persist CallRecords after each code block completion
-     * </ul>
-     */
-    private void setupDurableExecutionContext(ActionTask actionTask, ActionState actionState) {
-        if (actionStateStore == null) {
-            return;
-        }
-
-        RunnerContextImpl.DurableExecutionContext durableContext;
-        if (actionTaskDurableContexts.containsKey(actionTask)) {
-            // Reuse existing context for async action continuation
-            durableContext = actionTaskDurableContexts.get(actionTask);
+    private void initOrIncSequenceNumber() throws Exception {
+        // Initialize the sequence number state if it does not exist.
+        Long sequenceNumber = sequenceNumberKState.value();
+        if (sequenceNumber == null) {
+            sequenceNumberKState.update(0L);
         } else {
-            // Create new context for first invocation
-            final long sequenceNumber;
-            try {
-                sequenceNumber = stateManager.getSequenceNumber();
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to get sequence number from state", e);
-            }
-
-            durableContext =
-                    new RunnerContextImpl.DurableExecutionContext(
-                            actionTask.getKey(),
-                            sequenceNumber,
-                            actionTask.action,
-                            actionTask.event,
-                            actionState,
-                            this);
-        }
-
-        actionTask.getRunnerContext().setDurableExecutionContext(durableContext);
-    }
-
-    @Override
-    public void persist(
-            Object key, long sequenceNumber, Action action, Event event, ActionState actionState) {
-        try {
-            actionStateStore.put(key, sequenceNumber, action, event, actionState);
-        } catch (Exception e) {
-            LOG.error("Failed to persist ActionState", e);
-            throw new RuntimeException("Failed to persist ActionState", e);
-        }
-    }
-
-    private void maybePruneState(Object key, long sequenceNum) throws Exception {
-        if (actionStateStore != null) {
-            actionStateStore.pruneState(key, sequenceNum);
+            sequenceNumberKState.update(sequenceNumber + 1);
         }
     }
 
@@ -1000,7 +928,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 this::checkMailboxThread,
                                 this.agentPlan,
                                 this.resourceCache,
-                                stateManager.getJobIdentifier(),
+                                this.jobIdentifier,
                                 continuationActionExecutor);
             }
             return runnerContext;
@@ -1012,7 +940,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 this::checkMailboxThread,
                                 this.agentPlan,
                                 this.resourceCache,
-                                stateManager.getJobIdentifier());
+                                jobIdentifier);
             }
             return pythonRunnerContext;
         }
@@ -1029,13 +957,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         return EventLoggerFactory.createLogger(loggerConfigBuilder.build());
     }
 
-    private void maybeInitActionStateStore() {
-        if (actionStateStore == null
-                && KAFKA.getType()
-                        .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
-            LOG.info("Using Kafka as backend of action state store.");
-            actionStateStore = new KafkaActionStateStore(agentPlan.getConfig());
-        }
+    @VisibleForTesting
+    DurableExecutionManager getDurableExecutionManager() {
+        return durableExecManager;
+    }
+
+    private KeyGroupRange getCurrentSubtaskKeyGroupRange(int maxParallelism) {
+        int parallelism = getRuntimeContext().getTaskInfo().getNumberOfParallelSubtasks();
+        int subtaskIndex = getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
+        return KeyGroupRangeAssignment.computeKeyGroupRangeForOperatorIndex(
+                maxParallelism, parallelism, subtaskIndex);
+    }
+
+    private boolean isKeyOwnedByCurrentSubtask(
+            Object key, int maxParallelism, KeyGroupRange currentSubtaskKeyGroupRange) {
+        int keyGroup = KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism);
+        return currentSubtaskKeyGroupRange.contains(keyGroup);
     }
 
     /** Failed to execute Action task. */
