@@ -133,7 +133,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void open() throws Exception {
         super.open();
 
-        stateManager = new OperatorStateManager();
         stateManager.initializeKeyedStates(getRuntimeContext());
         stateManager.initializeOperatorStates(getOperatorStateBackend());
 
