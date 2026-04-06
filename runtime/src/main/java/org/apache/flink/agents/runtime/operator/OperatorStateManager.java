@@ -197,10 +197,7 @@ class OperatorStateManager {
     }
 
     @SuppressWarnings("unchecked")
-    void snapshotSequenceNumbers(
-            KeyedStateBackend<?> keyedStateBackend,
-            Map<Long, Map<Object, Long>> checkpointIdToSeqNums,
-            long checkpointId)
+    Map<Object, Long> snapshotSequenceNumbers(KeyedStateBackend<?> keyedStateBackend)
             throws Exception {
         HashMap<Object, Long> keyToSeqNum = new HashMap<>();
         ((KeyedStateBackend<Object>) keyedStateBackend)
@@ -209,7 +206,7 @@ class OperatorStateManager {
                         VoidNamespaceSerializer.INSTANCE,
                         new ValueStateDescriptor<>(MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class),
                         (key, state) -> keyToSeqNum.put(key, state.value()));
-        checkpointIdToSeqNums.put(checkpointId, keyToSeqNum);
+        return keyToSeqNum;
     }
 
     @SuppressWarnings("unchecked")

@@ -28,29 +28,15 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
-import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
-import org.apache.flink.agents.runtime.context.RunnerContextImpl;
-import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
-import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
-import org.apache.flink.api.common.state.ListState;
-import org.apache.flink.api.common.state.ListStateDescriptor;
-import org.apache.flink.api.common.state.MapState;
-import org.apache.flink.api.common.state.MapStateDescriptor;
-import org.apache.flink.api.common.state.ValueState;
-import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.state.KeyGroupRange;
-import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.runtime.state.StateInitializationContext;
 import org.apache.flink.runtime.state.StateSnapshotContext;
-import org.apache.flink.runtime.state.VoidNamespace;
-import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.BoundedOneInput;
@@ -68,12 +54,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Field;
-import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
-import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
-import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -93,18 +77,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private static final Logger LOG = LoggerFactory.getLogger(ActionExecutionOperator.class);
 
-    private static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
-    private static final String PENDING_INPUT_EVENT_STATE_NAME = "pendingInputEvents";
-
     private final AgentPlan agentPlan;
 
     private transient ResourceCache resourceCache;
 
     private final Boolean inputIsJava;
-
-    private transient MapState<String, MemoryObjectImpl.MemoryItem> sensoryMemState;
-
-    private transient MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState;
 
     private transient PythonBridgeManager pythonBridge;
 
@@ -123,31 +100,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // to obtain the MailboxProcessor instance and make the determination.
     private transient MailboxProcessor mailboxProcessor;
 
-    // An action will be split into one or more ActionTask objects. We use a state to store the
-    // pending ActionTasks that are waiting to be executed.
-    private transient ListState<ActionTask> actionTasksKState;
-
-    // To avoid processing different InputEvents with the same key, we use a state to store pending
-    // InputEvents that are waiting to be processed.
-    private transient ListState<Event> pendingInputEventsKState;
-
-    // An operator state is used to track the currently processing keys. This is useful when
-    // receiving an EndOfInput signal, as we need to wait until all related events are fully
-    // processed.
-    private transient ListState<Object> currentProcessingKeysOpState;
-
     private final transient EventRouter<IN, OUT> eventRouter;
-
-    private transient ValueState<Long> sequenceNumberKState;
 
     private final transient DurableExecutionManager durableExecManager;
 
-    // Each job can only have one identifier and this identifier must be consistent across restarts.
-    // We cannot use job id as the identifier here because user may change job id by
-    // creating a savepoint, stop the job and then resume from savepoint.
-    // We use this identifier to control the visibility for long-term memory.
-    // Inspired by Apache Paimon.
-    private transient String jobIdentifier;
+    private transient OperatorStateManager stateManager;
 
     public ActionExecutionOperator(
             AgentPlan agentPlan,
@@ -175,21 +132,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void open() throws Exception {
         super.open();
-        // init sensoryMemState
-        MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> sensoryMemStateDescriptor =
-                new MapStateDescriptor<>(
-                        "sensoryMemory",
-                        TypeInformation.of(String.class),
-                        TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
-        sensoryMemState = getRuntimeContext().getMapState(sensoryMemStateDescriptor);
 
-        // init shortTermMemState
-        MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> shortTermMemStateDescriptor =
-                new MapStateDescriptor<>(
-                        "shortTermMemory",
-                        TypeInformation.of(String.class),
-                        TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
-        shortTermMemState = getRuntimeContext().getMapState(shortTermMemStateDescriptor);
+        stateManager = new OperatorStateManager();
+        stateManager.initializeKeyedStates(getRuntimeContext());
+        stateManager.initializeOperatorStates(getOperatorStateBackend());
 
         resourceCache = new ResourceCache(agentPlan.getResourceProviders());
 
@@ -200,34 +146,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         durableExecManager.maybeInitActionStateStore(agentPlan.getConfig());
         durableExecManager.initRecoveryMarkerState(getOperatorStateBackend());
-        // init sequence number state for per key message ordering
-        sequenceNumberKState =
-                getRuntimeContext()
-                        .getState(
-                                new ValueStateDescriptor<>(
-                                        MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class));
-
-        // init agent processing related state
-        actionTasksKState =
-                getRuntimeContext()
-                        .getListState(
-                                new ListStateDescriptor<>(
-                                        "actionTasks", TypeInformation.of(ActionTask.class)));
-        pendingInputEventsKState =
-                getRuntimeContext()
-                        .getListState(
-                                new ListStateDescriptor<>(
-                                        PENDING_INPUT_EVENT_STATE_NAME,
-                                        TypeInformation.of(Event.class)));
-        // We use UnionList here to ensure that the task can access all keys after parallelism
-        // modifications.
-        // Subsequent steps {@link #tryResumeProcessActionTasks} will then filter out keys that do
-        // not belong to the key range of current task.
-        currentProcessingKeysOpState =
-                getOperatorStateBackend()
-                        .getUnionListState(
-                                new ListStateDescriptor<>(
-                                        "currentProcessingKeys", TypeInformation.of(Object.class)));
 
         // init PythonActionExecutor and PythonResourceAdapter
         pythonBridge = new PythonBridgeManager();
@@ -240,7 +158,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 getRuntimeContext().getJobInfo().getJobId(),
                 metricGroup,
                 this::checkMailboxThread,
-                jobIdentifier);
+                stateManager.getJobIdentifier());
 
         // init context manager for runner context creation and memory contexts
         contextManager =
@@ -279,11 +197,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         eventRouter.getKeySegmentQueue().addKeyToLastSegment(getCurrentKey());
 
-        if (currentKeyHasMoreActionTask()) {
+        if (stateManager.hasMoreActionTasks()) {
             // If there are already actions being processed for the current key, the newly incoming
             // event should be queued and processed later. Therefore, we add it to
             // pendingInputEventsState.
-            pendingInputEventsKState.add(inputEvent);
+            stateManager.addPendingInputEvent(inputEvent);
         } else {
             // Otherwise, the new event is processed immediately.
             processEvent(getCurrentKey(), inputEvent);
@@ -315,15 +233,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         } else {
             if (isInputEvent) {
                 // If the event is an InputEvent, we mark that the key is currently being processed.
-                currentProcessingKeysOpState.add(key);
-                initOrIncSequenceNumber();
+                stateManager.addProcessingKey(key);
+                stateManager.initOrIncSequenceNumber();
             }
             // We then obtain the triggered action and add ActionTasks to the waiting processing
             // queue.
             List<Action> triggerActions = eventRouter.getActionsTriggeredBy(event, agentPlan);
             if (triggerActions != null && !triggerActions.isEmpty()) {
                 for (Action triggerAction : triggerActions) {
-                    actionTasksKState.add(createActionTask(key, triggerAction, event));
+                    stateManager.addActionTask(createActionTask(key, triggerAction, event));
                 }
             }
         }
@@ -351,9 +269,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // 1. Get an action task for the key.
         setCurrentKey(key);
 
-        ActionTask actionTask = pollFromListState(actionTasksKState);
+        ActionTask actionTask = stateManager.pollNextActionTask();
         if (actionTask == null) {
-            int removedCount = removeFromListState(currentProcessingKeysOpState, key);
+            int removedCount = stateManager.removeProcessingKey(key);
             checkState(
                     removedCount == 1,
                     "Current processing key count for key "
@@ -374,14 +292,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 agentPlan,
                 resourceCache,
                 metricGroup,
-                jobIdentifier,
+                stateManager.getJobIdentifier(),
                 this::checkMailboxThread,
-                sensoryMemState,
-                shortTermMemState,
+                stateManager.getSensoryMemState(),
+                stateManager.getShortTermMemState(),
                 pythonBridge.getPythonRunnerContext(),
                 durableExecManager);
 
-        long sequenceNumber = sequenceNumberKState.value();
+        long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt = Optional.empty();
@@ -456,7 +374,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         boolean currentInputEventFinished = false;
         if (isFinished) {
             builtInMetrics.markActionExecuted(actionTask.action.getName());
-            currentInputEventFinished = !currentKeyHasMoreActionTask();
+            currentInputEventFinished = !stateManager.hasMoreActionTasks();
 
             // Persist memory to the Flink state when the action task is finished.
             actionTask.getRunnerContext().persistMemory();
@@ -471,29 +389,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
             // If the action task is not finished, we keep the contexts in memory for the
             // next generated ActionTask to be invoked.
-            contextManager.putMemoryContext(
-                    generatedActionTask, actionTask.getRunnerContext().getMemoryContext());
-            RunnerContextImpl.DurableExecutionContext durableContext =
-                    actionTask.getRunnerContext().getDurableExecutionContext();
-            if (durableContext != null) {
-                durableExecManager.putDurableContext(generatedActionTask, durableContext);
-            }
-            if (actionTask.getRunnerContext() instanceof JavaRunnerContextImpl) {
-                durableExecManager.putContinuationContext(
-                        generatedActionTask,
-                        ((JavaRunnerContextImpl) actionTask.getRunnerContext())
-                                .getContinuationContext());
-            }
-            if (actionTask.getRunnerContext() instanceof PythonRunnerContextImpl) {
-                String awaitableRef =
-                        ((PythonRunnerContextImpl) actionTask.getRunnerContext())
-                                .getPythonAwaitableRef();
-                if (awaitableRef != null) {
-                    durableExecManager.putPythonAwaitableRef(generatedActionTask, awaitableRef);
-                }
-            }
+            contextManager.transferContexts(actionTask, generatedActionTask, durableExecManager);
 
-            actionTasksKState.add(generatedActionTask);
+            stateManager.addActionTask(generatedActionTask);
         }
 
         // 3. Process the next InputEvent or next action task
@@ -503,7 +401,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.
-            int removedCount = removeFromListState(currentProcessingKeysOpState, key);
+            int removedCount = stateManager.removeProcessingKey(key);
             durableExecManager.maybePruneState(key, sequenceNumber);
             checkState(
                     removedCount == 1,
@@ -515,11 +413,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     eventRouter.getKeySegmentQueue().removeKey(key),
                     "Current key" + key + " is missing from the segmentedQueue.");
             eventRouter.processEligibleWatermarks(super::processWatermark);
-            Event pendingInputEvent = pollFromListState(pendingInputEventsKState);
+            Event pendingInputEvent = stateManager.pollNextPendingInputEvent();
             if (pendingInputEvent != null) {
                 processEvent(key, pendingInputEvent);
             }
-        } else if (currentKeyHasMoreActionTask()) {
+        } else if (stateManager.hasMoreActionTasks()) {
             // If the current key has additional action tasks remaining, we should submit a new mail
             // to continue processing them.
             mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
@@ -533,7 +431,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     @VisibleForTesting
     public void waitInFlightEventsFinished() throws Exception {
-        while (listStateNotEmpty(currentProcessingKeysOpState)) {
+        while (stateManager.hasProcessingKeys()) {
             mailboxExecutor.yield();
         }
     }
@@ -567,28 +465,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         durableExecManager.maybeInitActionStateStore(agentPlan.getConfig());
         durableExecManager.handleRecovery(getOperatorStateBackend());
 
-        // Get job identifier from user configuration.
-        // If not configured, get from state.
-        jobIdentifier = agentPlan.getConfig().get(JOB_IDENTIFIER);
-        if (jobIdentifier == null) {
-            String initialJobIdentifier = getRuntimeContext().getJobInfo().getJobId().toString();
-            jobIdentifier =
-                    StateUtils.getSingleValueFromState(
-                            context, "identifier_state", String.class, initialJobIdentifier);
-        }
+        stateManager = new OperatorStateManager();
+        stateManager.initJobIdentifier(context, agentPlan, getRuntimeContext());
     }
 
     @Override
     public void snapshotState(StateSnapshotContext context) throws Exception {
         durableExecManager.snapshotRecoveryMarker();
 
-        HashMap<Object, Long> keyToSeqNum = new HashMap<>();
-        getKeyedStateBackend()
-                .applyToAllKeys(
-                        VoidNamespace.INSTANCE,
-                        VoidNamespaceSerializer.INSTANCE,
-                        new ValueStateDescriptor<>(MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class),
-                        (key, state) -> keyToSeqNum.put(key, state.value()));
+        Map<Object, Long> keyToSeqNum =
+                stateManager.snapshotSequenceNumbers(getKeyedStateBackend());
         durableExecManager.recordCheckpointSequenceNumbers(context.getCheckpointId(), keyToSeqNum);
 
         super.snapshotState(context);
@@ -623,18 +509,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
-    private boolean currentKeyHasMoreActionTask() throws Exception {
-        return listStateNotEmpty(actionTasksKState);
-    }
-
     private void tryResumeProcessActionTasks() throws Exception {
-        Iterable<Object> keys = currentProcessingKeysOpState.get();
+        Iterable<Object> keys = stateManager.getProcessingKeys();
         if (keys != null) {
             int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
             KeyGroupRange currentSubtaskKeyGroupRange =
-                    getCurrentSubtaskKeyGroupRange(maxParallelism);
+                    stateManager.getCurrentSubtaskKeyGroupRange(
+                            maxParallelism, getRuntimeContext());
             for (Object key : keys) {
-                if (!isKeyOwnedByCurrentSubtask(key, maxParallelism, currentSubtaskKeyGroupRange)) {
+                if (!stateManager.isKeyOwnedByCurrentSubtask(
+                        key, maxParallelism, currentSubtaskKeyGroupRange)) {
                     continue;
                 }
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
@@ -643,29 +527,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
         }
 
-        getKeyedStateBackend()
-                .applyToAllKeys(
-                        VoidNamespace.INSTANCE,
-                        VoidNamespaceSerializer.INSTANCE,
-                        new ListStateDescriptor<>(
-                                PENDING_INPUT_EVENT_STATE_NAME, TypeInformation.of(Event.class)),
-                        (key, state) ->
-                                state.get()
-                                        .forEach(
-                                                event ->
-                                                        eventRouter
-                                                                .getKeySegmentQueue()
-                                                                .addKeyToLastSegment(key)));
-    }
-
-    private void initOrIncSequenceNumber() throws Exception {
-        // Initialize the sequence number state if it does not exist.
-        Long sequenceNumber = sequenceNumberKState.value();
-        if (sequenceNumber == null) {
-            sequenceNumberKState.update(0L);
-        } else {
-            sequenceNumberKState.update(sequenceNumber + 1);
-        }
+        stateManager.forEachPendingInputEventKey(
+                getKeyedStateBackend(),
+                (key, state) ->
+                        state.get()
+                                .forEach(
+                                        event ->
+                                                eventRouter
+                                                        .getKeySegmentQueue()
+                                                        .addKeyToLastSegment(key)));
     }
 
     @VisibleForTesting
@@ -678,17 +548,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         return eventRouter;
     }
 
-    private KeyGroupRange getCurrentSubtaskKeyGroupRange(int maxParallelism) {
-        int parallelism = getRuntimeContext().getTaskInfo().getNumberOfParallelSubtasks();
-        int subtaskIndex = getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
-        return KeyGroupRangeAssignment.computeKeyGroupRangeForOperatorIndex(
-                maxParallelism, parallelism, subtaskIndex);
-    }
-
-    private boolean isKeyOwnedByCurrentSubtask(
-            Object key, int maxParallelism, KeyGroupRange currentSubtaskKeyGroupRange) {
-        int keyGroup = KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism);
-        return currentSubtaskKeyGroupRange.contains(keyGroup);
+    @VisibleForTesting
+    OperatorStateManager getOperatorStateManager() {
+        return stateManager;
     }
 
     /** Failed to execute Action task. */

@@ -173,6 +173,32 @@ class ActionTaskContextManager implements AutoCloseable {
         return actionTaskMemoryContexts.remove(actionTask);
     }
 
+    /**
+     * Transfers memory, durable execution, continuation, and Python awaitable contexts from the
+     * completed action task to the generated (next) action task.
+     */
+    void transferContexts(
+            ActionTask fromTask, ActionTask toTask, DurableExecutionManager durableExecManager) {
+        putMemoryContext(toTask, fromTask.getRunnerContext().getMemoryContext());
+        RunnerContextImpl.DurableExecutionContext durableContext =
+                fromTask.getRunnerContext().getDurableExecutionContext();
+        if (durableContext != null) {
+            durableExecManager.putDurableContext(toTask, durableContext);
+        }
+        if (fromTask.getRunnerContext() instanceof JavaRunnerContextImpl) {
+            durableExecManager.putContinuationContext(
+                    toTask,
+                    ((JavaRunnerContextImpl) fromTask.getRunnerContext()).getContinuationContext());
+        }
+        if (fromTask.getRunnerContext() instanceof PythonRunnerContextImpl) {
+            String awaitableRef =
+                    ((PythonRunnerContextImpl) fromTask.getRunnerContext()).getPythonAwaitableRef();
+            if (awaitableRef != null) {
+                durableExecManager.putPythonAwaitableRef(toTask, awaitableRef);
+            }
+        }
+    }
+
     @Override
     public void close() throws Exception {
         if (runnerContext != null) {
