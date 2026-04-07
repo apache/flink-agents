@@ -342,6 +342,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             return;
         }
         eventLogger.open(new EventLoggerOpenParams(runtimeContext));
+        if (eventLogger instanceof FileEventLogger) {
+            ((FileEventLogger) eventLogger)
+                    .setTruncatedEventsCounter(builtInMetrics.getEventLogTruncatedEventsCounter());
+        }
     }
 
     @Override
@@ -1132,6 +1136,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
         loggerConfigBuilder.property(
                 FileEventLogger.PRETTY_PRINT_PROPERTY_KEY, agentPlan.getConfig().get(PRETTY_PRINT));
+        loggerConfigBuilder.property(
+                FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentPlan.getConfig().getConfData());
         return EventLoggerFactory.createLogger(loggerConfigBuilder.build());
     }
 

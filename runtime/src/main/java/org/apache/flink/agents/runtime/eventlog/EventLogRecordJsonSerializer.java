@@ -25,6 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
 
 import java.io.IOException;
@@ -47,9 +48,11 @@ import java.util.Map;
  * <pre>{@code
  * {
  *   "timestamp": "2024-01-15T10:30:00Z",
+ *   "logLevel": "STANDARD",
+ *   "eventType": "org.apache.flink.agents.api.InputEvent",
  *   "event": {
- *     "eventType": "org.apache.flink.agents.api.InputEvent"
- *     // Event-specific fields serialized normally
+ *     "eventType": "org.apache.flink.agents.api.InputEvent",
+ *     // Event-specific fields (may be truncated at STANDARD level)
  *   }
  * }
  * }</pre>
@@ -67,6 +70,9 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
 
         gen.writeStartObject();
         gen.writeStringField("timestamp", record.getContext().getTimestamp());
+        gen.writeStringField(
+                "logLevel", record.getLogLevel() != null ? record.getLogLevel().name() : "VERBOSE");
+        gen.writeStringField("eventType", record.getContext().getEventType());
 
         gen.writeFieldName("event");
         JsonNode eventNode = buildEventNode(record.getEvent(), mapper);
@@ -74,8 +80,18 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
             throw new IllegalStateException(
                     "Event log payload must be a JSON object, but was: " + eventNode.getNodeType());
         }
-        eventNode = reorderEventFields((ObjectNode) eventNode, record.getEvent(), mapper);
-        gen.writeTree(eventNode);
+        ObjectNode orderedNode =
+                reorderEventFields((ObjectNode) eventNode, record.getEvent(), mapper);
+
+        // Apply truncation for STANDARD level
+        if (record.getLogLevel() == EventLogLevel.STANDARD && record.getTruncator() != null) {
+            boolean truncated = record.getTruncator().truncate(orderedNode);
+            if (truncated && record.getTruncatedEventsCounter() != null) {
+                record.getTruncatedEventsCounter().inc();
+            }
+        }
+
+        gen.writeTree(orderedNode);
         gen.writeEndObject();
     }
 
