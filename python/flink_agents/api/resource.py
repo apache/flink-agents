@@ -296,6 +296,10 @@ class ResourceName:
         OPENAI_CONNECTION = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelConnection"
         OPENAI_SETUP = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup"
 
+        # Tongyi
+        TONGYI_EMBEDDING_MODEL_CONNECTION = "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelConnection"
+        TONGYI_EMBEDDING_MODEL_SETUP = "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelSetup"
+
         # Java Wrapper
         JAVA_WRAPPER_CONNECTION = "flink_agents.api.embedding_models.java_embedding_model.JavaEmbeddingModelConnection"
         JAVA_WRAPPER_SETUP = "flink_agents.api.embedding_models.java_embedding_model.JavaEmbeddingModelSetup"
