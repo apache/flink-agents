@@ -54,4 +54,32 @@ public class AgentConfigOptions {
     /** The config parameter specifies the unique identifier of job. */
     public static final ConfigOption<String> JOB_IDENTIFIER =
             new ConfigOption<>("job-identifier", String.class, null);
+
+    /**
+     * The global event log level controlling the default verbosity for all event types. Valid
+     * values are "OFF", "STANDARD", and "VERBOSE". Defaults to "STANDARD".
+     */
+    public static final ConfigOption<String> EVENT_LOG_LEVEL =
+            new ConfigOption<>("event-log.level", String.class, "STANDARD");
+
+    /**
+     * The maximum string length for event payloads when logging at STANDARD level. Strings
+     * exceeding this length will be truncated. Defaults to 2000.
+     */
+    public static final ConfigOption<Integer> EVENT_LOG_MAX_STRING_LENGTH =
+            new ConfigOption<>("event-log.standard.max-string-length", Integer.class, 2000);
+
+    /**
+     * The maximum number of array elements to include in event payloads when logging at STANDARD
+     * level. Arrays exceeding this size will be truncated. Defaults to 20.
+     */
+    public static final ConfigOption<Integer> EVENT_LOG_MAX_ARRAY_ELEMENTS =
+            new ConfigOption<>("event-log.standard.max-array-elements", Integer.class, 20);
+
+    /**
+     * The maximum nesting depth for event payloads when logging at STANDARD level. Objects deeper
+     * than this level will be summarized. Defaults to 5.
+     */
+    public static final ConfigOption<Integer> EVENT_LOG_MAX_DEPTH =
+            new ConfigOption<>("event-log.standard.max-depth", Integer.class, 5);
 }
