@@ -105,9 +105,7 @@ def test_python_event_logging(tmp_path: Path) -> None:
     log_files = list(event_log_dir.glob("events-*.log"))
 
     # At least one log file should exist
-    assert len(log_files) > 0, (
-        f"Event log files should be created in {event_log_dir}"
-    )
+    assert len(log_files) > 0, f"Event log files should be created in {event_log_dir}"
 
     # Check that log files contain structured event content
     record = None
@@ -129,6 +127,8 @@ def test_python_event_logging(tmp_path: Path) -> None:
     assert record is not None, "Event log file is empty."
     assert record_line is not None, "Event log file is empty."
     assert "timestamp" in record
+    assert "logLevel" in record
+    assert "eventType" in record
     assert "event" in record
     assert "eventType" in record["event"]
     assert has_processed_review, "Log should contain processed review content"
@@ -140,3 +140,125 @@ def test_python_event_logging(tmp_path: Path) -> None:
     assert id_idx != -1
     assert attributes_idx != -1
     assert event_type_idx < id_idx < attributes_idx
+
+
+def _run_event_logging_pipeline(
+    tmp_path: Path, config_overrides: dict[str, str] | None = None
+) -> Path:
+    """Run the event logging pipeline and return the event log directory.
+
+    Args:
+        tmp_path: Temporary directory for log output.
+        config_overrides: Optional dict of config key-value pairs to set.
+
+    Returns:
+        The event log directory path.
+    """
+    event_log_dir = tmp_path / "event_log"
+    default_log_dir = Path(tempfile.gettempdir()) / "flink-agents"
+    shutil.rmtree(default_log_dir, ignore_errors=True)
+
+    config = Configuration()
+    env = StreamExecutionEnvironment.get_execution_environment(config)
+    env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
+    env.set_parallelism(1)
+
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    agents_env.get_config().set_str("baseLogDir", str(event_log_dir))
+
+    if config_overrides:
+        for key, value in config_overrides.items():
+            agents_env.get_config().set_str(key, value)
+
+    current_dir = Path(__file__).parent
+    input_datastream = env.from_source(
+        source=FileSource.for_record_stream_format(
+            StreamFormat.text_line_format(),
+            f"file:///{current_dir}/../resources/input/input_data.txt",
+        ).build(),
+        watermark_strategy=WatermarkStrategy.no_watermarks(),
+        source_name="python_event_logging_test",
+    )
+
+    deserialize_datastream = input_datastream.map(lambda x: json.loads(x))
+
+    agents_env.from_datastream(
+        input=deserialize_datastream, key_selector=InputKeySelector()
+    ).apply(PythonEventLoggingAgent()).to_datastream()
+
+    agents_env.execute()
+    return event_log_dir
+
+
+def _read_log_records(event_log_dir: Path) -> list[dict]:
+    """Read all JSON records from event log files.
+
+    Args:
+        event_log_dir: Directory containing event log files.
+
+    Returns:
+        List of parsed JSON records.
+    """
+    records: list[dict] = []
+    for log_file in event_log_dir.glob("events-*.log"):
+        with log_file.open(encoding="utf-8") as handle:
+            records.extend(json.loads(line) for line in handle if line.strip())
+    return records
+
+
+def test_event_log_verbose_level(tmp_path: Path) -> None:
+    """Test that VERBOSE log level writes events without truncation."""
+    event_log_dir = _run_event_logging_pipeline(
+        tmp_path, config_overrides={"event-log.level": "VERBOSE"}
+    )
+
+    records = _read_log_records(event_log_dir)
+    assert len(records) > 0, "VERBOSE level should produce event log records"
+
+    for record in records:
+        assert record.get("logLevel") == "VERBOSE", (
+            f"Expected logLevel VERBOSE, got {record.get('logLevel')}"
+        )
+
+    # VERBOSE should not truncate content (no truncatedString wrappers)
+    raw_content = json.dumps(records)
+    assert "truncatedString" not in raw_content, (
+        "VERBOSE level should not truncate any content"
+    )
+
+
+def test_event_log_off_level(tmp_path: Path) -> None:
+    """Test that OFF log level suppresses all event logging."""
+    event_log_dir = _run_event_logging_pipeline(
+        tmp_path, config_overrides={"event-log.level": "OFF"}
+    )
+
+    records = _read_log_records(event_log_dir)
+    assert len(records) == 0, (
+        f"OFF level should not produce any event log records, but found {len(records)}"
+    )
+
+
+def test_event_log_standard_truncation(tmp_path: Path) -> None:
+    """Test that STANDARD level truncates strings exceeding max-string-length."""
+    event_log_dir = _run_event_logging_pipeline(
+        tmp_path,
+        config_overrides={
+            "event-log.level": "STANDARD",
+            "event-log.standard.max-string-length": "10",
+        },
+    )
+
+    records = _read_log_records(event_log_dir)
+    assert len(records) > 0, "STANDARD level should produce event log records"
+
+    for record in records:
+        assert record.get("logLevel") == "STANDARD", (
+            f"Expected logLevel STANDARD, got {record.get('logLevel')}"
+        )
+
+    # With max-string-length=10, any string longer than 10 chars should be truncated
+    raw_content = json.dumps(records)
+    assert "truncatedString" in raw_content, (
+        "STANDARD level with max-string-length=10 should truncate long strings"
+    )
