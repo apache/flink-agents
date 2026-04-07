@@ -78,9 +78,4 @@ public class BuiltInMetrics {
     public Counter getEventLogTruncatedEventsCounter() {
         return eventLogTruncatedEvents;
     }
-
-    /** Increments the event log truncation counter. */
-    public void markEventTruncated() {
-        eventLogTruncatedEvents.inc();
-    }
 }

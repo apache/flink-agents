@@ -72,7 +72,16 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
         gen.writeStringField("timestamp", record.getContext().getTimestamp());
         gen.writeStringField(
                 "logLevel", record.getLogLevel() != null ? record.getLogLevel().name() : "VERBOSE");
-        gen.writeStringField("eventType", record.getContext().getEventType());
+        // For PythonEvent, use the Python module path as the top-level eventType
+        // (consistent with the eventType inside the event object)
+        String topLevelEventType = record.getContext().getEventType();
+        if (record.getEvent() instanceof PythonEvent) {
+            String pythonType = ((PythonEvent) record.getEvent()).getEventType();
+            if (pythonType != null) {
+                topLevelEventType = pythonType;
+            }
+        }
+        gen.writeStringField("eventType", topLevelEventType);
 
         gen.writeFieldName("event");
         JsonNode eventNode = buildEventNode(record.getEvent(), mapper);
