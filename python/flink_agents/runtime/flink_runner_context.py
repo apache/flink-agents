@@ -19,7 +19,7 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict
+from typing import Any, Callable, Dict
 
 import cloudpickle
 from typing_extensions import override
@@ -38,13 +38,13 @@ from flink_agents.api.runner_context import (
     AsyncExecutionResult,
     RunnerContext,
 )
-from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
-from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
 from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
     _validate_reconciler_callable,
 )
+from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
+from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
 from flink_agents.runtime.memory.internal_base_long_term_memory import (
     InternalBaseLongTermMemory,
 )
@@ -53,9 +53,6 @@ from flink_agents.runtime.memory.vector_store_long_term_memory import (
 )
 from flink_agents.runtime.python_java_utils import _build_event_log_string
 from flink_agents.runtime.resource_cache import ResourceCache
-
-if TYPE_CHECKING:
-    from flink_agents.plan.agent_plan import AgentPlan
 
 logger = logging.getLogger(__name__)
 

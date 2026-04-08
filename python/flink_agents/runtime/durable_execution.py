@@ -51,9 +51,10 @@ def _can_bind_call(
     """Return whether the callable signature can bind the provided arguments."""
     try:
         inspect.signature(func).bind(*args, **kwargs)
-        return True
     except (TypeError, ValueError):
         return False
+    else:
+        return True
 
 
 def _validate_reconciler_callable(

@@ -16,11 +16,13 @@
 # limitations under the License.
 #################################################################################
 import asyncio
+from typing import Any
 
 from flink_agents.runtime.local_runner import LocalRunnerContext
 
 
 def reconciled_add(x: int, y: int) -> int:
+    """Return a simple deterministic value for local-runner tests."""
     return x + y
 
 
@@ -29,6 +31,7 @@ def _create_local_runner_context() -> LocalRunnerContext:
 
 
 def test_local_runner_context_reconciler_durable_execute_degrades() -> None:
+    """Keep sync local execution on the existing non-durable path."""
     ctx = _create_local_runner_context()
     reconciler_called = False
 
@@ -44,6 +47,7 @@ def test_local_runner_context_reconciler_durable_execute_degrades() -> None:
 
 
 def test_local_runner_context_reconciler_durable_execute_async_degrades() -> None:
+    """Keep async local execution on the existing non-durable path."""
     ctx = _create_local_runner_context()
     reconciler_called = False
 
@@ -56,7 +60,7 @@ def test_local_runner_context_reconciler_durable_execute_async_degrades() -> Non
         reconciled_add, 5, 10, reconciler=reconciler
     )
 
-    async def _await_result():
+    async def _await_result() -> Any:
         return await async_result
 
     assert asyncio.run(_await_result()) == 15
@@ -64,9 +68,10 @@ def test_local_runner_context_reconciler_durable_execute_async_degrades() -> Non
 
 
 def test_local_runner_context_reconciler_kwarg_is_not_forwarded() -> None:
+    """Do not forward the reserved reconciler kwarg to the user function."""
     ctx = _create_local_runner_context()
 
-    def collect_kwargs(**kwargs):
+    def collect_kwargs(**kwargs: Any) -> dict[str, Any]:
         return kwargs
 
     result = ctx.durable_execute(collect_kwargs, reconciler=lambda: "unused")

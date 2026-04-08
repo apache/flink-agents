@@ -18,6 +18,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Any, Callable
 
 import cloudpickle
 import pytest
@@ -44,7 +45,7 @@ class _FakeJavaRunnerContext:
         self.current_call_index = 0
         self.operations: list[str] = []
 
-    def getCurrentCallResultFields(self):
+    def getCurrentCallResultFields(self) -> list[Any] | None:
         self.operations.append("peek")
         if self.current_call_index < len(self.call_results):
             current = self.call_results[self.current_call_index]
@@ -57,7 +58,9 @@ class _FakeJavaRunnerContext:
             ]
         return None
 
-    def matchNextOrClearSubsequentCallResult(self, function_id: str, args_digest: str):
+    def matchNextOrClearSubsequentCallResult(
+        self, function_id: str, args_digest: str
+    ) -> list[Any] | None:
         self.operations.append("match")
         if self.current_call_index < len(self.call_results):
             current = self.call_results[self.current_call_index]
@@ -141,14 +144,19 @@ def _close_runner_context(ctx: FlinkRunnerContext) -> None:
     ctx.executor.shutdown(wait=True)
 
 
-def _run_async(result) -> object:
-    async def _await_result():
+def _run_async(result: Any) -> object:
+    async def _await_result() -> Any:
         return await result
 
     return asyncio.run(_await_result())
 
 
-def _preload_pending(j_runner_context: _FakeJavaRunnerContext, func, *args, **kwargs) -> None:
+def _preload_pending(
+    j_runner_context: _FakeJavaRunnerContext,
+    func: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=_compute_function_id(func),
@@ -163,6 +171,7 @@ def _call_value(value: str) -> str:
 
 
 def test_flink_runner_context_sync_with_reconciler_executes_original_call() -> None:
+    """Start a new durable call when no pending state exists."""
     j_runner_context = _FakeJavaRunnerContext()
     ctx = _create_runner_context(j_runner_context)
     reconciler_called = False
@@ -184,6 +193,7 @@ def test_flink_runner_context_sync_with_reconciler_executes_original_call() -> N
 
 
 def test_flink_runner_context_sync_reconciler_success() -> None:
+    """Persist a recovered success without re-executing the original call."""
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -213,6 +223,7 @@ def test_flink_runner_context_sync_reconciler_success() -> None:
 
 
 def test_flink_runner_context_sync_reconciler_exception_propagates() -> None:
+    """Propagate reconciler exceptions without finalizing the pending slot."""
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -225,7 +236,8 @@ def test_flink_runner_context_sync_reconciler_exception_propagates() -> None:
     ctx = _create_runner_context(j_runner_context)
 
     def reconciler() -> str:
-        raise ValueError("failed:order-1")
+        error_message = "failed:order-1"
+        raise ValueError(error_message)
 
     try:
         with pytest.raises(ValueError, match="failed:order-1"):
@@ -240,6 +252,7 @@ def test_flink_runner_context_sync_reconciler_exception_propagates() -> None:
 
 
 def test_flink_runner_context_async_writes_pending_on_await() -> None:
+    """Defer pending-state writes for async execution until await time."""
     j_runner_context = _FakeJavaRunnerContext()
     ctx = _create_runner_context(j_runner_context)
     reconciler_called = False
@@ -267,6 +280,7 @@ def test_flink_runner_context_async_writes_pending_on_await() -> None:
 
 
 def test_flink_runner_context_async_reconciler_success() -> None:
+    """Recover a successful async result through the reconciler."""
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -294,6 +308,7 @@ def test_flink_runner_context_async_reconciler_success() -> None:
 
 
 def test_flink_runner_context_async_reconciler_exception_propagates() -> None:
+    """Propagate async reconciler exceptions without advancing state."""
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -306,7 +321,8 @@ def test_flink_runner_context_async_reconciler_exception_propagates() -> None:
     ctx = _create_runner_context(j_runner_context)
 
     def reconciler() -> str:
-        raise RuntimeError("reconcile unavailable")
+        error_message = "reconcile unavailable"
+        raise RuntimeError(error_message)
 
     try:
         async_result = ctx.durable_execute_async(
@@ -326,10 +342,11 @@ def test_flink_runner_context_async_reconciler_exception_propagates() -> None:
 
 
 def test_flink_runner_context_reconciler_kwarg_is_not_forwarded() -> None:
+    """Keep the reserved reconciler kwarg out of the user function call."""
     j_runner_context = _FakeJavaRunnerContext()
     ctx = _create_runner_context(j_runner_context)
 
-    def collect_kwargs(**kwargs):
+    def collect_kwargs(**kwargs: Any) -> dict[str, Any]:
         return kwargs
 
     try:

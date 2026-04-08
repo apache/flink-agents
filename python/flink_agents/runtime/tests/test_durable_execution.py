@@ -54,12 +54,15 @@ class ReconcilerCallables:
     """Helpers for reconciler callable validation tests."""
 
     def __init__(self, prefix: str) -> None:
+        """Store a prefix used by the helper callables."""
         self.prefix = prefix
 
     def bound_no_arg(self) -> str:
+        """Return a bound zero-argument reconciler result."""
         return f"bound:{self.prefix}"
 
     def requires_arg(self, value: int) -> str:
+        """Require an argument so validation can reject the callable."""
         return f"{self.prefix}:{value}"
 
 
@@ -143,10 +146,12 @@ def test_compute_args_digest_kwargs_vs_args() -> None:
 
 
 def test_validate_reconciler_callable_accepts_none() -> None:
+    """Allow omitting the reconciler callable."""
     assert _validate_reconciler_callable(None) is None
 
 
 def test_validate_reconciler_callable_accepts_zero_arg_function() -> None:
+    """Accept a zero-argument reconciler function."""
     def reconciler() -> str:
         return "ok"
 
@@ -157,6 +162,7 @@ def test_validate_reconciler_callable_accepts_zero_arg_function() -> None:
 
 
 def test_validate_reconciler_callable_accepts_bound_zero_arg_method() -> None:
+    """Accept a bound reconciler method with no remaining arguments."""
     callables = ReconcilerCallables("client")
     bound_method = callables.bound_no_arg
 
@@ -167,11 +173,13 @@ def test_validate_reconciler_callable_accepts_bound_zero_arg_method() -> None:
 
 
 def test_validate_reconciler_callable_requires_callable() -> None:
+    """Reject non-callable reconciler values."""
     with pytest.raises(TypeError, match="reconciler must be callable"):
         _validate_reconciler_callable(1)  # type: ignore[arg-type]
 
 
 def test_validate_reconciler_callable_requires_zero_args() -> None:
+    """Reject reconciler callables that require arguments."""
     callables = ReconcilerCallables("client")
 
     with pytest.raises(
