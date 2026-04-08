@@ -27,10 +27,11 @@ module.exports = async ({ github, context, core, workflowRunId, triggerWorkflow 
   // Fallback for fork PRs: pull_requests is empty for cross-repo workflow runs
   if (!prNumber) {
     core.info(`No PR in pull_requests array, falling back to search by head branch...`);
+    // Search all PRs (including closed) to avoid errors when editing closed PRs
     const { data: pullRequests } = await github.rest.pulls.list({
       owner: context.repo.owner,
       repo: context.repo.repo,
-      state: 'open',
+      state: 'all',
       head: `${run.head_repository.owner.login}:${run.head_branch}`,
     });
     prNumber = pullRequests[0]?.number;
@@ -47,6 +48,12 @@ module.exports = async ({ github, context, core, workflowRunId, triggerWorkflow 
     repo: context.repo.repo,
     pull_number: prNumber,
   });
+
+  // Skip labeling for closed/merged PRs — editing them should not trigger label changes
+  if (pr.state !== 'open') {
+    core.info(`PR #${prNumber} is ${pr.state}, skipping labeling.`);
+    return;
+  }
 
   const isOpenTrigger = triggerWorkflow === 'PR-Open-Trigger';
   const labels = [];
