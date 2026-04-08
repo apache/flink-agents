@@ -223,7 +223,7 @@ class ResourceName:
     Example usage:
         # Python implementation
         ResourceName.ChatModel.OLLAMA_CONNECTION
-        ResourceName.ChatModel.OPENAI_SETUP
+        ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP
 
         # Java implementation
         ResourceName.ChatModel.Java.OLLAMA_CONNECTION
