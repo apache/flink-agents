@@ -251,6 +251,49 @@ def test_flink_runner_context_sync_reconciler_exception_propagates() -> None:
     assert j_runner_context.current_call_index == 0
 
 
+def test_flink_runner_context_sync_reconciler_mismatch_clears_and_executes() -> None:
+    """Clear mismatched persisted state before executing the original call."""
+    j_runner_context = _FakeJavaRunnerContext()
+    stale_result_payload = cloudpickle.dumps("stale")
+    j_runner_context.call_results.extend(
+        [
+            _StoredCallResult(
+                function_id=_compute_function_id(_call_value),
+                args_digest=_compute_args_digest(("other-order",), {}),
+                status="PENDING",
+            ),
+            _StoredCallResult(
+                function_id="stale.function",
+                args_digest="stale-args",
+                status="SUCCEEDED",
+                result_payload=stale_result_payload,
+            ),
+        ]
+    )
+    ctx = _create_runner_context(j_runner_context)
+    reconciler_called = False
+
+    def reconciler() -> str:
+        nonlocal reconciler_called
+        reconciler_called = True
+        return "reconciled:order-1"
+
+    try:
+        result = ctx.durable_execute(_call_value, "order-1", reconciler=reconciler)
+    finally:
+        _close_runner_context(ctx)
+
+    assert result == "call:order-1"
+    assert reconciler_called is False
+    assert j_runner_context.operations == ["peek", "clear", "append_pending", "finalize"]
+    assert len(j_runner_context.call_results) == 1
+    assert j_runner_context.call_results[0].function_id == _compute_function_id(_call_value)
+    assert j_runner_context.call_results[0].args_digest == _compute_args_digest(
+        ("order-1",), {}
+    )
+    assert j_runner_context.call_results[0].status == "SUCCEEDED"
+
+
 def test_flink_runner_context_async_writes_pending_on_await() -> None:
     """Defer pending-state writes for async execution until await time."""
     j_runner_context = _FakeJavaRunnerContext()
