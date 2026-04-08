@@ -213,9 +213,9 @@ class RunnerContext(ABC):
         will always make the durable_execute call with the same arguments and in the
         same order during job recovery. Otherwise, the behavior is undefined.
 
-        If `reconciler` is provided, it is used only during recovery when the
-        previous durable invocation has not yet produced a persisted terminal
-        outcome. The reconciler may:
+        If `reconciler` is provided, recovery invokes it only when revisiting
+        this durable call and no terminal outcome from the previous durable
+        invocation has been persisted yet. The reconciler may:
 
         * return a result to provide the recovered successful outcome for this
           durable call
@@ -267,9 +267,9 @@ class RunnerContext(ABC):
         will always make the durable_execute_async call with the same arguments and in
         the same order during job recovery. Otherwise, the behavior is undefined.
 
-        If `reconciler` is provided, it is used only during recovery when the
-        previous durable invocation has not yet produced a persisted terminal
-        outcome. The reconciler may:
+        If `reconciler` is provided, recovery invokes it only when revisiting
+        this durable call and no terminal outcome from the previous durable
+        invocation has been persisted yet. The reconciler may:
 
         * return a result to provide the recovered successful outcome for this
           durable call
