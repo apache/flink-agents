@@ -34,7 +34,7 @@ package org.apache.flink.agents.api.resource;
  * <pre>{@code
  * // Java implementation
  * ResourceName.ChatModel.OLLAMA_CONNECTION
- * ResourceName.ChatModel.OPENAI_SETUP
+ * ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP
  *
  * // Python implementation
  * ResourceName.ChatModel.Python.OLLAMA_CONNECTION

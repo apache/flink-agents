@@ -734,7 +734,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OPENAI_CONNECTION,
+            clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION,
             api_key="<your-api-key>",
             api_base_url="https://api.openai.com/v1",
             max_retries=3,
@@ -745,7 +745,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OPENAI_SETUP,
+            clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP,
             connection="openai_connection",
             model="gpt-4",
             temperature=0.7,
@@ -761,7 +761,7 @@ class MyAgent(Agent):
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor openaiConnection() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
                 .addInitialArgument("api_base_url", "https://api.openai.com/v1")
                 .addInitialArgument("timeout", 60)
@@ -771,7 +771,7 @@ public class MyAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor openaiChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP)
                 .addInitialArgument("connection", "openaiConnection")
                 .addInitialArgument("model", "gpt-4")
                 .addInitialArgument("temperature", 0.7d)
