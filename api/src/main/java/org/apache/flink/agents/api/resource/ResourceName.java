@@ -153,9 +153,9 @@ public final class ResourceName {
                     "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup";
 
             // Tongyi
-            public static final String TONGYI_EMBEDDING_MODEL_CONNECTION =
+            public static final String TONGYI_CONNECTION =
                     "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelConnection";
-            public static final String TONGYI_EMBEDDING_MODEL_SETUP =
+            public static final String TONGYI_SETUP =
                     "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelSetup";
 
             private Python() {}

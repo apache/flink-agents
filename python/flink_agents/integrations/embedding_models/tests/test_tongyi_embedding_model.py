@@ -138,6 +138,52 @@ def test_tongyi_embedding_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(response) == 5
 
 
+def test_tongyi_embedding_batch_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test batch embedding functionality with mocked DashScope API."""
+    mock_embeddings = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+
+    mocked_response = SimpleNamespace(
+        status_code=HTTPStatus.OK,
+        output={
+            "embeddings": [
+                {"embedding": mock_embeddings[0]},
+                {"embedding": mock_embeddings[1]},
+            ]
+        },
+        message="Success",
+    )
+
+    mock_call = MagicMock(return_value=mocked_response)
+
+    monkeypatch.setattr(
+        "flink_agents.integrations.embedding_models.tongyi_embedding_model.dashscope.TextEmbedding.call",
+        mock_call,
+    )
+
+    connection = TongyiEmbeddingModelConnection(
+        name="tongyi",
+        api_key="fake-key",
+    )
+
+    def get_resource(name: str, type: ResourceType) -> Resource:
+        if type == ResourceType.EMBEDDING_MODEL_CONNECTION:
+            return connection
+        else:
+            msg = f"Unknown resource type: {type}"
+            raise ValueError(msg)
+
+    embedding_model = TongyiEmbeddingModelSetup(
+        name="tongyi", model=test_model, connection="tongyi", get_resource=get_resource
+    )
+    embedding_model.open()
+
+    response = embedding_model.embed(["Text one", "Text two"])
+
+    mock_call.assert_called_once()
+    assert response == mock_embeddings
+    assert len(response) == 2
+
+
 def test_tongyi_embedding_error_handling(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test error handling when API call fails."""
     mocked_response = SimpleNamespace(

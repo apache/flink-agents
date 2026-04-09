@@ -415,7 +415,7 @@ class MyAgent(Agent):
     @staticmethod
     def tongyi_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.EmbeddingModel.TONGYI_EMBEDDING_MODEL_CONNECTION,
+            clazz=ResourceName.EmbeddingModel.TONGYI_CONNECTION,
             api_key="your-api-key-here",  # Or set DASHSCOPE_API_KEY env var
             request_timeout=30.0
         )
@@ -424,7 +424,7 @@ class MyAgent(Agent):
     @staticmethod
     def tongyi_embedding() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.EmbeddingModel.TONGYI_EMBEDDING_MODEL_SETUP,
+            clazz=ResourceName.EmbeddingModel.TONGYI_SETUP,
             connection="tongyi_connection",
             model="text-embedding-v4",
             text_type="query"

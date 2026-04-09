@@ -17,7 +17,7 @@
 ################################################################################
 import os
 from http import HTTPStatus
-from typing import Any, Dict
+from typing import Any, Dict, Sequence
 
 import dashscope
 from pydantic import Field
@@ -44,8 +44,8 @@ class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
         The timeout for making http request to Tongyi API server.
     """
 
-    api_key: str = Field(
-        default_factory=lambda: os.environ.get("DASHSCOPE_API_KEY"),
+    api_key: str | None = Field(
+        default=None,
         description="Your DashScope API key.",
     )
     request_timeout: float = Field(
@@ -74,8 +74,10 @@ class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
             **kwargs,
         )
 
-    def embed(self, text: str, **kwargs: Any) -> list[float]:
-        """Generate embedding vector for a single text."""
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> list[float] | list[list[float]]:
+        """Generate embedding vector for text input."""
         model = kwargs.pop("model", DEFAULT_MODEL)
         text_type = kwargs.pop("text_type", None)
         dimension = kwargs.pop("dimension", None)
@@ -85,6 +87,7 @@ class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
             "model": model,
             "input": text,
             "api_key": req_api_key,
+            "timeout": self.request_timeout,
         }
 
         if text_type is not None:
@@ -100,7 +103,8 @@ class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
             msg = f"DashScope TextEmbedding call failed: {response.message}"
             raise RuntimeError(msg)
 
-        return response.output["embeddings"][0]["embedding"]
+        embeddings = [e["embedding"] for e in response.output["embeddings"]]
+        return embeddings[0] if isinstance(text, str) else embeddings
 
 
 class TongyiEmbeddingModelSetup(BaseEmbeddingModelSetup):
