@@ -283,7 +283,7 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
 
 ### Durable Execution
 
-Use durable execution when you wrap a time-consuming or side-effecting operation. The framework persists the result and replays it on recovery when the same call is encountered, so the function will not be called again and side effects are avoided. Action code outside `durable_execute` / `durable_execute_async` is always re-executed during recovery.
+Use durable execution when you wrap a time-consuming or side-effecting operation. The framework persists the result and replays it on recovery when the same call is encountered, so the function will not be called again and side effects are avoided. When recovery re-enters an action that has not been recorded as completed, code outside `durable_execute` / `durable_execute_async` will still be re-executed.
 
 **Constraints:**
 - The function must be deterministic and called in the same order on recovery.
@@ -301,6 +301,11 @@ on how to setup and configure the external action state store.
 - If a failure happens after a function completes but before its result is persisted, the call will be re-executed.
 - In Python async actions, if `ctx.durable_execute_async(...)` is not awaited, the result is not recorded and cannot be replayed.
 
+**Recovered success with a reconciler:**
+- A durable call may optionally provide a reconciler that is used only during recovery, when the same durable call is revisited and no terminal outcome has been persisted for it yet.
+- If the reconciler returns a result, Flink Agents uses it as the result of the durable call, persists it as the recovered successful outcome, and replays the persisted result on subsequent recovery.
+- If the reconciler raises an exception, the exception is propagated to the caller and no recovered terminal outcome is persisted.
+
 {{< tabs "Durable Execution" >}}
 {{< tab "Python" >}}
 Python actions can call `ctx.durable_execute(...)` to run a synchronous durable code block.
@@ -314,6 +319,25 @@ def process_input(event: InputEvent, ctx: RunnerContext) -> None:
 
     # Synchronous durable execution
     result = ctx.durable_execute(slow_external_call, event.input)
+    ctx.send_event(OutputEvent(output=result))
+```
+
+You can also pass an optional `reconciler` callable to recover a successful result during recovery.
+```python
+@action(InputEvent)
+@staticmethod
+def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def submit_payment(order_id: str) -> str:
+        return payment_client.submit(order_id)
+
+    def payment_reconciler() -> str:
+        return payment_client.lookup_completed_payment(event.input)
+
+    result = ctx.durable_execute(
+        submit_payment,
+        event.input,
+        reconciler=payment_reconciler,
+    )
     ctx.send_event(OutputEvent(output=result))
 ```
 {{< /tab >}}
@@ -346,6 +370,37 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
     ctx.sendEvent(new OutputEvent(result));
 }
 ```
+
+Java actions can also override `reconciler()` to recover a successful result during recovery.
+```java
+@Action(listenEvents = {InputEvent.class})
+public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    DurableCallable<String> call = new DurableCallable<>() {
+        @Override
+        public String getId() {
+            return "submit_payment";
+        }
+
+        @Override
+        public Class<String> getResultClass() {
+            return String.class;
+        }
+
+        @Override
+        public String call() {
+            return paymentClient.submit(event.getInput());
+        }
+
+        @Override
+        public Callable<String> reconciler() {
+            return () -> paymentClient.lookupCompletedPayment(event.getInput());
+        }
+    };
+
+    String result = ctx.durableExecute(call);
+    ctx.sendEvent(new OutputEvent(result));
+}
+```
 {{< /tab >}}
 {{< /tabs >}}
 
@@ -355,7 +410,7 @@ Async execution uses the same durable semantics but yields while waiting for a t
 
 {{< tabs "Async Execution" >}}
 {{< tab "Python" >}}
-Define an `async def` action and `await ctx.durable_execute_async(...)`.
+Define an `async def` action and `await ctx.durable_execute_async(...)`. The same optional `reconciler=...` argument is available for recovery.
 ```python
 @action(InputEvent)
 @staticmethod
@@ -376,7 +431,7 @@ functions like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and
 
 {{< tab "Java" >}}
 Use `ctx.durableExecuteAsync(DurableCallable)`; on **JDK 21+** it yields using Continuation,
-and on **JDK < 21** it falls back to synchronous execution.
+and on **JDK < 21** it falls back to synchronous execution. The same optional `reconciler()` hook can be used for recovery.
 ```java
 @Action(listenEvents = {InputEvent.class})
 public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
