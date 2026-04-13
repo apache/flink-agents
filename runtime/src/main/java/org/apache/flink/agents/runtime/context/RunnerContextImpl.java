@@ -482,8 +482,8 @@ public class RunnerContextImpl implements RunnerContext {
      *
      * @param durableCallable durable call that provides the durable execution identity and result
      *     metadata
-     * @param reconcileCallable reconcile boundary used to recover a successful outcome from a
-     *     pending durable call
+     * @param reconcileCallable reconcile boundary used to recover a terminal outcome from a pending
+     *     durable call
      * @param executionCallable concrete execution boundary for the current path when recovery
      *     starts or restarts the original durable call
      */
@@ -523,8 +523,23 @@ public class RunnerContextImpl implements RunnerContext {
                             durableExecutionContext.getCurrentCallIndex(), functionId, argsDigest));
         }
 
-        T reconcileResult = reconcileCallable.call();
-        finalizeCurrentCall(functionId, argsDigest, serializeDurableResult(reconcileResult), null);
+        T reconcileResult = null;
+        Exception reconcileException = null;
+        try {
+            reconcileResult = reconcileCallable.call();
+        } catch (Exception e) {
+            reconcileException = e;
+        }
+
+        finalizeCurrentCall(
+                functionId,
+                argsDigest,
+                serializeDurableResult(reconcileResult),
+                serializeDurableException(reconcileException));
+
+        if (reconcileException != null) {
+            throw reconcileException;
+        }
         return reconcileResult;
     }
 

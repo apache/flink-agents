@@ -217,7 +217,7 @@ class RunnerContextImplDurableExecuteTest {
     }
 
     @Test
-    void testDurableExecuteReconcilableReconcileExceptionPropagates() throws Exception {
+    void testDurableExecuteReconcilableReconcileExceptionPersistsFailure() throws Exception {
         ActionState actionState = new ActionState(null);
         actionState.addCallResult(CallResult.pending("recon-call", ""));
         RunnerContextImpl context = createContext(actionState);
@@ -237,11 +237,11 @@ class RunnerContextImplDurableExecuteTest {
         assertSame(failure, thrown);
         assertEquals(0, callable.getCallCount());
         assertEquals(1, callable.getReconcileCount());
-        assertEquals(0, persistCallCount.get());
+        assertEquals(1, persistCallCount.get());
         CallResult persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
-        assertTrue(persisted.isPending());
-        assertEquals(0, context.getDurableExecutionContext().getCurrentCallIndex());
+        assertTrue(persisted.isFailure());
+        assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
     }
 
     @Test
