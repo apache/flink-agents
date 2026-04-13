@@ -68,7 +68,7 @@ public interface DurableCallable<T> {
      *   <li>Return the result to provide the recovered successful outcome for this durable call.
      *       The runtime persists and replays that recovered result.
      *   <li>Throw an exception to provide the recovered failed outcome for this durable call. The
-     *       runtime persists that recovered failure and replays it on subsequent recovery.
+     *       runtime persists and replays that recovered failure.
      * </ul>
      */
     default @Nullable Callable<T> reconciler() {
