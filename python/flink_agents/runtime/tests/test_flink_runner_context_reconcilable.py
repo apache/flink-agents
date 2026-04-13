@@ -222,8 +222,8 @@ def test_flink_runner_context_sync_reconciler_success() -> None:
     )
 
 
-def test_flink_runner_context_sync_reconciler_exception_propagates() -> None:
-    """Propagate reconciler exceptions without finalizing the pending slot."""
+def test_flink_runner_context_sync_reconciler_exception_persists_failure() -> None:
+    """Persist a recovered failure from the reconciler and re-raise it."""
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -246,9 +246,14 @@ def test_flink_runner_context_sync_reconciler_exception_propagates() -> None:
         _close_runner_context(ctx)
 
     assert call_count == 0
-    assert j_runner_context.operations == ["peek"]
-    assert j_runner_context.call_results[0].status == "PENDING"
-    assert j_runner_context.current_call_index == 0
+    assert j_runner_context.operations == ["peek", "finalize"]
+    assert j_runner_context.call_results[0].status == "FAILED"
+    persisted_exception = cloudpickle.loads(
+        j_runner_context.call_results[0].exception_payload
+    )
+    assert isinstance(persisted_exception, ValueError)
+    assert str(persisted_exception) == "failed:order-1"
+    assert j_runner_context.current_call_index == 1
 
 
 def test_flink_runner_context_sync_reconciler_mismatch_clears_and_executes() -> None:
@@ -350,8 +355,8 @@ def test_flink_runner_context_async_reconciler_success() -> None:
     assert j_runner_context.operations == ["peek", "finalize"]
 
 
-def test_flink_runner_context_async_reconciler_exception_propagates() -> None:
-    """Propagate async reconciler exceptions without advancing state."""
+def test_flink_runner_context_async_reconciler_exception_persists_failure() -> None:
+    """Persist an async reconciler failure and re-raise it."""
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -379,9 +384,14 @@ def test_flink_runner_context_async_reconciler_exception_propagates() -> None:
         _close_runner_context(ctx)
 
     assert call_count == 0
-    assert j_runner_context.operations == ["peek"]
-    assert j_runner_context.call_results[0].status == "PENDING"
-    assert j_runner_context.current_call_index == 0
+    assert j_runner_context.operations == ["peek", "finalize"]
+    assert j_runner_context.call_results[0].status == "FAILED"
+    persisted_exception = cloudpickle.loads(
+        j_runner_context.call_results[0].exception_payload
+    )
+    assert isinstance(persisted_exception, RuntimeError)
+    assert str(persisted_exception) == "reconcile unavailable"
+    assert j_runner_context.current_call_index == 1
 
 
 def test_flink_runner_context_reconciler_kwarg_is_not_forwarded() -> None:

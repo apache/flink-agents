@@ -19,7 +19,8 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable, Dict
+from functools import partial
+from typing import Any, Callable, Dict, Literal
 
 import cloudpickle
 from typing_extensions import override
@@ -67,10 +68,11 @@ class _PersistedCallResult:
 
 
 @dataclass(frozen=True)
-class _ReconcilerCallResolution:
-    kind: str
-    result: Any = None
-    exception: BaseException | None = None
+class _ReconcilerExecutionPlan:
+    mode: Literal["replay", "execute"]
+    callable: Callable[[], Any] | None = None
+    needs_clear: bool = False
+    needs_append_pending: bool = False
 
 
 class _DurableExecutionResult:
@@ -195,35 +197,27 @@ class _ReconcilerDurableAsyncExecutionResult(AsyncExecutionResult):
         self._reconciler = reconciler
 
     def __await__(self) -> Any:
-        resolution = self._ctx._resolve_reconciler_call(
+        plan = self._ctx._plan_reconciler_execution(
             self._func,
             self._args,
             self._reconciler,
             self._kwargs,
         )
 
-        if resolution.kind == "replay":
+        if plan.mode == "replay":
             result = self._ctx._replay_terminal_call(self._func, self._args, self._kwargs)
             if False:
                 yield
             return result
 
-        if resolution.kind == "finalize_success":
-            self._ctx._finalize_current_call(
-                self._func,
-                self._args,
-                self._kwargs,
-                resolution.result,
-                None,
-            )
-            if False:
-                yield
-            return resolution.result
+        self._ctx._prepare_reconciler_execution(
+            plan,
+            self._func,
+            self._args,
+            self._kwargs,
+        )
 
-        if resolution.kind == "raise":
-            raise resolution.exception
-
-        future = self._executor.submit(self._func, *self._args, **self._kwargs)
+        future = self._executor.submit(plan.callable)
         while not future.done():
             yield
 
@@ -541,41 +535,56 @@ class FlinkRunnerContext(RunnerContext):
             raise RuntimeError(err_msg)
         return cached_result
 
-    def _resolve_reconciler_call(
+    def _plan_reconciler_execution(
         self,
         func: Callable,
         args: tuple,
         reconciler: Callable[[], Any],
         kwargs: dict,
-    ) -> _ReconcilerCallResolution:
+    ) -> _ReconcilerExecutionPlan:
         function_id = _compute_function_id(func)
         args_digest = _compute_args_digest(args, kwargs)
         current = self._peek_current_call_result()
+        durable_call = partial(func, *args, **kwargs)
 
         if current is None:
-            self._append_pending_call(func, args, kwargs)
-            return _ReconcilerCallResolution("execute")
-
-        if current.function_id != function_id or current.args_digest != args_digest:
-            self._clear_call_results_from_current_index_and_persist()
-            self._append_pending_call(func, args, kwargs)
-            return _ReconcilerCallResolution("execute")
-
-        if current.status != "PENDING":
-            return _ReconcilerCallResolution("replay")
-
-        try:
-            result = reconciler()
-        except Exception as exception:
-            return _ReconcilerCallResolution(
-                "raise",
-                exception=exception,
+            return _ReconcilerExecutionPlan(
+                "execute",
+                callable=durable_call,
+                needs_append_pending=True,
             )
 
-        return _ReconcilerCallResolution("finalize_success", result=result)
+        if current.function_id != function_id or current.args_digest != args_digest:
+            return _ReconcilerExecutionPlan(
+                "execute",
+                callable=durable_call,
+                needs_clear=True,
+                needs_append_pending=True,
+            )
+
+        if current.status != "PENDING":
+            return _ReconcilerExecutionPlan("replay")
+
+        return _ReconcilerExecutionPlan(
+            "execute",
+            callable=reconciler,
+        )
+
+    def _prepare_reconciler_execution(
+        self,
+        plan: _ReconcilerExecutionPlan,
+        func: Callable,
+        args: tuple,
+        kwargs: dict,
+    ) -> None:
+        if plan.needs_clear:
+            self._clear_call_results_from_current_index_and_persist()
+        if plan.needs_append_pending:
+            self._append_pending_call(func, args, kwargs)
 
     def _execute_current_pending_call(
         self,
+        execution_callable: Callable[[], Any],
         func: Callable,
         args: tuple,
         kwargs: dict,
@@ -583,7 +592,7 @@ class FlinkRunnerContext(RunnerContext):
         exception = None
         result = None
         try:
-            result = func(*args, **kwargs)
+            result = execution_callable()
         except BaseException as e:
             exception = e
 
@@ -638,20 +647,22 @@ class FlinkRunnerContext(RunnerContext):
         validated_reconciler = _validate_reconciler_callable(reconciler)
 
         if validated_reconciler is not None:
-            resolution = self._resolve_reconciler_call(
+            plan = self._plan_reconciler_execution(
                 func,
                 args,
                 validated_reconciler,
                 kwargs,
             )
-            if resolution.kind == "replay":
+            if plan.mode == "replay":
                 return self._replay_terminal_call(func, args, kwargs)
-            if resolution.kind == "finalize_success":
-                self._finalize_current_call(func, args, kwargs, resolution.result, None)
-                return resolution.result
-            if resolution.kind == "raise":
-                raise resolution.exception
-            return self._execute_current_pending_call(func, args, kwargs)
+
+            self._prepare_reconciler_execution(plan, func, args, kwargs)
+            return self._execute_current_pending_call(
+                plan.callable,
+                func,
+                args,
+                kwargs,
+            )
 
         # Try to get cached result for recovery
         is_hit, cached_result = self._try_get_cached_result(func, args, kwargs)

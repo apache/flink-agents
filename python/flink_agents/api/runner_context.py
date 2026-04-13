@@ -218,10 +218,10 @@ class RunnerContext(ABC):
         invocation has been persisted yet. The reconciler may:
 
         * return a result to provide the recovered successful outcome for this
-          durable call
-        * raise an exception if it cannot provide a successful outcome; the
-          exception is propagated to the caller and no recovered terminal
-          outcome is persisted for this durable call
+          durable call; The runtime persists and replays that recovered result
+        * raise an exception to provide the recovered failed outcome for this
+          durable call; The runtime persists and replays that recovered
+          failure
 
         Usage::
 
@@ -272,10 +272,10 @@ class RunnerContext(ABC):
         invocation has been persisted yet. The reconciler may:
 
         * return a result to provide the recovered successful outcome for this
-          durable call
-        * raise an exception if it cannot provide a successful outcome; the
-          exception is propagated to the caller and no recovered terminal
-          outcome is persisted for this durable call
+          durable call; The runtime persists and replays that recovered result
+        * raise an exception to provide the recovered failed outcome for this
+          durable call; The runtime persists and replays that recovered
+          failure
 
         Usage::
 
