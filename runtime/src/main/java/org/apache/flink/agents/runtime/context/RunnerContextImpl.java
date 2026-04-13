@@ -523,24 +523,7 @@ public class RunnerContextImpl implements RunnerContext {
                             durableExecutionContext.getCurrentCallIndex(), functionId, argsDigest));
         }
 
-        T reconcileResult = null;
-        Exception reconcileException = null;
-        try {
-            reconcileResult = reconcileCallable.call();
-        } catch (Exception e) {
-            reconcileException = e;
-        }
-
-        finalizeCurrentCall(
-                functionId,
-                argsDigest,
-                serializeDurableResult(reconcileResult),
-                serializeDurableException(reconcileException));
-
-        if (reconcileException != null) {
-            throw reconcileException;
-        }
-        return reconcileResult;
+        return executeAndFinalizeCurrentCall(functionId, argsDigest, reconcileCallable);
     }
 
     protected <T> T executeAndFinalizeCurrentCall(
