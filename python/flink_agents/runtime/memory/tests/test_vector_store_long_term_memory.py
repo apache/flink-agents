@@ -16,14 +16,13 @@
 # limitations under the License.
 #################################################################################
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 from unittest.mock import create_autospec
 
 import pytest
-from chromadb import EmbeddingFunction
-from chromadb.utils import embedding_functions
 from pydantic import ConfigDict
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -61,7 +60,6 @@ current_dir = Path(__file__).parent
 
 class MockEmbeddingModel(BaseEmbeddingModelSetup):  # noqa: D101
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    ef: EmbeddingFunction = embedding_functions.DefaultEmbeddingFunction()
     connection: str = "mock"
     model: str = "mock"
 
@@ -72,8 +70,13 @@ class MockEmbeddingModel(BaseEmbeddingModelSetup):  # noqa: D101
     def model_kwargs(self) -> Dict[str, Any]:  # noqa: D102
         return {}
 
-    def embed(self, text: str, **kwargs: Any) -> Any:  # noqa: D102
-        return self.ef([text])[0]
+    def embed(self, text: str, **kwargs: Any) -> list[float]:  # noqa: D102
+        match = re.search(r"no\.(\d+)", text)
+        if match is not None:
+            index = float(match.group(1))
+            return [index, 1.0]
+
+        return [0.0, 1.0]
 
 
 @pytest.fixture(scope="module")
