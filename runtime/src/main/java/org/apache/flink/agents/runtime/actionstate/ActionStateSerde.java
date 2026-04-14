@@ -18,59 +18,49 @@
 package org.apache.flink.agents.runtime.actionstate;
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.runtime.operator.ActionTask;
-import org.apache.kafka.common.serialization.Deserializer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.Map;
 
 /**
- * Kafka deserializer for {@link ActionState}.
+ * Backend-agnostic serializer/deserializer for {@link ActionState}.
  *
- * <p>This deserializer handles the deserialization of byte arrays from Kafka back to ActionState
- * instances. It uses Jackson ObjectMapper with custom deserializers to handle polymorphic Event
- * types and ensures ActionTask is deserialized as null.
+ * <p>Uses Jackson {@link ObjectMapper} configured with polymorphic type information for the {@link
+ * Event} hierarchy and a custom null-serializer for {@link ActionTask}. Both Kafka and Fluss
+ * ActionStateStore backends delegate to this class for consistent serialization format.
  */
-public class ActionStateKafkaDeserializer implements Deserializer<ActionState> {
+public final class ActionStateSerde {
 
-    private static final Logger LOG = LoggerFactory.getLogger(ActionStateKafkaDeserializer.class);
     private static final ObjectMapper OBJECT_MAPPER = createObjectMapper();
 
-    @Override
-    public void configure(Map<String, ?> configs, boolean isKey) {
-        // No configuration needed
+    private ActionStateSerde() {}
+
+    /** Serializes an {@link ActionState} to a JSON byte array. */
+    public static byte[] serialize(ActionState state) {
+        try {
+            return OBJECT_MAPPER.writeValueAsBytes(state);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize ActionState", e);
+        }
     }
 
-    @Override
-    public ActionState deserialize(String topic, byte[] data) {
-        if (data == null) {
-            return null;
-        }
-
+    /** Deserializes an {@link ActionState} from a JSON byte array. */
+    public static ActionState deserialize(byte[] data) {
         try {
             return OBJECT_MAPPER.readValue(data, ActionState.class);
         } catch (Exception e) {
-            LOG.error("Failed to deserialize ActionState for topic: {}", topic, e);
             throw new RuntimeException("Failed to deserialize ActionState", e);
         }
     }
 
-    @Override
-    public void close() {
-        // No resources to close
-    }
-
-    /** Creates and configures the ObjectMapper for ActionState deserialization. */
     private static ObjectMapper createObjectMapper() {
         ObjectMapper mapper = new ObjectMapper();
 
@@ -79,12 +69,9 @@ public class ActionStateKafkaDeserializer implements Deserializer<ActionState> {
         mapper.addMixIn(InputEvent.class, EventTypeInfoMixin.class);
         mapper.addMixIn(OutputEvent.class, EventTypeInfoMixin.class);
 
-        // Create a module for custom deserializers
+        // Custom serializer for ActionTask - always serialize as null
         SimpleModule module = new SimpleModule();
-
-        // Custom deserializer for ActionTask - always deserialize as null
-        module.addDeserializer(ActionTask.class, new ActionTaskDeserializer());
-
+        module.addSerializer(ActionTask.class, new ActionTaskSerializer());
         mapper.registerModule(module);
 
         return mapper;
@@ -95,16 +82,14 @@ public class ActionStateKafkaDeserializer implements Deserializer<ActionState> {
             use = JsonTypeInfo.Id.CLASS,
             include = JsonTypeInfo.As.PROPERTY,
             property = "@class")
-    public abstract static class EventTypeInfoMixin {}
+    abstract static class EventTypeInfoMixin {}
 
-    /** Custom deserializer for ActionTask that always deserializes as null. */
-    public static class ActionTaskDeserializer extends JsonDeserializer<ActionTask> {
+    /** Custom serializer for ActionTask that always serializes as null. */
+    static class ActionTaskSerializer extends JsonSerializer<ActionTask> {
         @Override
-        public ActionTask deserialize(JsonParser p, DeserializationContext ctxt)
+        public void serialize(ActionTask value, JsonGenerator gen, SerializerProvider serializers)
                 throws IOException {
-            // Skip the value and return null
-            p.skipChildren();
-            return null;
+            gen.writeNull();
         }
     }
 }
