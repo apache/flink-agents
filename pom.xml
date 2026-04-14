@@ -43,6 +43,7 @@ under the License.
         <spotless.skip>false</spotless.skip>
         <flink.version>2.2.0</flink.version>
         <kafka.version>4.0.0</kafka.version>
+        <fluss.version>0.9.0-incubating</fluss.version>
         <junit5.version>5.10.1</junit5.version>
         <jackson.version>2.18.2</jackson.version>
         <pemja.version>0.5.5</pemja.version>

@@ -140,14 +140,35 @@ Here is the list of all built-in core configuration options.
 
 ### Action State Store
 
+#### Common
+
+| Key                          | Default          | Type    | Description                                                                              |
+|------------------------------|------------------|---------|------------------------------------------------------------------------------------------|
+| `actionStateStoreBackend`    | (none)           | String  | The backend for action state store. Supported values: `"kafka"`, `"fluss"`.              |
+
 #### Kafka-based Action State Store
 
 Here are the configuration options for Kafka-based Action State Store.
 
 | Key                                 | Default                  | Type    | Description                                                                 |
 |-------------------------------------|--------------------------|---------|-----------------------------------------------------------------------------|
-| `actionStateStoreBackend`           | (none)                   | String  | The config parameter specifies the backend for action state store.          |
 | `kafkaBootstrapServers`             | "localhost:9092"         | String  | The config parameter specifies the Kafka bootstrap server.                  |
 | `kafkaActionStateTopic`             | (none)                   | String  | The config parameter specifies the Kafka topic for action state.            |
 | `kafkaActionStateTopicNumPartitions`| 64                       | Integer | The config parameter specifies the number of partitions for the Kafka action state topic. |
 | `kafkaActionStateTopicReplicationFactor` | 1                     | Integer | The config parameter specifies the replication factor for the Kafka action state topic. |
+
+#### Fluss-based Action State Store
+
+Here are the configuration options for Fluss-based Action State Store. Fluss provides O(1) KV point lookup for action state, eliminating the need for in-memory state rebuilding during recovery.
+
+| Key                          | Default          | Type    | Description                                                                              |
+|------------------------------|------------------|---------|------------------------------------------------------------------------------------------|
+| `flussBootstrapServers`      | "localhost:9123" | String  | The Fluss bootstrap servers address.                                                     |
+| `flussActionStateDatabase`   | "flink_agents"   | String  | The Fluss database name for storing action state.                                        |
+| `flussActionStateTable`      | "action_state"   | String  | The Fluss table name for storing action state.                                           |
+| `flussActionStateTableBuckets` | 8              | Integer | The number of buckets for the Fluss action state table.                                  |
+| `flussSecurityProtocol`      | "PLAINTEXT"      | String  | The authentication protocol for Fluss client (e.g., `PLAINTEXT`, `SASL_PLAIN`).          |
+| `flussSaslMechanism`         | "PLAIN"          | String  | The SASL mechanism for Fluss authentication.                                             |
+| `flussSaslJaasConfig`        | (none)           | String  | The JAAS configuration string for Fluss SASL authentication.                             |
+| `flussSaslUsername`          | (none)           | String  | The username for Fluss SASL authentication.                                              |
+| `flussSaslPassword`          | (none)           | String  | The password for Fluss SASL authentication.                                              |

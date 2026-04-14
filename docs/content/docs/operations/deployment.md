@@ -172,7 +172,7 @@ After recovery from a checkpoint, Flink Agents reprocess events that arrived aft
 To ensure exactly-once action consistency, you must configure an external action state store. Flink Agents record action state in this store on a per-action basis. After recovering from a checkpoint, Flink Agents consult the external store and will not re-execute actions that were already completed. This guarantees each action is executed exactly once after recovering from a checkpoint.
 
 {{< hint info >}}
-**Note**: Currently, Kafka is supported as the external action state store.
+**Note**: Currently, Kafka and Fluss are supported as the external action state store.
 {{< /hint >}}
 
 See [Action State Store Configuration]({{< ref "docs/operations/configuration#action-state-store" >}}) for configuration options.
