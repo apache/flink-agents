@@ -83,7 +83,7 @@ Async execution can significantly improve performance by allowing multiple opera
 
 > **Cross-language async limitation**: When using cross-language resources (e.g., calling Java integrations from Python or vice versa), async execution is not supported. Cross-language calls always execute synchronously regardless of your JDK version.
 
-Reconciler-backed durable execution is available in both Python and Java, but it only affects how durable calls recover successful outcomes. It does not change the async execution matrix above.
+Reconciler-backed durable execution is available in both Python and Java, but it only affects how durable calls recover persisted terminal outcomes. It does not change the async execution matrix above.
 
 This is important because:
 

@@ -301,10 +301,10 @@ on how to setup and configure the external action state store.
 - If a failure happens after a function completes but before its result is persisted, the call will be re-executed.
 - In Python async actions, if `ctx.durable_execute_async(...)` is not awaited, the result is not recorded and cannot be replayed.
 
-**Recovered success with a reconciler:**
+**Recovered terminal outcome with a reconciler:**
 - A durable call may optionally provide a reconciler that is used only during recovery, when the same durable call is revisited and no terminal outcome has been persisted for it yet.
-- If the reconciler returns a result, Flink Agents uses it as the result of the durable call, persists it as the recovered successful outcome, and replays the persisted result on subsequent recovery.
-- If the reconciler raises an exception, the exception is propagated to the caller and no recovered terminal outcome is persisted.
+- If the reconciler returns a result, the runtime persists and replays that recovered result.
+- If the reconciler raises an exception, the runtime persists and replays that recovered failure.
 
 {{< tabs "Durable Execution" >}}
 {{< tab "Python" >}}
@@ -322,7 +322,7 @@ def process_input(event: InputEvent, ctx: RunnerContext) -> None:
     ctx.send_event(OutputEvent(output=result))
 ```
 
-You can also pass an optional `reconciler` callable to recover a successful result during recovery.
+You can also pass an optional `reconciler` callable to recover a terminal outcome during recovery.
 ```python
 @action(InputEvent)
 @staticmethod
@@ -371,7 +371,7 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
 }
 ```
 
-Java actions can also override `reconciler()` to recover a successful result during recovery.
+Java actions can also override `reconciler()` to recover a terminal outcome during recovery.
 ```java
 @Action(listenEvents = {InputEvent.class})
 public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
