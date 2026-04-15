@@ -331,7 +331,10 @@ def process_input(event: InputEvent, ctx: RunnerContext) -> None:
         return payment_client.submit(order_id)
 
     def payment_reconciler() -> str:
-        return payment_client.lookup_completed_payment(event.input)
+        status = payment_client.get_status(event.input)
+        if status == "SUCCEEDED":
+            return payment_client.lookup_completed_payment(event.input)
+        raise payment_client.get_failure(event.input)
 
     result = ctx.durable_execute(
         submit_payment,
@@ -393,7 +396,13 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
 
         @Override
         public Callable<String> reconciler() {
-            return () -> paymentClient.lookupCompletedPayment(event.getInput());
+            return () -> {
+                PaymentStatus status = paymentClient.getStatus(event.getInput());
+                if (status == PaymentStatus.SUCCEEDED) {
+                    return paymentClient.lookupCompletedPayment(event.getInput());
+                }
+                throw paymentClient.getFailure(event.getInput());
+            };
         }
     };
 
