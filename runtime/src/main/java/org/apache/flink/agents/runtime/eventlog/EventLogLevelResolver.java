@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.eventlog;
 
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.EventLogLevel;
 
 import java.util.Collections;
@@ -52,17 +53,11 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class EventLogLevelResolver {
 
-    /** Config key for the root default log level. */
-    static final String ROOT_LEVEL_KEY = "event-log.level";
-
     /** Prefix for per-event-type log level config keys. */
     static final String TYPE_PREFIX = "event-log.type.";
 
     /** Suffix for per-event-type log level config keys. */
     static final String TYPE_SUFFIX = ".level";
-
-    /** Built-in default when no configuration is provided. */
-    static final EventLogLevel BUILT_IN_DEFAULT = EventLogLevel.STANDARD;
 
     private final EventLogLevel rootDefault;
     private final Map<String, EventLogLevel> explicitLevels;
@@ -81,11 +76,11 @@ public class EventLogLevelResolver {
         Map<String, Object> data = confData != null ? confData : Collections.emptyMap();
 
         // Parse root default
-        Object rootValue = data.get(ROOT_LEVEL_KEY);
+        Object rootValue = data.get(AgentConfigOptions.EVENT_LOG_LEVEL.getKey());
         this.rootDefault =
                 rootValue != null
                         ? EventLogLevel.fromString(rootValue.toString())
-                        : BUILT_IN_DEFAULT;
+                        : AgentConfigOptions.EVENT_LOG_LEVEL.getDefaultValue();
 
         // Scan for per-type overrides
         Map<String, EventLogLevel> levels = new HashMap<>();

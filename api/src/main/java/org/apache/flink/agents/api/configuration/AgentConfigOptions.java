@@ -17,6 +17,8 @@
  */
 package org.apache.flink.agents.api.configuration;
 
+import org.apache.flink.agents.api.logger.EventLogLevel;
+
 /** The set of configuration options for agents parameters. */
 public class AgentConfigOptions {
 
@@ -59,8 +61,8 @@ public class AgentConfigOptions {
      * The global event log level controlling the default verbosity for all event types. Valid
      * values are "OFF", "STANDARD", and "VERBOSE". Defaults to "STANDARD".
      */
-    public static final ConfigOption<String> EVENT_LOG_LEVEL =
-            new ConfigOption<>("event-log.level", String.class, "STANDARD");
+    public static final ConfigOption<EventLogLevel> EVENT_LOG_LEVEL =
+            new ConfigOption<>("event-log.level", EventLogLevel.class, EventLogLevel.STANDARD);
 
     /**
      * The maximum string length for event payloads when logging at STANDARD level. Strings

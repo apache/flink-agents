@@ -25,6 +25,8 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.metrics.Counter;
 
+import javax.annotation.Nullable;
+
 /**
  * Represents a record in the event log, containing the event context and the event itself.
  *
@@ -44,8 +46,8 @@ public class EventLogRecord {
     private final Event event;
     private final EventLogLevel logLevel;
     private final String eventType;
-    private final transient JsonTruncator truncator;
-    private final transient Counter truncatedEventsCounter;
+    @Nullable private final transient JsonTruncator truncator;
+    @Nullable private final transient Counter truncatedEventsCounter;
 
     /**
      * Creates a record with default VERBOSE log level and no truncator. Used by the deserializer

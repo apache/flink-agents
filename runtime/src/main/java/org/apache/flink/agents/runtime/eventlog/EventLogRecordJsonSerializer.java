@@ -27,6 +27,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
+import org.apache.flink.agents.runtime.utils.EventUtil;
 
 import java.io.IOException;
 import java.util.Iterator;
@@ -72,16 +73,8 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
         gen.writeStringField("timestamp", record.getContext().getTimestamp());
         gen.writeStringField(
                 "logLevel", record.getLogLevel() != null ? record.getLogLevel().name() : "VERBOSE");
-        // For PythonEvent, use the Python module path as the top-level eventType
-        // (consistent with the eventType inside the event object)
-        String topLevelEventType = record.getContext().getEventType();
-        if (record.getEvent() instanceof PythonEvent) {
-            String pythonType = ((PythonEvent) record.getEvent()).getEventType();
-            if (pythonType != null) {
-                topLevelEventType = pythonType;
-            }
-        }
-        gen.writeStringField("eventType", topLevelEventType);
+        gen.writeStringField(
+                "eventType", EventUtil.resolveEventType(record.getEvent(), record.getContext()));
 
         gen.writeFieldName("event");
         JsonNode eventNode = buildEventNode(record.getEvent(), mapper);
