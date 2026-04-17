@@ -17,8 +17,6 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
-import org.apache.flink.agents.api.resource.Resource;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -151,14 +149,6 @@ class ActionTaskContextManager implements AutoCloseable {
             ((PythonRunnerContextImpl) context).setPythonAwaitableRef(awaitableRef);
         }
         actionTask.setRunnerContext(context);
-    }
-
-    Resource getResource(String name, ResourceType type, ResourceCache resourceCache) {
-        try {
-            return resourceCache.getResource(name, type);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
     }
 
     RunnerContextImpl.MemoryContext getMemoryContext(ActionTask actionTask) {
