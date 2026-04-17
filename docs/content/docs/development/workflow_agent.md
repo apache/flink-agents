@@ -298,11 +298,14 @@ on how to setup and configure the external action state store.
 
 **Best-effort replay:**
 - Results may not be reused if call order or arguments change (non-deterministic actions), which clears subsequent cached results and re-executes.
-- If a failure happens after a function completes but before its result is persisted, the call will be re-executed.
+- If a failure happens after a function starts but before it completes and its result is persisted, the call will be re-executed. See [With a reconciler](#durable-call-reconciler).
 - In Python async actions, if `ctx.durable_execute_async(...)` is not awaited, the result is not recorded and cannot be replayed.
 
-**Recovered terminal outcome with a reconciler:**
-- A durable call may optionally provide a reconciler that is used only during recovery, when the same durable call is revisited and no terminal outcome has been persisted for it yet.
+<a id="durable-call-reconciler"></a>
+**With a reconciler:**
+Use a reconciler for durable calls when the original call may already have completed but its result or failure has not yet been persisted, so the framework cannot determine during recovery whether the call needs to be executed again. A reconciler provides custom logic that can return the result or raise the failure for the durable call instead of re-executing the original call.
+
+- A durable call may optionally provide a reconciler that is used only during recovery, when the same durable call is revisited and no terminal result has been persisted for it yet.
 - If the reconciler returns a result, the runtime persists and replays that recovered result.
 - If the reconciler raises an exception, the runtime persists and replays that recovered failure.
 
@@ -322,7 +325,7 @@ def process_input(event: InputEvent, ctx: RunnerContext) -> None:
     ctx.send_event(OutputEvent(output=result))
 ```
 
-You can also pass an optional `reconciler` callable to recover a terminal outcome during recovery.
+You can also pass an optional `reconciler` callable to recover an execution outcome during recovery.
 ```python
 @action(InputEvent)
 @staticmethod
@@ -374,7 +377,7 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
 }
 ```
 
-Java actions can also override `reconciler()` to recover a terminal outcome during recovery.
+Java actions can also override `reconciler()` to recover an execution outcome during recovery.
 ```java
 @Action(listenEvents = {InputEvent.class})
 public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
