@@ -204,10 +204,19 @@ public class ChatModelAction {
         ctx.sendEvent(toolRequestEvent);
     }
 
+    static String cleanLlmResponse(String rawResponse) {
+        String trimmed = rawResponse.trim();
+        if (trimmed.startsWith("```")) {
+            return trimmed.replaceAll("(?s)^```(?:json)?\\s*(.*?)\\s*```$", "$1");
+        }
+        return trimmed;
+    }
+
     @SuppressWarnings("unchecked")
     private static ChatMessage generateStructuredOutput(ChatMessage response, Object outputSchema)
             throws JsonProcessingException {
         String output = response.getContent();
+        output = cleanLlmResponse(output);
         Object structuredOutput;
         if (outputSchema instanceof Class) {
             structuredOutput = mapper.readValue(String.valueOf(output), (Class<?>) outputSchema);
