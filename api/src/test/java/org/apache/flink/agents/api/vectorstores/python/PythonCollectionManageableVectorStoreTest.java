@@ -261,7 +261,7 @@ public class PythonCollectionManageableVectorStoreTest {
                         argThat(
                                 kwargs -> {
                                     assertThat(kwargs).containsKey("documents");
-                                    assertThat(kwargs).containsKey("collection");
+                                    assertThat(kwargs).containsKey("collection_name");
                                     assertThat(kwargs).containsKey("batch_size");
                                     return true;
                                 }));
@@ -294,7 +294,7 @@ public class PythonCollectionManageableVectorStoreTest {
                         argThat(
                                 kwargs -> {
                                     assertThat(kwargs).containsKey("ids");
-                                    assertThat(kwargs).containsKey("collection");
+                                    assertThat(kwargs).containsKey("collection_name");
                                     return true;
                                 }));
     }
@@ -317,7 +317,7 @@ public class PythonCollectionManageableVectorStoreTest {
                         argThat(
                                 kwargs -> {
                                     assertThat(kwargs).containsKey("ids");
-                                    assertThat(kwargs).containsKey("collection");
+                                    assertThat(kwargs).containsKey("collection_name");
                                     return true;
                                 }));
     }
