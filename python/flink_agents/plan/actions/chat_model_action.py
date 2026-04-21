@@ -18,6 +18,7 @@
 import copy
 import json
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Dict, List, cast
 from uuid import UUID
@@ -198,7 +199,7 @@ def _generate_structured_output(
 ) -> ChatMessage:
     """Deserialize output to expected output schema."""
     output_schema = output_schema.output_schema
-    output = json.loads(response.content.strip())
+    output = json.loads(_clean_llm_response(response.content))
 
     if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
         output = output_schema.model_validate(output)
@@ -211,6 +212,13 @@ def _generate_structured_output(
     response.extra_args[STRUCTURED_OUTPUT] = output
 
     return response
+
+
+def _clean_llm_response(raw_response: str) -> str:
+    trimmed = raw_response.strip()
+    if trimmed.startswith("```"):
+        return re.sub(r"(?s)^```(?:json)?\s*(.*?)\s*```$", r"\1", trimmed)
+    return trimmed
 
 
 async def chat(
