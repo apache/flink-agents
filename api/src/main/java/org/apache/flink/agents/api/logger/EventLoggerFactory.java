@@ -150,6 +150,36 @@ public final class EventLoggerFactory {
      */
     private static void registerBuiltInFactories() {
         registerFileEventLoggerFactory();
+        registerSlf4jEventLoggerFactory();
+    }
+
+    /**
+     * Registers the built-in SLF4J event logger factory.
+     *
+     * <p>This uses reflection to avoid hard dependencies on the runtime module, allowing the API
+     * module to be used independently.
+     */
+    private static void registerSlf4jEventLoggerFactory() {
+        try {
+            Class<?> slf4jLoggerClass =
+                    Class.forName("org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger");
+
+            registerFactory(
+                    "slf4j",
+                    config -> {
+                        try {
+                            return (EventLogger)
+                                    slf4jLoggerClass
+                                            .getConstructor(EventLoggerConfig.class)
+                                            .newInstance(config);
+                        } catch (Exception e) {
+                            throw new RuntimeException("Failed to create Slf4jEventLogger", e);
+                        }
+                    });
+        } catch (ClassNotFoundException e) {
+            // Slf4jEventLogger not found, skip registration
+            // This is expected if the runtime module is not on the classpath
+        }
     }
 
     /**

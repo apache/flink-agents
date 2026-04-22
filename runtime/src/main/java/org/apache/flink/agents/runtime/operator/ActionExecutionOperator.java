@@ -1128,6 +1128,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         EventLoggerConfig.Builder loggerConfigBuilder = EventLoggerConfig.builder();
         String baseLogDir = agentPlan.getConfig().get(BASE_LOG_DIR);
         if (baseLogDir != null && !baseLogDir.trim().isEmpty()) {
+            loggerConfigBuilder.loggerType("file");
             loggerConfigBuilder.property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, baseLogDir);
         }
         loggerConfigBuilder.property(

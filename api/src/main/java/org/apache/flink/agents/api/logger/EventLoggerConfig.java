@@ -72,7 +72,8 @@ public final class EventLoggerConfig {
      * instantiated. Built-in logger types include:
      *
      * <ul>
-     *   <li>"file" - File-based event logger (default)
+     *   <li>"slf4j" - SLF4J-based event logger (default), outputs to Flink Web UI via log4j2
+     *   <li>"file" - File-based event logger
      * </ul>
      *
      * @return the logger type identifier (e.g., "file", "database", "kafka")
@@ -142,7 +143,7 @@ public final class EventLoggerConfig {
      * validation and sensible defaults.
      */
     public static final class Builder {
-        private String loggerType = "file"; // Default to file logger
+        private String loggerType = "slf4j"; // Default to SLF4J logger
         private EventFilter eventFilter = EventFilter.ACCEPT_ALL; // Default to accept all
         private final Map<String, Object> properties = new HashMap<>();
 
