@@ -312,7 +312,7 @@ public class ActionExecutionOperatorTest {
     }
 
     /** A EventListener for unit test */
-    public static class TestListener implements EventListener {
+    public static class TestEventListener implements EventListener {
         public boolean called = false;
 
         @Override
@@ -324,7 +324,7 @@ public class ActionExecutionOperatorTest {
     @Test
     void testEventListenersFromAgentConfig() throws Exception {
         final AgentConfiguration config = new AgentConfiguration();
-        config.set(AgentConfigOptions.EVENT_LISTENERS, List.of(TestListener.class.getName()));
+        config.set(AgentConfigOptions.EVENT_LISTENERS, List.of(TestEventListener.class.getName()));
         final AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
@@ -346,17 +346,17 @@ public class ActionExecutionOperatorTest {
             assertThat(eventListeners.size()).isEqualTo(1);
 
             final Object listener = eventListeners.get(0);
-            assertThat(listener).isInstanceOf(TestListener.class);
+            assertThat(listener).isInstanceOf(TestEventListener.class);
 
             // listener should not have been triggered yet
-            boolean called = ((TestListener) listener).called;
+            boolean called = ((TestEventListener) listener).called;
             assertThat(called).isFalse();
 
             // process a some element to trigger the operator logic
             testHarness.processElement(new StreamRecord<>(1L));
 
             // listener should have been invoked after element processing
-            called = ((TestListener) listener).called;
+            called = ((TestEventListener) listener).called;
             assertThat(called).isTrue();
         }
     }
