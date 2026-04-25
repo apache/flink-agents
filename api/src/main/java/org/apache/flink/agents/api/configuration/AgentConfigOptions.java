@@ -17,6 +17,8 @@
  */
 package org.apache.flink.agents.api.configuration;
 
+import java.util.List;
+
 /** The set of configuration options for agents parameters. */
 public class AgentConfigOptions {
 
@@ -54,4 +56,9 @@ public class AgentConfigOptions {
     /** The config parameter specifies the unique identifier of job. */
     public static final ConfigOption<String> JOB_IDENTIFIER =
             new ConfigOption<>("job-identifier", String.class, null);
+
+    /** The config parameter specifies the list of event listener class names. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public static final ConfigOption<List<String>> EVENT_LISTENERS =
+            (ConfigOption) new ConfigOption<>("event-listeners", List.class, null);
 }
