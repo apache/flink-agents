@@ -31,6 +31,9 @@ import org.apache.flink.agents.api.EventContext;
  * <p>Event listeners are executed synchronously after the main event processing is complete but
  * before the next event is processed. Implementations should be lightweight and avoid blocking
  * operations to prevent impacting agent performance.
+ *
+ * <p><strong>Note:</strong> Implementing classes must provide a public no-argument constructor to
+ * allow for dynamic instantiation by the agent.
  */
 public interface EventListener {
     /**
