@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
@@ -91,6 +92,8 @@ import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxExecutorImpl;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxProcessor;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.FlinkException;
+import org.apache.flink.util.InstantiationUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pemja.core.PythonInterpreter;
@@ -191,7 +194,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private transient ListState<Object> currentProcessingKeysOpState;
 
     private final transient EventLogger eventLogger;
-    private final transient List<EventListener> eventListeners;
+    private transient List<EventListener> eventListeners;
 
     private transient ActionStateStore actionStateStore;
     private transient ValueState<Long> sequenceNumberKState;
@@ -232,7 +235,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.processingTimeService = processingTimeService;
         this.mailboxExecutor = mailboxExecutor;
         this.eventLogger = createEventLogger(agentPlan);
-        this.eventListeners = new ArrayList<>();
         this.actionStateStore = actionStateStore;
         this.checkpointIdToSeqNums = new HashMap<>();
         this.actionTaskMemoryContexts = new HashMap<>();
@@ -330,11 +332,41 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Initialize the event logger if it is set.
         initEventLogger(getRuntimeContext());
 
+        // Initialize user event listeners from configuration
+        initEventListeners();
+
         // Since an operator restart may change the key range it manages due to changes in
         // parallelism,
         // and {@link tryProcessActionTaskForKey} mails might be lost,
         // it is necessary to reprocess all keys to ensure correctness.
         tryResumeProcessActionTasks();
+    }
+
+    /**
+     * Initializes the {@link EventListener}s configured for this agent.
+     *
+     * @throws RuntimeException if any listener class fails to instantiate.
+     */
+    private void initEventListeners() {
+        final List<String> eventListenerClassList =
+                agentPlan.getConfig().get(AgentConfigOptions.EVENT_LISTENERS);
+        if (eventListenerClassList == null || eventListenerClassList.isEmpty()) {
+            return;
+        }
+
+        final ClassLoader userCodeClassLoader = getRuntimeContext().getUserCodeClassLoader();
+        final List<EventListener> eventListeners = new ArrayList<>();
+        for (String listenerClassName : eventListenerClassList) {
+            try {
+                eventListeners.add(
+                        InstantiationUtil.instantiate(
+                                listenerClassName, EventListener.class, userCodeClassLoader));
+            } catch (FlinkException e) {
+                throw new RuntimeException(
+                        "Failed to instantiate EventListener: " + listenerClassName, e);
+            }
+        }
+        this.eventListeners = eventListeners;
     }
 
     private void initEventLogger(StreamingRuntimeContext runtimeContext) throws Exception {
