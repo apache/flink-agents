@@ -527,17 +527,29 @@ PY
 )"
 
     local version_lib_dir="${pkg_root}/lib/flink-${FLINK_MAJOR_MINOR}"
+    local common_lib_dir="${pkg_root}/lib/common"
 
     [[ -d "$version_lib_dir" ]] || die "Flink Agents lib directory not found: $version_lib_dir"
+    [[ -d "$common_lib_dir" ]] || die "Flink Agents common lib directory not found: $common_lib_dir"
 
-    local copied=0
     local jar
+
+    ui_info "Copying Flink Agents common jar into Flink lib"
+    local common_copied=0
+    for jar in "$common_lib_dir"/flink-agents-dist-common-*.jar; do
+        [[ -f "$jar" ]] || continue
+        cp "$jar" "$FLINK_HOME/lib/"
+        common_copied=1
+    done
+    [[ "$common_copied" -eq 1 ]] || die "No flink-agents-dist-common jar found in: $common_lib_dir"
+
+    ui_info "Copying Flink Agents thin jar into Flink lib"
+    local copied=0
     for jar in "$version_lib_dir"/flink-agents-dist-*.jar; do
         [[ -f "$jar" ]] || continue
         cp "$jar" "$FLINK_HOME/lib/"
         copied=1
     done
-
     [[ "$copied" -eq 1 ]] || die "No flink-agents-dist jar found in: $version_lib_dir"
 }
 
@@ -715,14 +727,25 @@ verify_installation() {
             return 1
         fi
 
-        local agents_jar_found=0
-        for jar in "$FLINK_HOME/lib"/flink-agents-dist-*.jar; do
-            [[ -f "$jar" ]] && agents_jar_found=1 && break
+        local common_jar_found=0
+        for jar in "$FLINK_HOME/lib"/flink-agents-dist-common-*.jar; do
+            [[ -f "$jar" ]] && common_jar_found=1 && break
         done
-        if [[ "$agents_jar_found" -eq 1 ]]; then
-            ui_success "flink-agents-dist JAR found in FLINK_HOME/lib"
+        if [[ "$common_jar_found" -eq 1 ]]; then
+            ui_success "flink-agents-dist-common JAR found in FLINK_HOME/lib"
         else
-            ui_error "flink-agents-dist JAR not found in $FLINK_HOME/lib"
+            ui_error "flink-agents-dist-common JAR not found in $FLINK_HOME/lib"
+            return 1
+        fi
+
+        local thin_jar_found=0
+        for jar in "$FLINK_HOME/lib"/flink-agents-dist-flink-*-thin.jar; do
+            [[ -f "$jar" ]] && thin_jar_found=1 && break
+        done
+        if [[ "$thin_jar_found" -eq 1 ]]; then
+            ui_success "flink-agents-dist thin JAR found in FLINK_HOME/lib"
+        else
+            ui_error "flink-agents-dist thin JAR not found in $FLINK_HOME/lib"
             return 1
         fi
 
