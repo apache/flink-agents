@@ -426,9 +426,9 @@ choose_install_method_interactive() {
 
 install_flink_if_needed() {
     case "$INSTALL_FLINK" in
-        yes|true|1)
+        yes)
             ;;
-        no|false|0)
+        no)
             ui_info "Skipping Flink download/install (INSTALL_FLINK=${INSTALL_FLINK})."
             return
             ;;
@@ -555,10 +555,10 @@ PY
 
 should_enable_pyflink() {
     case "$ENABLE_PYFLINK" in
-        yes|true|1)
+        yes)
             return 0
             ;;
-        no|false|0)
+        no)
             return 1
             ;;
         ask)
@@ -683,7 +683,7 @@ show_install_plan() {
     ui_kv "Install Flink" "$INSTALL_FLINK"
     ui_kv "Install directory" "$INSTALL_DIR"
     ui_kv "Enable PyFlink" "$ENABLE_PYFLINK"
-    if [[ "$ENABLE_PYFLINK" =~ ^(yes|true|1)$ ]] || [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
+    if [[ "$ENABLE_PYFLINK" == "yes" ]] || [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
         ui_kv "Venv directory" "$VENV_DIR"
     fi
     if [[ -n "${FLINK_HOME:-}" ]]; then
