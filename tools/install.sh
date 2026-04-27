@@ -654,7 +654,7 @@ check_python() {
     py_major="${py_version_output%%.*}"
     py_minor="${py_version_output##*.}"
 
-    if [[ "$py_major" -ne 3 ]] || [[ "$py_minor" -lt 10 ]]; then
+    if [[ "$py_major" -ne 3 ]] || [[ "$py_minor" -lt 10 ]] || [[ "$py_minor" -ge 12 ]]; then
         ui_error "Python $py_major.$py_minor detected, but Flink Agents requires Python >=3.10 and <3.12"
         return 1
     fi
