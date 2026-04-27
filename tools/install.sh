@@ -65,10 +65,10 @@ download_file() {
         detect_downloader
     fi
     if [[ "$DOWNLOADER" == "curl" ]]; then
-        curl -fsSL --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 15 --retry 1 --retry-delay 1 --retry-connrefused -o "$output" "$url"
+        curl -fsSL --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 30 --retry 2 --retry-delay 1 --retry-connrefused -o "$output" "$url"
         return
     fi
-    wget -q --https-only --secure-protocol=TLSv1_2 --tries=2 --timeout=15 -O "$output" "$url"
+    wget -q --https-only --secure-protocol=TLSv1_2 --tries=2 --timeout=30 -O "$output" "$url"
 }
 
 GUM_VERSION="${FLINK_AGENTS_GUM_VERSION:-0.17.0}"
@@ -365,11 +365,17 @@ configure_verbose() {
     set -x
 }
 
+FLINK_VERSION_EXPLICIT=0
+if [[ -n "${FLINK_VERSION:-}" ]]; then
+    FLINK_VERSION_EXPLICIT=1
+fi
 FLINK_VERSION="${FLINK_VERSION:-2.2.0}"
 FLINK_AGENTS_VERSION="${FLINK_AGENTS_VERSION:-0.2.1}"
 FLINK_SCALA_VERSION="${FLINK_SCALA_VERSION:-2.12}"
-FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
 FLINK_BASE_URL="${FLINK_BASE_URL:-https://dlcdn.apache.org/flink}"
+
+FLINK_SUPPORTED_VERSIONS=("2.2.0" "2.1.1" "2.0.1" "1.20.3")
+FLINK_RECOMMENDED_VERSION="2.2.0"
 
 INSTALL_FLINK="${INSTALL_FLINK:-ask}"
 ENABLE_PYFLINK="${ENABLE_PYFLINK:-ask}"
@@ -381,9 +387,6 @@ DRY_RUN="${FLINK_AGENTS_DRY_RUN:-0}"
 VERIFY_INSTALL="${FLINK_AGENTS_VERIFY_INSTALL:-0}"
 HELP=0
 PYFLINK_ACTUALLY_ENABLED=0
-
-ARCHIVE_NAME="flink-${FLINK_VERSION}-bin-scala_${FLINK_SCALA_VERSION}.tgz"
-ARCHIVE_URL="${FLINK_BASE_URL}/flink-${FLINK_VERSION}/${ARCHIVE_NAME}"
 
 require_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
@@ -429,24 +432,95 @@ choose_install_method_interactive() {
     [[ "$answer" =~ ^[Yy]$ ]]
 }
 
+prompt_flink_version_interactive() {
+    if ! is_promptable; then
+        return 1
+    fi
+
+    local labels=()
+    local v
+    for v in "${FLINK_SUPPORTED_VERSIONS[@]}"; do
+        if [[ "$v" == "$FLINK_RECOMMENDED_VERSION" ]]; then
+            labels+=("$v (recommended)")
+        else
+            labels+=("$v")
+        fi
+    done
+
+    local selection=""
+    if [[ -n "$GUM" ]] && gum_is_tty; then
+        selection="$("$GUM" choose \
+            --header "Select Flink version" \
+            --cursor-prefix "❯ " \
+            "${labels[@]}" < /dev/tty || true)"
+        selection="${selection%% *}"
+    else
+        printf 'Select Flink version:\n' > /dev/tty
+        local i=1
+        for v in "${FLINK_SUPPORTED_VERSIONS[@]}"; do
+            local suffix=""
+            [[ "$v" == "$FLINK_RECOMMENDED_VERSION" ]] && suffix=" (recommended)"
+            printf '  %d) %s%s\n' "$i" "$v" "$suffix" > /dev/tty
+            i=$((i+1))
+        done
+        local answer=""
+        printf 'Enter choice [1-%d, default %s]: ' \
+            "${#FLINK_SUPPORTED_VERSIONS[@]}" "$FLINK_RECOMMENDED_VERSION" > /dev/tty
+        read -r answer < /dev/tty || true
+        if [[ "$answer" =~ ^[0-9]+$ ]] \
+           && (( answer >= 1 && answer <= ${#FLINK_SUPPORTED_VERSIONS[@]} )); then
+            selection="${FLINK_SUPPORTED_VERSIONS[$((answer-1))]}"
+        fi
+    fi
+
+    if [[ -z "$selection" ]]; then
+        selection="$FLINK_RECOMMENDED_VERSION"
+    fi
+    FLINK_VERSION="$selection"
+    return 0
+}
+
 install_flink_if_needed() {
+    local skip_install=0
     case "$INSTALL_FLINK" in
         yes)
             ;;
         no)
             ui_info "Skipping Flink download/install (INSTALL_FLINK=${INSTALL_FLINK})."
-            return
+            skip_install=1
             ;;
         ask)
-            if ! choose_install_method_interactive "Do you want this script to download and install Flink ${FLINK_VERSION}?"; then
+            if ! choose_install_method_interactive "Do you want this script to download and install Apache Flink?"; then
                 ui_info "Skipping Flink download/install by user choice."
-                return
+                skip_install=1
             fi
             ;;
         *)
             die "Unsupported INSTALL_FLINK value: ${INSTALL_FLINK}. Use: ask|yes|no"
             ;;
     esac
+
+    if [[ "$skip_install" -eq 1 ]]; then
+        if [[ -z "${FLINK_HOME:-}" || ! -d "${FLINK_HOME}" || ! -d "${FLINK_HOME}/lib" ]]; then
+            if is_promptable; then
+                FLINK_HOME="$(prompt_flink_home_interactive)"
+                export FLINK_HOME
+            fi
+        fi
+        [[ -n "${FLINK_HOME:-}" ]] || die "FLINK_HOME is not set."
+        [[ -d "$FLINK_HOME" ]] || die "FLINK_HOME does not exist: $FLINK_HOME"
+        [[ -d "$FLINK_HOME/lib" ]] || die "Invalid FLINK_HOME (missing lib directory): $FLINK_HOME"
+        ui_success "FLINK_HOME resolved: $FLINK_HOME"
+        FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+        return
+    fi
+
+    if [[ "$FLINK_VERSION_EXPLICIT" -eq 0 ]]; then
+        prompt_flink_version_interactive || true
+    fi
+
+    local ARCHIVE_NAME="flink-${FLINK_VERSION}-bin-scala_${FLINK_SCALA_VERSION}.tgz"
+    local ARCHIVE_URL="${FLINK_BASE_URL}/flink-${FLINK_VERSION}/${ARCHIVE_NAME}"
 
     detect_downloader
     require_cmd tar
@@ -483,35 +557,23 @@ install_flink_if_needed() {
     fi
 
     export FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
+    FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+    ui_success "FLINK_HOME resolved: $FLINK_HOME"
 }
 
 prompt_flink_home_interactive() {
     local input=""
     if [[ -n "$GUM" ]] && gum_is_tty; then
         input="$("$GUM" input \
-            --header "Enter the path to your existing FLINK_HOME" \
+            --header "Enter the path to your existing FLINK_HOME which version  >= 1.20" \
             --placeholder "/path/to/flink-${FLINK_VERSION}" \
             --width 70 < /dev/tty || true)"
     else
-        printf 'Enter FLINK_HOME path: ' > /dev/tty
+        printf 'Enter the path to your existing FLINK_HOME which version >= 1.20: ' > /dev/tty
         read -r input < /dev/tty || true
     fi
     input="${input/#\~/$HOME}"
     printf '%s' "$input"
-}
-
-resolve_flink_home() {
-    if [[ -z "${FLINK_HOME:-}" || ! -d "${FLINK_HOME}" || ! -d "${FLINK_HOME}/lib" ]]; then
-        if is_promptable; then
-            FLINK_HOME="$(prompt_flink_home_interactive)"
-            export FLINK_HOME
-        fi
-    fi
-
-    [[ -n "${FLINK_HOME:-}" ]] || die "FLINK_HOME is not set."
-    [[ -d "$FLINK_HOME" ]] || die "FLINK_HOME does not exist: $FLINK_HOME"
-    [[ -d "$FLINK_HOME/lib" ]] || die "Invalid FLINK_HOME (missing lib directory): $FLINK_HOME"
-    ui_success "FLINK_HOME resolved: $FLINK_HOME"
 }
 
 copy_pyflink_jar() {
@@ -617,7 +679,7 @@ Options:
   --help, -h              Show this help
 
 Environment variables:
-  FLINK_VERSION             Flink version to install (default: 2.2.0)
+  FLINK_VERSION             Flink version (default: 2.2.0; supported: 2.2.0, 2.1.1, 2.0.1, 1.20.3)
   FLINK_AGENTS_VERSION      Flink Agents version to install (default: 0.2.1)
   FLINK_SCALA_VERSION       Scala version suffix (default: 2.12)
   FLINK_BASE_URL            Mirror base URL (default: https://dlcdn.apache.org/flink)
@@ -853,7 +915,6 @@ main() {
 
     ui_stage "Installing Apache Flink"
     install_flink_if_needed
-    resolve_flink_home
 
     ui_stage "Setting up Python environment"
     if should_enable_pyflink; then
