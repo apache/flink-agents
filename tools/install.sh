@@ -389,6 +389,7 @@ if [[ -n "${VENV_DIR:-}" ]]; then
     VENV_DIR_EXPLICIT=1
 fi
 VENV_DIR="${VENV_DIR:-.flink-agents-env}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 NO_PROMPT="${NO_PROMPT:-0}"
 VERBOSE="${FLINK_AGENTS_VERBOSE:-0}"
 DRY_RUN="${FLINK_AGENTS_DRY_RUN:-0}"
@@ -657,8 +658,22 @@ copy_pyflink_jar() {
     cp "$pyflink_jar" "$FLINK_HOME/lib/"
 }
 
+create_venv() {
+    local venv_err
+    venv_err="$(mktempfile)"
+    if "$PYTHON_BIN" -m venv "$VENV_DIR" 2>"$venv_err"; then
+        return 0
+    fi
+
+    ui_error "Failed to create virtual environment at $VENV_DIR"
+    if [[ -s "$venv_err" ]]; then
+        sed 's/^/  /' "$venv_err" >&2 || true
+    fi
+    die "Virtual environment creation failed"
+}
+
 setup_python_env() {
-    check_python || die "Python environment check failed. Please install Python >=3.10."
+    resolve_python
 
     if [[ "$VENV_DIR_EXPLICIT" -eq 0 ]] && is_promptable; then
         VENV_DIR="$(prompt_path_choice_interactive \
@@ -669,7 +684,7 @@ setup_python_env() {
 
     if [[ ! -d "$VENV_DIR" ]]; then
         ui_info "Creating virtual environment: $VENV_DIR"
-        python3 -m venv "$VENV_DIR"
+        create_venv
     else
         ui_info "Reusing existing virtual environment: $VENV_DIR"
     fi
@@ -681,7 +696,6 @@ setup_python_env() {
     export PIP_NO_INPUT=1
 
     ui_info "Installing Python packages"
-    python -m pip install --upgrade pip
     python -m pip install "flink-agents==${FLINK_AGENTS_VERSION}" "apache-flink==${FLINK_VERSION}"
 }
 
@@ -756,6 +770,7 @@ Options:
   --verbose               Print debug output (set -x)
   --dry-run               Print install plan without making changes
   --verify                Run post-install verification checks
+  --python <path>         Path to a Python3 interpreter (overrides PATH lookup)
   --help, -h              Show this help
 
 Environment variables:
@@ -767,6 +782,7 @@ Environment variables:
   ENABLE_PYFLINK            ask|yes|no (default: ask)
   INSTALL_DIR               Flink install directory (default: \$HOME/.local/flink)
   VENV_DIR                  Python venv directory (default: .flink-agents-env)
+  PYTHON_BIN                Path to Python3 interpreter (default: auto-detect python3 on PATH)
   NO_PROMPT                 1 to disable all prompts
   FLINK_AGENTS_VERBOSE      1 to enable verbose output
   FLINK_AGENTS_DRY_RUN      1 to enable dry-run mode
@@ -816,30 +832,77 @@ check_java() {
     return 0
 }
 
-check_python() {
-    if ! command -v python3 &>/dev/null; then
-        ui_error "python3 not found on PATH"
-        return 1
-    fi
+validate_python_bin() {
+    local bin="$1"
+    [[ -n "$bin" ]] || return 1
+    command -v "$bin" >/dev/null 2>&1 || return 1
 
     local py_version_output
-    py_version_output="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
-
-    if [[ -z "$py_version_output" ]]; then
-        ui_error "Could not parse python3 version"
-        return 1
-    fi
+    py_version_output="$("$bin" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+    [[ -n "$py_version_output" ]] || return 1
 
     local py_major py_minor
     py_major="${py_version_output%%.*}"
     py_minor="${py_version_output##*.}"
 
     if [[ "$py_major" -ne 3 ]] || [[ "$py_minor" -lt 10 ]] || [[ "$py_minor" -ge 12 ]]; then
-        ui_error "Python $py_major.$py_minor detected, but Flink Agents requires Python >=3.10 and <3.12"
         return 1
     fi
+    return 0
+}
 
-    ui_success "Python $py_major.$py_minor found"
+prompt_python_bin_interactive() {
+    local input=""
+    if [[ -n "$GUM" ]] && gum_is_tty; then
+        input="$("$GUM" input \
+            --header "Enter path to a Python interpreter" \
+            --placeholder "/path/to/python3" \
+            --width 70 < /dev/tty || true)"
+    else
+        printf 'Enter path to a Python interpreter: ' > /dev/tty
+        read -r input < /dev/tty || true
+    fi
+    input="${input/#\~/$HOME}"
+    printf '%s' "$input"
+}
+
+resolve_python() {
+    if [[ -n "$PYTHON_BIN" ]]; then
+        if validate_python_bin "$PYTHON_BIN"; then
+            ui_success "Using Python: $PYTHON_BIN"
+            return 0
+        fi
+        die "PYTHON_BIN is invalid or unsupported (need >=3.10 and <3.12): $PYTHON_BIN"
+    fi
+
+    if validate_python_bin python3; then
+        PYTHON_BIN="python3"
+        local v
+        v="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null)"
+        ui_success "Python $v found on PATH"
+        return 0
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        ui_warn "python3 on PATH is incompatible (Flink Agents requires Python >=3.10 and <3.12)"
+    else
+        ui_warn "python3 not found on PATH"
+    fi
+
+    if ! is_promptable; then
+        die "No compatible Python found. Set PYTHON_BIN or pass --python <path>."
+    fi
+
+    local input
+    input="$(prompt_python_bin_interactive)"
+    if [[ -z "$input" ]]; then
+        die "No Python interpreter provided."
+    fi
+    if ! validate_python_bin "$input"; then
+        die "Provided Python is invalid or unsupported (need >=3.10 and <3.12): $input"
+    fi
+    PYTHON_BIN="$input"
+    ui_success "Using Python: $PYTHON_BIN"
     return 0
 }
 
@@ -853,6 +916,9 @@ show_install_plan() {
     ui_kv "Enable PyFlink" "$ENABLE_PYFLINK"
     if [[ "$ENABLE_PYFLINK" == "yes" ]] || [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
         ui_kv "Venv directory" "$VENV_DIR"
+        if [[ -n "$PYTHON_BIN" ]]; then
+            ui_kv "Python interpreter" "$PYTHON_BIN"
+        fi
     fi
     if [[ -n "${FLINK_HOME:-}" ]]; then
         ui_kv "FLINK_HOME" "$FLINK_HOME"
@@ -960,6 +1026,17 @@ parse_args() {
                 ;;
             --verify)
                 VERIFY_INSTALL=1
+                shift
+                ;;
+            --python)
+                if [[ $# -lt 2 ]]; then
+                    die "--python requires a path argument"
+                fi
+                PYTHON_BIN="$2"
+                shift 2
+                ;;
+            --python=*)
+                PYTHON_BIN="${1#*=}"
                 shift
                 ;;
             --help|-h)
