@@ -301,6 +301,11 @@ ui_error() {
     fi
 }
 
+die() {
+    ui_error "$*"
+    exit 1
+}
+
 INSTALL_STAGE_TOTAL=3
 INSTALL_STAGE_CURRENT=0
 
