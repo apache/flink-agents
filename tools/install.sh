@@ -379,7 +379,15 @@ FLINK_RECOMMENDED_VERSION="2.2.0"
 
 INSTALL_FLINK="${INSTALL_FLINK:-ask}"
 ENABLE_PYFLINK="${ENABLE_PYFLINK:-ask}"
+INSTALL_DIR_EXPLICIT=0
+if [[ -n "${INSTALL_DIR:-}" ]]; then
+    INSTALL_DIR_EXPLICIT=1
+fi
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/flink}"
+VENV_DIR_EXPLICIT=0
+if [[ -n "${VENV_DIR:-}" ]]; then
+    VENV_DIR_EXPLICIT=1
+fi
 VENV_DIR="${VENV_DIR:-.flink-agents-env}"
 NO_PROMPT="${NO_PROMPT:-0}"
 VERBOSE="${FLINK_AGENTS_VERBOSE:-0}"
@@ -525,6 +533,13 @@ install_flink_if_needed() {
     detect_downloader
     require_cmd tar
 
+    if [[ "$INSTALL_DIR_EXPLICIT" -eq 0 ]] && is_promptable; then
+        INSTALL_DIR="$(prompt_path_choice_interactive \
+            "Choose Flink install directory" \
+            "$INSTALL_DIR" \
+            "/path/to/flink-install-dir")"
+    fi
+
     if ! mkdir -p "$INSTALL_DIR"; then
         die "Failed to create INSTALL_DIR=$INSTALL_DIR. Please run with proper permissions or set INSTALL_DIR to a writable path."
     fi
@@ -576,6 +591,64 @@ prompt_flink_home_interactive() {
     printf '%s' "$input"
 }
 
+prompt_path_choice_interactive() {
+    local header="$1"
+    local default_path="$2"
+    local placeholder="$3"
+
+    if ! is_promptable; then
+        printf '%s' "$default_path"
+        return 0
+    fi
+
+    local default_label="Default: ${default_path}"
+    local custom_label="Custom..."
+    local selection=""
+
+    if [[ -n "$GUM" ]] && gum_is_tty; then
+        selection="$("$GUM" choose \
+            --header "$header" \
+            --cursor-prefix "❯ " \
+            "$default_label" "$custom_label" < /dev/tty || true)"
+    else
+        printf '%s\n' "$header" > /dev/tty
+        printf '  1) %s\n' "$default_label" > /dev/tty
+        printf '  2) %s\n' "$custom_label" > /dev/tty
+        local answer=""
+        printf 'Enter choice [1-2, default 1]: ' > /dev/tty
+        read -r answer < /dev/tty || true
+        case "$answer" in
+            2) selection="$custom_label" ;;
+            *) selection="$default_label" ;;
+        esac
+    fi
+
+    if [[ "$selection" != "$custom_label" ]]; then
+        printf '%s' "$default_path"
+        return 0
+    fi
+
+    local input=""
+    if [[ -n "$GUM" ]] && gum_is_tty; then
+        input="$("$GUM" input \
+            --header "$header" \
+            --placeholder "$placeholder" \
+            --width 70 < /dev/tty || true)"
+    else
+        printf 'Enter custom path: ' > /dev/tty
+        read -r input < /dev/tty || true
+    fi
+    input="${input/#\~/$HOME}"
+
+    if [[ -z "$input" ]]; then
+        ui_warn "Empty path; falling back to default: $default_path"
+        printf '%s' "$default_path"
+        return 0
+    fi
+
+    printf '%s' "$input"
+}
+
 copy_pyflink_jar() {
     local pyflink_jar="$FLINK_HOME/opt/flink-python-${FLINK_VERSION}.jar"
     [[ -f "$pyflink_jar" ]] || die "Missing required PyFlink jar: $pyflink_jar"
@@ -586,6 +659,13 @@ copy_pyflink_jar() {
 
 setup_python_env() {
     check_python || die "Python environment check failed. Please install Python >=3.10."
+
+    if [[ "$VENV_DIR_EXPLICIT" -eq 0 ]] && is_promptable; then
+        VENV_DIR="$(prompt_path_choice_interactive \
+            "Choose Python venv directory" \
+            "$VENV_DIR" \
+            "/path/to/venv")"
+    fi
 
     if [[ ! -d "$VENV_DIR" ]]; then
         ui_info "Creating virtual environment: $VENV_DIR"
