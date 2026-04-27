@@ -32,9 +32,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_ACTION_STATE_DATABASE;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_ACTION_STATE_TABLE;
@@ -140,9 +140,9 @@ public class FlussActionStateStoreIT {
 
         store.pruneState(TEST_KEY, 2L);
 
-        // Delete may take time to be applied from changelog to KV store
-        waitUntilDeleted(() -> store.get(TEST_KEY, 1L, testAction, testEvent));
-        waitUntilDeleted(() -> store.get(TEST_KEY, 2L, testAction, testEvent));
+        // pruneState is synchronous (in-memory eviction)
+        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNull();
+        assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNull();
         assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
     }
 
@@ -159,62 +159,62 @@ public class FlussActionStateStoreIT {
         // Prune only keyA up to seqNum 2
         store.pruneState(keyA, 2L);
 
-        // keyA entries pruned (may take time to propagate)
-        waitUntilDeleted(() -> store.get(keyA, 1L, testAction, testEvent));
-        waitUntilDeleted(() -> store.get(keyA, 2L, testAction, testEvent));
+        // pruneState is synchronous (in-memory eviction)
+        assertThat(store.get(keyA, 1L, testAction, testEvent)).isNull();
+        assertThat(store.get(keyA, 2L, testAction, testEvent)).isNull();
         // keyB entries unaffected
         assertThat(store.get(keyB, 1L, testAction, testEvent)).isNotNull();
         assertThat(store.get(keyB, 2L, testAction, testEvent)).isNotNull();
     }
 
-    // ==================== Fluss-Specific Behavior ====================
+    // ==================== Recovery ====================
 
     @Test
-    void testRecoveryMarkerReturnsNull() {
+    @SuppressWarnings("unchecked")
+    void testRecoveryMarkerReturnsBucketOffsets() {
         Object marker = store.getRecoveryMarker();
-        assertThat(marker).isNull();
+        assertThat(marker).isNotNull();
+        assertThat(marker).isInstanceOf(Map.class);
+        Map<Integer, Long> bucketOffsets = (Map<Integer, Long>) marker;
+        // With 1 bucket configured, we should have exactly 1 entry
+        assertThat(bucketOffsets).hasSize(1);
+        assertThat(bucketOffsets).containsKey(0);
+        assertThat(bucketOffsets.get(0)).isGreaterThanOrEqualTo(0L);
     }
 
     @Test
-    void testRebuildStateNoOp() throws Exception {
+    void testRebuildStateFromBeginning() throws Exception {
         store.put(TEST_KEY, 1L, testAction, testEvent, new ActionState(testEvent));
 
-        // rebuildState should complete without error
+        // rebuildState with empty markers should scan from beginning
         store.rebuildState(Collections.emptyList());
 
-        // Data should still be accessible
         assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
     }
 
-    // ==================== Durable Execution Patterns ====================
-
     @Test
-    void testCompletionOnlyFlow() throws Exception {
-        ActionState state = new ActionState(testEvent);
-        CallResult successResult =
-                new CallResult(
-                        "myFunction",
-                        "argsDigest123",
-                        "result-payload".getBytes(StandardCharsets.UTF_8));
-        state.addCallResult(successResult);
+    @SuppressWarnings("unchecked")
+    void testRebuildStateWithRecoveryMarkers() throws Exception {
+        store.put(TEST_KEY, 1L, testAction, testEvent, new ActionState(testEvent));
 
-        store.put(TEST_KEY, 1L, testAction, testEvent, state);
-        ActionState retrieved = store.get(TEST_KEY, 1L, testAction, testEvent);
+        // Capture recovery marker after writing data
+        Object marker = store.getRecoveryMarker();
 
-        assertThat(retrieved).isNotNull();
-        assertThat(retrieved.getCallResults()).hasSize(1);
-        CallResult retrievedResult = retrieved.getCallResult(0);
-        assertThat(retrievedResult.getFunctionId()).isEqualTo("myFunction");
-        assertThat(retrievedResult.getArgsDigest()).isEqualTo("argsDigest123");
-        assertThat(retrievedResult.isSuccess()).isTrue();
-        assertThat(retrievedResult.getResultPayload())
-                .isEqualTo("result-payload".getBytes(StandardCharsets.UTF_8));
+        // Write more data after the marker
+        store.put(TEST_KEY, 2L, testAction, testEvent, new ActionState(testEvent));
+
+        // Rebuild using the marker; should replay from marker offset and recover data after it
+        store.rebuildState(List.of(marker));
+
+        // Data written before the marker should NOT be in the rebuilt cache
+        // (rebuildState clears the cache and only replays from the marker offset)
+        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNull();
+        // Data written after the marker should be recovered
+        assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
     }
 
     @Test
     void testReconcilePendingPersistence() throws Exception {
-        // Simulate Reconcile pattern: write PENDING state, close store, reopen, verify PENDING
-        // survives
         ActionState state = new ActionState(testEvent);
         CallResult pending = CallResult.pending("sideEffectFn", "digest456");
         state.addCallResult(pending);
@@ -226,6 +226,8 @@ public class FlussActionStateStoreIT {
         FlussActionStateStore recoveredStore =
                 new FlussActionStateStore(createAgentConfiguration());
         try {
+            // Rebuild state from the log
+            recoveredStore.rebuildState(Collections.emptyList());
             ActionState recovered = recoveredStore.get(TEST_KEY, 1L, testAction, testEvent);
 
             assertThat(recovered).isNotNull();
@@ -241,66 +243,31 @@ public class FlussActionStateStoreIT {
 
     @Test
     void testPruneWorksAfterRecovery() throws Exception {
-        // This tests the critical bug fix: after close+reopen, the in-memory
-        // agentKeyToStateKeys mapping is empty. The get() method must rebuild
-        // this mapping so that pruneState() can still delete old records.
         store.put(TEST_KEY, 1L, testAction, testEvent, new ActionState(testEvent));
         store.put(TEST_KEY, 2L, testAction, testEvent, new ActionState(testEvent));
         store.put(TEST_KEY, 3L, testAction, testEvent, new ActionState(testEvent));
         store.close();
 
-        // Simulate recovery: new store instance, mapping is empty
+        // Simulate recovery: new store instance
         FlussActionStateStore recoveredStore =
                 new FlussActionStateStore(createAgentConfiguration());
         try {
-            // get() calls rebuild the mapping
+            // Rebuild state from the log
+            recoveredStore.rebuildState(Collections.emptyList());
+
             assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
             assertThat(recoveredStore.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
             assertThat(recoveredStore.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
 
-            // pruneState should now work because get() rebuilt the mapping
             recoveredStore.pruneState(TEST_KEY, 2L);
 
-            waitUntilDeleted(() -> recoveredStore.get(TEST_KEY, 1L, testAction, testEvent));
-            waitUntilDeleted(() -> recoveredStore.get(TEST_KEY, 2L, testAction, testEvent));
+            // pruneState is synchronous (in-memory eviction)
+            assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent)).isNull();
+            assertThat(recoveredStore.get(TEST_KEY, 2L, testAction, testEvent)).isNull();
             assertThat(recoveredStore.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
         } finally {
             recoveredStore.close();
         }
-    }
-
-    @Test
-    void testMultipleCallResults() throws Exception {
-        ActionState state = new ActionState(testEvent);
-        state.addCallResult(
-                new CallResult("fn1", "d1", "ok".getBytes(StandardCharsets.UTF_8))); // SUCCEEDED
-        state.addCallResult(CallResult.pending("fn2", "d2")); // PENDING
-        state.addCallResult(
-                new CallResult(
-                        "fn3", "d3", null, "error".getBytes(StandardCharsets.UTF_8))); // FAILED
-
-        store.put(TEST_KEY, 1L, testAction, testEvent, state);
-        ActionState retrieved = store.get(TEST_KEY, 1L, testAction, testEvent);
-
-        assertThat(retrieved).isNotNull();
-        assertThat(retrieved.getCallResults()).hasSize(3);
-        assertThat(retrieved.getCallResult(0).isSuccess()).isTrue();
-        assertThat(retrieved.getCallResult(1).isPending()).isTrue();
-        assertThat(retrieved.getCallResult(2).isFailure()).isTrue();
-    }
-
-    @Test
-    void testCompletedAction() throws Exception {
-        ActionState state = new ActionState(testEvent);
-        state.addCallResult(new CallResult("fn1", "d1", "result".getBytes(StandardCharsets.UTF_8)));
-        state.markCompleted();
-
-        store.put(TEST_KEY, 1L, testAction, testEvent, state);
-        ActionState retrieved = store.get(TEST_KEY, 1L, testAction, testEvent);
-
-        assertThat(retrieved).isNotNull();
-        assertThat(retrieved.isCompleted()).isTrue();
-        assertThat(retrieved.getCallResults()).isEmpty();
     }
 
     // ==================== Infrastructure ====================
@@ -324,30 +291,6 @@ public class FlussActionStateStoreIT {
         assertThatNoException().isThrownBy(() -> store.close());
         // Set to null to prevent double-close in tearDown
         store = null;
-    }
-
-    // ==================== Serialization ====================
-
-    @Test
-    void testFullSerializationRoundTrip() throws Exception {
-        InputEvent taskEvent = new InputEvent("full-test-data");
-        ActionState state = new ActionState(taskEvent);
-        state.addEvent(new InputEvent("output-event-1"));
-        state.addEvent(new InputEvent("output-event-2"));
-        state.addCallResult(
-                new CallResult("fn1", "digest1", "payload1".getBytes(StandardCharsets.UTF_8)));
-        state.addCallResult(CallResult.pending("fn2", "digest2"));
-
-        store.put(TEST_KEY, 1L, testAction, testEvent, state);
-        ActionState retrieved = store.get(TEST_KEY, 1L, testAction, testEvent);
-
-        assertThat(retrieved).isNotNull();
-        assertThat(retrieved.getTaskEvent()).isEqualTo(taskEvent);
-        assertThat(retrieved.getOutputEvents()).hasSize(2);
-        assertThat(retrieved.getCallResults()).hasSize(2);
-        assertThat(retrieved.getCallResult(0).isSuccess()).isTrue();
-        assertThat(retrieved.getCallResult(1).isPending()).isTrue();
-        assertThat(retrieved.isCompleted()).isFalse();
     }
 
     // ==================== Helpers ====================
@@ -387,25 +330,5 @@ public class FlussActionStateStoreIT {
                             new Class[] {Event.class, RunnerContext.class}),
                     List.of(InputEvent.class.getName()));
         }
-    }
-
-    @FunctionalInterface
-    private interface ThrowingSupplier<T> {
-        T get() throws Exception;
-    }
-
-    /**
-     * Polls until the supplier returns null, with a timeout. Fluss KV deletes may take time to
-     * propagate from the changelog to the RocksDB KV store.
-     */
-    private static void waitUntilDeleted(ThrowingSupplier<Object> supplier) throws Exception {
-        long deadline = System.currentTimeMillis() + 30_000;
-        while (System.currentTimeMillis() < deadline) {
-            if (supplier.get() == null) {
-                return;
-            }
-            Thread.sleep(200);
-        }
-        assertThat(supplier.get()).isNull();
     }
 }

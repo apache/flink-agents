@@ -65,7 +65,7 @@ public class AgentConfigOptions {
 
     /** The config parameter specifies the number of buckets for the Fluss action state table. */
     public static final ConfigOption<Integer> FLUSS_ACTION_STATE_TABLE_BUCKETS =
-            new ConfigOption<>("flussActionStateTableBuckets", Integer.class, 8);
+            new ConfigOption<>("flussActionStateTableBuckets", Integer.class, 64);
 
     /** The config parameter specifies the authentication protocol for Fluss client. */
     public static final ConfigOption<String> FLUSS_SECURITY_PROTOCOL =

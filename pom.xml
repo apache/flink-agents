@@ -310,6 +310,7 @@ under the License.
                 <configuration>
                     <argLine>
                         --add-opens=java.base/java.util=ALL-UNNAMED
+                        --add-opens=java.base/java.nio=ALL-UNNAMED
                         --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED
                     </argLine>
                 </configuration>
