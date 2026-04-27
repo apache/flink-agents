@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 ################################################################################
 #  Licensed to the Apache Software Foundation (ASF) under one
 #  or more contributor license agreements.  See the NOTICE file
@@ -65,10 +65,10 @@ download_file() {
         detect_downloader
     fi
     if [[ "$DOWNLOADER" == "curl" ]]; then
-        curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --retry-delay 1 --retry-connrefused -o "$output" "$url"
+        curl -fsSL --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 15 --retry 1 --retry-delay 1 --retry-connrefused -o "$output" "$url"
         return
     fi
-    wget -q --https-only --secure-protocol=TLSv1_2 --tries=3 --timeout=20 -O "$output" "$url"
+    wget -q --https-only --secure-protocol=TLSv1_2 --tries=2 --timeout=15 -O "$output" "$url"
 }
 
 GUM_VERSION="${FLINK_AGENTS_GUM_VERSION:-0.17.0}"
@@ -174,6 +174,8 @@ bootstrap_gum_temp() {
 
     gum_tmpdir="$(mktemp -d)"
     TMPFILES+=("$gum_tmpdir")
+
+    echo -e "${INFO}· Installing gum v${GUM_VERSION}, please wait...${NC}"
 
     if ! download_file "${base}/${asset}" "$gum_tmpdir/$asset"; then
         GUM_REASON="download failed"
@@ -568,7 +570,7 @@ Usage:
   curl -fsSL <url>/install.sh | bash -s -- [options]
 
 Options:
-  --yes, -y               Non-interactive mode (accept all defaults)
+  --non-interactive       Non-interactive mode (accept all defaults)
   --install-flink         Download and install Apache Flink
   --enable-pyflink        Enable PyFlink and install Python packages
   --verbose               Print debug output (set -x)
@@ -578,7 +580,7 @@ Options:
 
 Environment variables:
   FLINK_VERSION             Flink version to install (default: 2.2.0)
-  FLINK_AGENTS_VERSION      Flink Agents version to install (default: 0.3.0)
+  FLINK_AGENTS_VERSION      Flink Agents version to install (default: 0.2.1)
   FLINK_SCALA_VERSION       Scala version suffix (default: 2.12)
   FLINK_BASE_URL            Mirror base URL (default: https://dlcdn.apache.org/flink)
   INSTALL_FLINK             ask|yes|no (default: ask)
@@ -591,7 +593,7 @@ Environment variables:
   FLINK_AGENTS_VERIFY_INSTALL  1 to enable post-install verification
 
 Examples:
-  bash install.sh --install-flink --enable-pyflink --yes
+  bash install.sh --install-flink --enable-pyflink --non-interactive
   FLINK_VERSION=2.2.0 bash install.sh --verbose
   bash install.sh --dry-run
 EOF
@@ -745,7 +747,7 @@ show_footer_links() {
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --yes|-y)
+            --non-interactive)
                 NO_PROMPT=1
                 shift
                 ;;
