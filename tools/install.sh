@@ -175,7 +175,7 @@ bootstrap_gum_temp() {
     gum_tmpdir="$(mktemp -d)"
     TMPFILES+=("$gum_tmpdir")
 
-    echo -e "${INFO}· Installing gum v${GUM_VERSION}, please wait...${NC}"
+    ui_info "Installing gum v${GUM_VERSION}, please wait..."
 
     if ! download_file "${base}/${asset}" "$gum_tmpdir/$asset"; then
         GUM_REASON="download failed"
@@ -233,10 +233,9 @@ print_gum_status() {
 
 print_installer_banner() {
     if [[ -n "$GUM" ]]; then
-        local title card
+        local title
         title="$("$GUM" style --foreground "#ff4d4d" --bold "Apache Flink Agents Installer")"
-        card="$(printf '%s\n' "$title")"
-        "$GUM" style --border rounded --border-foreground "#ff4d4d" --padding "1 2" "$card"
+        "$GUM" style --border rounded --border-foreground "#ff4d4d" --padding "1 2" "$title"
         echo ""
         return
     fi
@@ -347,28 +346,19 @@ ui_celebrate() {
     fi
 }
 
-is_shell_function() {
-    local name="${1:-}"
-    [[ -n "$name" ]] && declare -F "$name" >/dev/null 2>&1
-}
-
-is_gum_raw_mode_failure() {
-    local err_log="$1"
-    [[ -s "$err_log" ]] || return 1
-    grep -Eiq '(setrawmode|inappropriate ioctl for device)' "$err_log"
-}
-
-configure_verbose() {
-    if [[ "$VERBOSE" != "1" ]]; then
-        return 0
+mark_explicit() {
+    local var="$1"
+    if [[ -n "${!var:-}" ]]; then
+        printf -v "${var}_EXPLICIT" '%s' '1'
+    else
+        printf -v "${var}_EXPLICIT" '%s' '0'
     fi
-    set -x
 }
 
-FLINK_VERSION_EXPLICIT=0
-if [[ -n "${FLINK_VERSION:-}" ]]; then
-    FLINK_VERSION_EXPLICIT=1
-fi
+mark_explicit FLINK_VERSION
+mark_explicit INSTALL_DIR
+mark_explicit VENV_DIR
+
 FLINK_VERSION="${FLINK_VERSION:-2.2.0}"
 FLINK_AGENTS_VERSION="${FLINK_AGENTS_VERSION:-0.2.1}"
 FLINK_SCALA_VERSION="${FLINK_SCALA_VERSION:-2.12}"
@@ -379,15 +369,7 @@ FLINK_RECOMMENDED_VERSION="2.2.0"
 
 INSTALL_FLINK="${INSTALL_FLINK:-Ask}"
 ENABLE_PYFLINK="${ENABLE_PYFLINK:-Ask}"
-INSTALL_DIR_EXPLICIT=0
-if [[ -n "${INSTALL_DIR:-}" ]]; then
-    INSTALL_DIR_EXPLICIT=1
-fi
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/flink}"
-VENV_DIR_EXPLICIT=0
-if [[ -n "${VENV_DIR:-}" ]]; then
-    VENV_DIR_EXPLICIT=1
-fi
 VENV_DIR="${VENV_DIR:-.flink-agents-env}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 NO_PROMPT="${NO_PROMPT:-0}"
@@ -396,6 +378,46 @@ DRY_RUN="${FLINK_AGENTS_DRY_RUN:-0}"
 VERIFY_INSTALL="${FLINK_AGENTS_VERIFY_INSTALL:-0}"
 HELP=0
 PYFLINK_ACTUALLY_ENABLED=0
+
+print_usage() {
+    cat <<EOF
+Apache Flink Agents Installer
+
+Usage:
+  bash install.sh [options]
+  curl -fsSL <url>/install.sh | bash -s -- [options]
+
+Options:
+  --non-interactive       Non-interactive mode (accept all defaults)
+  --install-flink         Download and install Apache Flink
+  --enable-pyflink        Enable PyFlink and install Python packages
+  --verbose               Print debug output (set -x)
+  --dry-run               Print install plan without making changes
+  --verify                Run post-install verification checks
+  --python <path>         Path to a Python3 interpreter (overrides PATH lookup)
+  --help, -h              Show this help
+
+Environment variables:
+  FLINK_VERSION             Flink version
+  FLINK_AGENTS_VERSION      Flink Agents version to install
+  FLINK_SCALA_VERSION       Scala version suffix (default: 2.12)
+  FLINK_BASE_URL            Mirror base URL (default: https://dlcdn.apache.org/flink)
+  INSTALL_FLINK             Ask|Yes|No (default: Ask)
+  ENABLE_PYFLINK            Ask|Yes|No (default: Ask)
+  INSTALL_DIR               Flink install directory (default: \$HOME/.local/flink)
+  VENV_DIR                  Python venv directory (default: .flink-agents-env)
+  PYTHON_BIN                Path to Python3 interpreter (default: auto-detect python3 on PATH)
+  NO_PROMPT                 1 to disable all prompts
+  FLINK_AGENTS_VERBOSE      1 to enable verbose output
+  FLINK_AGENTS_DRY_RUN      1 to enable dry-run mode
+  FLINK_AGENTS_VERIFY_INSTALL  1 to enable post-install verification
+
+Examples:
+  bash install.sh --install-flink --enable-pyflink --non-interactive
+  FLINK_VERSION=2.2.0 bash install.sh --verbose
+  bash install.sh --dry-run
+EOF
+}
 
 require_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
@@ -508,7 +530,7 @@ plan_flink() {
     if [[ "$INSTALL_FLINK" == "No" ]]; then
         if [[ -z "${FLINK_HOME:-}" || ! -d "${FLINK_HOME}" || ! -d "${FLINK_HOME}/lib" ]]; then
             if is_promptable; then
-                FLINK_HOME="$(prompt_flink_home_interactive)"
+                FLINK_HOME="$(prompt_path_input "Enter the path to your existing FLINK_HOME (version >= 1.20)" "/path/to/flink-${FLINK_VERSION}")"
                 export FLINK_HOME
             fi
         fi
@@ -629,15 +651,17 @@ install_flink_if_needed() {
     ui_success "FLINK_HOME resolved: $FLINK_HOME"
 }
 
-prompt_flink_home_interactive() {
+prompt_path_input() {
+    local header="$1"
+    local placeholder="$2"
     local input=""
     if [[ -n "$GUM" ]] && gum_is_tty; then
         input="$("$GUM" input \
-            --header "Enter the path to your existing FLINK_HOME which version  >= 1.20" \
-            --placeholder "/path/to/flink-${FLINK_VERSION}" \
+            --header "$header" \
+            --placeholder "$placeholder" \
             --width 70 < /dev/tty || true)"
     else
-        printf 'Enter the path to your existing FLINK_HOME which version >= 1.20: ' > /dev/tty
+        printf '%s: ' "$header" > /dev/tty
         read -r input < /dev/tty || true
     fi
     input="${input/#\~/$HOME}"
@@ -778,46 +802,6 @@ PY
     [[ "$copied" -eq 1 ]] || die "No flink-agents-dist jar found in: $version_lib_dir"
 }
 
-print_usage() {
-    cat <<EOF
-Apache Flink Agents Installer
-
-Usage:
-  bash install.sh [options]
-  curl -fsSL <url>/install.sh | bash -s -- [options]
-
-Options:
-  --non-interactive       Non-interactive mode (accept all defaults)
-  --install-flink         Download and install Apache Flink
-  --enable-pyflink        Enable PyFlink and install Python packages
-  --verbose               Print debug output (set -x)
-  --dry-run               Print install plan without making changes
-  --verify                Run post-install verification checks
-  --python <path>         Path to a Python3 interpreter (overrides PATH lookup)
-  --help, -h              Show this help
-
-Environment variables:
-  FLINK_VERSION             Flink version
-  FLINK_AGENTS_VERSION      Flink Agents version to install
-  FLINK_SCALA_VERSION       Scala version suffix (default: 2.12)
-  FLINK_BASE_URL            Mirror base URL (default: https://dlcdn.apache.org/flink)
-  INSTALL_FLINK             Ask|Yes|No (default: Ask)
-  ENABLE_PYFLINK            Ask|Yes|No (default: Ask)
-  INSTALL_DIR               Flink install directory (default: \$HOME/.local/flink)
-  VENV_DIR                  Python venv directory (default: .flink-agents-env)
-  PYTHON_BIN                Path to Python3 interpreter (default: auto-detect python3 on PATH)
-  NO_PROMPT                 1 to disable all prompts
-  FLINK_AGENTS_VERBOSE      1 to enable verbose output
-  FLINK_AGENTS_DRY_RUN      1 to enable dry-run mode
-  FLINK_AGENTS_VERIFY_INSTALL  1 to enable post-install verification
-
-Examples:
-  bash install.sh --install-flink --enable-pyflink --non-interactive
-  FLINK_VERSION=2.2.0 bash install.sh --verbose
-  bash install.sh --dry-run
-EOF
-}
-
 check_java() {
     if ! command -v java &>/dev/null; then
         ui_warn "Java not found on PATH"
@@ -834,7 +818,7 @@ check_java() {
     local java_version_output
     java_version_output="$(java -version 2>&1 | head -n1)"
     local java_major=""
-    java_major="$(echo "$java_version_output" | sed -n 's/.*version "\([0-9]*\).*/\1/p')"
+    java_major="$(echo "$java_version_output" | sed -E -n 's/.*version "?([0-9]+).*/\1/p')"
 
     if [[ -z "$java_major" ]]; then
         ui_warn "Could not parse Java version from: $java_version_output"
@@ -874,21 +858,6 @@ validate_python_bin() {
     return 0
 }
 
-prompt_python_bin_interactive() {
-    local input=""
-    if [[ -n "$GUM" ]] && gum_is_tty; then
-        input="$("$GUM" input \
-            --header "Enter path to a Python interpreter" \
-            --placeholder "/path/to/python3" \
-            --width 70 < /dev/tty || true)"
-    else
-        printf 'Enter path to a Python interpreter: ' > /dev/tty
-        read -r input < /dev/tty || true
-    fi
-    input="${input/#\~/$HOME}"
-    printf '%s' "$input"
-}
-
 resolve_python() {
     if [[ -n "$PYTHON_BIN" ]]; then
         if validate_python_bin "$PYTHON_BIN"; then
@@ -917,7 +886,7 @@ resolve_python() {
     fi
 
     local input
-    input="$(prompt_python_bin_interactive)"
+    input="$(prompt_path_input "Enter path to a Python interpreter" "/path/to/python3")"
     if [[ -z "$input" ]]; then
         die "No Python interpreter provided."
     fi
@@ -1072,6 +1041,17 @@ parse_args() {
                 ;;
         esac
     done
+}
+
+configure_verbose() {
+    if [[ "$VERBOSE" != "1" ]]; then
+        return 0
+    fi
+    if [[ "$NPM_LOGLEVEL" == "error" ]]; then
+        NPM_LOGLEVEL="notice"
+    fi
+    NPM_SILENT_FLAG=""
+    set -x
 }
 
 main() {
