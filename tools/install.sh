@@ -306,7 +306,7 @@ die() {
     exit 1
 }
 
-INSTALL_STAGE_TOTAL=3
+INSTALL_STAGE_TOTAL=5
 INSTALL_STAGE_CURRENT=0
 
 ui_section() {
@@ -377,8 +377,8 @@ FLINK_BASE_URL="${FLINK_BASE_URL:-https://dlcdn.apache.org/flink}"
 FLINK_SUPPORTED_VERSIONS=("2.2.0" "2.1.1" "2.0.1" "1.20.3")
 FLINK_RECOMMENDED_VERSION="2.2.0"
 
-INSTALL_FLINK="${INSTALL_FLINK:-ask}"
-ENABLE_PYFLINK="${ENABLE_PYFLINK:-ask}"
+INSTALL_FLINK="${INSTALL_FLINK:-Ask}"
+ENABLE_PYFLINK="${ENABLE_PYFLINK:-Ask}"
 INSTALL_DIR_EXPLICIT=0
 if [[ -n "${INSTALL_DIR:-}" ]]; then
     INSTALL_DIR_EXPLICIT=1
@@ -489,27 +489,23 @@ prompt_flink_version_interactive() {
     return 0
 }
 
-install_flink_if_needed() {
-    local skip_install=0
+plan_flink() {
     case "$INSTALL_FLINK" in
-        yes)
+        Yes|No)
             ;;
-        no)
-            ui_info "Skipping Flink download/install (INSTALL_FLINK=${INSTALL_FLINK})."
-            skip_install=1
-            ;;
-        ask)
-            if ! choose_install_method_interactive "Do you want this script to download and install Apache Flink?"; then
-                ui_info "Skipping Flink download/install by user choice."
-                skip_install=1
+        Ask)
+            if choose_install_method_interactive "Do you want this script to download and install Apache Flink?"; then
+                INSTALL_FLINK=Yes
+            else
+                INSTALL_FLINK=No
             fi
             ;;
         *)
-            die "Unsupported INSTALL_FLINK value: ${INSTALL_FLINK}. Use: ask|yes|no"
+            die "Unsupported INSTALL_FLINK value: ${INSTALL_FLINK}. Use: Ask|Yes|No"
             ;;
     esac
 
-    if [[ "$skip_install" -eq 1 ]]; then
+    if [[ "$INSTALL_FLINK" == "No" ]]; then
         if [[ -z "${FLINK_HOME:-}" || ! -d "${FLINK_HOME}" || ! -d "${FLINK_HOME}/lib" ]]; then
             if is_promptable; then
                 FLINK_HOME="$(prompt_flink_home_interactive)"
@@ -519,7 +515,6 @@ install_flink_if_needed() {
         [[ -n "${FLINK_HOME:-}" ]] || die "FLINK_HOME is not set."
         [[ -d "$FLINK_HOME" ]] || die "FLINK_HOME does not exist: $FLINK_HOME"
         [[ -d "$FLINK_HOME/lib" ]] || die "Invalid FLINK_HOME (missing lib directory): $FLINK_HOME"
-        ui_success "FLINK_HOME resolved: $FLINK_HOME"
         FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
         return
     fi
@@ -528,18 +523,76 @@ install_flink_if_needed() {
         prompt_flink_version_interactive || true
     fi
 
-    local ARCHIVE_NAME="flink-${FLINK_VERSION}-bin-scala_${FLINK_SCALA_VERSION}.tgz"
-    local ARCHIVE_URL="${FLINK_BASE_URL}/flink-${FLINK_VERSION}/${ARCHIVE_NAME}"
-
-    detect_downloader
-    require_cmd tar
-
     if [[ "$INSTALL_DIR_EXPLICIT" -eq 0 ]] && is_promptable; then
         INSTALL_DIR="$(prompt_path_choice_interactive \
             "Choose Flink install directory" \
             "$INSTALL_DIR" \
             "/path/to/flink-install-dir")"
     fi
+
+    FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
+    FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+}
+
+plan_pyflink() {
+    case "$ENABLE_PYFLINK" in
+        Yes|No)
+            ;;
+        Ask)
+            if choose_install_method_interactive "Create a Python venv with PyFlink and flink-agents? (Only needed for Python API users; Java users can select No)"; then
+                ENABLE_PYFLINK=Yes
+            else
+                ENABLE_PYFLINK=No
+            fi
+            ;;
+        *)
+            die "Unsupported ENABLE_PYFLINK value: ${ENABLE_PYFLINK}. Use: Ask|Yes|No"
+            ;;
+    esac
+
+    if [[ "$ENABLE_PYFLINK" == "No" ]]; then
+        return
+    fi
+
+    PYFLINK_ACTUALLY_ENABLED=1
+    resolve_python
+
+    if [[ "$VENV_DIR_EXPLICIT" -eq 0 ]] && is_promptable; then
+        VENV_DIR="$(prompt_path_choice_interactive \
+            "Choose Python venv directory" \
+            "$VENV_DIR" \
+            "/path/to/venv")"
+    fi
+
+    case "$VENV_DIR" in
+        /*) ;;
+        *)  VENV_DIR="$PWD/$VENV_DIR" ;;
+    esac
+}
+
+confirm_install_plan() {
+    if [[ "$NO_PROMPT" == "1" ]] || ! is_promptable; then
+        return 0
+    fi
+    if choose_install_method_interactive "Proceed with installation?"; then
+        return 0
+    fi
+    ui_info "Installation cancelled by user."
+    exit 0
+}
+
+install_flink_if_needed() {
+    if [[ "$INSTALL_FLINK" == "No" ]]; then
+        ui_info "Skipping Flink download/install (using existing FLINK_HOME)."
+        ui_success "FLINK_HOME resolved: $FLINK_HOME"
+        return
+    fi
+
+    local ARCHIVE_NAME="flink-${FLINK_VERSION}-bin-scala_${FLINK_SCALA_VERSION}.tgz"
+    local ARCHIVE_URL="${FLINK_BASE_URL}/flink-${FLINK_VERSION}/${ARCHIVE_NAME}"
+
+    detect_downloader
+    require_cmd tar
 
     if ! mkdir -p "$INSTALL_DIR"; then
         die "Failed to create INSTALL_DIR=$INSTALL_DIR. Please run with proper permissions or set INSTALL_DIR to a writable path."
@@ -572,8 +625,7 @@ install_flink_if_needed() {
         ui_info "Reusing existing Flink home: ${INSTALL_DIR}/flink-${FLINK_VERSION}"
     fi
 
-    export FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
-    FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+    export FLINK_HOME
     ui_success "FLINK_HOME resolved: $FLINK_HOME"
 }
 
@@ -673,15 +725,6 @@ create_venv() {
 }
 
 setup_python_env() {
-    resolve_python
-
-    if [[ "$VENV_DIR_EXPLICIT" -eq 0 ]] && is_promptable; then
-        VENV_DIR="$(prompt_path_choice_interactive \
-            "Choose Python venv directory" \
-            "$VENV_DIR" \
-            "/path/to/venv")"
-    fi
-
     if [[ ! -d "$VENV_DIR" ]]; then
         ui_info "Creating virtual environment: $VENV_DIR"
         create_venv
@@ -735,26 +778,6 @@ PY
     [[ "$copied" -eq 1 ]] || die "No flink-agents-dist jar found in: $version_lib_dir"
 }
 
-should_enable_pyflink() {
-    case "$ENABLE_PYFLINK" in
-        yes)
-            return 0
-            ;;
-        no)
-            return 1
-            ;;
-        ask)
-            if choose_install_method_interactive "Create a Python venv with PyFlink and flink-agents? (Only needed for Python API users; Java users can select No)"; then
-                return 0
-            fi
-            return 1
-            ;;
-        *)
-            die "Unsupported ENABLE_PYFLINK value: ${ENABLE_PYFLINK}. Use: ask|yes|no"
-            ;;
-    esac
-}
-
 print_usage() {
     cat <<EOF
 Apache Flink Agents Installer
@@ -774,12 +797,12 @@ Options:
   --help, -h              Show this help
 
 Environment variables:
-  FLINK_VERSION             Flink version (default: 2.2.0; supported: 2.2.0, 2.1.1, 2.0.1, 1.20.3)
-  FLINK_AGENTS_VERSION      Flink Agents version to install (default: 0.2.1)
+  FLINK_VERSION             Flink version
+  FLINK_AGENTS_VERSION      Flink Agents version to install
   FLINK_SCALA_VERSION       Scala version suffix (default: 2.12)
   FLINK_BASE_URL            Mirror base URL (default: https://dlcdn.apache.org/flink)
-  INSTALL_FLINK             ask|yes|no (default: ask)
-  ENABLE_PYFLINK            ask|yes|no (default: ask)
+  INSTALL_FLINK             Ask|Yes|No (default: Ask)
+  ENABLE_PYFLINK            Ask|Yes|No (default: Ask)
   INSTALL_DIR               Flink install directory (default: \$HOME/.local/flink)
   VENV_DIR                  Python venv directory (default: .flink-agents-env)
   PYTHON_BIN                Path to Python3 interpreter (default: auto-detect python3 on PATH)
@@ -914,7 +937,7 @@ show_install_plan() {
     ui_kv "Install Flink" "$INSTALL_FLINK"
     ui_kv "Install directory" "$INSTALL_DIR"
     ui_kv "Enable PyFlink" "$ENABLE_PYFLINK"
-    if [[ "$ENABLE_PYFLINK" == "yes" ]] || [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
+    if [[ "$ENABLE_PYFLINK" == "Yes" ]] || [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
         ui_kv "Venv directory" "$VENV_DIR"
         if [[ -n "$PYTHON_BIN" ]]; then
             ui_kv "Python interpreter" "$PYTHON_BIN"
@@ -1009,11 +1032,11 @@ parse_args() {
                 shift
                 ;;
             --install-flink)
-                INSTALL_FLINK=yes
+                INSTALL_FLINK=Yes
                 shift
                 ;;
             --enable-pyflink|--enable-pyFlink)
-                ENABLE_PYFLINK=yes
+                ENABLE_PYFLINK=Yes
                 shift
                 ;;
             --verbose)
@@ -1063,6 +1086,12 @@ main() {
     detect_os_or_die
     check_java || die "Java environment check failed. Please install Java 11 or newer."
 
+    ui_stage "Planning Flink installation"
+    plan_flink
+
+    ui_stage "Planning Python environment"
+    plan_pyflink
+
     show_install_plan
 
     if [[ "$DRY_RUN" == "1" ]]; then
@@ -1070,12 +1099,13 @@ main() {
         return 0
     fi
 
+    confirm_install_plan
+
     ui_stage "Installing Apache Flink"
     install_flink_if_needed
 
     ui_stage "Setting up Python environment"
-    if should_enable_pyflink; then
-        PYFLINK_ACTUALLY_ENABLED=1
+    if [[ "$ENABLE_PYFLINK" == "Yes" ]]; then
         copy_pyflink_jar
         setup_python_env
         copy_flink_agents_jars
