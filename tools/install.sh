@@ -485,12 +485,33 @@ install_flink_if_needed() {
     export FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
 }
 
-resolve_flink_home() {
-    if [[ -z "${FLINK_HOME:-}" ]]; then
-        die "FLINK_HOME is not set. Set FLINK_HOME or run with INSTALL_FLINK=yes."
+prompt_flink_home_interactive() {
+    local input=""
+    if [[ -n "$GUM" ]] && gum_is_tty; then
+        input="$("$GUM" input \
+            --header "Enter the path to your existing FLINK_HOME" \
+            --placeholder "/path/to/flink-${FLINK_VERSION}" \
+            --width 70 < /dev/tty || true)"
+    else
+        printf 'Enter FLINK_HOME path: ' > /dev/tty
+        read -r input < /dev/tty || true
     fi
+    input="${input/#\~/$HOME}"
+    printf '%s' "$input"
+}
+
+resolve_flink_home() {
+    if [[ -z "${FLINK_HOME:-}" || ! -d "${FLINK_HOME}" || ! -d "${FLINK_HOME}/lib" ]]; then
+        if is_promptable; then
+            FLINK_HOME="$(prompt_flink_home_interactive)"
+            export FLINK_HOME
+        fi
+    fi
+
+    [[ -n "${FLINK_HOME:-}" ]] || die "FLINK_HOME is not set."
     [[ -d "$FLINK_HOME" ]] || die "FLINK_HOME does not exist: $FLINK_HOME"
     [[ -d "$FLINK_HOME/lib" ]] || die "Invalid FLINK_HOME (missing lib directory): $FLINK_HOME"
+    ui_success "FLINK_HOME resolved: $FLINK_HOME"
 }
 
 copy_pyflink_jar() {
