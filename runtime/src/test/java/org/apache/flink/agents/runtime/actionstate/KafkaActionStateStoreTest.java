@@ -19,9 +19,7 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentConfiguration;
-import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
@@ -255,22 +253,5 @@ public class KafkaActionStateStoreTest {
                         actionStates.get(
                                 ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent)))
                 .isEqualTo(thirdState);
-    }
-
-    private static class TestAction extends Action {
-
-        public static void doNothing(Event event, RunnerContext context) {
-            // No operation
-        }
-
-        public TestAction(String name) throws Exception {
-            super(
-                    name,
-                    new JavaFunction(
-                            TestAction.class.getName(),
-                            "doNothing",
-                            new Class[] {Event.class, RunnerContext.class}),
-                    List.of(InputEvent.class.getName()));
-        }
     }
 }

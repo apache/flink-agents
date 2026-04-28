@@ -19,9 +19,7 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentConfiguration;
-import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.fluss.client.admin.Admin;
 import org.apache.fluss.metadata.TableInfo;
@@ -141,9 +139,11 @@ public class FlussActionStateStoreIT {
         store.pruneState(TEST_KEY, 2L);
 
         // pruneState is synchronous (in-memory eviction)
+        // Check surviving entry first: get() with a missing key triggers divergence cleanup
+        // that removes entries with higher seqNums (same as Kafka backend behavior).
+        assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
         assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNull();
         assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNull();
-        assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
     }
 
     @Test
@@ -160,11 +160,12 @@ public class FlussActionStateStoreIT {
         store.pruneState(keyA, 2L);
 
         // pruneState is synchronous (in-memory eviction)
-        assertThat(store.get(keyA, 1L, testAction, testEvent)).isNull();
-        assertThat(store.get(keyA, 2L, testAction, testEvent)).isNull();
-        // keyB entries unaffected
+        // Check surviving entries first: get() with a missing key triggers divergence cleanup
+        // that removes entries with higher seqNums (same as Kafka backend behavior).
         assertThat(store.get(keyB, 1L, testAction, testEvent)).isNotNull();
         assertThat(store.get(keyB, 2L, testAction, testEvent)).isNotNull();
+        assertThat(store.get(keyA, 1L, testAction, testEvent)).isNull();
+        assertThat(store.get(keyA, 2L, testAction, testEvent)).isNull();
     }
 
     // ==================== Recovery ====================
@@ -183,12 +184,14 @@ public class FlussActionStateStoreIT {
     }
 
     @Test
-    void testRebuildStateFromBeginning() throws Exception {
+    void testRebuildStateWithEmptyMarkersSkipsRebuild() throws Exception {
         store.put(TEST_KEY, 1L, testAction, testEvent, new ActionState(testEvent));
 
-        // rebuildState with empty markers should scan from beginning
+        // rebuildState with empty markers should skip rebuild (aligned with Kafka backend)
         store.rebuildState(Collections.emptyList());
 
+        // The in-memory cache is not cleared when rebuild is skipped,
+        // so the state should still be accessible
         assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
     }
 
@@ -197,24 +200,41 @@ public class FlussActionStateStoreIT {
     void testRebuildStateWithRecoveryMarkers() throws Exception {
         store.put(TEST_KEY, 1L, testAction, testEvent, new ActionState(testEvent));
 
-        // Capture recovery marker after writing data
+        // Capture recovery marker after writing data (simulates checkpoint boundary)
         Object marker = store.getRecoveryMarker();
 
-        // Write more data after the marker
+        // Write more data after the marker (simulates writes between checkpoint and crash)
         store.put(TEST_KEY, 2L, testAction, testEvent, new ActionState(testEvent));
 
-        // Rebuild using the marker; should replay from marker offset and recover data after it
-        store.rebuildState(List.of(marker));
+        // Close to ensure all writes are fully committed before recovery
+        store.close();
 
-        // Data written before the marker should NOT be in the rebuilt cache
-        // (rebuildState clears the cache and only replays from the marker offset)
-        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNull();
-        // Data written after the marker should be recovered
-        assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
+        // Simulate recovery: new store instance
+        FlussActionStateStore recoveredStore =
+                new FlussActionStateStore(createAgentConfiguration());
+        try {
+            // Rebuild using the marker; should replay from marker offset to current end
+            recoveredStore.rebuildState(List.of(marker));
+
+            // Check surviving entry first: get() with a missing key triggers divergence cleanup
+            // that removes entries with higher seqNums (same as Kafka backend behavior).
+            // Data written after the marker should be recovered
+            assertThat(recoveredStore.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
+            // Data written before the marker should NOT be in the rebuilt cache
+            assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent)).isNull();
+        } finally {
+            recoveredStore.close();
+            // Prevent double-close in tearDown
+            store = null;
+        }
     }
 
     @Test
     void testReconcilePendingPersistence() throws Exception {
+        // Capture recovery marker BEFORE writing data. In real recovery, the marker represents
+        // the checkpoint boundary: data written after the marker is recovered via rebuildState.
+        Object marker = store.getRecoveryMarker();
+
         ActionState state = new ActionState(testEvent);
         CallResult pending = CallResult.pending("sideEffectFn", "digest456");
         state.addCallResult(pending);
@@ -226,8 +246,8 @@ public class FlussActionStateStoreIT {
         FlussActionStateStore recoveredStore =
                 new FlussActionStateStore(createAgentConfiguration());
         try {
-            // Rebuild state from the log
-            recoveredStore.rebuildState(Collections.emptyList());
+            // Rebuild state from the log using recovery markers
+            recoveredStore.rebuildState(List.of(marker));
             ActionState recovered = recoveredStore.get(TEST_KEY, 1L, testAction, testEvent);
 
             assertThat(recovered).isNotNull();
@@ -243,6 +263,9 @@ public class FlussActionStateStoreIT {
 
     @Test
     void testPruneWorksAfterRecovery() throws Exception {
+        // Capture recovery marker BEFORE writing data.
+        Object marker = store.getRecoveryMarker();
+
         store.put(TEST_KEY, 1L, testAction, testEvent, new ActionState(testEvent));
         store.put(TEST_KEY, 2L, testAction, testEvent, new ActionState(testEvent));
         store.put(TEST_KEY, 3L, testAction, testEvent, new ActionState(testEvent));
@@ -252,8 +275,8 @@ public class FlussActionStateStoreIT {
         FlussActionStateStore recoveredStore =
                 new FlussActionStateStore(createAgentConfiguration());
         try {
-            // Rebuild state from the log
-            recoveredStore.rebuildState(Collections.emptyList());
+            // Rebuild state from the log using recovery markers
+            recoveredStore.rebuildState(List.of(marker));
 
             assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
             assertThat(recoveredStore.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
@@ -261,10 +284,10 @@ public class FlussActionStateStoreIT {
 
             recoveredStore.pruneState(TEST_KEY, 2L);
 
-            // pruneState is synchronous (in-memory eviction)
+            // Check surviving entry first (get() divergence cleanup side-effect)
+            assertThat(recoveredStore.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
             assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent)).isNull();
             assertThat(recoveredStore.get(TEST_KEY, 2L, testAction, testEvent)).isNull();
-            assertThat(recoveredStore.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
         } finally {
             recoveredStore.close();
         }
@@ -312,23 +335,6 @@ public class FlussActionStateStoreIT {
                         .getAdmin()) {
             TableInfo tableInfo = admin.getTableInfo(tablePath).get();
             FLUSS_CLUSTER.waitUntilTableReady(tableInfo.getTableId());
-        }
-    }
-
-    private static class TestAction extends Action {
-
-        public static void doNothing(Event event, RunnerContext context) {
-            // No operation
-        }
-
-        public TestAction(String name) throws Exception {
-            super(
-                    name,
-                    new JavaFunction(
-                            TestAction.class.getName(),
-                            "doNothing",
-                            new Class[] {Event.class, RunnerContext.class}),
-                    List.of(InputEvent.class.getName()));
         }
     }
 }

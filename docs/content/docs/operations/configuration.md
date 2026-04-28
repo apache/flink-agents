@@ -165,7 +165,7 @@ Here are the configuration options for Fluss-based Action State Store.
 |------------------------------|------------------|---------|------------------------------------------------------------------------------------------|
 | `flussBootstrapServers`      | "localhost:9123" | String  | The Fluss bootstrap servers address.                                                     |
 | `flussActionStateDatabase`   | "flink_agents"   | String  | The Fluss database name for storing action state.                                        |
-| `flussActionStateTable`      | "action_state"   | String  | The Fluss table name for storing action state.                                           |
+| `flussActionStateTable`      | "action_states"  | String  | The Fluss table name for storing action state.                                           |
 | `flussActionStateTableBuckets` | 64             | Integer | The number of buckets for the Fluss action state table.                                  |
 | `flussSecurityProtocol`      | "PLAINTEXT"      | String  | The authentication protocol for Fluss client (e.g., `PLAINTEXT`, `SASL_PLAIN`).          |
 | `flussSaslMechanism`         | "PLAIN"          | String  | The SASL mechanism for Fluss authentication.                                             |

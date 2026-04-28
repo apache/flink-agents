@@ -17,120 +17,157 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
-import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.plan.actions.Action;
+import org.apache.fluss.client.Connection;
+import org.apache.fluss.client.table.Table;
+import org.apache.fluss.client.table.writer.AppendWriter;
+import org.apache.fluss.row.InternalRow;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-/**
- * Unit tests for {@link FlussActionStateStore} serialization and in-memory behavior. These tests
- * verify the ObjectMapper configuration and ActionState serialization round-trips without requiring
- * a real Fluss cluster.
- */
+/** Unit tests for {@link FlussActionStateStore} store-level behavior. */
 public class FlussActionStateStoreTest {
 
-    private ObjectMapper objectMapper;
+    private static final String TEST_KEY = "test-key";
 
-    @JsonTypeInfo(
-            use = JsonTypeInfo.Id.CLASS,
-            include = JsonTypeInfo.As.PROPERTY,
-            property = "@class")
-    abstract static class EventTypeInfoMixin {}
+    private AppendWriter mockWriter;
+    private FlussActionStateStore store;
+    private Action testAction;
+    private Event testEvent;
+    private ActionState testActionState;
+    private Map<String, ActionState> actionStates;
 
     @BeforeEach
-    void setUp() {
-        objectMapper = new ObjectMapper();
-        objectMapper.addMixIn(Event.class, EventTypeInfoMixin.class);
-        objectMapper.addMixIn(InputEvent.class, EventTypeInfoMixin.class);
-        objectMapper.addMixIn(OutputEvent.class, EventTypeInfoMixin.class);
+    void setUp() throws Exception {
+        mockWriter = mock(AppendWriter.class);
+        when(mockWriter.append(any(InternalRow.class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        actionStates = new HashMap<>();
+        store =
+                new FlussActionStateStore(
+                        actionStates, mock(Connection.class), mock(Table.class), mockWriter);
+
+        testAction = new TestAction("test-action");
+        testEvent = new InputEvent("test data");
+        testActionState = new ActionState(testEvent);
     }
 
     @Test
-    void testCompletionOnlyFlow() throws Exception {
-        InputEvent taskEvent = new InputEvent("test-data");
-        ActionState state = new ActionState(taskEvent);
-        CallResult successResult =
-                new CallResult(
-                        "myFunction",
-                        "argsDigest123",
-                        "result-payload".getBytes(StandardCharsets.UTF_8));
-        state.addCallResult(successResult);
+    void testPutActionState() throws Exception {
+        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
 
-        byte[] payload = objectMapper.writeValueAsBytes(state);
-        ActionState retrieved = objectMapper.readValue(payload, ActionState.class);
+        verify(mockWriter).append(any(InternalRow.class));
 
-        assertThat(retrieved).isNotNull();
-        assertThat(retrieved.getCallResults()).hasSize(1);
-        CallResult retrievedResult = retrieved.getCallResult(0);
-        assertThat(retrievedResult.getFunctionId()).isEqualTo("myFunction");
-        assertThat(retrievedResult.getArgsDigest()).isEqualTo("argsDigest123");
-        assertThat(retrievedResult.isSuccess()).isTrue();
-        assertThat(retrievedResult.getResultPayload())
-                .isEqualTo("result-payload".getBytes(StandardCharsets.UTF_8));
+        String stateKey = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
+        assertThat(actionStates).containsKey(stateKey);
+        assertThat(actionStates.get(stateKey)).isEqualTo(testActionState);
     }
 
     @Test
-    void testMultipleCallResults() throws Exception {
-        InputEvent taskEvent = new InputEvent("test-data");
-        ActionState state = new ActionState(taskEvent);
-        state.addCallResult(
-                new CallResult("fn1", "d1", "ok".getBytes(StandardCharsets.UTF_8))); // SUCCEEDED
-        state.addCallResult(CallResult.pending("fn2", "d2")); // PENDING
-        state.addCallResult(
-                new CallResult(
-                        "fn3", "d3", null, "error".getBytes(StandardCharsets.UTF_8))); // FAILED
+    void testGetNonExistentActionState() throws Exception {
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent), testActionState);
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 4L, testAction, testEvent), testActionState);
 
-        byte[] payload = objectMapper.writeValueAsBytes(state);
-        ActionState retrieved = objectMapper.readValue(payload, ActionState.class);
+        // Request a key with a different action triggers divergence cleanup
+        store.get(TEST_KEY, 2L, new TestAction("test-1"), testEvent);
 
-        assertThat(retrieved).isNotNull();
-        assertThat(retrieved.getCallResults()).hasSize(3);
-        assertThat(retrieved.getCallResult(0).isSuccess()).isTrue();
-        assertThat(retrieved.getCallResult(1).isPending()).isTrue();
-        assertThat(retrieved.getCallResult(2).isFailure()).isTrue();
+        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
+        assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
+        assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNull();
+        assertThat(store.get(TEST_KEY, 4L, testAction, testEvent)).isNull();
     }
 
     @Test
-    void testCompletedAction() throws Exception {
-        InputEvent taskEvent = new InputEvent("test-data");
-        ActionState state = new ActionState(taskEvent);
-        state.addCallResult(new CallResult("fn1", "d1", "result".getBytes(StandardCharsets.UTF_8)));
-        state.markCompleted();
+    void testGetActionStateWithDiverge() throws Exception {
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
+        // diverge: same key+seqNum, different action
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 2L, new TestAction("test-2"), testEvent),
+                testActionState);
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent), testActionState);
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 4L, testAction, testEvent), testActionState);
 
-        byte[] payload = objectMapper.writeValueAsBytes(state);
-        ActionState retrieved = objectMapper.readValue(payload, ActionState.class);
+        store.get(TEST_KEY, 2L, testAction, testEvent);
 
-        assertThat(retrieved).isNotNull();
-        assertThat(retrieved.isCompleted()).isTrue();
-        assertThat(retrieved.getCallResults()).isEmpty();
+        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
+        assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
+        assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNull();
+        assertThat(store.get(TEST_KEY, 4L, testAction, testEvent)).isNull();
     }
 
     @Test
-    void testFullSerializationRoundTrip() throws Exception {
-        InputEvent taskEvent = new InputEvent("full-test-data");
-        ActionState state = new ActionState(taskEvent);
-        state.addEvent(new InputEvent("output-event-1"));
-        state.addEvent(new InputEvent("output-event-2"));
-        state.addCallResult(
-                new CallResult("fn1", "digest1", "payload1".getBytes(StandardCharsets.UTF_8)));
-        state.addCallResult(CallResult.pending("fn2", "digest2"));
+    void testPruneState() throws Exception {
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent), testActionState);
 
-        byte[] payload = objectMapper.writeValueAsBytes(state);
-        ActionState retrieved = objectMapper.readValue(payload, ActionState.class);
+        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
+        assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
+        assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
 
+        // Prune states up to sequence number 2
+        store.pruneState(TEST_KEY, 2L);
+
+        assertThat(
+                        actionStates.get(
+                                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent)))
+                .isNull();
+        assertThat(
+                        actionStates.get(
+                                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent)))
+                .isNull();
+        assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
+    }
+
+    @Test
+    void testActionStateUpdates() throws Exception {
+        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
+
+        // Update the same key with a new state
+        InputEvent updatedEvent = new InputEvent("updated data");
+        ActionState updatedState = new ActionState(updatedEvent);
+        store.put(TEST_KEY, 1L, testAction, testEvent, updatedState);
+
+        ActionState retrieved = store.get(TEST_KEY, 1L, testAction, testEvent);
         assertThat(retrieved).isNotNull();
-        assertThat(retrieved.getTaskEvent()).isEqualTo(taskEvent);
-        assertThat(retrieved.getOutputEvents()).hasSize(2);
-        assertThat(retrieved.getCallResults()).hasSize(2);
-        assertThat(retrieved.getCallResult(0).isSuccess()).isTrue();
-        assertThat(retrieved.getCallResult(1).isPending()).isTrue();
-        assertThat(retrieved.isCompleted()).isFalse();
+        assertThat(retrieved.getTaskEvent()).isEqualTo(updatedEvent);
+    }
+
+    @Test
+    void testRebuildStateWithEmptyMarkers() throws Exception {
+        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
+
+        // rebuildState with empty markers should skip rebuild and preserve existing cache
+        store.rebuildState(Collections.emptyList());
+
+        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
     }
 }

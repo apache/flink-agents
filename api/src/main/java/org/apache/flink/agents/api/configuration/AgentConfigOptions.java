@@ -61,7 +61,7 @@ public class AgentConfigOptions {
 
     /** The config parameter specifies the Fluss table name for action state. */
     public static final ConfigOption<String> FLUSS_ACTION_STATE_TABLE =
-            new ConfigOption<>("flussActionStateTable", String.class, "action_state");
+            new ConfigOption<>("flussActionStateTable", String.class, "action_states");
 
     /** The config parameter specifies the number of buckets for the Fluss action state table. */
     public static final ConfigOption<Integer> FLUSS_ACTION_STATE_TABLE_BUCKETS =

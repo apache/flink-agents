@@ -194,7 +194,9 @@ public class KafkaActionStateStore implements ActionStateStore {
     }
 
     private boolean checkDivergence(String key, long seqNum) {
-        return actionStates.keySet().stream().filter(k -> k.startsWith(key + "_" + seqNum)).count()
+        return actionStates.keySet().stream()
+                        .filter(k -> k.startsWith(key + "_" + seqNum + "_"))
+                        .count()
                 > 1;
     }
 
@@ -211,6 +213,7 @@ public class KafkaActionStateStore implements ActionStateStore {
             // Process recovery markers to get the smallest offsets for each partition
             for (Object marker : recoveryMarkers) {
                 if (marker instanceof Map) {
+                    @SuppressWarnings("unchecked")
                     Map<Integer, Long> markerMap = (Map<Integer, Long>) marker;
                     for (Map.Entry<Integer, Long> entry : markerMap.entrySet()) {
                         Long offset =
