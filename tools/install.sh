@@ -65,10 +65,10 @@ download_file() {
         detect_downloader
     fi
     if [[ "$DOWNLOADER" == "curl" ]]; then
-        curl -fsSL --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 30 --retry 2 --retry-delay 1 --retry-connrefused -o "$output" "$url"
+        curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --max-time 600 --retry-delay 1 -- --retry-connrefused -o "$output" "$url"
         return
     fi
-    wget -q --https-only --secure-protocol=TLSv1_2 --tries=2 --timeout=30 -O "$output" "$url"
+    wget -q --https-only --secure-protocol=TLSv1_2 --tries=3 --timeout=600 -O "$output" "$url"
 }
 
 GUM_VERSION="${FLINK_AGENTS_GUM_VERSION:-0.17.0}"
