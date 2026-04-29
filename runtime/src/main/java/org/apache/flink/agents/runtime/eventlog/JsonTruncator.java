@@ -123,12 +123,16 @@ public class JsonTruncator {
                     truncated = true;
                 }
             } else if (child.isArray()) {
-                // First recurse into retained elements, then truncate the array if needed
-                truncated |= truncateArrayContents((ArrayNode) child, depth + 1);
+                // Truncate the array first so we don't recurse into elements that will be dropped.
                 JsonNode replacement = truncateArray((ArrayNode) child);
                 if (replacement != null) {
+                    ArrayNode retained =
+                            (ArrayNode) ((ObjectNode) replacement).get("truncatedList");
+                    truncateArrayContents(retained, depth + 1);
                     node.set(fieldName, replacement);
                     truncated = true;
+                } else {
+                    truncated |= truncateArrayContents((ArrayNode) child, depth + 1);
                 }
             } else if (child.isObject()) {
                 truncated |= truncateObject((ObjectNode) child, depth + 1, false);
@@ -190,11 +194,15 @@ public class JsonTruncator {
             } else if (element.isObject()) {
                 truncated |= truncateObject((ObjectNode) element, depth, false);
             } else if (element.isArray()) {
-                truncated |= truncateArrayContents((ArrayNode) element, depth + 1);
                 JsonNode replacement = truncateArray((ArrayNode) element);
                 if (replacement != null) {
+                    ArrayNode retained =
+                            (ArrayNode) ((ObjectNode) replacement).get("truncatedList");
+                    truncateArrayContents(retained, depth + 1);
                     array.set(i, replacement);
                     truncated = true;
+                } else {
+                    truncated |= truncateArrayContents((ArrayNode) element, depth + 1);
                 }
             }
         }

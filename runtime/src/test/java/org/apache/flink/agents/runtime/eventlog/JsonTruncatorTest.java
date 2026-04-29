@@ -197,6 +197,50 @@ class JsonTruncatorTest {
     }
 
     @Test
+    void testRecursionSkipsDroppedTailElements() {
+        // Regression test: when an array exceeds maxArrayElements, the elements beyond the cap
+        // must NOT be recursed into. Prior to the fix, truncateArrayContents ran on the full
+        // array before truncateArray dropped the tail, causing wasted CPU/allocations on
+        // elements that were about to be discarded.
+        JsonTruncator truncator = new JsonTruncator(5, 2, 0);
+        ObjectNode node = MAPPER.createObjectNode();
+        ArrayNode items = MAPPER.createArrayNode();
+        // Two short strings that fit under the retained cap and the string limit.
+        items.add("a");
+        items.add("b");
+        // Three tail ObjectNodes whose long-string fields would be truncated if visited.
+        String longValue = "this-string-is-much-longer-than-five-chars";
+        ObjectNode tail0 = MAPPER.createObjectNode();
+        tail0.put("payload", longValue);
+        ObjectNode tail1 = MAPPER.createObjectNode();
+        tail1.put("payload", longValue);
+        ObjectNode tail2 = MAPPER.createObjectNode();
+        tail2.put("payload", longValue);
+        items.add(tail0);
+        items.add(tail1);
+        items.add(tail2);
+        node.set("items", items);
+
+        boolean result = truncator.truncate(node);
+
+        assertThat(result).isTrue();
+        // Retained list is exactly the first 2 elements; 3 are dropped.
+        assertThat(node.get("items").get("truncatedList").size()).isEqualTo(2);
+        assertThat(node.get("items").get("truncatedList").get(0).asText()).isEqualTo("a");
+        assertThat(node.get("items").get("truncatedList").get(1).asText()).isEqualTo("b");
+        assertThat(node.get("items").get("omittedElements").asInt()).isEqualTo(3);
+        // The dropped tail ObjectNodes were never visited — their payload fields remain
+        // untouched (still raw strings, not wrapped truncatedString objects). Under the old
+        // pre-reorder code path, these would have been mutated before being discarded.
+        assertThat(tail0.get("payload").isTextual()).isTrue();
+        assertThat(tail0.get("payload").asText()).isEqualTo(longValue);
+        assertThat(tail1.get("payload").isTextual()).isTrue();
+        assertThat(tail1.get("payload").asText()).isEqualTo(longValue);
+        assertThat(tail2.get("payload").isTextual()).isTrue();
+        assertThat(tail2.get("payload").asText()).isEqualTo(longValue);
+    }
+
+    @Test
     void testNullNode() {
         JsonTruncator truncator = new JsonTruncator(10, 10, 10);
 
