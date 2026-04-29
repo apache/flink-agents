@@ -42,6 +42,31 @@ import java.util.Map;
 
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 
+/**
+ * Owns all Flink state used by {@link ActionExecutionOperator} and exposes a narrow API for
+ * accessing it.
+ *
+ * <p>Owned state:
+ *
+ * <ul>
+ *   <li>Keyed list state of pending {@link ActionTask}s for the current key.
+ *   <li>Keyed list state of pending {@link Event}s buffered while another input is processing.
+ *   <li>Keyed value state holding the per-key message sequence number.
+ *   <li>Keyed map states for sensory and short-term memory.
+ *   <li>Operator union-list state of keys currently being processed (used after rescale to recover
+ *       in-flight work).
+ * </ul>
+ *
+ * <p>Lifecycle: instantiated by the operator's {@code initializeState()} (the Flink lifecycle runs
+ * {@code initializeState} before {@code open}). Both {@link
+ * #initializeKeyedStates(org.apache.flink.api.common.functions.RuntimeContext)} and {@link
+ * #initializeOperatorStates(OperatorStateBackend)} are invoked later from the operator's {@code
+ * open()}. There is no explicit close — the underlying state handles are owned by Flink.
+ *
+ * <p>Design constraint: package-private; no manager-to-manager held references. Cross-cutting data
+ * flows via method parameters (see for example {@link ActionTaskContextManager#transferContexts}
+ * which takes a {@link DurableExecutionManager} as an argument rather than holding one).
+ */
 class OperatorStateManager {
 
     static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
@@ -56,6 +81,15 @@ class OperatorStateManager {
 
     OperatorStateManager() {}
 
+    /**
+     * Registers all keyed-state descriptors against the operator's runtime context.
+     *
+     * <p>Registers: sensory memory map state, short-term memory map state, the per-key message
+     * sequence-number value state, the per-key list of pending {@link ActionTask}s, and the per-key
+     * list of buffered {@link Event}s. Called from the operator's {@code open()} method.
+     *
+     * @param runtimeContext the operator's runtime context, used to obtain keyed state handles.
+     */
     void initializeKeyedStates(org.apache.flink.api.common.functions.RuntimeContext runtimeContext)
             throws Exception {
         // init sensoryMemState
@@ -90,6 +124,16 @@ class OperatorStateManager {
                                 PENDING_INPUT_EVENT_STATE_NAME, TypeInformation.of(Event.class)));
     }
 
+    /**
+     * Registers operator-level (non-keyed) state.
+     *
+     * <p>Registers the {@code currentProcessingKeys} union-list state. A union-list lets every
+     * subtask see all keys after a rescale; the operator filters out keys that do not belong to the
+     * current subtask's key-group range during recovery. Called from the operator's {@code open()}
+     * method (after {@code super.open()} and after the keyed-state setup).
+     *
+     * @param operatorStateBackend the operator state backend used to obtain operator state.
+     */
     void initializeOperatorStates(OperatorStateBackend operatorStateBackend) throws Exception {
         // We use UnionList here to ensure that the task can access all keys after parallelism
         // modifications.
@@ -101,6 +145,12 @@ class OperatorStateManager {
                                 "currentProcessingKeys", TypeInformation.of(Object.class)));
     }
 
+    /**
+     * Advances the per-key message sequence number.
+     *
+     * <p>If the state has no value for the current key, sets it to {@code 0L}. Otherwise increments
+     * the existing value by one. Must be called under a keyed context.
+     */
     void initOrIncSequenceNumber() throws Exception {
         // Initialize the sequence number state if it does not exist.
         Long sequenceNumber = sequenceNumberKState.value();
@@ -119,6 +169,12 @@ class OperatorStateManager {
         return listStateNotEmpty(actionTasksKState);
     }
 
+    /**
+     * Removes and returns the next pending {@link ActionTask} for the current key.
+     *
+     * @return the next {@link ActionTask}, or {@code null} if the queue for the current key is
+     *     empty.
+     */
     @Nullable
     ActionTask pollNextActionTask() throws Exception {
         return pollFromListState(actionTasksKState);
@@ -132,6 +188,12 @@ class OperatorStateManager {
         pendingInputEventsKState.add(event);
     }
 
+    /**
+     * Removes and returns the next pending input {@link Event} buffered for the current key.
+     *
+     * @return the next buffered input {@link Event}, or {@code null} if the buffer for the current
+     *     key is empty.
+     */
     @Nullable
     Event pollNextPendingInputEvent() throws Exception {
         return pollFromListState(pendingInputEventsKState);
@@ -178,6 +240,16 @@ class OperatorStateManager {
         return currentSubtaskKeyGroupRange.contains(keyGroup);
     }
 
+    /**
+     * Captures the current per-key sequence numbers across all keys held by the given backend.
+     *
+     * <p>Invoked during checkpoint snapshotting so the caller can later associate the snapshot's
+     * per-key sequence numbers with a checkpoint id (see {@link
+     * DurableExecutionManager#recordCheckpointSequenceNumbers}).
+     *
+     * @param keyedStateBackend the keyed state backend to scan.
+     * @return an immutable map snapshot from key to its current sequence number.
+     */
     @SuppressWarnings("unchecked")
     Map<Object, Long> snapshotSequenceNumbers(KeyedStateBackend<?> keyedStateBackend)
             throws Exception {
@@ -191,6 +263,15 @@ class OperatorStateManager {
         return keyToSeqNum;
     }
 
+    /**
+     * Applies a function to the pending-input-event list state for every key in the backend.
+     *
+     * <p>Used during recovery to scan all keys that hold buffered input events so the operator can
+     * resume processing them after a restore.
+     *
+     * @param keyedStateBackend the keyed state backend to scan.
+     * @param function the function to apply per (key, list-state) pair.
+     */
     @SuppressWarnings("unchecked")
     void forEachPendingInputEventKey(
             KeyedStateBackend<?> keyedStateBackend,

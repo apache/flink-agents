@@ -41,6 +41,31 @@ import javax.annotation.Nullable;
 
 import java.util.HashMap;
 
+/**
+ * Owns the embedded Python runtime used by {@link ActionExecutionOperator} when an agent plan
+ * contains Python actions or Python-defined resources.
+ *
+ * <p>Owned state:
+ *
+ * <ul>
+ *   <li>The {@link PythonEnvironmentManager} that prepares dependencies and the Pemja runtime.
+ *   <li>The {@link PythonInterpreter} obtained from that environment.
+ *   <li>The {@link PythonActionExecutor} (when the plan contains Python actions).
+ *   <li>The {@link PythonRunnerContextImpl} consumed by Python actions.
+ *   <li>The Java/Python resource adapters that bridge resource lookups across languages.
+ * </ul>
+ *
+ * <p>Lifecycle: instantiated by the operator's {@code open()} (lazy — not in the operator
+ * constructor), then immediately initialized via {@link #open} in the same call. {@link #open} is a
+ * no-op when the agent plan contains no Python actions and no Python resources — in that case all
+ * accessors return {@code null} and {@link #isInitialized()} returns {@code false}. {@link
+ * #close()} closes the owned resources in the reverse order of creation: {@code
+ * pythonActionExecutor} → {@code pythonInterpreter} → {@code pythonEnvironmentManager}.
+ *
+ * <p>Design constraint: package-private; no manager-to-manager held references. Other managers
+ * receive what they need (e.g. the Python runner context, the action executor) via method
+ * parameters.
+ */
 class PythonBridgeManager implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(PythonBridgeManager.class);
@@ -57,6 +82,27 @@ class PythonBridgeManager implements AutoCloseable {
         this.initialized = false;
     }
 
+    /**
+     * Initializes the Python runtime if the agent plan needs it.
+     *
+     * <p>Scans the agent plan for any {@link PythonFunction} action or {@link
+     * PythonResourceProvider}. If neither is present, this method is a no-op and {@link
+     * #isInitialized()} stays {@code false}. Otherwise it builds the {@link
+     * PythonEnvironmentManager}, opens an embedded {@link PythonInterpreter}, constructs the shared
+     * {@link PythonRunnerContextImpl}, wires the Java/Python resource adapters, and conditionally
+     * initializes the Python action executor and the Python resource adapter (each only when the
+     * corresponding component is present in the plan).
+     *
+     * @param agentPlan the agent plan describing actions and resources.
+     * @param resourceCache the resource cache visible to both languages.
+     * @param executionConfig used to derive Python dependency information.
+     * @param distributedCache used to resolve distributed Python files.
+     * @param tmpDirs Flink-managed temp directories made available to Python.
+     * @param jobId the Flink job id.
+     * @param metricGroup the agent metric group, exposed to Python via the runner context.
+     * @param mailboxThreadChecker hook used by the runner context to assert mailbox-thread access.
+     * @param jobIdentifier the job identifier used to scope Python state.
+     */
     void open(
             AgentPlan agentPlan,
             ResourceCache resourceCache,
@@ -152,11 +198,19 @@ class PythonBridgeManager implements AutoCloseable {
                 agentPlan.getResourceProviders(), pythonResourceAdapter, resourceCache);
     }
 
+    /**
+     * @return the Python action executor, or {@code null} if the agent plan contains no Python
+     *     actions (or {@link #open} has not yet been called).
+     */
     @Nullable
     PythonActionExecutor getPythonActionExecutor() {
         return pythonActionExecutor;
     }
 
+    /**
+     * @return the Python runner context, or {@code null} if no Python runtime was initialized
+     *     because the agent plan has neither Python actions nor Python resources.
+     */
     @Nullable
     PythonRunnerContextImpl getPythonRunnerContext() {
         return pythonRunnerContext;

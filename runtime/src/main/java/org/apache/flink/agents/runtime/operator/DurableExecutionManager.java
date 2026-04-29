@@ -44,6 +44,31 @@ import java.util.Map;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
 
+/**
+ * Owns the durable-execution side of {@link ActionExecutionOperator}: the optional {@link
+ * ActionStateStore}, the recovery-marker operator state, the per-checkpoint sequence-number map,
+ * and the per-{@link ActionTask} {@link RunnerContextImpl.DurableExecutionContext} map.
+ *
+ * <p>Durable mode is optional. If no {@link ActionStateStore} is configured (and none is
+ * pre-injected via the constructor), all {@code maybe*} methods are no-ops and {@link
+ * #hasDurableStore()} returns {@code false}. This lets the operator stay agnostic of whether
+ * durable execution is enabled.
+ *
+ * <p>Lifecycle: instantiated in the operator constructor. {@link
+ * #maybeInitActionStateStore(AgentConfiguration)} runs from BOTH the operator's {@code
+ * initializeState()} and {@code open()} — recovery requires the store to be configured before
+ * {@link #handleRecovery(OperatorStateBackend)} reads from it, and the {@code open()} call ensures
+ * the store is also available on the normal (non-recovery) path. The method creates a default
+ * Kafka-backed store when one was not pre-injected, and is idempotent on the second call. {@link
+ * #handleRecovery(OperatorStateBackend)} runs from the operator's {@code initializeState()} during
+ * recovery. {@link #initRecoveryMarkerState(OperatorStateBackend)} runs from the operator's {@code
+ * open()}. {@link #close()} closes the underlying store.
+ *
+ * <p>Design constraint: package-private; no manager-to-manager held references. Cross-cutting data
+ * flows via method parameters. In particular, {@link
+ * ActionTaskContextManager#transferContexts(ActionTask, ActionTask, DurableExecutionManager)}
+ * accepts this manager as a parameter so that the durable-context map can stay encapsulated here.
+ */
 class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(DurableExecutionManager.class);
@@ -57,12 +82,27 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
     private final Map<ActionTask, RunnerContextImpl.DurableExecutionContext>
             actionTaskDurableContexts;
 
+    /**
+     * @param actionStateStore an optional pre-injected store, primarily for tests. When {@code
+     *     null}, {@link #maybeInitActionStateStore(AgentConfiguration)} may create a default store
+     *     based on configuration; otherwise durable execution is disabled.
+     */
     DurableExecutionManager(@Nullable ActionStateStore actionStateStore) {
         this.actionStateStore = actionStateStore;
         this.checkpointIdToSeqNums = new HashMap<>();
         this.actionTaskDurableContexts = new HashMap<>();
     }
 
+    /**
+     * Lazily creates a default {@link ActionStateStore} from configuration if none was
+     * pre-injected.
+     *
+     * <p>Only creates a store when this manager was constructed without one and the configuration
+     * selects a recognized backend (currently Kafka). Otherwise this is a no-op, which leaves
+     * durable execution disabled.
+     *
+     * @param config the agent configuration carrying the backend selection.
+     */
     void maybeInitActionStateStore(AgentConfiguration config) {
         if (actionStateStore == null
                 && KAFKA.getType().equalsIgnoreCase(config.get(ACTION_STATE_STORE_BACKEND))) {
@@ -84,9 +124,18 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         }
     }
 
-    // Note: Re-creates the union list state descriptor here because handleRecovery() is called
-    // from initializeState() which runs BEFORE open(), so recoveryMarkerOpState is not yet
-    // initialized. The descriptor name matches exactly, so Flink returns the same state.
+    /**
+     * Replays recovery markers from the operator's union-list state to rebuild durable action
+     * state.
+     *
+     * <p>Called from the operator's {@code initializeState()}, which runs before {@code open()}.
+     * This means {@link #recoveryMarkerOpState} is not yet initialized, so the union-list state
+     * descriptor is re-created here using the same descriptor name — Flink returns the same
+     * underlying state. No-op when durable execution is disabled.
+     *
+     * @param operatorStateBackend the operator state backend used to obtain the recovery-marker
+     *     union-list state.
+     */
     void handleRecovery(OperatorStateBackend operatorStateBackend) throws Exception {
         if (actionStateStore != null) {
             List<Object> markers = new ArrayList<>();
@@ -120,6 +169,21 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         }
     }
 
+    /**
+     * Persists the result of a finished {@link ActionTask} to the durable store.
+     *
+     * <p>No-op when no store is configured or when the task did not finish (e.g. it suspended on a
+     * continuation). On finish, accumulates the task's memory updates and emitted output events
+     * into the {@link ActionState}, marks it completed, persists it, and clears the in-context
+     * durable bookkeeping.
+     *
+     * @param key the key under which the action ran.
+     * @param sequenceNum the per-key message sequence number.
+     * @param action the action being persisted.
+     * @param event the input event that triggered this action.
+     * @param context the runner context whose memory updates will be folded into the action state.
+     * @param actionTaskResult the result of running the action task.
+     */
     void maybePersistTaskResult(
             Object key,
             long sequenceNum,
@@ -157,6 +221,19 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         context.clearDurableExecutionContext();
     }
 
+    /**
+     * Wires a {@link RunnerContextImpl.DurableExecutionContext} onto the given action task's runner
+     * context.
+     *
+     * <p>Returns immediately when no durable store is configured. Otherwise reuses an existing
+     * {@link RunnerContextImpl.DurableExecutionContext} held in the per-task map (i.e. when
+     * resuming a continuation), or creates a fresh one bound to this manager so that nested
+     * persists route back through {@link #persist}.
+     *
+     * @param actionTask the action task to attach the context to.
+     * @param actionState the action state for this (key, sequenceNum, action, event).
+     * @param seqNum the per-key sequence number.
+     */
     void setupDurableExecutionContext(ActionTask actionTask, ActionState actionState, long seqNum) {
         if (actionStateStore == null) {
             return;
@@ -196,6 +273,16 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         }
     }
 
+    /**
+     * Prunes durable state for all per-key sequence numbers that were captured at the time of the
+     * given checkpoint.
+     *
+     * <p>The mapping from checkpoint id to per-key sequence numbers must have been recorded earlier
+     * via {@link #recordCheckpointSequenceNumbers}. After pruning, the entry for that checkpoint is
+     * removed. No-op when durable execution is disabled.
+     *
+     * @param checkpointId the id of the completed checkpoint.
+     */
     void notifyCheckpointComplete(long checkpointId) {
         if (actionStateStore != null) {
             Map<Object, Long> keyToSeqNum =
@@ -216,6 +303,15 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         }
     }
 
+    /**
+     * Records the per-key sequence numbers observed when snapshotting the given checkpoint.
+     *
+     * <p>The recorded mapping is consulted later by {@link #notifyCheckpointComplete(long)} to
+     * prune durable state up to the sequence number that was committed by that checkpoint.
+     *
+     * @param checkpointId the checkpoint being snapshotted.
+     * @param seqNums the per-key sequence numbers captured during the snapshot.
+     */
     void recordCheckpointSequenceNumbers(long checkpointId, Map<Object, Long> seqNums) {
         checkpointIdToSeqNums.put(checkpointId, seqNums);
     }

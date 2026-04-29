@@ -36,6 +36,34 @@ import javax.annotation.Nullable;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Owns the per-{@link ActionTask} runtime context bookkeeping for {@link ActionExecutionOperator}.
+ *
+ * <p>Owned state:
+ *
+ * <ul>
+ *   <li>The shared (Java) {@link RunnerContextImpl} that is reused across action tasks via {@link
+ *       RunnerContextImpl#switchActionContext}.
+ *   <li>Three per-{@link ActionTask} maps that survive across the boundary between a finishing
+ *       action and the action it generates: memory contexts, continuation contexts (for async Java
+ *       actions), and Python awaitable references.
+ *   <li>The {@link ContinuationActionExecutor} thread pool used to run async Java continuations.
+ * </ul>
+ *
+ * <p>Lifecycle: instantiated by the operator's {@code open()} with the configured async-thread
+ * count from the agent plan. Has no separate {@code open()} step — fully constructed in the
+ * operator's {@code open()}. {@link #close()} closes the shared runner context and the continuation
+ * executor.
+ *
+ * <p>Note: the Python {@link RunnerContextImpl} is not owned here — it is owned by {@link
+ * PythonBridgeManager} and passed in as a parameter to {@link #createOrGetRunnerContext} and {@link
+ * #createAndSetRunnerContext}. The durable-execution context map likewise lives on {@link
+ * DurableExecutionManager} and is accessed via the manager parameter passed to {@link
+ * #transferContexts}.
+ *
+ * <p>Design constraint: package-private; no manager-to-manager held references. Cross-cutting data
+ * flows via method parameters.
+ */
 class ActionTaskContextManager implements AutoCloseable {
 
     private RunnerContextImpl runnerContext;
@@ -53,6 +81,24 @@ class ActionTaskContextManager implements AutoCloseable {
         this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
     }
 
+    /**
+     * Returns a runner context for an action's exec language.
+     *
+     * <p>For Java actions, lazily creates a single {@link JavaRunnerContextImpl} that is reused for
+     * every Java action. For Python actions, returns the supplied {@link PythonRunnerContextImpl}
+     * (owned by {@link PythonBridgeManager}). Throws {@link IllegalStateException} if a Python
+     * context is requested but none was provided, or if the continuation executor has not been
+     * initialized.
+     *
+     * @param isJava {@code true} if the action is a Java action, {@code false} if Python.
+     * @param agentPlan the agent plan, used when creating the Java runner context.
+     * @param resourceCache the resource cache, used when creating the Java runner context.
+     * @param metricGroup the agent metric group.
+     * @param jobIdentifier the job identifier.
+     * @param mailboxThreadChecker hook used by runner contexts to assert mailbox-thread access.
+     * @param pythonRunnerContext the pre-built Python runner context, or {@code null} for Java.
+     * @return the runner context appropriate for the action's exec language.
+     */
     RunnerContextImpl createOrGetRunnerContext(
             boolean isJava,
             AgentPlan agentPlan,
@@ -86,6 +132,36 @@ class ActionTaskContextManager implements AutoCloseable {
         }
     }
 
+    /**
+     * Resolves the runner context for the given action task, switches it to that task's action, and
+     * wires its memory, continuation, and Python-awaitable contexts.
+     *
+     * <p>Steps:
+     *
+     * <ol>
+     *   <li>Selects a Java or Python runner context based on the action's {@code Exec} type.
+     *   <li>Reuses any existing {@link RunnerContextImpl.MemoryContext} for this task; otherwise
+     *       builds a fresh one backed by the supplied sensory/short-term memory states.
+     *   <li>Calls {@link RunnerContextImpl#switchActionContext} so the shared context now points at
+     *       this action's name, memory, and key namespace.
+     *   <li>For Java contexts, attaches a continuation context (re-used if the task is resuming
+     *       from an async suspend, fresh otherwise).
+     *   <li>For Python contexts, attaches the per-task awaitable reference (or {@code null} if the
+     *       awaitable was lost across a checkpoint restore — the action will then re-execute).
+     * </ol>
+     *
+     * @param actionTask the task to be set up before execution.
+     * @param key the current Flink key.
+     * @param agentPlan the agent plan.
+     * @param resourceCache the resource cache.
+     * @param metricGroup the agent metric group.
+     * @param jobIdentifier the job identifier.
+     * @param mailboxThreadChecker hook used to assert mailbox-thread access from runner contexts.
+     * @param sensoryMemState keyed map state backing sensory memory.
+     * @param shortTermMemState keyed map state backing short-term memory.
+     * @param pythonRunnerContext the Python runner context, or {@code null} when no Python runtime
+     *     is initialized.
+     */
     void createAndSetRunnerContext(
             ActionTask actionTask,
             Object key,
@@ -171,8 +247,17 @@ class ActionTaskContextManager implements AutoCloseable {
     }
 
     /**
-     * Transfers memory, durable execution, continuation, and Python awaitable contexts from the
-     * completed action task to the generated (next) action task.
+     * Transfers per-task contexts from a finishing action task to the action task it generated.
+     *
+     * <p>Always transfers the memory context. For Java tasks, transfers the continuation context.
+     * For Python tasks, transfers the awaitable reference when present. The durable-execution
+     * context map lives on {@link DurableExecutionManager}, so that manager is passed in as a
+     * parameter rather than held as a field — this keeps the no-manager-to-manager-references
+     * design constraint intact.
+     *
+     * @param fromTask the finishing task whose contexts should be transferred.
+     * @param toTask the newly generated task that will inherit the contexts.
+     * @param durableExecManager used to copy the durable-execution context entry, if any.
      */
     void transferContexts(
             ActionTask fromTask, ActionTask toTask, DurableExecutionManager durableExecManager) {

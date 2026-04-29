@@ -49,6 +49,33 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.PRETTY_PRINT;
 import static org.apache.flink.util.Preconditions.checkState;
 
+/**
+ * Handles event-side concerns for {@link ActionExecutionOperator}: input/output transformation
+ * between Java/Python representations, action lookup against the {@link AgentPlan}, event-logger
+ * and event-listener notification, and watermark draining via the per-key segment queue.
+ *
+ * <p>Owned state:
+ *
+ * <ul>
+ *   <li>The {@link EventLogger} created from the agent plan's logging configuration (may be {@code
+ *       null} when logging is disabled).
+ *   <li>The list of registered {@link EventListener}s.
+ *   <li>A reused {@link StreamRecord} used to emit outputs without per-record allocation.
+ *   <li>The {@link SegmentedQueue} that orders watermarks behind in-flight keys so a watermark is
+ *       only emitted once all keys ahead of it have finished.
+ *   <li>The late-bound {@link BuiltInMetrics} provided in {@link #open(BuiltInMetrics)}.
+ * </ul>
+ *
+ * <p>Lifecycle: instantiated in the operator constructor (which decides {@link #inputIsJava}).
+ * {@link #open(BuiltInMetrics)} runs from the operator's {@code open()} once metrics are available.
+ * {@link #initEventLogger} also runs from the operator's {@code open()} once the runtime context is
+ * available (after metrics have been built). {@link #close()} closes the event logger.
+ *
+ * <p>Design constraint: package-private; no manager-to-manager held references.
+ *
+ * @param <IN> input record type
+ * @param <OUT> output record type
+ */
 class EventRouter<IN, OUT> implements AutoCloseable {
 
     private final boolean inputIsJava;
@@ -64,6 +91,15 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         this.eventListeners = new ArrayList<>();
     }
 
+    /**
+     * Initializes mutable runtime state that depends on metrics being available.
+     *
+     * <p>Allocates the reused stream record and the segmented watermark queue, and stores the
+     * supplied {@link BuiltInMetrics} for use in {@link #notifyEventProcessed(Event)}. Called from
+     * the operator's {@code open()} once metric groups are constructed.
+     *
+     * @param builtInMetrics the operator's built-in metrics handle.
+     */
     void open(BuiltInMetrics builtInMetrics) {
         this.reusedStreamRecord = new StreamRecord<>(null);
         this.keySegmentQueue = new SegmentedQueue();
@@ -77,6 +113,19 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         eventLogger.open(new EventLoggerOpenParams(runtimeContext));
     }
 
+    /**
+     * Wraps an incoming record into an {@link Event} suitable for action dispatch.
+     *
+     * <p>Java pipelines wrap the raw input directly into a Java {@link InputEvent}. Python
+     * pipelines expect a two-field {@link Row} where the first field is the key and the second is
+     * the actual payload; the payload is converted to a Python event via the supplied {@link
+     * PythonActionExecutor}.
+     *
+     * @param input the raw input record.
+     * @param pythonActionExecutor the Python action executor (used only when input originates from
+     *     Python).
+     * @return the wrapped input event.
+     */
     @SuppressWarnings("unchecked")
     Event wrapToInputEvent(IN input, PythonActionExecutor pythonActionExecutor) {
         if (inputIsJava) {
@@ -89,6 +138,18 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         }
     }
 
+    /**
+     * Extracts the downstream output payload from an {@link OutputEvent}.
+     *
+     * <p>For a Java {@link OutputEvent}, returns the payload directly. For a Python {@link
+     * PythonEvent}, delegates to the supplied {@link PythonActionExecutor} to convert the Python
+     * output back into the Java output type.
+     *
+     * @param event the output event (must satisfy {@link EventUtil#isOutputEvent(Event)}).
+     * @param pythonActionExecutor the Python action executor (used only for Python events).
+     * @return the typed output payload.
+     * @throws IllegalStateException if the event is not a recognized output-event type.
+     */
     @SuppressWarnings("unchecked")
     OUT getOutputFromOutputEvent(Event event, PythonActionExecutor pythonActionExecutor) {
         checkState(EventUtil.isOutputEvent(event));
@@ -112,6 +173,16 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         }
     }
 
+    /**
+     * Notifies the configured event sinks (logger, listeners, metrics) that an event was processed.
+     *
+     * <p>If event logging is enabled, appends and immediately flushes the event. Then notifies
+     * every registered {@link EventListener}. Finally increments the {@code eventProcessed}
+     * built-in metric. The event logger is flushed per call as a temporary measure pending a
+     * batched flush mechanism.
+     *
+     * @param event the event that was just processed.
+     */
     void notifyEventProcessed(Event event) throws Exception {
         EventContext eventContext = new EventContext(event);
         if (eventLogger != null) {
@@ -131,6 +202,15 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         builtInMetrics.markEventProcessed();
     }
 
+    /**
+     * Drains all watermarks from the segmented queue that are now eligible to be emitted.
+     *
+     * <p>A watermark becomes eligible once every key in the segment ahead of it has finished
+     * processing. This method pops watermarks in order and forwards each to the supplied {@link
+     * WatermarkEmitter}.
+     *
+     * @param watermarkEmitter callback that emits a watermark downstream.
+     */
     void processEligibleWatermarks(WatermarkEmitter watermarkEmitter) throws Exception {
         Watermark mark = keySegmentQueue.popOldestWatermark();
         while (mark != null) {
