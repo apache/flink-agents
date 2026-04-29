@@ -25,7 +25,6 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
-import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.api.common.JobID;
@@ -509,12 +508,12 @@ class FileEventLoggerTest {
                         + "\"id\":null,\"attributes\":{},\"input\":\"test\"}}";
 
         EventLogRecord record = objectMapper.readValue(oldFormatJson, EventLogRecord.class);
-        assertEquals(
-                EventLogLevel.VERBOSE,
-                record.getLogLevel(),
-                "Missing logLevel should default to VERBOSE");
         assertNotNull(record.getEvent());
         assertInstanceOf(InputEvent.class, record.getEvent());
+        assertEquals(
+                "test",
+                ((InputEvent) record.getEvent()).getInput(),
+                "Old-format JSON without logLevel should still deserialize the event payload");
     }
 
     @Test

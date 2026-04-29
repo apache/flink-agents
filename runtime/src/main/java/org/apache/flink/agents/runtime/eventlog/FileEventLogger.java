@@ -18,7 +18,9 @@
 
 package org.apache.flink.agents.runtime.eventlog;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
@@ -180,21 +182,47 @@ public class FileEventLogger implements EventLogger {
 
         String eventTypeStr = EventUtil.resolveEventType(event, context);
 
-        // Resolve log level and skip OFF events
+        // Resolve log level and skip OFF events.
         EventLogLevel level =
                 levelResolver != null ? levelResolver.resolve(eventTypeStr) : EventLogLevel.VERBOSE;
         if (level == EventLogLevel.OFF) {
             return;
         }
 
-        EventLogRecord record =
-                new EventLogRecord(context, event, level, truncator, truncatedEventsCounter);
-        // All events should be JSON serializable, since we check it when sending events to context:
-        // RunnerContextImpl.sendEvent
+        // All events should be JSON serializable; we already check this when sending events
+        // to context (RunnerContextImpl.sendEvent).
+        EventLogRecord record = new EventLogRecord(context, event);
+        JsonNode tree = MAPPER.valueToTree(record);
+        if (!(tree instanceof ObjectNode)) {
+            throw new IllegalStateException(
+                    "EventLogRecord must serialize to a JSON object, but was: "
+                            + tree.getNodeType());
+        }
+        ObjectNode rootNode = (ObjectNode) tree;
+
+        // Truncate the event subtree at STANDARD level.
+        if (level == EventLogLevel.STANDARD && truncator != null) {
+            JsonNode eventNode = rootNode.get("event");
+            if (eventNode instanceof ObjectNode) {
+                boolean truncated = truncator.truncate((ObjectNode) eventNode);
+                if (truncated && truncatedEventsCounter != null) {
+                    truncatedEventsCounter.inc();
+                }
+            }
+        }
+
+        // Rebuild the top-level object so logLevel sits between timestamp and eventType,
+        // matching the documented JSON layout.
+        ObjectNode ordered = MAPPER.createObjectNode();
+        ordered.set("timestamp", rootNode.get("timestamp"));
+        ordered.put("logLevel", level.name());
+        ordered.set("eventType", rootNode.get("eventType"));
+        ordered.set("event", rootNode.get("event"));
+
         String json =
                 prettyPrint
-                        ? MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(record)
-                        : MAPPER.writeValueAsString(record);
+                        ? MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(ordered)
+                        : MAPPER.writeValueAsString(ordered);
         writer.println(json);
     }
 
