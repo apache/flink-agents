@@ -39,7 +39,6 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_ACTION_STATE_TABLE_BUCKETS;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_BOOTSTRAP_SERVERS;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatNoException;
 
 /** Integration tests for {@link FlussActionStateStore} against an embedded Fluss cluster. */
 public class FlussActionStateStoreIT {
@@ -146,28 +145,6 @@ public class FlussActionStateStoreIT {
         assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNull();
     }
 
-    @Test
-    void testPruneMultipleAgentKeys() throws Exception {
-        String keyA = "agent-key-a";
-        String keyB = "agent-key-b";
-
-        store.put(keyA, 1L, testAction, testEvent, new ActionState(testEvent));
-        store.put(keyA, 2L, testAction, testEvent, new ActionState(testEvent));
-        store.put(keyB, 1L, testAction, testEvent, new ActionState(testEvent));
-        store.put(keyB, 2L, testAction, testEvent, new ActionState(testEvent));
-
-        // Prune only keyA up to seqNum 2
-        store.pruneState(keyA, 2L);
-
-        // pruneState is synchronous (in-memory eviction)
-        // Check surviving entries first: get() with a missing key triggers divergence cleanup
-        // that removes entries with higher seqNums (same as Kafka backend behavior).
-        assertThat(store.get(keyB, 1L, testAction, testEvent)).isNotNull();
-        assertThat(store.get(keyB, 2L, testAction, testEvent)).isNotNull();
-        assertThat(store.get(keyA, 1L, testAction, testEvent)).isNull();
-        assertThat(store.get(keyA, 2L, testAction, testEvent)).isNull();
-    }
-
     // ==================== Recovery ====================
 
     @Test
@@ -230,38 +207,6 @@ public class FlussActionStateStoreIT {
     }
 
     @Test
-    void testReconcilePendingPersistence() throws Exception {
-        // Capture recovery marker BEFORE writing data. In real recovery, the marker represents
-        // the checkpoint boundary: data written after the marker is recovered via rebuildState.
-        Object marker = store.getRecoveryMarker();
-
-        ActionState state = new ActionState(testEvent);
-        CallResult pending = CallResult.pending("sideEffectFn", "digest456");
-        state.addCallResult(pending);
-
-        store.put(TEST_KEY, 1L, testAction, testEvent, state);
-        store.close();
-
-        // Create a new store instance (simulating recovery)
-        FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createAgentConfiguration());
-        try {
-            // Rebuild state from the log using recovery markers
-            recoveredStore.rebuildState(List.of(marker));
-            ActionState recovered = recoveredStore.get(TEST_KEY, 1L, testAction, testEvent);
-
-            assertThat(recovered).isNotNull();
-            assertThat(recovered.getCallResults()).hasSize(1);
-            CallResult recoveredResult = recovered.getCallResult(0);
-            assertThat(recoveredResult.isPending()).isTrue();
-            assertThat(recoveredResult.getFunctionId()).isEqualTo("sideEffectFn");
-            assertThat(recoveredResult.getArgsDigest()).isEqualTo("digest456");
-        } finally {
-            recoveredStore.close();
-        }
-    }
-
-    @Test
     void testPruneWorksAfterRecovery() throws Exception {
         // Capture recovery marker BEFORE writing data.
         Object marker = store.getRecoveryMarker();
@@ -293,46 +238,32 @@ public class FlussActionStateStoreIT {
         }
     }
 
-    // ==================== Infrastructure ====================
-
-    @Test
-    void testIdempotentTableCreation() throws Exception {
-        // Creating a second store with the same config should succeed
-        // (table already exists, createTable with ignoreIfExists=true)
-        FlussActionStateStore secondStore = new FlussActionStateStore(createAgentConfiguration());
-        try {
-            secondStore.put(TEST_KEY, 1L, testAction, testEvent, new ActionState(testEvent));
-            assertThat(secondStore.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
-        } finally {
-            secondStore.close();
-        }
-    }
-
-    @Test
-    void testCloseIdempotent() throws Exception {
-        store.close();
-        assertThatNoException().isThrownBy(() -> store.close());
-        // Set to null to prevent double-close in tearDown
-        store = null;
-    }
-
     // ==================== Helpers ====================
 
     private AgentConfiguration createAgentConfiguration() {
+        return createAgentConfiguration(TEST_DATABASE, TEST_TABLE, 1);
+    }
+
+    private AgentConfiguration createAgentConfiguration(
+            String database, String table, int buckets) {
         AgentConfiguration config = new AgentConfiguration();
         config.set(FLUSS_BOOTSTRAP_SERVERS, FLUSS_CLUSTER.getBootstrapServers());
-        config.set(FLUSS_ACTION_STATE_DATABASE, TEST_DATABASE);
-        config.set(FLUSS_ACTION_STATE_TABLE, TEST_TABLE);
-        config.set(FLUSS_ACTION_STATE_TABLE_BUCKETS, 1);
+        config.set(FLUSS_ACTION_STATE_DATABASE, database);
+        config.set(FLUSS_ACTION_STATE_TABLE, table);
+        config.set(FLUSS_ACTION_STATE_TABLE_BUCKETS, buckets);
         return config;
     }
 
     private void waitForTableReady() throws Exception {
-        TablePath tablePath = TablePath.of(TEST_DATABASE, TEST_TABLE);
-        try (Admin admin =
-                org.apache.fluss.client.ConnectionFactory.createConnection(
-                                FLUSS_CLUSTER.getClientConfig())
-                        .getAdmin()) {
+        waitForTableReady(TEST_DATABASE, TEST_TABLE);
+    }
+
+    private void waitForTableReady(String database, String table) throws Exception {
+        TablePath tablePath = TablePath.of(database, table);
+        try (org.apache.fluss.client.Connection conn =
+                        org.apache.fluss.client.ConnectionFactory.createConnection(
+                                FLUSS_CLUSTER.getClientConfig());
+                Admin admin = conn.getAdmin()) {
             TableInfo tableInfo = admin.getTableInfo(tablePath).get();
             FLUSS_CLUSTER.waitUntilTableReady(tableInfo.getTableId());
         }

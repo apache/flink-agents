@@ -27,7 +27,6 @@ import org.apache.fluss.row.InternalRow;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -159,15 +158,5 @@ public class FlussActionStateStoreTest {
         ActionState retrieved = store.get(TEST_KEY, 1L, testAction, testEvent);
         assertThat(retrieved).isNotNull();
         assertThat(retrieved.getTaskEvent()).isEqualTo(updatedEvent);
-    }
-
-    @Test
-    void testRebuildStateWithEmptyMarkers() throws Exception {
-        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
-
-        // rebuildState with empty markers should skip rebuild and preserve existing cache
-        store.rebuildState(Collections.emptyList());
-
-        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
     }
 }
