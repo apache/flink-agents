@@ -103,6 +103,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         }
     }
 
+    @Nullable
     ActionState maybeGetActionState(Object key, long sequenceNum, Action action, Event event)
             throws Exception {
         return actionStateStore == null
@@ -221,6 +222,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
 
     // --- Durable execution context map accessors ---
 
+    @Nullable
     RunnerContextImpl.DurableExecutionContext getDurableContext(ActionTask actionTask) {
         return actionTaskDurableContexts.get(actionTask);
     }
@@ -239,6 +241,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
     }
 
     @VisibleForTesting
+    @Nullable
     ActionStateStore getActionStateStore() {
         return actionStateStore;
     }

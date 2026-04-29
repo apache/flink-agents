@@ -35,6 +35,8 @@ import org.apache.flink.runtime.state.OperatorStateBackend;
 import org.apache.flink.runtime.state.VoidNamespace;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 
+import javax.annotation.Nullable;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -117,6 +119,7 @@ class OperatorStateManager {
         return listStateNotEmpty(actionTasksKState);
     }
 
+    @Nullable
     ActionTask pollNextActionTask() throws Exception {
         return pollFromListState(actionTasksKState);
     }
@@ -129,6 +132,7 @@ class OperatorStateManager {
         pendingInputEventsKState.add(event);
     }
 
+    @Nullable
     Event pollNextPendingInputEvent() throws Exception {
         return pollFromListState(pendingInputEventsKState);
     }
@@ -149,10 +153,12 @@ class OperatorStateManager {
         return currentProcessingKeysOpState.get();
     }
 
+    @Nullable
     MapState<String, MemoryObjectImpl.MemoryItem> getSensoryMemState() {
         return sensoryMemState;
     }
 
+    @Nullable
     MapState<String, MemoryObjectImpl.MemoryItem> getShortTermMemState() {
         return shortTermMemState;
     }

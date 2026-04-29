@@ -37,6 +37,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pemja.core.PythonInterpreter;
 
+import javax.annotation.Nullable;
+
 import java.util.HashMap;
 
 class PythonBridgeManager implements AutoCloseable {
@@ -150,10 +152,12 @@ class PythonBridgeManager implements AutoCloseable {
                 agentPlan.getResourceProviders(), pythonResourceAdapter, resourceCache);
     }
 
+    @Nullable
     PythonActionExecutor getPythonActionExecutor() {
         return pythonActionExecutor;
     }
 
+    @Nullable
     PythonRunnerContextImpl getPythonRunnerContext() {
         return pythonRunnerContext;
     }

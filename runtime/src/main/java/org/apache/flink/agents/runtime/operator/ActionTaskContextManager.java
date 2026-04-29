@@ -31,6 +31,8 @@ import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.api.common.state.MapState;
 
+import javax.annotation.Nullable;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -154,6 +156,7 @@ class ActionTaskContextManager implements AutoCloseable {
         actionTask.setRunnerContext(context);
     }
 
+    @Nullable
     RunnerContextImpl.MemoryContext getMemoryContext(ActionTask actionTask) {
         return actionTaskMemoryContexts.get(actionTask);
     }
@@ -162,6 +165,7 @@ class ActionTaskContextManager implements AutoCloseable {
         actionTaskMemoryContexts.put(actionTask, memoryContext);
     }
 
+    @Nullable
     RunnerContextImpl.MemoryContext removeMemoryContext(ActionTask actionTask) {
         return actionTaskMemoryContexts.remove(actionTask);
     }
@@ -192,6 +196,7 @@ class ActionTaskContextManager implements AutoCloseable {
         }
     }
 
+    @Nullable
     ContinuationContext getContinuationContext(ActionTask actionTask) {
         return continuationContexts.get(actionTask);
     }
@@ -208,6 +213,7 @@ class ActionTaskContextManager implements AutoCloseable {
         return continuationContexts.containsKey(actionTask);
     }
 
+    @Nullable
     String getPythonAwaitableRef(ActionTask actionTask) {
         return pythonAwaitableRefs.get(actionTask);
     }

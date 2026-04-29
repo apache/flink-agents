@@ -40,6 +40,8 @@ import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.types.Row;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -137,15 +139,18 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         }
     }
 
+    @Nullable
     SegmentedQueue getKeySegmentQueue() {
         return keySegmentQueue;
     }
 
+    @Nullable
     StreamRecord<OUT> getReusedStreamRecord() {
         return reusedStreamRecord;
     }
 
     @VisibleForTesting
+    @Nullable
     EventLogger getEventLogger() {
         return eventLogger;
     }
