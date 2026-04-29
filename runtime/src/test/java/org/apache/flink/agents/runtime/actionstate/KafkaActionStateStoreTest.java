@@ -74,7 +74,7 @@ public class KafkaActionStateStoreTest {
                         TEST_TOPIC);
 
         // Create test objects
-        testAction = new TestAction("test-action");
+        testAction = new NoOpAction("test-action");
         testEvent = new InputEvent("test data");
         testActionState = new ActionState(testEvent);
     }
@@ -105,7 +105,7 @@ public class KafkaActionStateStoreTest {
         actionStates.put(
                 ActionStateUtil.generateKey(TEST_KEY, 4L, testAction, testEvent), testActionState);
 
-        actionStateStore.get(TEST_KEY, 2L, new TestAction("test-1"), testEvent);
+        actionStateStore.get(TEST_KEY, 2L, new NoOpAction("test-1"), testEvent);
 
         assertNotNull(actionStateStore.get(TEST_KEY, 1L, testAction, testEvent));
         assertNotNull(actionStateStore.get(TEST_KEY, 2L, testAction, testEvent));
@@ -121,7 +121,7 @@ public class KafkaActionStateStoreTest {
                 ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
         // diverge here
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 2L, new TestAction("test-2"), testEvent),
+                ActionStateUtil.generateKey(TEST_KEY, 2L, new NoOpAction("test-2"), testEvent),
                 testActionState);
         actionStates.put(
                 ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent), testActionState);

@@ -67,7 +67,11 @@ public class AgentConfigOptions {
     public static final ConfigOption<Integer> FLUSS_ACTION_STATE_TABLE_BUCKETS =
             new ConfigOption<>("flussActionStateTableBuckets", Integer.class, 64);
 
-    /** The config parameter specifies the authentication protocol for Fluss client. */
+    /**
+     * The config parameter specifies the authentication protocol for Fluss client. Valid values:
+     * {@code "PLAINTEXT"} (default, no authentication) and {@code "SASL"} (SASL/PLAIN
+     * authentication). Value is case-insensitive.
+     */
     public static final ConfigOption<String> FLUSS_SECURITY_PROTOCOL =
             new ConfigOption<>("flussSecurityProtocol", String.class, "PLAINTEXT");
 

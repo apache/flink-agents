@@ -129,22 +129,27 @@ public class FlussActionStateStore implements ActionStateStore {
         // that each append is sent immediately without waiting for additional records to batch.
         flussConf.set(ConfigOptions.CLIENT_WRITER_BATCH_TIMEOUT, Duration.ZERO);
 
-        flussConf.setString(
-                CLIENT_SECURITY_PROTOCOL, agentConfiguration.get(FLUSS_SECURITY_PROTOCOL));
+        // Only set security/SASL parameters when the protocol requires authentication.
+        // When PLAINTEXT (the default), SASL parameters are semantically invalid and may
+        // cause the Fluss client to attempt an unwanted SASL handshake.
+        String securityProtocol = agentConfiguration.get(FLUSS_SECURITY_PROTOCOL);
+        flussConf.setString(CLIENT_SECURITY_PROTOCOL, securityProtocol);
+        if (!"PLAINTEXT".equalsIgnoreCase(securityProtocol)) {
+            flussConf.setString(
+                    CLIENT_SASL_MECHANISM, agentConfiguration.get(FLUSS_SASL_MECHANISM));
 
-        flussConf.setString(CLIENT_SASL_MECHANISM, agentConfiguration.get(FLUSS_SASL_MECHANISM));
-
-        String jaasConfig = agentConfiguration.get(FLUSS_SASL_JAAS_CONFIG);
-        if (jaasConfig != null) {
-            flussConf.setString(CLIENT_SASL_JAAS_CONFIG, jaasConfig);
-        }
-        String username = agentConfiguration.get(FLUSS_SASL_USERNAME);
-        if (username != null) {
-            flussConf.setString(CLIENT_SASL_JAAS_USERNAME, username);
-        }
-        String password = agentConfiguration.get(FLUSS_SASL_PASSWORD);
-        if (password != null) {
-            flussConf.setString(CLIENT_SASL_JAAS_PASSWORD, password);
+            String jaasConfig = agentConfiguration.get(FLUSS_SASL_JAAS_CONFIG);
+            if (jaasConfig != null) {
+                flussConf.setString(CLIENT_SASL_JAAS_CONFIG, jaasConfig);
+            }
+            String username = agentConfiguration.get(FLUSS_SASL_USERNAME);
+            if (username != null) {
+                flussConf.setString(CLIENT_SASL_JAAS_USERNAME, username);
+            }
+            String password = agentConfiguration.get(FLUSS_SASL_PASSWORD);
+            if (password != null) {
+                flussConf.setString(CLIENT_SASL_JAAS_PASSWORD, password);
+            }
         }
 
         this.connection = ConnectionFactory.createConnection(flussConf);
@@ -236,7 +241,39 @@ public class FlussActionStateStore implements ActionStateStore {
 
         actionStates.clear();
 
-        // Compute per-bucket start offsets from recovery markers
+        Map<Integer, Long> bucketStartOffsets = mergeRecoveryMarkerOffsets(recoveryMarkers);
+        if (bucketStartOffsets.isEmpty()) {
+            LOG.info("No valid bucket offsets in recovery markers, skipping state rebuild");
+            return;
+        }
+
+        Map<Integer, Long> bucketEndOffsets = getBucketEndOffsets();
+        Map<Integer, Long> bucketEarliestOffsets = getBucketEarliestOffsets();
+        LOG.debug(
+                "Rebuild window: startOffsets={}, earliestOffsets={}, endOffsets={}",
+                bucketStartOffsets,
+                bucketEarliestOffsets,
+                bucketEndOffsets);
+
+        try (LogScanner scanner = table.newScan().createLogScanner()) {
+            Map<Integer, Long> remainingBuckets =
+                    subscribeEffectiveOffsets(
+                            scanner, bucketStartOffsets, bucketEndOffsets, bucketEarliestOffsets);
+            LOG.debug("Subscribed buckets for rebuild: {}", remainingBuckets);
+
+            pollAndReplay(scanner, remainingBuckets);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to rebuild state from Fluss log table", e);
+        }
+
+        LOG.info("Completed rebuilding state, recovered {} states", actionStates.size());
+    }
+
+    /**
+     * Merges recovery markers into a per-bucket start offset map. For each bucket, the minimum
+     * offset across all markers is used to cover the widest recovery window.
+     */
+    private Map<Integer, Long> mergeRecoveryMarkerOffsets(List<Object> recoveryMarkers) {
         Map<Integer, Long> bucketStartOffsets = new HashMap<>();
         for (Object marker : recoveryMarkers) {
             if (marker instanceof Map) {
@@ -251,138 +288,103 @@ public class FlussActionStateStore implements ActionStateStore {
                         marker.getClass().getName());
             }
         }
-
-        if (bucketStartOffsets.isEmpty()) {
-            LOG.info("No valid bucket offsets in recovery markers, skipping state rebuild");
-            return;
-        }
-
-        // Capture the latest offsets as the stopping point for each bucket
-        Map<Integer, Long> bucketEndOffsets = getBucketEndOffsets();
-        // Capture the earliest available offsets so we can skip buckets whose data has
-        // been fully cleaned by log retention (earliestOffset >= endOffset).
-        Map<Integer, Long> bucketEarliestOffsets = getBucketEarliestOffsets();
-        LOG.debug(
-                "Rebuild window: startOffsets={}, earliestOffsets={}, endOffsets={}",
-                bucketStartOffsets,
-                bucketEarliestOffsets,
-                bucketEndOffsets);
-
-        try (LogScanner scanner = table.newScan().createLogScanner()) {
-            // Track which buckets still need to be consumed
-            Map<Integer, Long> remainingBuckets = new HashMap<>();
-            for (Map.Entry<Integer, Long> entry : bucketStartOffsets.entrySet()) {
-                int bucket = entry.getKey();
-                long startOffset = entry.getValue();
-                Long endOffset = bucketEndOffsets.get(bucket);
-
-                // Bucket referenced in recovery marker does not exist in current table
-                if (endOffset == null) {
-                    LOG.warn(
-                            "Bucket {} referenced in recovery marker does not exist "
-                                    + "in current table, state recovery for this bucket is skipped",
-                            bucket);
-                    continue;
-                }
-
-                // No new data since checkpoint (includes empty buckets that never had writes)
-                if (endOffset <= startOffset) {
-                    LOG.info(
-                            "Skipping bucket {} for rebuild: no new data "
-                                    + "(endOffset={} <= startOffset={})",
-                            bucket,
-                            endOffset,
-                            startOffset);
-                    continue;
-                }
-
-                // Check if retention has cleaned data in the recovery window
-                Long earliestOffset = bucketEarliestOffsets.get(bucket);
-                long effectiveStart = startOffset;
-                if (earliestOffset != null && earliestOffset > startOffset) {
-                    effectiveStart = earliestOffset;
-                    if (effectiveStart >= endOffset) {
-                        // All data in recovery window has been cleaned by retention
-                        LOG.warn(
-                                "Bucket {} state recovery failed: all data between offset {} "
-                                        + "and {} has been cleaned by log retention "
-                                        + "(earliest available: {})",
-                                bucket,
-                                startOffset,
-                                endOffset,
-                                earliestOffset);
-                        continue;
-                    }
-                    // Partial data loss: some state between startOffset and earliestOffset is gone
-                    LOG.warn(
-                            "Bucket {} partial state loss: data between offset {} and {} "
-                                    + "has been cleaned by log retention, "
-                                    + "recovering from offset {} instead",
-                            bucket,
-                            startOffset,
-                            earliestOffset,
-                            effectiveStart);
-                }
-
-                scanner.subscribe(bucket, effectiveStart);
-                remainingBuckets.put(bucket, endOffset);
-            }
-            LOG.debug("Subscribed buckets for rebuild: {}", remainingBuckets);
-
-            while (!remainingBuckets.isEmpty()) {
-
-                ScanRecords records = scanner.poll(POLL_TIMEOUT);
-                for (TableBucket bucket : records.buckets()) {
-                    Long endOffset = remainingBuckets.get(bucket.getBucket());
-                    if (endOffset == null) {
-                        continue;
-                    }
-                    // Track the highest offset seen in this batch (including skipped records
-                    // beyond endOffset) so that we can detect when the bucket has been fully
-                    // consumed even if the last records are past our target window.
-                    long lastSeenOffset = -1;
-                    for (ScanRecord record : records.records(bucket)) {
-                        lastSeenOffset = record.logOffset();
-                        if (record.logOffset() >= endOffset) {
-                            continue;
-                        }
-                        InternalRow row = record.getRow();
-                        String stateKey = row.getString(COL_STATE_KEY).toString();
-                        byte[] payload = row.getBytes(COL_STATE_PAYLOAD);
-                        try {
-                            ActionState state = ActionStateSerde.deserialize(payload);
-                            actionStates.put(stateKey, state);
-                        } catch (Exception e) {
-                            LOG.warn(
-                                    "Failed to deserialize action state for key: {}, skipping",
-                                    stateKey,
-                                    e);
-                        }
-                    }
-                    // Remove bucket if the highest seen offset has reached or passed the end
-                    if (lastSeenOffset + 1 >= endOffset) {
-                        remainingBuckets.remove(bucket.getBucket());
-                    }
-                }
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to rebuild state from Fluss log table", e);
-        }
-
-        LOG.info("Completed rebuilding state, recovered {} states", actionStates.size());
+        return bucketStartOffsets;
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * Validates effective offsets for each bucket and subscribes the scanner. Buckets with no new
+     * data are skipped; buckets with data loss (retention cleaned the recovery window) cause an
+     * immediate failure.
+     *
+     * @return a map of bucket-id to end-offset for buckets that need to be scanned
+     */
+    private Map<Integer, Long> subscribeEffectiveOffsets(
+            LogScanner scanner,
+            Map<Integer, Long> bucketStartOffsets,
+            Map<Integer, Long> bucketEndOffsets,
+            Map<Integer, Long> bucketEarliestOffsets) {
+        Map<Integer, Long> remainingBuckets = new HashMap<>();
+        for (Map.Entry<Integer, Long> entry : bucketStartOffsets.entrySet()) {
+            int bucket = entry.getKey();
+            long startOffset = entry.getValue();
+            long endOffset = bucketEndOffsets.get(bucket);
+            long earliestOffset = bucketEarliestOffsets.get(bucket);
+
+            // No new data since checkpoint (includes empty buckets that never had writes:
+            // endOffset=0, startOffset=0)
+            if (endOffset <= startOffset) {
+                LOG.info(
+                        "Skipping bucket {} for rebuild: no new data "
+                                + "(endOffset={} <= startOffset={})",
+                        bucket,
+                        endOffset,
+                        startOffset);
+                continue;
+            }
+
+            // Retention has cleaned data in the recovery window — data loss
+            if (earliestOffset > startOffset) {
+                throw new RuntimeException(
+                        String.format(
+                                "Data loss detected for bucket %s: "
+                                        + "retention has cleaned data in the recovery window "
+                                        + "(earliestOffset=%d > startOffset=%d). "
+                                        + "Cannot recover state safely.",
+                                bucket, earliestOffset, startOffset));
+            }
+
+            scanner.subscribe(bucket, startOffset);
+            remainingBuckets.put(bucket, endOffset);
+        }
+        return remainingBuckets;
+    }
+
+    /**
+     * Polls the scanner and replays deserialized action states until all subscribed buckets have
+     * been fully consumed up to their end offsets.
+     */
+    private void pollAndReplay(LogScanner scanner, Map<Integer, Long> remainingBuckets) {
+        while (!remainingBuckets.isEmpty()) {
+            ScanRecords records = scanner.poll(POLL_TIMEOUT);
+            for (TableBucket bucket : records.buckets()) {
+                Long endOffset = remainingBuckets.get(bucket.getBucket());
+                long lastSeenOffset = replayRecords(records.records(bucket), endOffset);
+                if (lastSeenOffset + 1 >= endOffset) {
+                    remainingBuckets.remove(bucket.getBucket());
+                }
+            }
+        }
+    }
+
+    /**
+     * Replays records from a single bucket, deserializing and applying each action state. Returns
+     * the highest log offset seen (including records past endOffset), used to detect bucket
+     * completion.
+     */
+    private long replayRecords(Iterable<ScanRecord> records, long endOffset) {
+        long lastSeenOffset = -1;
+        for (ScanRecord record : records) {
+            lastSeenOffset = record.logOffset();
+            if (record.logOffset() >= endOffset) {
+                break;
+            }
+            InternalRow row = record.getRow();
+            String stateKey = row.getString(COL_STATE_KEY).toString();
+            byte[] payload = row.getBytes(COL_STATE_PAYLOAD);
+            ActionState state = ActionStateSerde.deserialize(payload);
+            actionStates.put(stateKey, state);
+        }
+        return lastSeenOffset;
+    }
+
     private Map<Integer, Long> getBucketEndOffsets() {
         return getBucketOffsets(new OffsetSpec.LatestSpec());
     }
 
-    @SuppressWarnings("unchecked")
     private Map<Integer, Long> getBucketEarliestOffsets() {
         return getBucketOffsets(new OffsetSpec.EarliestSpec());
     }
 
-    @SuppressWarnings("unchecked")
     private Map<Integer, Long> getBucketOffsets(OffsetSpec offsetSpec) {
         int numBuckets = table.getTableInfo().getNumBuckets();
         try (Admin admin = connection.getAdmin()) {
@@ -390,8 +392,7 @@ public class FlussActionStateStore implements ActionStateStore {
             for (int b = 0; b < numBuckets; b++) {
                 buckets.add(b);
             }
-            return (Map<Integer, Long>)
-                    admin.listOffsets(tablePath, buckets, offsetSpec).all().get();
+            return admin.listOffsets(tablePath, buckets, offsetSpec).all().get();
         } catch (Exception e) {
             throw new RuntimeException("Failed to get offsets for Fluss table: " + tablePath, e);
         }
@@ -437,14 +438,11 @@ public class FlussActionStateStore implements ActionStateStore {
 
     @Override
     public void close() throws Exception {
-        try {
-            if (table != null) {
-                table.close();
-            }
-        } finally {
-            if (connection != null) {
-                connection.close();
-            }
+        if (table != null) {
+            table.close();
+        }
+        if (connection != null) {
+            connection.close();
         }
     }
 

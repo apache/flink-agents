@@ -26,17 +26,17 @@ import org.apache.flink.agents.plan.actions.Action;
 import java.util.List;
 
 /** A no-op {@link Action} for use in action state store tests. */
-public class TestAction extends Action {
+public class NoOpAction extends Action {
 
     public static void doNothing(Event event, RunnerContext context) {
         // No operation
     }
 
-    public TestAction(String name) throws Exception {
+    public NoOpAction(String name) throws Exception {
         super(
                 name,
                 new JavaFunction(
-                        TestAction.class.getName(),
+                        NoOpAction.class.getName(),
                         "doNothing",
                         new Class[] {Event.class, RunnerContext.class}),
                 List.of(InputEvent.class.getName()));

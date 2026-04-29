@@ -27,11 +27,15 @@ import org.apache.fluss.row.InternalRow;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -60,7 +64,7 @@ public class FlussActionStateStoreTest {
                 new FlussActionStateStore(
                         actionStates, mock(Connection.class), mock(Table.class), mockWriter);
 
-        testAction = new TestAction("test-action");
+        testAction = new NoOpAction("test-action");
         testEvent = new InputEvent("test data");
         testActionState = new ActionState(testEvent);
     }
@@ -77,86 +81,93 @@ public class FlussActionStateStoreTest {
     }
 
     @Test
-    void testGetNonExistentActionState() throws Exception {
-        actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
-        actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
-        actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent), testActionState);
-        actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 4L, testAction, testEvent), testActionState);
+    void testPutActionStateWriterFailure() throws Exception {
+        when(mockWriter.append(any(InternalRow.class)))
+                .thenReturn(CompletableFuture.failedFuture(new IOException("connection lost")));
 
-        // Request a key with a different action triggers divergence cleanup
-        store.get(TEST_KEY, 2L, new TestAction("test-1"), testEvent);
+        FlussActionStateStore failStore =
+                new FlussActionStateStore(
+                        actionStates, mock(Connection.class), mock(Table.class), mockWriter);
 
-        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
-        assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
-        assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNull();
-        assertThat(store.get(TEST_KEY, 4L, testAction, testEvent)).isNull();
+        assertThatThrownBy(
+                        () -> failStore.put(TEST_KEY, 1L, testAction, testEvent, testActionState))
+                .isInstanceOf(Exception.class);
+
+        // Cache should NOT be updated on write failure
+        String stateKey = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
+        assertThat(actionStates).doesNotContainKey(stateKey);
     }
 
     @Test
-    void testGetActionStateWithDiverge() throws Exception {
+    void testGetTriggersDivergenceCleanup() throws Exception {
         actionStates.put(
                 ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
         actionStates.put(
                 ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
         // diverge: same key+seqNum, different action
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 2L, new TestAction("test-2"), testEvent),
+                ActionStateUtil.generateKey(TEST_KEY, 2L, new NoOpAction("test-2"), testEvent),
                 testActionState);
         actionStates.put(
                 ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent), testActionState);
-        actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 4L, testAction, testEvent), testActionState);
 
-        store.get(TEST_KEY, 2L, testAction, testEvent);
+        store.get(TEST_KEY, 2L, new NoOpAction("test-1"), testEvent);
 
+        // Divergence detected at seqNum 2 → removeIf clears seqNum > 2
         assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
         assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
         assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNull();
-        assertThat(store.get(TEST_KEY, 4L, testAction, testEvent)).isNull();
     }
 
+    // ==================== rebuildState tests ====================
+
     @Test
-    void testPruneState() throws Exception {
+    void testRebuildStateSkipsOnEmptyMarkers() throws Exception {
         actionStates.put(
                 ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
-        actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
-        actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent), testActionState);
 
-        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
-        assertThat(store.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
-        assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
+        store.rebuildState(Collections.emptyList());
 
-        // Prune states up to sequence number 2
-        store.pruneState(TEST_KEY, 2L);
-
-        assertThat(
-                        actionStates.get(
-                                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent)))
-                .isNull();
-        assertThat(
-                        actionStates.get(
-                                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent)))
-                .isNull();
-        assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNotNull();
+        // Empty markers → rebuild is skipped, cache is NOT cleared
+        assertThat(actionStates).isNotEmpty();
     }
 
     @Test
-    void testActionStateUpdates() throws Exception {
-        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
+    void testRebuildStateSkipsOnNonMapMarker() throws Exception {
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
 
-        // Update the same key with a new state
-        InputEvent updatedEvent = new InputEvent("updated data");
-        ActionState updatedState = new ActionState(updatedEvent);
-        store.put(TEST_KEY, 1L, testAction, testEvent, updatedState);
+        // A non-Map marker is ignored, resulting in empty bucketStartOffsets.
+        // Note: rebuildState clears the cache before checking offsets,
+        // so the cache will be empty even though no actual rebuild occurs.
+        store.rebuildState(List.of("invalid-marker"));
 
-        ActionState retrieved = store.get(TEST_KEY, 1L, testAction, testEvent);
-        assertThat(retrieved).isNotNull();
-        assertThat(retrieved.getTaskEvent()).isEqualTo(updatedEvent);
+        assertThat(actionStates).isEmpty();
+    }
+
+    @Test
+    void testRebuildStateSkipsOnEmptyBucketOffsets() throws Exception {
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+
+        // Empty map marker → no valid bucket offsets.
+        // Same as above: cache is cleared before the early-return check.
+        store.rebuildState(List.of(Map.of()));
+
+        assertThat(actionStates).isEmpty();
+    }
+
+    @Test
+    void testCloseClosesResources() throws Exception {
+        Table mockTable = mock(Table.class);
+        Connection mockConnection = mock(Connection.class);
+
+        FlussActionStateStore closeableStore =
+                new FlussActionStateStore(actionStates, mockConnection, mockTable, mockWriter);
+
+        closeableStore.close();
+
+        verify(mockTable).close();
+        verify(mockConnection).close();
     }
 }

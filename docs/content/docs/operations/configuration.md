@@ -167,7 +167,7 @@ Here are the configuration options for Fluss-based Action State Store.
 | `flussActionStateDatabase`   | "flink_agents"   | String  | The Fluss database name for storing action state.                                        |
 | `flussActionStateTable`      | "action_states"  | String  | The Fluss table name for storing action state.                                           |
 | `flussActionStateTableBuckets` | 64             | Integer | The number of buckets for the Fluss action state table.                                  |
-| `flussSecurityProtocol`      | "PLAINTEXT"      | String  | The authentication protocol for Fluss client (e.g., `PLAINTEXT`, `SASL_PLAIN`).          |
+| `flussSecurityProtocol`      | "PLAINTEXT"      | String  | The authentication protocol for Fluss client. Valid values: `PLAINTEXT` (default, no authentication), `SASL` (SASL/PLAIN authentication). |
 | `flussSaslMechanism`         | "PLAIN"          | String  | The SASL mechanism for Fluss authentication.                                             |
 | `flussSaslJaasConfig`        | (none)           | String  | The JAAS configuration string for Fluss SASL authentication.                             |
 | `flussSaslUsername`          | (none)           | String  | The username for Fluss SASL authentication.                                              |

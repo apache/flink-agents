@@ -63,7 +63,7 @@ public class FlussActionStateStoreIT {
         // Wait for table to be ready in the cluster
         waitForTableReady();
 
-        testAction = new TestAction("test-action");
+        testAction = new NoOpAction("test-action");
         testEvent = new InputEvent("test-data");
     }
 
@@ -235,6 +235,65 @@ public class FlussActionStateStoreIT {
             assertThat(recoveredStore.get(TEST_KEY, 2L, testAction, testEvent)).isNull();
         } finally {
             recoveredStore.close();
+        }
+    }
+
+    // ==================== Multi-bucket ====================
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testMultiBucketRecovery() throws Exception {
+        // Use a separate database/table with 4 buckets to test multi-bucket scenario
+        String multiDb = "test_flink_agents_multi";
+        String multiTable = "action_state_multi";
+        AgentConfiguration multiConfig = createAgentConfiguration(multiDb, multiTable, 4);
+        FlussActionStateStore multiStore = new FlussActionStateStore(multiConfig);
+        try {
+            waitForTableReady(multiDb, multiTable);
+
+            // Write states with different keys (likely distributed across buckets)
+            Action action1 = new NoOpAction("multi-action");
+            for (int i = 0; i < 10; i++) {
+                String key = "multi-key-" + i;
+                multiStore.put(key, 1L, action1, testEvent, new ActionState(testEvent));
+            }
+
+            // Verify all states are retrievable
+            for (int i = 0; i < 10; i++) {
+                String key = "multi-key-" + i;
+                assertThat(multiStore.get(key, 1L, action1, testEvent)).isNotNull();
+            }
+
+            // Recovery marker should contain all 4 buckets
+            Object marker = multiStore.getRecoveryMarker();
+            assertThat(marker).isInstanceOf(Map.class);
+            Map<Integer, Long> bucketOffsets = (Map<Integer, Long>) marker;
+            assertThat(bucketOffsets).hasSize(4);
+
+            // Write more data after marker
+            for (int i = 10; i < 15; i++) {
+                String key = "multi-key-" + i;
+                multiStore.put(key, 1L, action1, testEvent, new ActionState(testEvent));
+            }
+            multiStore.close();
+
+            // Recover into a new store instance
+            FlussActionStateStore recoveredStore = new FlussActionStateStore(multiConfig);
+            try {
+                recoveredStore.rebuildState(List.of(marker));
+
+                // Data written after marker should be recovered
+                for (int i = 10; i < 15; i++) {
+                    String key = "multi-key-" + i;
+                    assertThat(recoveredStore.get(key, 1L, action1, testEvent)).isNotNull();
+                }
+            } finally {
+                recoveredStore.close();
+            }
+        } finally {
+            multiStore.close();
+            // Prevent double-close in tearDown
+            store = null;
         }
     }
 

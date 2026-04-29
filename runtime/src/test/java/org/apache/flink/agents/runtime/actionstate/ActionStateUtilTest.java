@@ -35,7 +35,7 @@ public class ActionStateUtilTest {
     public void testGenerateKeyConsistency() throws Exception {
         // Create test data
         Object key = "consistency-test";
-        Action action = new TestAction("consistency-action");
+        Action action = new NoOpAction("consistency-action");
         InputEvent inputEvent = new InputEvent("same-input");
         InputEvent inputEvent2 = new InputEvent("same-input");
 
@@ -51,7 +51,7 @@ public class ActionStateUtilTest {
     public void testGenerateKeyDifferentInputs() throws Exception {
         // Create test data
         Object key = "diff-test";
-        Action action = new TestAction("diff-action");
+        Action action = new NoOpAction("diff-action");
         InputEvent inputEvent1 = new InputEvent("input1");
         InputEvent inputEvent2 = new InputEvent("input2");
 
@@ -65,7 +65,7 @@ public class ActionStateUtilTest {
 
     @Test
     public void testGenerateKeyWithNullKey() throws Exception {
-        Action action = new TestAction("test-action");
+        Action action = new NoOpAction("test-action");
         InputEvent inputEvent = new InputEvent("test-input");
 
         assertThrows(
@@ -90,7 +90,7 @@ public class ActionStateUtilTest {
     @Test
     public void testGenerateKeyWithNullEvent() throws Exception {
         Object key = "test-key";
-        Action action = new TestAction("test-action");
+        Action action = new NoOpAction("test-action");
 
         assertThrows(
                 NullPointerException.class,
@@ -103,7 +103,7 @@ public class ActionStateUtilTest {
     public void testParseKeyValidKey() throws Exception {
         // Create test data and generate a key
         Object key = "test-key";
-        Action action = new TestAction("test-action");
+        Action action = new NoOpAction("test-action");
         InputEvent inputEvent = new InputEvent("test-input");
         long seqNum = 123;
 
@@ -125,7 +125,7 @@ public class ActionStateUtilTest {
     public void testParseKeyRoundTrip() throws Exception {
         // Test that generate -> parse -> values match original inputs
         Object originalKey = "round-trip-test";
-        Action action = new TestAction("round-trip-action");
+        Action action = new NoOpAction("round-trip-action");
         InputEvent inputEvent = new InputEvent("round-trip-input");
         long seqNum = 456;
 
@@ -173,7 +173,7 @@ public class ActionStateUtilTest {
     public void testParseKeyWithSpecialCharacters() throws Exception {
         // Test with keys containing special characters (but not the separator)
         Object key = "key-with-special@chars#123";
-        Action action = new TestAction("action-with-special@chars");
+        Action action = new NoOpAction("action-with-special@chars");
         InputEvent inputEvent = new InputEvent("input-with-special@chars");
         long seqNum = 789;
 
@@ -187,7 +187,7 @@ public class ActionStateUtilTest {
     @Test
     public void testParseKeyConsistencyWithDifferentKeys() throws Exception {
         // Generate keys with different inputs and verify parsing consistency
-        Action action = new TestAction("consistency-action");
+        Action action = new NoOpAction("consistency-action");
         InputEvent inputEvent = new InputEvent("consistency-input");
 
         String key1 = ActionStateUtil.generateKey("key1", 100, action, inputEvent);
