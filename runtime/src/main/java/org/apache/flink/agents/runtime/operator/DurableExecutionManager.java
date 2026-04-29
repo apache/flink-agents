@@ -24,7 +24,6 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
-import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.ActionStatePersister;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.annotation.VisibleForTesting;
@@ -57,15 +56,11 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
 
     private final Map<ActionTask, RunnerContextImpl.DurableExecutionContext>
             actionTaskDurableContexts;
-    private final Map<ActionTask, ContinuationContext> continuationContexts;
-    private final Map<ActionTask, String> pythonAwaitableRefs;
 
     DurableExecutionManager(@Nullable ActionStateStore actionStateStore) {
         this.actionStateStore = actionStateStore;
         this.checkpointIdToSeqNums = new HashMap<>();
         this.actionTaskDurableContexts = new HashMap<>();
-        this.continuationContexts = new HashMap<>();
-        this.pythonAwaitableRefs = new HashMap<>();
     }
 
     void maybeInitActionStateStore(AgentConfiguration config) {
@@ -224,7 +219,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         checkpointIdToSeqNums.put(checkpointId, seqNums);
     }
 
-    // --- Context map accessors ---
+    // --- Durable execution context map accessors ---
 
     RunnerContextImpl.DurableExecutionContext getDurableContext(ActionTask actionTask) {
         return actionTaskDurableContexts.get(actionTask);
@@ -239,36 +234,8 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         actionTaskDurableContexts.remove(actionTask);
     }
 
-    ContinuationContext getContinuationContext(ActionTask actionTask) {
-        return continuationContexts.get(actionTask);
-    }
-
-    void putContinuationContext(ActionTask actionTask, ContinuationContext context) {
-        continuationContexts.put(actionTask, context);
-    }
-
-    void removeContinuationContext(ActionTask actionTask) {
-        continuationContexts.remove(actionTask);
-    }
-
-    String getPythonAwaitableRef(ActionTask actionTask) {
-        return pythonAwaitableRefs.get(actionTask);
-    }
-
-    void putPythonAwaitableRef(ActionTask actionTask, String ref) {
-        pythonAwaitableRefs.put(actionTask, ref);
-    }
-
-    void removePythonAwaitableRef(ActionTask actionTask) {
-        pythonAwaitableRefs.remove(actionTask);
-    }
-
     boolean hasDurableContext(ActionTask actionTask) {
         return actionTaskDurableContexts.containsKey(actionTask);
-    }
-
-    boolean hasContinuationContext(ActionTask actionTask) {
-        return continuationContexts.containsKey(actionTask);
     }
 
     @VisibleForTesting

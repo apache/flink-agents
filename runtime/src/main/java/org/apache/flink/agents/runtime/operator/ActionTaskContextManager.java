@@ -39,11 +39,15 @@ class ActionTaskContextManager implements AutoCloseable {
     private RunnerContextImpl runnerContext;
 
     private final Map<ActionTask, RunnerContextImpl.MemoryContext> actionTaskMemoryContexts;
+    private final Map<ActionTask, ContinuationContext> continuationContexts;
+    private final Map<ActionTask, String> pythonAwaitableRefs;
 
     private ContinuationActionExecutor continuationActionExecutor;
 
     ActionTaskContextManager(int numAsyncThreads) {
         this.actionTaskMemoryContexts = new HashMap<>();
+        this.continuationContexts = new HashMap<>();
+        this.pythonAwaitableRefs = new HashMap<>();
         this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
     }
 
@@ -90,8 +94,7 @@ class ActionTaskContextManager implements AutoCloseable {
             Runnable mailboxThreadChecker,
             MapState<String, MemoryObjectImpl.MemoryItem> sensoryMemState,
             MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState,
-            PythonRunnerContextImpl pythonRunnerContext,
-            DurableExecutionManager durableExecManager) {
+            PythonRunnerContextImpl pythonRunnerContext) {
         RunnerContextImpl context;
         if (actionTask.action.getExec() instanceof JavaFunction) {
             context =
@@ -133,10 +136,10 @@ class ActionTaskContextManager implements AutoCloseable {
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;
-            if (durableExecManager.hasContinuationContext(actionTask)) {
+            if (this.hasContinuationContext(actionTask)) {
                 // action task for async execution action, should retrieve intermediate results
                 // from map.
-                continuationContext = durableExecManager.getContinuationContext(actionTask);
+                continuationContext = this.getContinuationContext(actionTask);
             } else {
                 continuationContext = new ContinuationContext();
             }
@@ -145,7 +148,7 @@ class ActionTaskContextManager implements AutoCloseable {
         if (context instanceof PythonRunnerContextImpl) {
             // Get the awaitable ref from the transient map. After checkpoint restore, this will
             // be null, signaling that the awaitable was lost and needs re-execution.
-            String awaitableRef = durableExecManager.getPythonAwaitableRef(actionTask);
+            String awaitableRef = this.getPythonAwaitableRef(actionTask);
             ((PythonRunnerContextImpl) context).setPythonAwaitableRef(awaitableRef);
         }
         actionTask.setRunnerContext(context);
@@ -176,7 +179,7 @@ class ActionTaskContextManager implements AutoCloseable {
             durableExecManager.putDurableContext(toTask, durableContext);
         }
         if (fromTask.getRunnerContext() instanceof JavaRunnerContextImpl) {
-            durableExecManager.putContinuationContext(
+            this.putContinuationContext(
                     toTask,
                     ((JavaRunnerContextImpl) fromTask.getRunnerContext()).getContinuationContext());
         }
@@ -184,9 +187,37 @@ class ActionTaskContextManager implements AutoCloseable {
             String awaitableRef =
                     ((PythonRunnerContextImpl) fromTask.getRunnerContext()).getPythonAwaitableRef();
             if (awaitableRef != null) {
-                durableExecManager.putPythonAwaitableRef(toTask, awaitableRef);
+                this.putPythonAwaitableRef(toTask, awaitableRef);
             }
         }
+    }
+
+    ContinuationContext getContinuationContext(ActionTask actionTask) {
+        return continuationContexts.get(actionTask);
+    }
+
+    void putContinuationContext(ActionTask actionTask, ContinuationContext context) {
+        continuationContexts.put(actionTask, context);
+    }
+
+    void removeContinuationContext(ActionTask actionTask) {
+        continuationContexts.remove(actionTask);
+    }
+
+    boolean hasContinuationContext(ActionTask actionTask) {
+        return continuationContexts.containsKey(actionTask);
+    }
+
+    String getPythonAwaitableRef(ActionTask actionTask) {
+        return pythonAwaitableRefs.get(actionTask);
+    }
+
+    void putPythonAwaitableRef(ActionTask actionTask, String ref) {
+        pythonAwaitableRefs.put(actionTask, ref);
+    }
+
+    void removePythonAwaitableRef(ActionTask actionTask) {
+        pythonAwaitableRefs.remove(actionTask);
     }
 
     @Override

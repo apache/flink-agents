@@ -295,8 +295,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 this::checkMailboxThread,
                 stateManager.getSensoryMemState(),
                 stateManager.getShortTermMemState(),
-                pythonBridge.getPythonRunnerContext(),
-                durableExecManager);
+                pythonBridge.getPythonRunnerContext());
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
@@ -352,8 +351,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // finished.
             contextManager.removeMemoryContext(actionTask);
             durableExecManager.removeDurableContext(actionTask);
-            durableExecManager.removeContinuationContext(actionTask);
-            durableExecManager.removePythonAwaitableRef(actionTask);
+            contextManager.removeContinuationContext(actionTask);
+            contextManager.removePythonAwaitableRef(actionTask);
             durableExecManager.maybePersistTaskResult(
                     key,
                     sequenceNumber,
