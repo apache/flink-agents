@@ -19,7 +19,6 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
@@ -33,14 +32,12 @@ import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.runtime.state.KeyedStateBackend;
 import org.apache.flink.runtime.state.KeyedStateFunction;
 import org.apache.flink.runtime.state.OperatorStateBackend;
-import org.apache.flink.runtime.state.StateInitializationContext;
 import org.apache.flink.runtime.state.VoidNamespace;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 
 class OperatorStateManager {
@@ -54,7 +51,6 @@ class OperatorStateManager {
     private ValueState<Long> sequenceNumberKState;
     private MapState<String, MemoryObjectImpl.MemoryItem> sensoryMemState;
     private MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState;
-    private String jobIdentifier;
 
     OperatorStateManager() {}
 
@@ -101,22 +97,6 @@ class OperatorStateManager {
                 operatorStateBackend.getUnionListState(
                         new ListStateDescriptor<>(
                                 "currentProcessingKeys", TypeInformation.of(Object.class)));
-    }
-
-    void initJobIdentifier(
-            StateInitializationContext context,
-            AgentPlan agentPlan,
-            org.apache.flink.api.common.functions.RuntimeContext runtimeContext)
-            throws Exception {
-        // Get job identifier from user configuration.
-        // If not configured, get from state.
-        jobIdentifier = agentPlan.getConfig().get(JOB_IDENTIFIER);
-        if (jobIdentifier == null) {
-            String initialJobIdentifier = runtimeContext.getJobInfo().getJobId().toString();
-            jobIdentifier =
-                    StateUtils.getSingleValueFromState(
-                            context, "identifier_state", String.class, initialJobIdentifier);
-        }
     }
 
     void initOrIncSequenceNumber() throws Exception {
@@ -175,10 +155,6 @@ class OperatorStateManager {
 
     MapState<String, MemoryObjectImpl.MemoryItem> getShortTermMemState() {
         return shortTermMemState;
-    }
-
-    String getJobIdentifier() {
-        return jobIdentifier;
     }
 
     KeyGroupRange getCurrentSubtaskKeyGroupRange(

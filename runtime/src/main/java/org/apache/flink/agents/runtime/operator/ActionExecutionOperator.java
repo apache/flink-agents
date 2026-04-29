@@ -58,6 +58,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -80,8 +81,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final AgentPlan agentPlan;
 
     private transient ResourceCache resourceCache;
-
-    private final Boolean inputIsJava;
 
     private transient PythonBridgeManager pythonBridge;
 
@@ -106,6 +105,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient OperatorStateManager stateManager;
 
+    private transient String jobIdentifier;
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
@@ -113,7 +114,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             MailboxExecutor mailboxExecutor,
             ActionStateStore actionStateStore) {
         this.agentPlan = agentPlan;
-        this.inputIsJava = inputIsJava;
         this.processingTimeService = processingTimeService;
         this.mailboxExecutor = mailboxExecutor;
         this.eventRouter = new EventRouter<>(agentPlan, inputIsJava);
@@ -157,7 +157,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 getRuntimeContext().getJobInfo().getJobId(),
                 metricGroup,
                 this::checkMailboxThread,
-                stateManager.getJobIdentifier());
+                jobIdentifier);
 
         // init context manager for runner context creation and memory contexts
         contextManager =
@@ -291,7 +291,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 agentPlan,
                 resourceCache,
                 metricGroup,
-                stateManager.getJobIdentifier(),
+                jobIdentifier,
                 this::checkMailboxThread,
                 stateManager.getSensoryMemState(),
                 stateManager.getShortTermMemState(),
@@ -464,7 +464,19 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         durableExecManager.handleRecovery(getOperatorStateBackend());
 
         stateManager = new OperatorStateManager();
-        stateManager.initJobIdentifier(context, agentPlan, getRuntimeContext());
+
+        // Resolve the agent's stable job identifier:
+        //  - If the user set it via AgentConfigOptions.JOB_IDENTIFIER, use that.
+        //  - Otherwise fall back to the current Flink JobID, cached in operator
+        //    state so the value remains stable across job restarts (Flink
+        //    generates a fresh JobID on each restart).
+        jobIdentifier = agentPlan.getConfig().get(JOB_IDENTIFIER);
+        if (jobIdentifier == null) {
+            String initialJobIdentifier = getRuntimeContext().getJobInfo().getJobId().toString();
+            jobIdentifier =
+                    StateUtils.getSingleValueFromState(
+                            context, "identifier_state", String.class, initialJobIdentifier);
+        }
     }
 
     @Override
