@@ -351,6 +351,7 @@ public class FlussActionStateStore implements ActionStateStore {
                 long lastSeenOffset = replayRecords(records.records(bucket), endOffset);
                 if (lastSeenOffset + 1 >= endOffset) {
                     remainingBuckets.remove(bucket.getBucket());
+                    scanner.unsubscribe(bucket.getBucket());
                 }
             }
         }
