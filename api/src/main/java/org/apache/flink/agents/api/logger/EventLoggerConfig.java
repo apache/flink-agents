@@ -37,20 +37,20 @@ import java.util.Objects;
  * <pre>{@code
  * // Enable default file-based event logging with custom properties
  * EventLoggerConfig fileConfig = EventLoggerConfig.builder()
- *     .loggerType("file")
+ *     .loggerType(LoggerType.FILE)
  *     .property("baseLogDir", "/tmp/logs")
  *     .build();
  * }</pre>
  */
 public final class EventLoggerConfig {
 
-    private final String loggerType;
+    private final LoggerType loggerType;
     private final EventFilter eventFilter;
     private final Map<String, Object> properties;
 
     /** Private constructor - use {@link #builder()} to create instances. */
     private EventLoggerConfig(
-            String loggerType, EventFilter eventFilter, Map<String, Object> properties) {
+            LoggerType loggerType, EventFilter eventFilter, Map<String, Object> properties) {
         this.loggerType = Objects.requireNonNull(loggerType, "Logger type cannot be null");
         this.eventFilter = eventFilter == null ? EventFilter.ACCEPT_ALL : eventFilter;
         this.properties = Collections.unmodifiableMap(new HashMap<>(properties));
@@ -66,19 +66,20 @@ public final class EventLoggerConfig {
     }
 
     /**
-     * Gets the logger type identifier.
+     * Gets the logger type.
      *
-     * <p>This string identifier is used to determine which EventLogger implementation should be
-     * instantiated. Built-in logger types include:
+     * <p>The {@link LoggerType} determines which EventLogger implementation should be instantiated.
+     * Built-in types include:
      *
      * <ul>
-     *   <li>"slf4j" - SLF4J-based event logger (default), outputs to Flink Web UI via log4j2
-     *   <li>"file" - File-based event logger
+     *   <li>{@link LoggerType#SLF4J} - SLF4J-based event logger (default), outputs to Flink Web UI
+     *       via log4j2
+     *   <li>{@link LoggerType#FILE} - File-based event logger
      * </ul>
      *
-     * @return the logger type identifier (e.g., "file", "database", "kafka")
+     * @return the logger type
      */
-    public String getLoggerType() {
+    public LoggerType getLoggerType() {
         return loggerType;
     }
 
@@ -143,24 +144,24 @@ public final class EventLoggerConfig {
      * validation and sensible defaults.
      */
     public static final class Builder {
-        private String loggerType = "slf4j"; // Default to SLF4J logger
+        private LoggerType loggerType = LoggerType.SLF4J; // Default to SLF4J logger
         private EventFilter eventFilter = EventFilter.ACCEPT_ALL; // Default to accept all
         private final Map<String, Object> properties = new HashMap<>();
 
         private Builder() {}
 
         /**
-         * Sets the logger type identifier.
+         * Sets the logger type.
          *
-         * @param loggerType the logger type (e.g., "file", "database", "kafka")
+         * @param loggerType the logger type
          * @return this Builder instance for method chaining
-         * @throws IllegalArgumentException if loggerType is null or empty
+         * @throws IllegalArgumentException if loggerType is null
          */
-        public Builder loggerType(String loggerType) {
-            if (loggerType == null || loggerType.trim().isEmpty()) {
-                throw new IllegalArgumentException("Logger type cannot be null or empty");
+        public Builder loggerType(LoggerType loggerType) {
+            if (loggerType == null) {
+                throw new IllegalArgumentException("Logger type cannot be null");
             }
-            this.loggerType = loggerType.trim();
+            this.loggerType = loggerType;
             return this;
         }
 

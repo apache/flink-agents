@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.EventFilter;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
@@ -60,8 +61,6 @@ import org.slf4j.LoggerFactory;
  * its own subtask context fields.
  */
 public class Slf4jEventLogger implements EventLogger {
-    public static final String PRETTY_PRINT_PROPERTY_KEY = "prettyPrint";
-
     /** Dedicated logger name for event log output. */
     public static final String EVENT_LOGGER_NAME = "org.apache.flink.agents.EventLog";
 
@@ -85,7 +84,9 @@ public class Slf4jEventLogger implements EventLogger {
     @Override
     public void open(EventLoggerOpenParams params) throws Exception {
         prettyPrint =
-                (Boolean) config.getProperties().getOrDefault(PRETTY_PRINT_PROPERTY_KEY, true);
+                (Boolean)
+                        config.getProperties()
+                                .getOrDefault(AgentConfigOptions.PRETTY_PRINT.getKey(), true);
         jobId = params.getRuntimeContext().getJobInfo().getJobId().toString();
         taskName = params.getRuntimeContext().getTaskInfo().getTaskName();
         subtaskId = params.getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();

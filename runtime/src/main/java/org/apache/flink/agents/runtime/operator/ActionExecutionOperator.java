@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerFactory;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -47,7 +48,6 @@ import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
-import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
@@ -104,6 +104,7 @@ import java.util.Optional;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LOGGER_TYPE;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.PRETTY_PRINT;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
@@ -1126,13 +1127,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private EventLogger createEventLogger(AgentPlan agentPlan) {
         EventLoggerConfig.Builder loggerConfigBuilder = EventLoggerConfig.builder();
+        LoggerType loggerType = LoggerType.fromType(agentPlan.getConfig().get(EVENT_LOGGER_TYPE));
+        loggerConfigBuilder.loggerType(loggerType);
+
         String baseLogDir = agentPlan.getConfig().get(BASE_LOG_DIR);
         if (baseLogDir != null && !baseLogDir.trim().isEmpty()) {
-            loggerConfigBuilder.loggerType("file");
-            loggerConfigBuilder.property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, baseLogDir);
+            loggerConfigBuilder.loggerType(LoggerType.FILE);
+            loggerConfigBuilder.property(BASE_LOG_DIR.getKey(), baseLogDir);
         }
         loggerConfigBuilder.property(
-                FileEventLogger.PRETTY_PRINT_PROPERTY_KEY, agentPlan.getConfig().get(PRETTY_PRINT));
+                PRETTY_PRINT.getKey(), agentPlan.getConfig().get(PRETTY_PRINT));
         return EventLoggerFactory.createLogger(loggerConfigBuilder.build());
     }
 

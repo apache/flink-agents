@@ -25,8 +25,10 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.EventFilter;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.JobInfo;
 import org.apache.flink.api.common.TaskInfo;
@@ -120,7 +122,7 @@ class Slf4jEventLoggerTest {
 
     @Test
     void testAppendWritesJsonWithSubtaskContext() throws Exception {
-        EventLoggerConfig config = EventLoggerConfig.builder().loggerType("slf4j").build();
+        EventLoggerConfig config = EventLoggerConfig.builder().loggerType(LoggerType.SLF4J).build();
         logger = new Slf4jEventLogger(config);
         logger.open(openParams);
 
@@ -147,7 +149,7 @@ class Slf4jEventLoggerTest {
 
     @Test
     void testAppendMultipleEvents() throws Exception {
-        EventLoggerConfig config = EventLoggerConfig.builder().loggerType("slf4j").build();
+        EventLoggerConfig config = EventLoggerConfig.builder().loggerType(LoggerType.SLF4J).build();
         logger = new Slf4jEventLogger(config);
         logger.open(openParams);
 
@@ -171,7 +173,7 @@ class Slf4jEventLoggerTest {
     void testEventFilterRejectAll() throws Exception {
         EventLoggerConfig config =
                 EventLoggerConfig.builder()
-                        .loggerType("slf4j")
+                        .loggerType(LoggerType.SLF4J)
                         .eventFilter(EventFilter.REJECT_ALL)
                         .build();
         logger = new Slf4jEventLogger(config);
@@ -188,7 +190,7 @@ class Slf4jEventLoggerTest {
     void testEventFilterByEventType() throws Exception {
         EventLoggerConfig config =
                 EventLoggerConfig.builder()
-                        .loggerType("slf4j")
+                        .loggerType(LoggerType.SLF4J)
                         .eventFilter(EventFilter.byEventType(InputEvent.class))
                         .build();
         logger = new Slf4jEventLogger(config);
@@ -210,7 +212,7 @@ class Slf4jEventLoggerTest {
     @Test
     void testDefaultPrettyPrintOutput() throws Exception {
         // Default config should produce pretty-printed JSON
-        EventLoggerConfig config = EventLoggerConfig.builder().loggerType("slf4j").build();
+        EventLoggerConfig config = EventLoggerConfig.builder().loggerType(LoggerType.SLF4J).build();
         logger = new Slf4jEventLogger(config);
         logger.open(openParams);
 
@@ -230,8 +232,8 @@ class Slf4jEventLoggerTest {
     void testDisablePrettyPrint() throws Exception {
         EventLoggerConfig config =
                 EventLoggerConfig.builder()
-                        .loggerType("slf4j")
-                        .property(Slf4jEventLogger.PRETTY_PRINT_PROPERTY_KEY, false)
+                        .loggerType(LoggerType.SLF4J)
+                        .property(AgentConfigOptions.PRETTY_PRINT.getKey(), false)
                         .build();
         logger = new Slf4jEventLogger(config);
         logger.open(openParams);
@@ -249,7 +251,7 @@ class Slf4jEventLoggerTest {
 
     @Test
     void testFlushAndCloseAreNoOps() throws Exception {
-        EventLoggerConfig config = EventLoggerConfig.builder().loggerType("slf4j").build();
+        EventLoggerConfig config = EventLoggerConfig.builder().loggerType(LoggerType.SLF4J).build();
         logger = new Slf4jEventLogger(config);
         logger.open(openParams);
 

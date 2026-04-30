@@ -17,8 +17,18 @@
  */
 package org.apache.flink.agents.api.configuration;
 
+import org.apache.flink.agents.api.logger.LoggerType;
+
 /** The set of configuration options for agents parameters. */
 public class AgentConfigOptions {
+
+    /**
+     * The config parameter specifies which event logger implementation to use. The value should
+     * match one of the identifiers returned by {@link LoggerType#getType()} (e.g., {@code "slf4j"}
+     * or {@code "file"}). Defaults to {@link LoggerType#SLF4J}.
+     */
+    public static final ConfigOption<String> EVENT_LOGGER_TYPE =
+            new ConfigOption<>("eventLoggerType", String.class, LoggerType.SLF4J.getType());
 
     /** The config parameter specifies the directory for the FileEvent file. */
     public static final ConfigOption<String> BASE_LOG_DIR =
