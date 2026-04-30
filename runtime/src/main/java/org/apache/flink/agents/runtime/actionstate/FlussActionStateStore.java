@@ -78,6 +78,8 @@ public class FlussActionStateStore implements ActionStateStore {
 
     private static final Duration POLL_TIMEOUT = Duration.ofSeconds(1);
 
+    private static final String SECURITY_PROTOCOL_PLAINTEXT = "PLAINTEXT";
+
     // Column names in the Fluss table schema
     private static final String COL_NAME_STATE_KEY = "state_key";
     private static final String COL_NAME_STATE_PAYLOAD = "state_payload";
@@ -134,7 +136,7 @@ public class FlussActionStateStore implements ActionStateStore {
         // cause the Fluss client to attempt an unwanted SASL handshake.
         String securityProtocol = agentConfiguration.get(FLUSS_SECURITY_PROTOCOL);
         flussConf.setString(CLIENT_SECURITY_PROTOCOL, securityProtocol);
-        if (!"PLAINTEXT".equalsIgnoreCase(securityProtocol)) {
+        if (!SECURITY_PROTOCOL_PLAINTEXT.equalsIgnoreCase(securityProtocol)) {
             flussConf.setString(
                     CLIENT_SASL_MECHANISM, agentConfiguration.get(FLUSS_SASL_MECHANISM));
 
@@ -312,25 +314,25 @@ public class FlussActionStateStore implements ActionStateStore {
 
             // No new data since checkpoint (includes empty buckets that never had writes:
             // endOffset=0, startOffset=0)
-            if (endOffset <= startOffset) {
+            if (endOffset == startOffset) {
                 LOG.info(
                         "Skipping bucket {} for rebuild: no new data "
-                                + "(endOffset={} <= startOffset={})",
+                                + "(endOffset={} = startOffset={})",
                         bucket,
                         endOffset,
                         startOffset);
                 continue;
             }
 
-            // Retention has cleaned data in the recovery window — data loss
-            if (earliestOffset > startOffset) {
-                throw new RuntimeException(
+            // Data loss: retention cleaned the recovery window, or log was truncated/reset
+            if (earliestOffset > startOffset || endOffset < startOffset) {
+                throw new IllegalStateException(
                         String.format(
-                                "Data loss detected for bucket %s: "
-                                        + "retention has cleaned data in the recovery window "
-                                        + "(earliestOffset=%d > startOffset=%d). "
-                                        + "Cannot recover state safely.",
-                                bucket, earliestOffset, startOffset));
+                                "Data loss detected for bucket %d: required data is no longer "
+                                        + "available in the log (startOffset=%d, endOffset=%d, "
+                                        + "earliestOffset=%d). Increase log retention or reduce "
+                                        + "checkpoint interval.",
+                                bucket, startOffset, endOffset, earliestOffset));
             }
 
             scanner.subscribe(bucket, startOffset);
@@ -439,11 +441,14 @@ public class FlussActionStateStore implements ActionStateStore {
 
     @Override
     public void close() throws Exception {
-        if (table != null) {
-            table.close();
-        }
-        if (connection != null) {
-            connection.close();
+        try {
+            if (table != null) {
+                table.close();
+            }
+        } finally {
+            if (connection != null) {
+                connection.close();
+            }
         }
     }
 
