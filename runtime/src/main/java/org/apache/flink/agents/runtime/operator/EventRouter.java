@@ -219,12 +219,10 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         }
     }
 
-    @Nullable
     SegmentedQueue getKeySegmentQueue() {
         return keySegmentQueue;
     }
 
-    @Nullable
     StreamRecord<OUT> getReusedStreamRecord() {
         return reusedStreamRecord;
     }

@@ -215,12 +215,10 @@ class OperatorStateManager {
         return currentProcessingKeysOpState.get();
     }
 
-    @Nullable
     MapState<String, MemoryObjectImpl.MemoryItem> getSensoryMemState() {
         return sensoryMemState;
     }
 
-    @Nullable
     MapState<String, MemoryObjectImpl.MemoryItem> getShortTermMemState() {
         return shortTermMemState;
     }
