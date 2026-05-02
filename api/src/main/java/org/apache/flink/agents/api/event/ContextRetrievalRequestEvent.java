@@ -18,52 +18,66 @@
 
 package org.apache.flink.agents.api.event;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.agents.api.Event;
 
 /** Event representing a request for context retrieval. */
 public class ContextRetrievalRequestEvent extends Event {
 
+    public static final String EVENT_TYPE = "_context_retrieval_request_event";
+
     private static final int DEFAULT_MAX_RESULTS = 3;
 
-    private final String query;
-    private final String vectorStore;
-    private final int maxResults;
-
     public ContextRetrievalRequestEvent(String query, String vectorStore) {
-        this.query = query;
-        this.vectorStore = vectorStore;
-        this.maxResults = DEFAULT_MAX_RESULTS;
+        this(query, vectorStore, DEFAULT_MAX_RESULTS);
     }
 
     public ContextRetrievalRequestEvent(String query, String vectorStore, int maxResults) {
-        this.query = query;
-        this.vectorStore = vectorStore;
-        this.maxResults = maxResults;
+        super(EVENT_TYPE);
+        setAttr("query", query);
+        setAttr("vector_store", vectorStore);
+        setAttr("max_results", maxResults);
     }
 
+    /**
+     * Reconstructs a typed ContextRetrievalRequestEvent from a base Event.
+     *
+     * @param event the base event containing context retrieval request data in attributes
+     * @return a typed ContextRetrievalRequestEvent
+     */
+    public static ContextRetrievalRequestEvent fromEvent(Event event) {
+        String query = (String) event.getAttr("query");
+        String vectorStore = (String) event.getAttr("vector_store");
+        int maxResults = ((Number) event.getAttr("max_results")).intValue();
+        return new ContextRetrievalRequestEvent(query, vectorStore, maxResults);
+    }
+
+    @JsonIgnore
     public String getQuery() {
-        return query;
+        return (String) getAttr("query");
     }
 
+    @JsonIgnore
     public String getVectorStore() {
-        return vectorStore;
+        return (String) getAttr("vector_store");
     }
 
+    @JsonIgnore
     public int getMaxResults() {
-        return maxResults;
+        return ((Number) getAttr("max_results")).intValue();
     }
 
     @Override
     public String toString() {
         return "ContextRetrievalRequestEvent{"
                 + "query='"
-                + query
+                + getQuery()
                 + '\''
                 + ", vectorStore='"
-                + vectorStore
+                + getVectorStore()
                 + '\''
                 + ", maxResults="
-                + maxResults
+                + getMaxResults()
                 + '}';
     }
 }

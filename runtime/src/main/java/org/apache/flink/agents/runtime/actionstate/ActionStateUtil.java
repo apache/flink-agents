@@ -21,7 +21,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.actions.Action;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.util.Preconditions;
 
 import javax.annotation.Nonnull;
@@ -59,10 +58,7 @@ public class ActionStateUtil {
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {
-        if (event instanceof PythonEvent) {
-            PythonEvent pythonEvent = (PythonEvent) event;
-            return String.valueOf(UUID.nameUUIDFromBytes(pythonEvent.getEvent()));
-        } else if (event instanceof InputEvent) {
+        if (event instanceof InputEvent) {
             InputEvent inputEvent = (InputEvent) event;
             byte[] inputEventBytes =
                     MAPPER.writeValueAsBytes(

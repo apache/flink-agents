@@ -93,7 +93,7 @@ public class ReActAgent extends Agent {
         try {
             Method method =
                     this.getClass().getMethod("startAction", InputEvent.class, RunnerContext.class);
-            this.addAction(new Class[] {InputEvent.class}, method, actionConfig);
+            this.addAction(new String[] {InputEvent.EVENT_TYPE}, method, actionConfig);
         } catch (NoSuchMethodException e) {
             throw new IllegalStateException(
                     "Can't find the method stopAction, this must be a bug.");
@@ -166,7 +166,7 @@ public class ReActAgent extends Agent {
         ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages, outputSchema));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void stopAction(ChatResponseEvent event, RunnerContext ctx) {
         ChatMessage response = event.getResponse();
 

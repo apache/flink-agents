@@ -56,7 +56,6 @@ import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
 import org.apache.flink.agents.runtime.python.utils.JavaResourceAdapter;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -876,7 +875,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         super.notifyCheckpointComplete(checkpointId);
     }
 
-    private Event wrapToInputEvent(IN input) {
+    private Event wrapToInputEvent(IN input) throws Exception {
         if (inputIsJava) {
             return new InputEvent(input);
         } else {
@@ -891,22 +890,24 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         checkState(EventUtil.isOutputEvent(event));
         if (event instanceof OutputEvent) {
             return (OUT) ((OutputEvent) event).getOutput();
-        } else if (event instanceof PythonEvent) {
-            Object outputFromOutputEvent =
-                    pythonActionExecutor.getOutputFromOutputEvent(((PythonEvent) event).getEvent());
-            return (OUT) outputFromOutputEvent;
         } else {
-            throw new IllegalStateException(
-                    "Unsupported event type: " + event.getClass().getName());
+            // Python output events arrive as unified Event with type "_output_event".
+            // Pass the JSON representation to Python for extraction.
+            try {
+                String eventJson =
+                        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(event);
+                Object outputFromOutputEvent =
+                        pythonActionExecutor.getOutputFromOutputEvent(eventJson);
+                return (OUT) outputFromOutputEvent;
+            } catch (Exception e) {
+                throw new IllegalStateException(
+                        "Failed to extract output from event: " + event.getType(), e);
+            }
         }
     }
 
     private List<Action> getActionsTriggeredBy(Event event) {
-        if (event instanceof PythonEvent) {
-            return agentPlan.getActionsTriggeredBy(((PythonEvent) event).getEventType());
-        } else {
-            return agentPlan.getActionsTriggeredBy(event.getClass().getName());
-        }
+        return agentPlan.getActionsTriggeredBy(event.getType());
     }
 
     private MailboxProcessor getMailboxProcessor() throws Exception {

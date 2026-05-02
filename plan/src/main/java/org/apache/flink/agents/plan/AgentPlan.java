@@ -21,7 +21,6 @@ package org.apache.flink.agents.plan;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
-import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.*;
 import org.apache.flink.agents.api.resource.Resource;
@@ -55,6 +54,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,7 +76,7 @@ public class AgentPlan implements Serializable {
     /** Mapping from action name to action itself. */
     private Map<String, Action> actions;
 
-    /** Mapping from event class name to list of actions that should be triggered by the event. */
+    /** Mapping from event type string to list of actions that should be triggered by the event. */
     private Map<String, List<Action>> actionsByEvent;
 
     /** Two-level mapping of resource type to resource name to resource provider. */
@@ -177,12 +177,15 @@ public class AgentPlan implements Serializable {
     }
 
     private void extractActions(
-            Class<? extends Event>[] listenEventTypes, Method method, Map<String, Object> config)
+            String[] listenEventTypeStrings, Method method, Map<String, Object> config)
             throws Exception {
-        // Convert event types to string names
-        List<String> eventTypeNames = new ArrayList<>();
-        for (Class<? extends Event> eventType : listenEventTypes) {
-            eventTypeNames.add(eventType.getName());
+        List<String> eventTypeNames = new ArrayList<>(Arrays.asList(listenEventTypeStrings));
+
+        if (eventTypeNames.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Action method "
+                            + method.getName()
+                            + " must specify at least one event type via listenEventTypes.");
         }
 
         // Create a JavaFunction for this method
@@ -225,17 +228,16 @@ public class AgentPlan implements Serializable {
                 org.apache.flink.agents.api.annotation.Action actionAnnotation =
                         method.getAnnotation(org.apache.flink.agents.api.annotation.Action.class);
 
-                // Get the event types this action listens to
-                Class<? extends Event>[] listenEventTypes =
-                        Objects.requireNonNull(actionAnnotation).listenEvents();
+                String[] listenEventTypeStrings =
+                        Objects.requireNonNull(actionAnnotation).listenEventTypes();
 
-                extractActions(listenEventTypes, method, null);
+                extractActions(listenEventTypeStrings, method, null);
             }
         }
 
-        for (Map.Entry<String, Tuple3<Class<? extends Event>[], Method, Map<String, Object>>>
-                action : agent.getActions().entrySet()) {
-            Tuple3<Class<? extends Event>[], Method, Map<String, Object>> tuple = action.getValue();
+        for (Map.Entry<String, Tuple3<String[], Method, Map<String, Object>>> action :
+                agent.getActions().entrySet()) {
+            Tuple3<String[], Method, Map<String, Object>> tuple = action.getValue();
             extractActions(tuple.f0, tuple.f1, tuple.f2);
         }
     }

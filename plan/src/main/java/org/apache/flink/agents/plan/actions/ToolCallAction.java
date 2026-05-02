@@ -41,7 +41,7 @@ public class ToolCallAction {
                         ToolCallAction.class,
                         "processToolRequest",
                         new Class[] {ToolRequestEvent.class, RunnerContext.class}),
-                List.of(ToolRequestEvent.class.getName()));
+                List.of(ToolRequestEvent.EVENT_TYPE));
     }
 
     @SuppressWarnings("unchecked")
