@@ -1230,10 +1230,12 @@ public class ActionExecutionOperatorTest {
                 new java.util.concurrent.atomic.AtomicInteger(0);
 
         public static class MiddleEvent extends Event {
+            public static final String EVENT_TYPE = "MiddleEvent";
+
             public Long num;
 
             public MiddleEvent(Long num) {
-                super();
+                super(EVENT_TYPE);
                 this.num = num;
             }
 
@@ -1555,7 +1557,7 @@ public class ActionExecutionOperatorTest {
                                         TestAgent.class,
                                         "action1",
                                         new Class<?>[] {InputEvent.class, RunnerContext.class}),
-                                Collections.singletonList(InputEvent.class.getName()));
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
                 Action action2 =
                         new Action(
                                 "action2",
@@ -1563,9 +1565,9 @@ public class ActionExecutionOperatorTest {
                                         TestAgent.class,
                                         "action2",
                                         new Class<?>[] {MiddleEvent.class, RunnerContext.class}),
-                                Collections.singletonList(MiddleEvent.class.getName()));
-                actionsByEvent.put(InputEvent.class.getName(), Collections.singletonList(action1));
-                actionsByEvent.put(MiddleEvent.class.getName(), Collections.singletonList(action2));
+                                Collections.singletonList(MiddleEvent.EVENT_TYPE));
+                actionsByEvent.put(InputEvent.EVENT_TYPE, Collections.singletonList(action1));
+                actionsByEvent.put(MiddleEvent.EVENT_TYPE, Collections.singletonList(action2));
                 Map<String, Action> actions = new HashMap<>();
                 actions.put(action1.getName(), action1);
                 actions.put(action2.getName(), action2);
@@ -1580,9 +1582,8 @@ public class ActionExecutionOperatorTest {
                                             new Class<?>[] {
                                                 MiddleEvent.class, RunnerContext.class
                                             }),
-                                    Collections.singletonList(MiddleEvent.class.getName()));
-                    actionsByEvent.put(
-                            MiddleEvent.class.getName(), Collections.singletonList(action3));
+                                    Collections.singletonList(MiddleEvent.EVENT_TYPE));
+                    actionsByEvent.put(MiddleEvent.EVENT_TYPE, Collections.singletonList(action3));
                     actions.put(action3.getName(), action3);
                 }
 
@@ -1613,10 +1614,9 @@ public class ActionExecutionOperatorTest {
                                             TestAgent.class,
                                             "multiAsyncAction",
                                             new Class<?>[] {InputEvent.class, RunnerContext.class}),
-                                    Collections.singletonList(InputEvent.class.getName()));
+                                    Collections.singletonList(InputEvent.EVENT_TYPE));
                     actionsByEvent.put(
-                            InputEvent.class.getName(),
-                            Collections.singletonList(multiAsyncAction));
+                            InputEvent.EVENT_TYPE, Collections.singletonList(multiAsyncAction));
                     actions.put(multiAsyncAction.getName(), multiAsyncAction);
                 } else {
                     // Use asyncAction1 -> action2 chain
@@ -1627,7 +1627,7 @@ public class ActionExecutionOperatorTest {
                                             TestAgent.class,
                                             "asyncAction1",
                                             new Class<?>[] {InputEvent.class, RunnerContext.class}),
-                                    Collections.singletonList(InputEvent.class.getName()));
+                                    Collections.singletonList(InputEvent.EVENT_TYPE));
                     Action action2 =
                             new Action(
                                     "action2",
@@ -1637,11 +1637,10 @@ public class ActionExecutionOperatorTest {
                                             new Class<?>[] {
                                                 MiddleEvent.class, RunnerContext.class
                                             }),
-                                    Collections.singletonList(MiddleEvent.class.getName()));
+                                    Collections.singletonList(MiddleEvent.EVENT_TYPE));
                     actionsByEvent.put(
-                            InputEvent.class.getName(), Collections.singletonList(asyncAction1));
-                    actionsByEvent.put(
-                            MiddleEvent.class.getName(), Collections.singletonList(action2));
+                            InputEvent.EVENT_TYPE, Collections.singletonList(asyncAction1));
+                    actionsByEvent.put(MiddleEvent.EVENT_TYPE, Collections.singletonList(action2));
                     actions.put(asyncAction1.getName(), asyncAction1);
                     actions.put(action2.getName(), action2);
                 }
@@ -1665,9 +1664,9 @@ public class ActionExecutionOperatorTest {
                                         TestAgent.class,
                                         "durableSyncAction",
                                         new Class<?>[] {InputEvent.class, RunnerContext.class}),
-                                Collections.singletonList(InputEvent.class.getName()));
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
-                        InputEvent.class.getName(), Collections.singletonList(durableSyncAction));
+                        InputEvent.EVENT_TYPE, Collections.singletonList(durableSyncAction));
                 actions.put(durableSyncAction.getName(), durableSyncAction);
 
                 return new AgentPlan(actions, actionsByEvent, new HashMap<>());
@@ -1689,9 +1688,9 @@ public class ActionExecutionOperatorTest {
                                         TestAgent.class,
                                         "durableReconcilableAction",
                                         new Class<?>[] {InputEvent.class, RunnerContext.class}),
-                                Collections.singletonList(InputEvent.class.getName()));
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
-                        InputEvent.class.getName(), Collections.singletonList(reconcilableAction));
+                        InputEvent.EVENT_TYPE, Collections.singletonList(reconcilableAction));
                 actions.put(reconcilableAction.getName(), reconcilableAction);
 
                 return new AgentPlan(actions, actionsByEvent, new HashMap<>());
@@ -1713,9 +1712,9 @@ public class ActionExecutionOperatorTest {
                                         TestAgent.class,
                                         "durableMixedRecoveryAction",
                                         new Class<?>[] {InputEvent.class, RunnerContext.class}),
-                                Collections.singletonList(InputEvent.class.getName()));
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
-                        InputEvent.class.getName(), Collections.singletonList(mixedRecoveryAction));
+                        InputEvent.EVENT_TYPE, Collections.singletonList(mixedRecoveryAction));
                 actions.put(mixedRecoveryAction.getName(), mixedRecoveryAction);
 
                 return new AgentPlan(actions, actionsByEvent, new HashMap<>());
@@ -1737,9 +1736,9 @@ public class ActionExecutionOperatorTest {
                                         TestAgent.class,
                                         "durableExceptionAction",
                                         new Class<?>[] {InputEvent.class, RunnerContext.class}),
-                                Collections.singletonList(InputEvent.class.getName()));
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
-                        InputEvent.class.getName(), Collections.singletonList(exceptionAction));
+                        InputEvent.EVENT_TYPE, Collections.singletonList(exceptionAction));
                 actions.put(exceptionAction.getName(), exceptionAction);
 
                 return new AgentPlan(actions, actionsByEvent, new HashMap<>());
@@ -1817,9 +1816,9 @@ public class ActionExecutionOperatorTest {
                                         TestAgent.class,
                                         "durableExceptionUncaughtAction",
                                         new Class<?>[] {InputEvent.class, RunnerContext.class}),
-                                Collections.singletonList(InputEvent.class.getName()));
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
-                        InputEvent.class.getName(), Collections.singletonList(exceptionAction));
+                        InputEvent.EVENT_TYPE, Collections.singletonList(exceptionAction));
                 actions.put(exceptionAction.getName(), exceptionAction);
 
                 return new AgentPlan(actions, actionsByEvent, new HashMap<>());
@@ -1841,9 +1840,9 @@ public class ActionExecutionOperatorTest {
                                         TestAgent.class,
                                         "durableAsyncExceptionAction",
                                         new Class<?>[] {InputEvent.class, RunnerContext.class}),
-                                Collections.singletonList(InputEvent.class.getName()));
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
-                        InputEvent.class.getName(), Collections.singletonList(exceptionAction));
+                        InputEvent.EVENT_TYPE, Collections.singletonList(exceptionAction));
                 actions.put(exceptionAction.getName(), exceptionAction);
 
                 return new AgentPlan(actions, actionsByEvent, new HashMap<>());

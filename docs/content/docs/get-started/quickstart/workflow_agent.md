@@ -128,7 +128,7 @@ class ReviewAnalysisAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent)
+    @action("_input_event")
     @staticmethod
     def process_input(event: InputEvent, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
@@ -142,7 +142,7 @@ class ReviewAnalysisAgent(Agent):
         msg = ChatMessage(role=MessageRole.USER, extra_args={"input": content})
         ctx.send_event(ChatRequestEvent(model="review_analysis_model", messages=[msg]))
 
-    @action(ChatResponseEvent)
+    @action("_chat_response_event")
     @staticmethod
     def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
@@ -211,7 +211,7 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
         String input = (String) event.getInput();
         MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -229,7 +229,7 @@ public class ReviewAnalysisAgent extends Agent {
         ctx.sendEvent(new ChatRequestEvent("reviewAnalysisModel", List.of(msg)));
     }
 
-    @Action(listenEvents = ChatResponseEvent.class)
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
             throws Exception {
         JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());

@@ -46,7 +46,7 @@ public class MCPCrossLanguageAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void process(InputEvent event, RunnerContext ctx) throws Exception {
         Map<String, Object> testResult = new HashMap<>();
         try {

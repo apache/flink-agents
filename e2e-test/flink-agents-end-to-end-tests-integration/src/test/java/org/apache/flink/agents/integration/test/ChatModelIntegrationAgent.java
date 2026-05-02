@@ -198,7 +198,7 @@ public class ChatModelIntegrationAgent extends Agent {
         return Math.random();
     }
 
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void process(InputEvent event, RunnerContext ctx) throws Exception {
         ctx.sendEvent(
                 new ChatRequestEvent(
@@ -207,7 +207,7 @@ public class ChatModelIntegrationAgent extends Agent {
                                 new ChatMessage(MessageRole.USER, (String) event.getInput()))));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
         ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
     }

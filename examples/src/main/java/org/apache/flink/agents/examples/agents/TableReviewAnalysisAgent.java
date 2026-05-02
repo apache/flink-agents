@@ -107,7 +107,7 @@ public class TableReviewAnalysisAgent extends Agent {
      * <p>When using {@code fromTable()}, the input is a {@link Row} with fields matching the table
      * column names.
      */
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
         Row row = (Row) event.getInput();
         String productId = (String) row.getField("id");
@@ -124,7 +124,7 @@ public class TableReviewAnalysisAgent extends Agent {
         ctx.sendEvent(new ChatRequestEvent("reviewAnalysisModel", List.of(msg)));
     }
 
-    @Action(listenEvents = ChatResponseEvent.class)
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
             throws Exception {
         JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());

@@ -87,7 +87,7 @@ class AgentPlanDeclareChatModelTest {
                     .build();
         }
 
-        @Action(listenEvents = {InputEvent.class})
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public void onInput(Event e, RunnerContext ctx) {
             // no-op for this test; validates action registration signature
         }

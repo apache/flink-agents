@@ -80,7 +80,7 @@ class MyAgent(Agent):
             temperature=0.7
         )
 
-    @action(InputEvent)
+    @action("_input_event")
     @staticmethod
     def process_input(event: InputEvent, ctx: RunnerContext) -> None:
         # Create a chat request with user message
@@ -92,7 +92,7 @@ class MyAgent(Agent):
             ChatRequestEvent(model="ollama_chat_model", messages=[user_message])
         )
 
-    @action(ChatResponseEvent)
+    @action("_chat_response_event")
     @staticmethod
     def process_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
         response_content = event.response.content
@@ -119,14 +119,14 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
         ChatMessage userMessage =
                 new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
         ctx.sendEvent(new ChatRequestEvent("ollamaChatModel", List.of(userMessage)));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
             throws Exception {
         String response = event.getResponse().getContent();
@@ -1024,7 +1024,7 @@ class MyAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent)
+    @action("_input_event")
     @staticmethod
     def process_input(event: InputEvent, ctx: RunnerContext) -> None:
         # Create a chat request with user message
@@ -1036,7 +1036,7 @@ class MyAgent(Agent):
             ChatRequestEvent(model="java_chat_model", messages=[user_message])
         )
 
-    @action(ChatResponseEvent)
+    @action("_chat_response_event")
     @staticmethod
     def process_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
         response_content = event.response.content
@@ -1081,14 +1081,14 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
         ChatMessage userMessage =
                 new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
         ctx.sendEvent(new ChatRequestEvent("pythonChatModel", List.of(userMessage)));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
             throws Exception {
         String response = event.getResponse().getContent();

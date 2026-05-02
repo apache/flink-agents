@@ -37,17 +37,23 @@ import java.io.FileWriter;
  * correspond modification should be applied to it when modify this file.
  */
 public class GenerateAgentPlanJson {
-    private static class MyEvent extends Event {}
+    private static class MyEvent extends Event {
+        public static final String EVENT_TYPE = "MyEvent";
+
+        public MyEvent() {
+            super(EVENT_TYPE);
+        }
+    }
 
     /** Agent class for generating java agent plan json. */
     public static class JavaAgentPlanCompatibilityTestAgent extends Agent {
 
-        @Action(listenEvents = {InputEvent.class})
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public void firstAction(InputEvent event, RunnerContext context) {
             // Test action implementation
         }
 
-        @Action(listenEvents = {InputEvent.class, MyEvent.class})
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE, MyEvent.EVENT_TYPE})
         public void secondAction(Event event, RunnerContext context) {
             // Test action implementation
         }

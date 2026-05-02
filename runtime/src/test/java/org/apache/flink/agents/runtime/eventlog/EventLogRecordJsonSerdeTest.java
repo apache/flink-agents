@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.eventlog;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
@@ -62,10 +63,11 @@ class EventLogRecordJsonSerdeTest {
         // Verify event
         JsonNode eventNode = jsonNode.get("event");
         assertTrue(eventNode.has("eventType"));
-        assertTrue(eventNode.has("input"));
-        assertEquals("test input data", eventNode.get("input").asText());
-        assertEquals("org.apache.flink.agents.api.InputEvent", eventNode.get("eventType").asText());
+        assertEquals(InputEvent.EVENT_TYPE, eventNode.get("eventType").asText());
         assertFalse(eventNode.has("sourceTimestamp"));
+        // Data is stored in attributes
+        assertTrue(eventNode.has("attributes"));
+        assertEquals("test input data", eventNode.get("attributes").get("input").asText());
     }
 
     @Test
@@ -80,10 +82,9 @@ class EventLogRecordJsonSerdeTest {
 
         // Then
         JsonNode jsonNode = objectMapper.readTree(json);
+        assertEquals(OutputEvent.EVENT_TYPE, jsonNode.get("event").get("eventType").asText());
         assertEquals(
-                "org.apache.flink.agents.api.OutputEvent",
-                jsonNode.get("event").get("eventType").asText());
-        assertEquals("test output data", jsonNode.get("event").get("output").asText());
+                "test output data", jsonNode.get("event").get("attributes").get("output").asText());
     }
 
     @Test
@@ -98,14 +99,12 @@ class EventLogRecordJsonSerdeTest {
 
         // Then
         JsonNode jsonNode = objectMapper.readTree(json);
-        assertEquals(
-                "org.apache.flink.agents.runtime.eventlog.EventLogRecordJsonSerdeTest$CustomTestEvent",
-                jsonNode.get("event").get("eventType").asText());
+        assertEquals(CustomTestEvent.EVENT_TYPE, jsonNode.get("event").get("eventType").asText());
 
-        JsonNode eventNode = jsonNode.get("event");
-        assertEquals("custom data", eventNode.get("customData").asText());
-        assertEquals(42, eventNode.get("customNumber").asInt());
-        assertEquals(true, eventNode.get("customFlag").asBoolean());
+        JsonNode attrsNode = jsonNode.get("event").get("attributes");
+        assertEquals("custom data", attrsNode.get("customData").asText());
+        assertEquals(42, attrsNode.get("customNumber").asInt());
+        assertEquals(true, attrsNode.get("customFlag").asBoolean());
     }
 
     @Test
@@ -126,14 +125,14 @@ class EventLogRecordJsonSerdeTest {
 
         // Verify context
         EventContext deserializedContext = deserializedRecord.getContext();
-        assertEquals("org.apache.flink.agents.api.InputEvent", deserializedContext.getEventType());
+        assertEquals(InputEvent.EVENT_TYPE, deserializedContext.getEventType());
         assertNotNull(deserializedContext.getTimestamp());
 
-        // Verify event
+        // Verify event via fromEvent
         Event deserializedEvent = deserializedRecord.getEvent();
-        assertTrue(deserializedEvent instanceof InputEvent);
-        InputEvent deserializedInputEvent = (InputEvent) deserializedEvent;
-        assertEquals("test input data", deserializedInputEvent.getInput());
+        assertEquals(InputEvent.EVENT_TYPE, deserializedEvent.getType());
+        InputEvent inputEvent = InputEvent.fromEvent(deserializedEvent);
+        assertEquals("test input data", inputEvent.getInput());
     }
 
     @Test
@@ -149,9 +148,9 @@ class EventLogRecordJsonSerdeTest {
 
         // Then
         Event deserializedEvent = deserializedRecord.getEvent();
-        assertTrue(deserializedEvent instanceof OutputEvent);
-        OutputEvent deserializedOutputEvent = (OutputEvent) deserializedEvent;
-        assertEquals("test output data", deserializedOutputEvent.getOutput());
+        assertEquals(OutputEvent.EVENT_TYPE, deserializedEvent.getType());
+        OutputEvent outputEvent = OutputEvent.fromEvent(deserializedEvent);
+        assertEquals("test output data", outputEvent.getOutput());
     }
 
     @Test
@@ -165,13 +164,13 @@ class EventLogRecordJsonSerdeTest {
         // When
         EventLogRecord deserializedRecord = objectMapper.readValue(json, EventLogRecord.class);
 
-        // Then
+        // Then — deserialized as base Event; use fromEvent for typed access
         Event deserializedEvent = deserializedRecord.getEvent();
-        assertInstanceOf(CustomTestEvent.class, deserializedEvent);
-        CustomTestEvent deserializedCustomEvent = (CustomTestEvent) deserializedEvent;
-        assertEquals("custom data", deserializedCustomEvent.getCustomData());
-        assertEquals(42, deserializedCustomEvent.getCustomNumber());
-        assertTrue(deserializedCustomEvent.isCustomFlag());
+        assertEquals(CustomTestEvent.EVENT_TYPE, deserializedEvent.getType());
+        CustomTestEvent customEvent = CustomTestEvent.fromEvent(deserializedEvent);
+        assertEquals("custom data", customEvent.getCustomData());
+        assertEquals(42, customEvent.getCustomNumber());
+        assertTrue(customEvent.isCustomFlag());
     }
 
     @Test
@@ -188,50 +187,109 @@ class EventLogRecordJsonSerdeTest {
         // Then - verify all data is preserved
         assertEquals(
                 originalContext.getEventType(), deserializedRecord.getContext().getEventType());
-        assertInstanceOf(InputEvent.class, deserializedRecord.getEvent());
+        assertEquals(InputEvent.EVENT_TYPE, deserializedRecord.getEvent().getType());
 
-        InputEvent deserializedEvent = (InputEvent) deserializedRecord.getEvent();
-        InputEvent originalInputEvent = (InputEvent) originalRecord.getEvent();
-        assertEquals(originalInputEvent.getInput(), deserializedEvent.getInput());
+        InputEvent deserializedEvent = InputEvent.fromEvent(deserializedRecord.getEvent());
+        assertEquals(originalEvent.getInput(), deserializedEvent.getInput());
     }
 
-    /** Custom test event class for testing polymorphic serialization. */
-    public static class CustomTestEvent extends Event {
-        private String customData;
-        private int customNumber;
-        private boolean customFlag;
+    @Test
+    void testSerializeUnifiedEvent() throws Exception {
+        // Given - a unified event with user-defined type
+        java.util.Map<String, Object> attrs = new java.util.HashMap<>();
+        attrs.put("msg", "hello");
+        Event unifiedEvent = new Event("MyCustomEvent", attrs);
+        EventContext context = new EventContext(unifiedEvent);
+        EventLogRecord record = new EventLogRecord(context, unifiedEvent);
 
-        // Default constructor for Jackson
-        public CustomTestEvent() {}
+        // When
+        String json = objectMapper.writeValueAsString(record);
+
+        // Then
+        JsonNode jsonNode = objectMapper.readTree(json);
+        JsonNode eventNode = jsonNode.get("event");
+
+        // eventType should be the user-defined type string
+        assertEquals("MyCustomEvent", eventNode.get("eventType").asText());
+        // attributes should be present
+        assertEquals("hello", eventNode.get("attributes").get("msg").asText());
+    }
+
+    @Test
+    void testDeserializeUnifiedEvent() throws Exception {
+        // Given - a unified event serialized via the EventLogRecord serializer
+        java.util.Map<String, Object> attrs = new java.util.HashMap<>();
+        attrs.put("key", "value");
+        attrs.put("count", 42);
+        Event originalEvent = new Event("CustomType", attrs);
+        EventContext originalContext = new EventContext(originalEvent);
+        EventLogRecord originalRecord = new EventLogRecord(originalContext, originalEvent);
+        String json = objectMapper.writeValueAsString(originalRecord);
+
+        // When
+        EventLogRecord deserializedRecord = objectMapper.readValue(json, EventLogRecord.class);
+
+        // Then
+        EventContext deserializedContext = deserializedRecord.getContext();
+        // eventType is the routing key (user-defined string)
+        assertEquals("CustomType", deserializedContext.getEventType());
+
+        // The event should be deserialized as a base Event with the type field set
+        Event deserializedEvent = deserializedRecord.getEvent();
+        assertEquals("CustomType", deserializedEvent.getType());
+    }
+
+    @Test
+    void testRoundTripUnifiedEvent() throws Exception {
+        // Given
+        java.util.Map<String, Object> attrs = new java.util.HashMap<>();
+        attrs.put("x", 1);
+        attrs.put("y", "two");
+        Event originalEvent = new Event("RoundTripEvent", attrs);
+        EventContext context = new EventContext(originalEvent);
+        EventLogRecord record = new EventLogRecord(context, originalEvent);
+
+        // When - serialize and deserialize
+        String json = objectMapper.writeValueAsString(record);
+        EventLogRecord deserialized = objectMapper.readValue(json, EventLogRecord.class);
+
+        // Then
+        assertEquals("RoundTripEvent", deserialized.getContext().getEventType());
+        Event event = deserialized.getEvent();
+        assertEquals("RoundTripEvent", event.getType());
+    }
+
+    /** Custom test event class using the attributes-based pattern. */
+    public static class CustomTestEvent extends Event {
+        public static final String EVENT_TYPE = "CustomTestEvent";
 
         public CustomTestEvent(String customData, int customNumber, boolean customFlag) {
-            this.customData = customData;
-            this.customNumber = customNumber;
-            this.customFlag = customFlag;
+            super(EVENT_TYPE);
+            setAttr("customData", customData);
+            setAttr("customNumber", customNumber);
+            setAttr("customFlag", customFlag);
         }
 
+        public static CustomTestEvent fromEvent(Event event) {
+            String data = (String) event.getAttr("customData");
+            int number = ((Number) event.getAttr("customNumber")).intValue();
+            boolean flag = (Boolean) event.getAttr("customFlag");
+            return new CustomTestEvent(data, number, flag);
+        }
+
+        @JsonIgnore
         public String getCustomData() {
-            return customData;
+            return (String) getAttr("customData");
         }
 
-        public void setCustomData(String customData) {
-            this.customData = customData;
-        }
-
+        @JsonIgnore
         public int getCustomNumber() {
-            return customNumber;
+            return ((Number) getAttr("customNumber")).intValue();
         }
 
-        public void setCustomNumber(int customNumber) {
-            this.customNumber = customNumber;
-        }
-
+        @JsonIgnore
         public boolean isCustomFlag() {
-            return customFlag;
-        }
-
-        public void setCustomFlag(boolean customFlag) {
-            this.customFlag = customFlag;
+            return (Boolean) getAttr("customFlag");
         }
     }
 }

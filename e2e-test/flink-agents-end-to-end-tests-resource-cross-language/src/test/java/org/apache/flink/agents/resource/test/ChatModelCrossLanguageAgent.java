@@ -146,7 +146,7 @@ public class ChatModelCrossLanguageAgent extends Agent {
         return Math.random();
     }
 
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void process(InputEvent event, RunnerContext ctx) throws Exception {
         String model;
         if (event.getInput().toString().contains("temperature")
@@ -162,7 +162,7 @@ public class ChatModelCrossLanguageAgent extends Agent {
                                 new ChatMessage(MessageRole.USER, (String) event.getInput()))));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
         ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
     }

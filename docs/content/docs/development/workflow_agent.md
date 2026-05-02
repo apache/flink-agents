@@ -26,7 +26,7 @@ under the License.
 
 A workflow style agent in Flink-Agents is an agent whose reasoning and behavior are organized as a directed workflow of modular steps, called actions, connected by events. This design is inspired by the need to orchestrate complex, multi-stage tasks in a transparent, extensible, and data-centric way, leveraging Apache Flink's streaming architecture.
 
-In Flink-Agents, a workflow agent is defined as a class that inherits from the `Agent` base class. The agent's logic is expressed as a set of actions, each of which is a function decorated with `@action(EventType)` in python (or a method annotated with `@action(listenEvents = {})` in java). Actions consume events, perform reasoning or tool calls, and emit new events, which may trigger downstream actions. This event-driven workflow forms a directed cyclic graph of computation, where each node is an action and each edge is an event type.
+In Flink-Agents, a workflow agent is defined as a class that inherits from the `Agent` base class. The agent's logic is expressed as a set of actions, each of which is a function decorated with `@action(EventType)` in python (or a method annotated with `@Action(listenEventTypes = {})` in java). Actions consume events, perform reasoning or tool calls, and emit new events, which may trigger downstream actions. This event-driven workflow forms a directed cyclic graph of computation, where each node is an action and each edge is an event type.
 
 A workflow agent is well-suited for scenarios where the solution requires explicit orchestration, branching, or multi-step reasoning, such as data enrichment, multi-tool pipelines, or complex business logic.
 
@@ -85,7 +85,7 @@ class ReviewAnalysisAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent)
+    @action("_input_event")
     @staticmethod
     def process_input(event: InputEvent, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
@@ -99,7 +99,7 @@ class ReviewAnalysisAgent(Agent):
         msg = ChatMessage(role=MessageRole.USER, extra_args={"input": content})
         ctx.send_event(ChatRequestEvent(model="review_analysis_model", messages=[msg]))
 
-    @action(ChatResponseEvent)
+    @action("_chat_response_event")
     @staticmethod
     def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
@@ -168,7 +168,7 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
         String input = (String) event.getInput();
         MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -186,7 +186,7 @@ public class ReviewAnalysisAgent extends Agent {
         ctx.sendEvent(new ChatRequestEvent("reviewAnalysisModel", List.of(msg)));
     }
 
-    @Action(listenEvents = ChatResponseEvent.class)
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
             throws Exception {
         JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());
@@ -230,7 +230,7 @@ The decorated/annotated function signature should be `(Event, RunnerContext) -> 
 {{< tab "Python" >}}
 ```python
 class ReviewAnalysisAgent(Agent):
-    @action(InputEvent)
+    @action("_input_event")
     @staticmethod
     def process_input(event: InputEvent, ctx: RunnerContext) -> None:
         # the action logic
@@ -241,7 +241,7 @@ class ReviewAnalysisAgent(Agent):
 ```java
 public class ReviewAnalysisAgent extends Agent {
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
         // the action logic
     }
@@ -257,7 +257,7 @@ In the function, user can also send new events, to trigger other actions, or out
 
 {{< tab "Python" >}}
 ```python
-@action(InputEvent)
+@action("_input_event")
 @staticmethod
 def process_input(event: InputEvent, ctx: RunnerContext) -> None:
     # send ChatRequestEvent
@@ -269,7 +269,7 @@ def process_input(event: InputEvent, ctx: RunnerContext) -> None:
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEvents = {InputEvent.class})
+@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
 public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
     // send ChatRequestEvent
     ctx.sendEvent(new ChatRequestEvent("my_model", messages));
@@ -313,7 +313,7 @@ Use a reconciler for durable calls when the original call may already have compl
 {{< tab "Python" >}}
 Python actions can call `ctx.durable_execute(...)` to run a synchronous durable code block.
 ```python
-@action(InputEvent)
+@action("_input_event")
 @staticmethod
 def process_input(event: InputEvent, ctx: RunnerContext) -> None:
     def slow_external_call(data: str) -> str:
@@ -351,7 +351,7 @@ def process_input(event: InputEvent, ctx: RunnerContext) -> None:
 {{< tab "Java" >}}
 Java actions use `DurableCallable<T>` with `ctx.durableExecute(...)`, where `getId()` must be stable and `getResultClass()` supports recovery deserialization.
 ```java
-@Action(listenEvents = {InputEvent.class})
+@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
 public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
     DurableCallable<String> call = new DurableCallable<>() {
         @Override
@@ -379,7 +379,7 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
 
 Java actions can also override `reconciler()` to recover an execution outcome during recovery.
 ```java
-@Action(listenEvents = {InputEvent.class})
+@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
 public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
     DurableCallable<String> call = new DurableCallable<>() {
         @Override
@@ -424,7 +424,7 @@ Async execution uses the same durable semantics but yields while waiting for a t
 {{< tab "Python" >}}
 Define an `async def` action and `await ctx.durable_execute_async(...)`. The same optional `reconciler=...` argument is available for recovery.
 ```python
-@action(InputEvent)
+@action("_input_event")
 @staticmethod
 async def process_with_async(event: InputEvent, ctx: RunnerContext) -> None:
     def slow_external_call(data: str) -> str:
@@ -445,7 +445,7 @@ functions like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and
 Use `ctx.durableExecuteAsync(DurableCallable)`; on **JDK 21+** it yields using Continuation,
 and on **JDK < 21** it falls back to synchronous execution. The same optional `reconciler()` hook can be used for recovery.
 ```java
-@Action(listenEvents = {InputEvent.class})
+@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
 public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
     DurableCallable<String> call = new DurableCallable<>() {
         @Override

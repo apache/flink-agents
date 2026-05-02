@@ -71,7 +71,7 @@ public class ProductSuggestionAgent extends Agent {
     }
 
     /** Process input event. */
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
         String input = (String) event.getInput();
 
@@ -91,7 +91,7 @@ public class ProductSuggestionAgent extends Agent {
     }
 
     /** Process chat response event. */
-    @Action(listenEvents = {ChatResponseEvent.class})
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
             throws Exception {
         JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());

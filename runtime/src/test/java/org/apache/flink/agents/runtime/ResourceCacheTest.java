@@ -123,7 +123,7 @@ public class ResourceCacheTest {
 
         @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
-        @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public void handleInputEvent(InputEvent event, RunnerContext context) {}
     }
 

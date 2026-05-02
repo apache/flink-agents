@@ -369,7 +369,7 @@ Long-Term Memory is accessed through the `RunnerContext` object:
 {{< tab "Python" >}}
 
 ```python
-@action(InputEvent)
+@action("_input_event")
 def process_event(event: InputEvent, ctx: RunnerContext) -> None:
     # Access long-term memory
     ltm = ctx.long_term_memory
@@ -386,7 +386,7 @@ def process_event(event: InputEvent, ctx: RunnerContext) -> None:
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEvents = {InputEvent.class})
+@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
 public static void processEvent(InputEvent event, RunnerContext ctx) throws Exception {
     // Access long-term memory
     BaseLongTermMemory ltm = ctx.getLongTermMemory();

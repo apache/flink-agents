@@ -92,14 +92,14 @@ public class VectorStoreIntegrationAgent extends Agent {
         }
     }
 
-    @Action(listenEvents = InputEvent.class)
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void inputEvent(InputEvent event, RunnerContext ctx) {
         final String input = (String) event.getInput();
 
         ctx.sendEvent(new ContextRetrievalRequestEvent(input, "vectorStore"));
     }
 
-    @Action(listenEvents = ContextRetrievalResponseEvent.class)
+    @Action(listenEventTypes = {ContextRetrievalResponseEvent.EVENT_TYPE})
     public static void contextRetrievalResponseEvent(
             ContextRetrievalResponseEvent event, RunnerContext ctx) {
         final List<Document> documents = event.getDocuments();

@@ -104,7 +104,7 @@ public class VectorStoreCrossLanguageAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = InputEvent.class)
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void inputEvent(InputEvent event, RunnerContext ctx) throws Exception {
         final String input = (String) event.getInput();
 
@@ -197,7 +197,7 @@ public class VectorStoreCrossLanguageAgent extends Agent {
         ctx.sendEvent(new ContextRetrievalRequestEvent(input, "vectorStore"));
     }
 
-    @Action(listenEvents = ContextRetrievalResponseEvent.class)
+    @Action(listenEventTypes = {ContextRetrievalResponseEvent.EVENT_TYPE})
     public static void contextRetrievalResponseEvent(
             ContextRetrievalResponseEvent event, RunnerContext ctx) {
         final List<Document> documents = event.getDocuments();

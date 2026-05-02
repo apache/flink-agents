@@ -243,7 +243,7 @@ class ReviewAnalysisAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent)
+    @action("_input_event")
     @staticmethod
     def process_input(event: InputEvent, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
@@ -301,7 +301,7 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
         String input = (String) event.getInput();
         MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);

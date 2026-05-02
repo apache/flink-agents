@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.eventlog;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
@@ -122,14 +123,10 @@ class FileEventLoggerTest {
         assertNotNull(deserializedRecord.getContext(), "Deserialized context should not be null");
         assertNotNull(deserializedRecord.getEvent(), "Deserialized event should not be null");
 
-        assertEquals(
-                "org.apache.flink.agents.api.InputEvent",
-                deserializedRecord.getContext().getEventType());
-        assertInstanceOf(
-                InputEvent.class,
-                deserializedRecord.getEvent(),
-                "Deserialized event should be InputEvent");
-        assertEquals("test input", ((InputEvent) deserializedRecord.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, deserializedRecord.getContext().getEventType());
+        assertEquals(InputEvent.EVENT_TYPE, deserializedRecord.getEvent().getType());
+        InputEvent deserializedInput = InputEvent.fromEvent(deserializedRecord.getEvent());
+        assertEquals("test input", deserializedInput.getInput());
     }
 
     @Test
@@ -148,15 +145,15 @@ class FileEventLoggerTest {
         List<String> lines = Files.readAllLines(logFile);
         assertEquals(2, lines.size(), "Should have written two lines");
 
-        // Verify first event (InputEvent) - deserialization
+        // Verify first event (InputEvent) - deserialization via fromEvent
         EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertTrue(inputRecord.getEvent() instanceof InputEvent);
-        assertEquals("input data", ((InputEvent) inputRecord.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, inputRecord.getEvent().getType());
+        assertEquals("input data", InputEvent.fromEvent(inputRecord.getEvent()).getInput());
 
-        // Verify second event (OutputEvent) - deserialization
+        // Verify second event (OutputEvent) - deserialization via fromEvent
         EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
-        assertTrue(outputRecord.getEvent() instanceof OutputEvent);
-        assertEquals("output data", ((OutputEvent) outputRecord.getEvent()).getOutput());
+        assertEquals(OutputEvent.EVENT_TYPE, outputRecord.getEvent().getType());
+        assertEquals("output data", OutputEvent.fromEvent(outputRecord.getEvent()).getOutput());
     }
 
     @Test
@@ -177,23 +174,20 @@ class FileEventLoggerTest {
 
         // Verify JSON structure
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
-        assertEquals(
-                "org.apache.flink.agents.runtime.eventlog.FileEventLoggerTest$TestCustomEvent",
-                jsonNode.get("event").get("eventType").asText());
+        assertEquals(TestCustomEvent.EVENT_TYPE, jsonNode.get("event").get("eventType").asText());
 
-        JsonNode eventNode = jsonNode.get("event");
-        assertEquals("custom data", eventNode.get("customData").asText());
-        assertEquals(42, eventNode.get("customNumber").asInt());
+        JsonNode attrsNode = jsonNode.get("event").get("attributes");
+        assertEquals("custom data", attrsNode.get("customData").asText());
+        assertEquals(42, attrsNode.get("customNumber").asInt());
 
-        // Verify deserialization works correctly
+        // Verify deserialization via fromEvent
         EventLogRecord deserializedRecord =
                 objectMapper.readValue(lines.get(0), EventLogRecord.class);
         assertNotNull(deserializedRecord);
-        assertTrue(
-                deserializedRecord.getEvent() instanceof TestCustomEvent,
-                "Deserialized event should be TestCustomEvent");
+        assertEquals(TestCustomEvent.EVENT_TYPE, deserializedRecord.getEvent().getType());
 
-        TestCustomEvent deserializedEvent = (TestCustomEvent) deserializedRecord.getEvent();
+        TestCustomEvent deserializedEvent =
+                TestCustomEvent.fromEvent(deserializedRecord.getEvent());
         assertEquals("custom data", deserializedEvent.getCustomData());
         assertEquals(42, deserializedEvent.getCustomNumber());
     }
@@ -223,19 +217,22 @@ class FileEventLoggerTest {
 
         // Verify JSON structure
         JsonNode firstEventJson = objectMapper.readTree(lines.get(0));
-        assertEquals("first event", firstEventJson.get("event").get("input").asText());
+        assertEquals(
+                "first event", firstEventJson.get("event").get("attributes").get("input").asText());
 
         JsonNode secondEventJson = objectMapper.readTree(lines.get(1));
-        assertEquals("second event", secondEventJson.get("event").get("input").asText());
+        assertEquals(
+                "second event",
+                secondEventJson.get("event").get("attributes").get("input").asText());
 
-        // Verify deserialization
+        // Verify deserialization via fromEvent
         EventLogRecord firstRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertTrue(firstRecord.getEvent() instanceof InputEvent);
-        assertEquals("first event", ((InputEvent) firstRecord.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, firstRecord.getEvent().getType());
+        assertEquals("first event", InputEvent.fromEvent(firstRecord.getEvent()).getInput());
 
         EventLogRecord secondRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
-        assertTrue(secondRecord.getEvent() instanceof InputEvent);
-        assertEquals("second event", ((InputEvent) secondRecord.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, secondRecord.getEvent().getType());
+        assertEquals("second event", InputEvent.fromEvent(secondRecord.getEvent()).getInput());
     }
 
     @Test
@@ -281,19 +278,23 @@ class FileEventLoggerTest {
         JsonNode subtask0EventJson = objectMapper.readTree(subtask0Lines.get(0));
         JsonNode subtask1EventJson = objectMapper.readTree(subtask1Lines.get(0));
 
-        assertEquals("subtask 0 event", subtask0EventJson.get("event").get("input").asText());
-        assertEquals("subtask 1 event", subtask1EventJson.get("event").get("input").asText());
+        assertEquals(
+                "subtask 0 event",
+                subtask0EventJson.get("event").get("attributes").get("input").asText());
+        assertEquals(
+                "subtask 1 event",
+                subtask1EventJson.get("event").get("attributes").get("input").asText());
 
-        // Verify deserialization
+        // Verify deserialization via fromEvent
         EventLogRecord subtask0Record =
                 objectMapper.readValue(subtask0Lines.get(0), EventLogRecord.class);
-        assertTrue(subtask0Record.getEvent() instanceof InputEvent);
-        assertEquals("subtask 0 event", ((InputEvent) subtask0Record.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, subtask0Record.getEvent().getType());
+        assertEquals("subtask 0 event", InputEvent.fromEvent(subtask0Record.getEvent()).getInput());
 
         EventLogRecord subtask1Record =
                 objectMapper.readValue(subtask1Lines.get(0), EventLogRecord.class);
-        assertTrue(subtask1Record.getEvent() instanceof InputEvent);
-        assertEquals("subtask 1 event", ((InputEvent) subtask1Record.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, subtask1Record.getEvent().getType());
+        assertEquals("subtask 1 event", InputEvent.fromEvent(subtask1Record.getEvent()).getInput());
     }
 
     @Test
@@ -323,10 +324,10 @@ class FileEventLoggerTest {
 
         // Verify both events were deserialized correctly
         EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertInstanceOf(InputEvent.class, inputRecord.getEvent());
+        assertEquals(InputEvent.EVENT_TYPE, inputRecord.getEvent().getType());
 
         EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
-        assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
+        assertEquals(OutputEvent.EVENT_TYPE, outputRecord.getEvent().getType());
     }
 
     @Test
@@ -384,8 +385,8 @@ class FileEventLoggerTest {
         assertEquals(1, lines.size(), "Only InputEvent should be logged");
 
         EventLogRecord record = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertInstanceOf(InputEvent.class, record.getEvent());
-        assertEquals("input data", ((InputEvent) record.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, record.getEvent().getType());
+        assertEquals("input data", InputEvent.fromEvent(record.getEvent()).getInput());
     }
 
     @Test
@@ -416,12 +417,12 @@ class FileEventLoggerTest {
         assertEquals(2, lines.size(), "InputEvent and OutputEvent should be logged");
 
         EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertInstanceOf(InputEvent.class, inputRecord.getEvent());
-        assertEquals("input data", ((InputEvent) inputRecord.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, inputRecord.getEvent().getType());
+        assertEquals("input data", InputEvent.fromEvent(inputRecord.getEvent()).getInput());
 
         EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
-        assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
-        assertEquals("output data", ((OutputEvent) outputRecord.getEvent()).getOutput());
+        assertEquals(OutputEvent.EVENT_TYPE, outputRecord.getEvent().getType());
+        assertEquals("output data", OutputEvent.fromEvent(outputRecord.getEvent()).getOutput());
     }
 
     @Test
@@ -429,8 +430,11 @@ class FileEventLoggerTest {
         // Given - config with custom filter that only accepts events with specific content
         EventFilter customFilter =
                 (event, context) -> {
-                    if (event instanceof InputEvent) {
-                        return ((InputEvent) event).getInput().toString().contains("important");
+                    if (InputEvent.EVENT_TYPE.equals(event.getType())) {
+                        return InputEvent.fromEvent(event)
+                                .getInput()
+                                .toString()
+                                .contains("important");
                     }
                     return false;
                 };
@@ -460,8 +464,8 @@ class FileEventLoggerTest {
         assertEquals(1, lines.size(), "Only important InputEvent should be logged");
 
         EventLogRecord record = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertInstanceOf(InputEvent.class, record.getEvent());
-        assertEquals("important data", ((InputEvent) record.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, record.getEvent().getType());
+        assertEquals("important data", InputEvent.fromEvent(record.getEvent()).getInput());
     }
 
     @Test
@@ -489,10 +493,10 @@ class FileEventLoggerTest {
         assertEquals(2, lines.size(), "Both events should be logged with default filter");
 
         EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertInstanceOf(InputEvent.class, inputRecord.getEvent());
+        assertEquals(InputEvent.EVENT_TYPE, inputRecord.getEvent().getType());
 
         EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
-        assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
+        assertEquals(OutputEvent.EVENT_TYPE, outputRecord.getEvent().getType());
     }
 
     @Test
@@ -533,33 +537,30 @@ class FileEventLoggerTest {
                         "events-%s-%s-%d.log", testJobId.toString(), testTaskName, testSubTaskId));
     }
 
-    /** Custom test event class for testing polymorphic serialization. */
+    /** Custom test event class using the attributes-based pattern. */
     public static class TestCustomEvent extends Event {
-        private String customData;
-        private int customNumber;
-
-        // Default constructor for Jackson
-        public TestCustomEvent() {}
+        public static final String EVENT_TYPE = "TestCustomEvent";
 
         public TestCustomEvent(String customData, int customNumber) {
-            this.customData = customData;
-            this.customNumber = customNumber;
+            super(EVENT_TYPE);
+            setAttr("customData", customData);
+            setAttr("customNumber", customNumber);
         }
 
+        public static TestCustomEvent fromEvent(Event event) {
+            String data = (String) event.getAttr("customData");
+            int number = ((Number) event.getAttr("customNumber")).intValue();
+            return new TestCustomEvent(data, number);
+        }
+
+        @JsonIgnore
         public String getCustomData() {
-            return customData;
+            return (String) getAttr("customData");
         }
 
-        public void setCustomData(String customData) {
-            this.customData = customData;
-        }
-
+        @JsonIgnore
         public int getCustomNumber() {
-            return customNumber;
-        }
-
-        public void setCustomNumber(int customNumber) {
-            this.customNumber = customNumber;
+            return ((Number) getAttr("customNumber")).intValue();
         }
     }
 }

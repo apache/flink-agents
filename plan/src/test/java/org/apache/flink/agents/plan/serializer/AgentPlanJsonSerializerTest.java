@@ -42,18 +42,18 @@ public class AgentPlanJsonSerializerTest {
     /** Test Agent class with @Action annotated methods. */
     public static class TestAgent extends Agent {
 
-        @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public void handleInputEvent(InputEvent event, RunnerContext context) {
             // Test action logic
         }
 
-        @org.apache.flink.agents.api.annotation.Action(listenEvents = {OutputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {OutputEvent.EVENT_TYPE})
         public void processOutputEvent(OutputEvent event, RunnerContext context) {
             // Test action logic
         }
 
         @org.apache.flink.agents.api.annotation.Action(
-                listenEvents = {InputEvent.class, OutputEvent.class})
+                listenEventTypes = {InputEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE})
         public void handleMultipleEvents(Event event, RunnerContext context) {
             // Test action logic for multiple event types
         }
@@ -74,7 +74,7 @@ public class AgentPlanJsonSerializerTest {
                         new Class[] {InputEvent.class, RunnerContext.class});
 
         // Create an Action
-        Action action = new Action("testAction", function, List.of(InputEvent.class.getName()));
+        Action action = new Action("testAction", function, List.of(InputEvent.EVENT_TYPE));
 
         // Create a map of actions
         Map<String, Action> actions = new HashMap<>();
@@ -95,7 +95,7 @@ public class AgentPlanJsonSerializerTest {
         assertThat(json).contains("\"qualname\":\"org.apache.flink.agents.plan.TestAction\"");
         assertThat(json).contains("\"method_name\":\"legal\"");
         assertThat(json).contains("\"listen_event_types\":[");
-        assertThat(json).contains("\"org.apache.flink.agents.api.InputEvent\"");
+        assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\"");
         assertThat(json).contains("\"actions_by_event\":{}");
     }
 
@@ -109,11 +109,11 @@ public class AgentPlanJsonSerializerTest {
                         new Class[] {InputEvent.class, RunnerContext.class});
 
         // Create an Action
-        Action action = new Action("testAction", function, List.of(InputEvent.class.getName()));
+        Action action = new Action("testAction", function, List.of(InputEvent.EVENT_TYPE));
 
         // Create a map of event trigger actions
         Map<String, List<Action>> actionsByEvent = new HashMap<>();
-        actionsByEvent.put(InputEvent.class.getName(), List.of(action));
+        actionsByEvent.put(InputEvent.EVENT_TYPE, List.of(action));
 
         // Create a AgentPlan with event trigger actions but no regular actions
         AgentPlan agentPlan = new AgentPlan(new HashMap<>(), actionsByEvent);
@@ -124,7 +124,7 @@ public class AgentPlanJsonSerializerTest {
         // Verify the JSON contains the expected fields
         assertThat(json).contains("\"actions\":{}");
         assertThat(json).contains("\"actions_by_event\":{");
-        assertThat(json).contains("\"org.apache.flink.agents.api.InputEvent\":[");
+        assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\":[");
         assertThat(json).contains("\"testAction\"");
     }
 
@@ -143,8 +143,8 @@ public class AgentPlanJsonSerializerTest {
                         new Class[] {InputEvent.class, RunnerContext.class});
 
         // Create Actions
-        Action action1 = new Action("action1", function1, List.of(InputEvent.class.getName()));
-        Action action2 = new Action("action2", function2, List.of(OutputEvent.class.getName()));
+        Action action1 = new Action("action1", function1, List.of(InputEvent.EVENT_TYPE));
+        Action action2 = new Action("action2", function2, List.of(OutputEvent.EVENT_TYPE));
 
         // Create a map of actions
         Map<String, Action> actions = new HashMap<>();
@@ -153,8 +153,8 @@ public class AgentPlanJsonSerializerTest {
 
         // Create a map of event trigger actions
         Map<String, List<Action>> actionsByEvent = new HashMap<>();
-        actionsByEvent.put(InputEvent.class.getName(), List.of(action1));
-        actionsByEvent.put(OutputEvent.class.getName(), List.of(action2));
+        actionsByEvent.put(InputEvent.EVENT_TYPE, List.of(action1));
+        actionsByEvent.put(OutputEvent.EVENT_TYPE, List.of(action2));
 
         // Create a AgentPlan with both actions and event trigger actions
         AgentPlan agentPlan = new AgentPlan(actions, actionsByEvent);
@@ -167,8 +167,8 @@ public class AgentPlanJsonSerializerTest {
         assertThat(json).contains("\"action1\":{");
         assertThat(json).contains("\"action2\":{");
         assertThat(json).contains("\"actions_by_event\":{");
-        assertThat(json).contains("\"org.apache.flink.agents.api.InputEvent\":[");
-        assertThat(json).contains("\"org.apache.flink.agents.api.OutputEvent\":[");
+        assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\":[");
+        assertThat(json).contains("\"" + OutputEvent.EVENT_TYPE + "\":[");
         assertThat(json).contains("\"action1\"");
         assertThat(json).contains("\"action2\"");
     }
@@ -211,9 +211,9 @@ public class AgentPlanJsonSerializerTest {
         assertThat(json).contains("\"processOutputEvent\"");
         assertThat(json).contains("\"handleMultipleEvents\"");
 
-        // Verify event mappings
-        assertThat(json).contains("\"org.apache.flink.agents.api.InputEvent\"");
-        assertThat(json).contains("\"org.apache.flink.agents.api.OutputEvent\"");
+        // Verify event mappings use EVENT_TYPE constants
+        assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\"");
+        assertThat(json).contains("\"" + OutputEvent.EVENT_TYPE + "\"");
 
         // Verify function details
         assertThat(json).contains("\"func_type\":\"JavaFunction\"");

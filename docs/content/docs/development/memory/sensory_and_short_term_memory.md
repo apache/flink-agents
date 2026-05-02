@@ -79,7 +79,7 @@ The key of the pairs store in `MemoryObject` must be string, and the value can b
 
 {{< tab "Python" >}}
 ```python
-@action(InputEvent)
+@action("_input_event")
 def process_event(event: InputEvent, ctx: RunnerContext) -> None:
     memory: MemoryObject = ctx.sensory_memory # or ctx.short_term_memory
     # store primitive
@@ -103,7 +103,7 @@ def process_event(event: InputEvent, ctx: RunnerContext) -> None:
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEvents = {InputEvent.class})
+@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
 public static void processEvent(InputEvent event, RunnerContext ctx) throws Exception {
     MemoryObject memory = ctx.getSensoryMemory(); // ctx.getShortTermMemory();
     // store primitive
@@ -223,7 +223,7 @@ def second_action(event: Event, ctx: RunnerContext):
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEvents = {InputEvent.class})
+@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
 public static void firstAction(Event event, RunnerContext ctx) throws Exception {
     ...
     MemoryObject sensoryMemory = ctx.getSensoryMemory();
@@ -233,7 +233,7 @@ public static void firstAction(Event event, RunnerContext ctx) throws Exception 
     ...
 }
 
-@Action(listenEvents = {MyEvent.class})
+@Action(listenEventTypes = {MyEvent.EVENT_TYPE})
 public static void secondAction(Event event, RunnerContext ctx) throws Exception {
     ...
     MemoryObject sensoryMemory = ctx.getSensoryMemory();

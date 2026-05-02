@@ -86,7 +86,7 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
         String input = (String) event.getInput();
         MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -104,7 +104,7 @@ public class ReviewAnalysisAgent extends Agent {
         ctx.sendEvent(new ChatRequestEvent("reviewAnalysisModel", List.of(msg)));
     }
 
-    @Action(listenEvents = ChatResponseEvent.class)
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
             throws Exception {
         JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());

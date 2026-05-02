@@ -129,7 +129,7 @@ public class EmbeddingIntegrationAgent extends Agent {
     }
 
     /** Main test action that processes input and validates embedding generation. */
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void testEmbeddingGeneration(InputEvent event, RunnerContext ctx)
             throws Exception {
         String input = (String) event.getInput();

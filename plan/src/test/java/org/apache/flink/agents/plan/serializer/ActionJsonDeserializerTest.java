@@ -54,7 +54,7 @@ public class ActionJsonDeserializerTest {
         assertEquals(InputEvent.class, javaFunction.getParameterTypes()[0]);
         assertEquals(RunnerContext.class, javaFunction.getParameterTypes()[1]);
         assertEquals(1, action.getListenEventTypes().size());
-        assertEquals(InputEvent.class.getName(), action.getListenEventTypes().get(0));
+        assertEquals(InputEvent.EVENT_TYPE, action.getListenEventTypes().get(0));
     }
 
     @Test
@@ -73,7 +73,7 @@ public class ActionJsonDeserializerTest {
         assertEquals("test_module", pythonFunction.getModule());
         assertEquals("test_function", pythonFunction.getQualName());
         assertEquals(1, action.getListenEventTypes().size());
-        assertEquals(InputEvent.class.getName(), action.getListenEventTypes().get(0));
+        assertEquals(InputEvent.EVENT_TYPE, action.getListenEventTypes().get(0));
     }
 
     @Test

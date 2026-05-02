@@ -50,9 +50,12 @@ public class AgentPlanTest {
 
     /** Test event class for testing. */
     public static class TestEvent extends Event {
+        public static final String EVENT_TYPE = "TestEvent";
+
         private final String data;
 
         public TestEvent(String data) {
+            super(EVENT_TYPE);
             this.data = data;
         }
 
@@ -121,13 +124,13 @@ public class AgentPlanTest {
     /** Test agent class with annotated methods. */
     public static class TestAgent extends Agent {
 
-        @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public void handleInputEvent(InputEvent event, RunnerContext context) {
             // Test action implementation
         }
 
         @org.apache.flink.agents.api.annotation.Action(
-                listenEvents = {TestEvent.class, OutputEvent.class})
+                listenEventTypes = {TestEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE})
         public void handleMultipleEvents(Event event, RunnerContext context) {
             // Test action implementation
         }
@@ -156,7 +159,7 @@ public class AgentPlanTest {
 
         @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
-        @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public void handleInputEvent(InputEvent event, RunnerContext context) {
             // Test action implementation
         }
@@ -188,8 +191,7 @@ public class AgentPlanTest {
         Action inputAction = agentPlan.getActions().get("handleInputEvent");
         assertThat(inputAction).isNotNull();
         assertThat(inputAction.getName()).isEqualTo("handleInputEvent");
-        assertThat(inputAction.getListenEventTypes())
-                .isEqualTo(List.of(InputEvent.class.getName()));
+        assertThat(inputAction.getListenEventTypes()).isEqualTo(List.of(InputEvent.EVENT_TYPE));
         assertThat(inputAction.getExec()).isInstanceOf(JavaFunction.class);
 
         // Check that the JavaFunction instance has the correct method/class/params
@@ -203,29 +205,26 @@ public class AgentPlanTest {
         assertThat(multiAction).isNotNull();
         assertThat(multiAction.getName()).isEqualTo("handleMultipleEvents");
         assertThat(multiAction.getListenEventTypes())
-                .isEqualTo(List.of(TestEvent.class.getName(), OutputEvent.class.getName()));
+                .isEqualTo(List.of(TestEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE));
         assertThat(multiAction.getExec()).isInstanceOf(JavaFunction.class);
 
         // Verify actionsByEvent mapping
         assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(7);
 
         // Check InputEvent mapping
-        List<Action> inputEventActions =
-                agentPlan.getActionsByEvent().get(InputEvent.class.getName());
+        List<Action> inputEventActions = agentPlan.getActionsByEvent().get(InputEvent.EVENT_TYPE);
         assertThat(inputEventActions).isNotNull();
         assertThat(inputEventActions.size()).isEqualTo(1);
         assertThat(inputEventActions.get(0).getName()).isEqualTo("handleInputEvent");
 
         // Check TestEvent mapping
-        List<Action> testEventActions =
-                agentPlan.getActionsByEvent().get(TestEvent.class.getName());
+        List<Action> testEventActions = agentPlan.getActionsByEvent().get(TestEvent.EVENT_TYPE);
         assertThat(testEventActions).isNotNull();
         assertThat(testEventActions.size()).isEqualTo(1);
         assertThat(testEventActions.get(0).getName()).isEqualTo("handleMultipleEvents");
 
         // Check OutputEvent mapping
-        List<Action> outputEventActions =
-                agentPlan.getActionsByEvent().get(OutputEvent.class.getName());
+        List<Action> outputEventActions = agentPlan.getActionsByEvent().get(OutputEvent.EVENT_TYPE);
         assertThat(outputEventActions).isNotNull();
         assertThat(outputEventActions.size()).isEqualTo(1);
         assertThat(outputEventActions.get(0).getName()).isEqualTo("handleMultipleEvents");
@@ -269,11 +268,11 @@ public class AgentPlanTest {
         Agent agent = new Agent();
         Map<String, Object> config = Map.of("key", 123);
         agent.addAction(
-                        new Class[] {InputEvent.class},
+                        new String[] {InputEvent.EVENT_TYPE},
                         TestAgent.class.getMethod(
                                 "handleInputEvent", InputEvent.class, RunnerContext.class))
                 .addAction(
-                        new Class[] {TestEvent.class, OutputEvent.class},
+                        new String[] {TestEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE},
                         TestAgent.class.getMethod(
                                 "handleMultipleEvents", Event.class, RunnerContext.class),
                         config);
