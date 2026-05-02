@@ -16,8 +16,8 @@
 # limitations under the License.
 #################################################################################
 import hashlib
-from abc import ABC
-from typing import Any, Dict
+import json
+from typing import Any, ClassVar, Dict
 
 try:
     from typing import override
@@ -30,8 +30,35 @@ from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
 
-class Event(BaseModel, ABC, extra="allow"):
+def _reconstruct_row_if_needed(data: Any) -> Any:
+    """Recursively reconstruct pyflink Row objects from their JSON-serialized dicts.
+
+    Row objects are serialized as ``{"type": "Row", "values": [...], "fields": [...]}``.
+    This helper walks dicts and lists to convert any such representation back
+    into a ``pyflink.common.Row``.
+    """
+    if isinstance(data, dict):
+        if data.get("type") == "Row" and "values" in data:
+            fields = data.get("fields")
+            values = data["values"]
+            if fields:
+                return Row(**dict(zip(fields, values, strict=False)))
+            return Row(*values)
+        return {k: _reconstruct_row_if_needed(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_reconstruct_row_if_needed(item) for item in data]
+    return data
+
+
+class Event(BaseModel, extra="allow"):
     """Base class for all event types in the system.
+
+    This class serves dual purposes:
+
+    - **Unified events**: Instantiated directly with a user-defined ``type``
+      string and arbitrary key-value ``attributes``.  No subclassing required.
+    - **Subclassed events**: Concrete subclasses (e.g., :class:`InputEvent`)
+      set a fixed ``type`` string and store data in ``attributes``.
 
     Event allows extra properties, but these must be BaseModel instances or JSON
     serializable.
@@ -40,17 +67,25 @@ class Event(BaseModel, ABC, extra="allow"):
     ----------
     id : UUID
         Unique identifier for the event, generated deterministically based on
-        event content. This ensures events with identical content have the same
-        ID, which is critical for ActionStateStore divergence detection.
+        event content.
+    type : str | None
+        Event type string used for routing.
+    attributes : Dict[str, Any]
+        Key-value properties for the event data.
     """
 
     id: UUID = Field(default=None)
+    type: str | None = Field(default=None)
+    attributes: Dict[str, Any] = Field(default_factory=dict)
 
     @staticmethod
     def __serialize_unknown(field: Any) -> Dict[str, Any]:
         """Handle serialization of unknown types, specifically Row objects."""
         if isinstance(field, Row):
-            return {"type": "Row", "values": field._values}
+            result: Dict[str, Any] = {"type": "Row", "values": field._values}
+            if hasattr(field, "_fields") and field._fields:
+                result["fields"] = list(field._fields)
+            return result
         else:
             err_msg = f"Unable to serialize unknown type: {field.__class__}"
             raise PydanticSerializationError(err_msg)
@@ -91,13 +126,91 @@ class Event(BaseModel, ABC, extra="allow"):
         if name != "id":
             object.__setattr__(self, "id", self._generate_content_based_id())
 
+    def get_type(self) -> str:
+        """Return the event type string used for routing."""
+        if self.type is None:
+            msg = (
+                f"{self.__class__.__name__} has no type set. "
+                "All events must have an explicit type string."
+            )
+            raise ValueError(msg)
+        return self.type
+
+    def get_attr(self, name: str) -> Any:
+        """Get an attribute value from the attributes map."""
+        return self.attributes.get(name)
+
+    def set_attr(self, name: str, value: Any) -> None:
+        """Set an attribute value in the attributes map."""
+        self.attributes[name] = value
+
+    @classmethod
+    def from_event(cls, event: "Event") -> "Event":
+        """Reconstruct a typed event from a base Event.
+
+        Subclasses override this to validate attributes and return a
+        properly typed instance.
+        """
+        return event
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "Event":
+        """Deserialize a unified event from a JSON string.
+
+        Parameters
+        ----------
+        json_str : str
+            JSON string containing at least a ``type`` field.
+
+        Returns:
+        -------
+        Event
+            The deserialized event.
+
+        Raises:
+        ------
+        ValueError
+            If the ``type`` field is missing or empty.
+        """
+        data = json.loads(json_str)
+        event = cls.model_validate(data)
+        if event.type is None or event.type == "":
+            msg = "Event JSON must contain a 'type' field."
+            raise ValueError(msg)
+        for key in list(event.attributes):
+            event.attributes[key] = _reconstruct_row_if_needed(event.attributes[key])
+        return event
+
 
 class InputEvent(Event):
     """Event generated by the framework, carrying an input data that
     arrives at the agent.
+
+    Attributes:
+    ----------
+    input : Any
+        The input data arriving at the agent.
     """
 
-    input: Any
+    EVENT_TYPE: ClassVar[str] = "_input_event"
+
+    def __init__(self, input: Any) -> None:
+        """Create an InputEvent with the given input data."""
+        super().__init__(
+            type=InputEvent.EVENT_TYPE,
+            attributes={"input": input},
+        )
+
+    @classmethod
+    @override
+    def from_event(cls, event: Event) -> "InputEvent":
+        assert "input" in event.attributes
+        return InputEvent(input=event.attributes["input"])
+
+    @property
+    def input(self) -> Any:
+        """Return the input data."""
+        return self.get_attr("input")
 
 
 class OutputEvent(Event):
@@ -110,4 +223,22 @@ class OutputEvent(Event):
         The output result returned by the agent.
     """
 
-    output: Any
+    EVENT_TYPE: ClassVar[str] = "_output_event"
+
+    def __init__(self, output: Any) -> None:
+        """Create an OutputEvent with the given output data."""
+        super().__init__(
+            type=OutputEvent.EVENT_TYPE,
+            attributes={"output": output},
+        )
+
+    @classmethod
+    @override
+    def from_event(cls, event: Event) -> "OutputEvent":
+        assert "output" in event.attributes
+        return OutputEvent(output=event.attributes["output"])
+
+    @property
+    def output(self) -> Any:
+        """Return the output data."""
+        return self.get_attr("output")

@@ -36,35 +36,33 @@ _logger = logging.getLogger(__name__)
 
 async def process_context_retrieval_request(event: Event, ctx: RunnerContext) -> None:
     """Built-in action for processing context retrieval requests."""
-    if isinstance(event, ContextRetrievalRequestEvent):
-        vector_store = ctx.get_resource(event.vector_store, ResourceType.VECTOR_STORE)
+    event = ContextRetrievalRequestEvent.from_event(event)
+    vector_store = ctx.get_resource(event.vector_store, ResourceType.VECTOR_STORE)
 
-        query = VectorStoreQuery(query_text=event.query, limit=event.max_results)
+    query = VectorStoreQuery(query_text=event.query, limit=event.max_results)
 
-        rag_async = ctx.config.get(AgentExecutionOptions.RAG_ASYNC)
+    rag_async = ctx.config.get(AgentExecutionOptions.RAG_ASYNC)
 
-        if isinstance(vector_store, JavaVectorStore) and not support_async():
-            rag_async = False
+    if isinstance(vector_store, JavaVectorStore) and not support_async():
+        rag_async = False
 
-        if rag_async:
-            # To avoid https://github.com/alibaba/pemja/issues/88,
-            # we log a message here.
-            _logger.debug("Processing context retrieval asynchronously.")
-            result = await ctx.durable_execute_async(vector_store.query, query)
-        else:
-            result = ctx.durable_execute(vector_store.query, query)
+    if rag_async:
+        # To avoid https://github.com/alibaba/pemja/issues/88,
+        # we log a message here.
+        _logger.debug("Processing context retrieval asynchronously.")
+        result = await ctx.durable_execute_async(vector_store.query, query)
+    else:
+        result = ctx.durable_execute(vector_store.query, query)
 
-        ctx.send_event(
-            ContextRetrievalResponseEvent(
-                request_id=event.id, query=event.query, documents=result.documents
-            )
+    ctx.send_event(
+        ContextRetrievalResponseEvent(
+            request_id=event.id, query=event.query, documents=result.documents
         )
+    )
 
 
 CONTEXT_RETRIEVAL_ACTION = Action(
     name="context_retrieval_action",
     exec=PythonFunction.from_callable(process_context_retrieval_request),
-    listen_event_types=[
-        f"{ContextRetrievalRequestEvent.__module__}.{ContextRetrievalRequestEvent.__name__}",
-    ],
+    listen_event_types=[ContextRetrievalRequestEvent.EVENT_TYPE],
 )
