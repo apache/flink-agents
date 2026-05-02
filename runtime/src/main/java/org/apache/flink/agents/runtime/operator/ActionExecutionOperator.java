@@ -235,6 +235,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.processingTimeService = processingTimeService;
         this.mailboxExecutor = mailboxExecutor;
         this.eventLogger = createEventLogger(agentPlan);
+        this.eventListeners = new ArrayList<>();
         this.actionStateStore = actionStateStore;
         this.checkpointIdToSeqNums = new HashMap<>();
         this.actionTaskMemoryContexts = new HashMap<>();
@@ -411,8 +412,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
      * `tryProcessActionTaskForKey` to continue processing.
      */
     private void processEvent(Object key, Event event) throws Exception {
-        notifyEventProcessed(event);
-
         boolean isInputEvent = EventUtil.isInputEvent(event);
         if (EventUtil.isOutputEvent(event)) {
             // If the event is an OutputEvent, we send it downstream.
@@ -443,6 +442,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // If the event is an InputEvent, we submit a new mail to try processing the actions.
             mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
         }
+
+        notifyEventProcessed(event);
     }
 
     private void notifyEventProcessed(Event event) throws Exception {
