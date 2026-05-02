@@ -27,7 +27,7 @@ from flink_agents.api.decorators import (
     tool,
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import (
     ResourceDescriptor,
@@ -129,14 +129,15 @@ class ChatModelCrossLanguageAgent(Agent):
         """
         return a + b
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing input.
 
         In this action, we will send ChatRequestEvent to trigger built-in actions.
         """
-        input_text = event.input.lower()
+        input_event = InputEvent.from_event(event)
+        input_text = input_event.input.lower()
         model_name = (
             "math_chat_model"
             if ("calculate" in input_text or "sum" in input_text)
@@ -145,14 +146,15 @@ class ChatModelCrossLanguageAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model=model_name,
-                messages=[ChatMessage(role=MessageRole.USER, content=event.input)],
+                messages=[ChatMessage(role=MessageRole.USER, content=input_event.input)],
             )
         )
 
-    @action(ChatResponseEvent)
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing chat model response."""
-        input = event.response
-        if event.response and input.content:
+        chat_response = ChatResponseEvent.from_event(event)
+        input = chat_response.response
+        if chat_response.response and input.content:
             ctx.send_event(OutputEvent(output=input.content))

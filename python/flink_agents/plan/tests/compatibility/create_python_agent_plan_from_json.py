@@ -35,10 +35,8 @@ if __name__ == "__main__":
     assert len(actions) == 5
 
     event = "org.apache.flink.agents.api.Event"
-    input_event = "org.apache.flink.agents.api.InputEvent"
-    my_event = (
-        "org.apache.flink.agents.plan.compatibility.GenerateAgentPlanJson$MyEvent"
-    )
+    input_event = "_input_event"
+    my_event = "MyEvent"
     runner_context = "org.apache.flink.agents.api.context.RunnerContext"
     qualname = "org.apache.flink.agents.plan.compatibility.GenerateAgentPlanJson$JavaAgentPlanCompatibilityTestAgent"
 
@@ -49,7 +47,10 @@ if __name__ == "__main__":
     assert isinstance(func1, JavaFunction)
     assert func1.qualname == qualname
     assert func1.method_name == "firstAction"
-    assert func1.parameter_types == [input_event, runner_context]
+    assert func1.parameter_types == [
+        "org.apache.flink.agents.api.InputEvent",
+        runner_context,
+    ]
     listen_event_types1 = action1.listen_event_types
     assert listen_event_types1 == [input_event]
 
@@ -66,8 +67,8 @@ if __name__ == "__main__":
     ]
     listen_event_types2 = action2.listen_event_types
     assert sorted(listen_event_types2) == [
-        input_event,
         my_event,
+        input_event,
     ]
 
     # check actions_by_event

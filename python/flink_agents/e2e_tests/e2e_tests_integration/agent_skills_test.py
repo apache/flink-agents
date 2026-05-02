@@ -107,7 +107,7 @@ class SkillTestAgent(Agent):
             ],
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def process_input(event: InputEvent, ctx: RunnerContext) -> None:
         if isinstance(event.input, Operation):
@@ -137,7 +137,7 @@ class SkillTestAgent(Agent):
                 )
             )
 
-    @action(ChatResponseEvent)
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
     def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
         input = event.response

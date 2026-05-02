@@ -15,11 +15,18 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import os
 import sysconfig
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, List
+from typing import Any, ClassVar, List
+
+try:
+    from typing import override
+except ImportError:
+    from typing_extensions import override
+
 
 import pytest
 from pydantic import BaseModel
@@ -98,7 +105,26 @@ class Record(BaseModel):
 
 
 class MyEvent(Event):
-    value: Any
+    EVENT_TYPE: ClassVar[str] = "_my_event"
+
+    def __init__(self, value: Any) -> None:
+        """Create a MyEvent with the given value."""
+        super().__init__(
+            type=MyEvent.EVENT_TYPE,
+            attributes={"value": value},
+        )
+
+    @classmethod
+    @override
+    def from_event(cls, event: Event) -> "MyEvent":
+        """Reconstruct a MyEvent from a generic Event."""
+        assert "value" in event.attributes
+        return MyEvent(value=event.attributes["value"])
+
+    @property
+    def value(self) -> Any:
+        """Return the event value."""
+        return self.attributes["value"]
 
 
 class MyKeySelector(KeySelector):
@@ -163,10 +189,10 @@ class LongTermMemoryAgent(Agent):
             collection="context",
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     async def add_items(event: Event, ctx: RunnerContext) -> None:
-        input_data: ItemData = event.input
+        input_data = ItemData.model_validate(InputEvent.from_event(event).input)
         ltm = ctx.long_term_memory
 
         timestamp_before_add = datetime.now(timezone.utc).isoformat()
@@ -192,10 +218,10 @@ class LongTermMemoryAgent(Agent):
             )
         )
 
-    @action(MyEvent)
+    @action(MyEvent.EVENT_TYPE)
     @staticmethod
-    async def retrieve_items(event: Event, ctx: RunnerContext):  # noqa D102
-        record: Record = event.value
+    async def retrieve_items(event: Event, ctx: RunnerContext) -> None:
+        record: Record = MyEvent.from_event(event).value
         record.timestamp_second_action = datetime.now(timezone.utc).isoformat()
         memory_set = ctx.long_term_memory.get_memory_set(name="test_ltm")
         items = await ctx.durable_execute_async(memory_set.get)
@@ -250,7 +276,7 @@ def test_long_term_memory_async_execution_in_action(tmp_path: Path) -> None:
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    output_datastream.map(lambda x: x.model_dump_json(), Types.STRING()).add_sink(
+    output_datastream.map(lambda x: json.dumps(x), Types.STRING()).add_sink(
         StreamingFileSink.for_row_format(
             base_path=str(result_dir.absolute()),
             encoder=Encoder.simple_string_encoder(),

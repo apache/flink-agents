@@ -29,7 +29,7 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
 )
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceName,
@@ -97,15 +97,15 @@ class VectorStoreCrossLanguageAgent(Agent):
             dims=768,
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing input.
 
         In this action, we will test Vector store Collection Management and
         Document Management.
         """
-        input_text = event.input
+        input_text = InputEvent.from_event(event).input
 
         stm = ctx.short_term_memory
 
@@ -202,16 +202,16 @@ class VectorStoreCrossLanguageAgent(Agent):
             ContextRetrievalRequestEvent(query=input_text, vector_store="vector_store")
         )
 
-    @action(ContextRetrievalResponseEvent)
+    @action(ContextRetrievalResponseEvent.EVENT_TYPE)
     @staticmethod
     def contextRetrievalResponseEvent(
-        event: ContextRetrievalResponseEvent, ctx: RunnerContext
+        event: Event, ctx: RunnerContext
     ) -> None:
         """User defined action for processing context retrieval response.
 
         In this action, we will test Vector store Context Retrieval.
         """
-        documents = event.documents
+        documents = ContextRetrievalResponseEvent.from_event(event).documents
 
         assert documents is not None
         assert len(documents) > 0
