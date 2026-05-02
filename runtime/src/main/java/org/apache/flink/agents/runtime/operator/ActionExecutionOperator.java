@@ -194,7 +194,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private transient ListState<Object> currentProcessingKeysOpState;
 
     private final transient EventLogger eventLogger;
-    private transient List<EventListener> eventListeners;
+    private final transient List<EventListener> eventListeners;
 
     private transient ActionStateStore actionStateStore;
     private transient ValueState<Long> sequenceNumberKState;
@@ -367,7 +367,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         "Failed to instantiate EventListener: " + listenerClassName, e);
             }
         }
-        this.eventListeners = eventListeners;
+        this.eventListeners.addAll(eventListeners);
     }
 
     private void initEventLogger(StreamingRuntimeContext runtimeContext) throws Exception {
