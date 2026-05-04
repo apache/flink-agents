@@ -24,8 +24,8 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
-import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore.Collection;
 import org.apache.flink.agents.api.vectorstores.Document;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
@@ -71,7 +71,6 @@ public class ElasticsearchVectorStoreTest {
                         .addInitialArgument("dims", 5)
                         .addInitialArgument("username", "elastic")
                         .addInitialArgument("password", System.getenv("ES_PASSWORD"));
-        ;
         store =
                 new ElasticsearchVectorStore(
                         builder.build(), ElasticsearchVectorStoreTest::getResource);
@@ -81,29 +80,24 @@ public class ElasticsearchVectorStoreTest {
     public void testCollectionManagement() throws Exception {
         CollectionManageableVectorStore vectorStore = (CollectionManageableVectorStore) store;
         String name = "collection_management";
-        Map<String, Object> metadata = Map.of("key1", "value1", "key2", "value2");
-        vectorStore.getOrCreateCollection(name, metadata);
+        // ES backend ignores any metadata in kwargs (no native index-metadata support).
+        vectorStore.createCollectionIfNotExists(name, Map.of());
 
-        Collection collection = vectorStore.getCollection(name);
-
-        Assertions.assertNotNull(collection);
-        Assertions.assertEquals(name, collection.getName());
-        Assertions.assertEquals(0, store.size(name));
-        Assertions.assertEquals(metadata, collection.getMetadata());
+        // The collection (index) is created and empty.
+        List<Document> empty = store.get(null, name, null, null, Collections.emptyMap());
+        Assertions.assertTrue(empty.isEmpty());
 
         vectorStore.deleteCollection(name);
 
+        // Querying a deleted collection should fail.
         Assertions.assertThrows(
-                RuntimeException.class,
-                () -> vectorStore.getCollection(name),
-                String.format("Collection %s not found", name));
+                Exception.class, () -> store.get(null, name, null, null, Collections.emptyMap()));
     }
 
     @Test
     public void testDocumentManagement() throws Exception {
         String name = "document_management";
-        Map<String, Object> metadata = Map.of("key1", "value1", "key2", "value2");
-        ((CollectionManageableVectorStore) store).getOrCreateCollection(name, metadata);
+        ((CollectionManageableVectorStore) store).createCollectionIfNotExists(name, Map.of());
 
         List<Document> documents = new ArrayList<>();
         documents.add(
@@ -124,27 +118,139 @@ public class ElasticsearchVectorStoreTest {
         }
 
         // test get all documents
-        List<Document> all = store.get(null, name, Collections.emptyMap());
+        List<Document> all = store.get(null, name, null, null, Collections.emptyMap());
         Assertions.assertEquals(documents, all);
 
         // test get specific document
         List<Document> specific =
-                store.get(Collections.singletonList("doc1"), name, Collections.emptyMap());
+                store.get(
+                        Collections.singletonList("doc1"),
+                        name,
+                        null,
+                        null,
+                        Collections.emptyMap());
         Assertions.assertEquals(1, specific.size());
         Assertions.assertEquals(documents.get(0), specific.get(0));
 
         // test delete specific document
-        store.delete(Collections.singletonList("doc1"), name, Collections.emptyMap());
+        store.delete(Collections.singletonList("doc1"), name, null, Collections.emptyMap());
         Thread.sleep(1000);
-        List<Document> remain = store.get(null, name, Collections.emptyMap());
+        List<Document> remain = store.get(null, name, null, null, Collections.emptyMap());
         Assertions.assertEquals(1, remain.size());
         Assertions.assertEquals(documents.get(1), remain.get(0));
 
         // test delete all documents
-        store.delete(null, name, Collections.emptyMap());
+        store.delete(null, name, null, Collections.emptyMap());
         Thread.sleep(1000);
-        List<Document> empty = store.get(null, name, Collections.emptyMap());
+        List<Document> empty = store.get(null, name, null, null, Collections.emptyMap());
         Assertions.assertTrue(empty.isEmpty());
+
+        ((CollectionManageableVectorStore) store).deleteCollection(name);
+    }
+
+    @Test
+    public void testFiltersDsl() throws Exception {
+        // Verify the unified equality-only filters DSL gets translated into ES bool/must term
+        // clauses against metadata.<key>.keyword. Two docs go in with different metadata; get
+        // and queryEmbedding with filters must each return only the matching doc.
+        String name = "filters_dsl";
+        ((CollectionManageableVectorStore) store).createCollectionIfNotExists(name, Map.of());
+
+        List<Document> docs = new ArrayList<>();
+        docs.add(
+                new Document(
+                        "Elasticsearch is a search engine",
+                        Map.of("category", "database", "user_id", "alice"),
+                        "doc_alice"));
+        docs.add(
+                new Document(
+                        "Apache Flink Agents is an Agentic AI framework based on Apache Flink.",
+                        Map.of("category", "ai-agent", "user_id", "bob"),
+                        "doc_bob"));
+        store.add(docs, name, Collections.emptyMap());
+        Thread.sleep(1000);
+
+        List<Document> aliceOnly =
+                store.get(null, name, Map.of("user_id", "alice"), null, Collections.emptyMap());
+        Assertions.assertEquals(1, aliceOnly.size());
+        Assertions.assertEquals("doc_alice", aliceOnly.get(0).getId());
+
+        // queryEmbedding with the same filter should also restrict to alice.
+        List<Document> aliceQueried =
+                store.queryEmbedding(
+                        new float[] {0.2f, 0.3f, 0.4f, 0.5f, 0.6f},
+                        5,
+                        name,
+                        Map.of("user_id", "alice"),
+                        Collections.emptyMap());
+        Assertions.assertFalse(aliceQueried.isEmpty());
+        Assertions.assertTrue(aliceQueried.stream().allMatch(d -> "doc_alice".equals(d.getId())));
+
+        ((CollectionManageableVectorStore) store).deleteCollection(name);
+    }
+
+    @Test
+    public void testUpdateOverwritesExistingDocument() throws Exception {
+        // ES bulk index is upsert by id — update should rewrite the doc in place.
+        String name = "update_overwrite";
+        ((CollectionManageableVectorStore) store).createCollectionIfNotExists(name, Map.of());
+
+        Document original =
+                new Document(
+                        "Elasticsearch is a search engine", Map.of("category", "database"), "doc1");
+        store.add(List.of(original), name, Collections.emptyMap());
+        Thread.sleep(1000);
+
+        Document rewritten =
+                new Document(
+                        "Apache Flink Agents is an Agentic AI framework based on Apache Flink.",
+                        Map.of("category", "ai-agent"),
+                        "doc1");
+        store.update(List.of(rewritten), name, Collections.emptyMap());
+        Thread.sleep(1000);
+
+        List<Document> after = store.get(List.of("doc1"), name, null, null, Collections.emptyMap());
+        Assertions.assertEquals(1, after.size());
+        Assertions.assertEquals(
+                "Apache Flink Agents is an Agentic AI framework based on Apache Flink.",
+                after.get(0).getContent());
+        Assertions.assertEquals("ai-agent", after.get(0).getMetadata().get("category"));
+
+        ((CollectionManageableVectorStore) store).deleteCollection(name);
+    }
+
+    @Test
+    public void testQueryEmbeddingPopulatesScore() throws Exception {
+        // KNN hits must come back with a non-null Document.score so callers (e.g. mem0) can
+        // surface the relevance score in their output.
+        String name = "score_populated";
+        ((CollectionManageableVectorStore) store).createCollectionIfNotExists(name, Map.of());
+
+        store.add(
+                List.of(
+                        new Document(
+                                "Elasticsearch is a search engine", Map.of("src", "test"), "doc1"),
+                        new Document(
+                                "Apache Flink Agents is an Agentic AI framework based on Apache Flink.",
+                                Map.of("src", "test"),
+                                "doc2")),
+                name,
+                Collections.emptyMap());
+        Thread.sleep(1000);
+
+        VectorStoreQuery q =
+                new VectorStoreQuery(
+                        "Elasticsearch is a search engine", 5, name, Collections.emptyMap());
+        List<Document> hits = store.query(q).getDocuments();
+        Assertions.assertFalse(hits.isEmpty());
+        Assertions.assertTrue(
+                hits.stream().allMatch(d -> d.getScore() != null),
+                "Every KNN hit should carry an Elasticsearch _score");
+
+        // mget (get-by-ids) has no relevance score — Document.score must stay null.
+        List<Document> byId = store.get(List.of("doc1"), name, null, null, Collections.emptyMap());
+        Assertions.assertEquals(1, byId.size());
+        Assertions.assertNull(byId.get(0).getScore());
 
         ((CollectionManageableVectorStore) store).deleteCollection(name);
     }

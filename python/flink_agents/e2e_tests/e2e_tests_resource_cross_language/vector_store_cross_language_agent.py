@@ -39,6 +39,8 @@ from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.vector_stores.vector_store import (
     CollectionManageableVectorStore,
     Document,
+    VectorStoreQuery,
+    VectorStoreQueryMode,
 )
 
 TEST_COLLECTION = "test_collection"
@@ -140,20 +142,19 @@ class VectorStoreCrossLanguageAgent(Agent):
                 ]
                 vector_store.add(documents=documents)
 
-                # Test size
-                assert vector_store.size() == 3
+                assert len(vector_store.get()) == 3
 
                 # Test delete
                 vector_store.delete(ids="doc3")
 
                 # Wait for vector store to delete doc3
                 retry_time = 0
-                while vector_store.size() > 2 and retry_time < MAX_RETRIES_TIMES:
+                while len(vector_store.get()) > 2 and retry_time < MAX_RETRIES_TIMES:
                     retry_time += 1
                     time.sleep(2)
                     print(f"[TEST] Retrying to delete doc3, retry_time={retry_time}")
 
-                assert vector_store.size() == 2
+                assert len(vector_store.get()) == 2
 
                 # Test get
                 doc = vector_store.get(ids="doc2")
@@ -165,6 +166,35 @@ class VectorStoreCrossLanguageAgent(Agent):
                 )
 
                 print("[TEST] Vector store Document Management PASSED")
+
+                # Verify VectorStoreQuery.filters survives the Python->Java bridge.
+                # Elasticsearch translates the unified-DSL filter to a bool/must term
+                # post-filter, so the result must contain only the doc tagged
+                # ``category=calculate`` (doc1).
+                filtered_query = VectorStoreQuery(
+                    mode=VectorStoreQueryMode.SEMANTIC,
+                    query_text="sum",
+                    limit=10,
+                    filters={"category": "calculate"},
+                )
+
+                # ES is eventually consistent; allow a few retries.
+                retry_time = 0
+                filtered_docs = vector_store.query(filtered_query).documents
+                while (
+                    len(filtered_docs) != 1 and retry_time < MAX_RETRIES_TIMES
+                ):
+                    retry_time += 1
+                    time.sleep(2)
+                    filtered_docs = vector_store.query(filtered_query).documents
+
+                assert len(filtered_docs) == 1, (
+                    f"Filter {{category=calculate}} should match 1 doc, got "
+                    f"{len(filtered_docs)}"
+                )
+                assert filtered_docs[0].id == "doc1"
+
+                print("[TEST] Vector store filter query PASSED")
 
             stm.set("is_initialized", True)
 

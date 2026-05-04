@@ -53,7 +53,7 @@ public class PythonCollectionManageableVectorStoreTest {
 
     @Mock private BiFunction<String, ResourceType, Resource> mockGetResource;
 
-    @Mock private PyObject mockPythonCollection;
+    @Mock private PyObject mockPythonDocument;
 
     private PythonCollectionManageableVectorStore vectorStore;
     private AutoCloseable mocks;
@@ -91,98 +91,63 @@ public class PythonCollectionManageableVectorStoreTest {
     }
 
     @Test
-    void testGetOrCreateCollectionWithMetadata() throws Exception {
+    void testCreateCollectionIfNotExistsWithMetadata() throws Exception {
         String collectionName = "test_collection";
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("key1", "value1");
         metadata.put("key2", "value2");
+        Map<String, Object> kwargs = new HashMap<>();
+        kwargs.put("metadata", metadata);
 
-        CollectionManageableVectorStore.Collection expectedCollection =
-                new CollectionManageableVectorStore.Collection(collectionName, metadata);
-
-        when(mockAdapter.callMethod(
-                        eq(mockVectorStore), eq("create_collection_if_not_exists"), any(Map.class)))
-                .thenReturn(mockPythonCollection);
-        when(mockAdapter.fromPythonCollection(mockPythonCollection)).thenReturn(expectedCollection);
-
-        CollectionManageableVectorStore.Collection result =
-                vectorStore.getOrCreateCollection(collectionName, metadata);
-
-        assertThat(result).isNotNull();
-        assertThat(result.getName()).isEqualTo(collectionName);
-        assertThat(result.getMetadata()).isEqualTo(metadata);
+        vectorStore.createCollectionIfNotExists(collectionName, kwargs);
 
         verify(mockAdapter)
                 .callMethod(
                         eq(mockVectorStore),
                         eq("create_collection_if_not_exists"),
                         argThat(
-                                kwargs -> {
-                                    assertThat(kwargs).containsKey("name");
-                                    assertThat(kwargs).containsKey("metadata");
-                                    assertThat(kwargs.get("name")).isEqualTo(collectionName);
-                                    assertThat(kwargs.get("metadata")).isEqualTo(metadata);
+                                args -> {
+                                    assertThat(args).containsKey("name");
+                                    assertThat(args).containsKey("metadata");
+                                    assertThat(args.get("name")).isEqualTo(collectionName);
+                                    assertThat(args.get("metadata")).isEqualTo(metadata);
                                     return true;
                                 }));
     }
 
     @Test
-    void testGetOrCreateCollectionWithEmptyMetadata() throws Exception {
+    void testCreateCollectionIfNotExistsWithEmptyKwargs() throws Exception {
         String collectionName = "test_collection";
-        Map<String, Object> metadata = new HashMap<>();
 
-        CollectionManageableVectorStore.Collection expectedCollection =
-                new CollectionManageableVectorStore.Collection(collectionName, metadata);
-
-        when(mockAdapter.callMethod(
-                        eq(mockVectorStore), eq("create_collection_if_not_exists"), any(Map.class)))
-                .thenReturn(mockPythonCollection);
-        when(mockAdapter.fromPythonCollection(mockPythonCollection)).thenReturn(expectedCollection);
-
-        CollectionManageableVectorStore.Collection result =
-                vectorStore.getOrCreateCollection(collectionName, metadata);
-
-        assertThat(result).isNotNull();
-        assertThat(result.getName()).isEqualTo(collectionName);
+        vectorStore.createCollectionIfNotExists(collectionName, new HashMap<>());
 
         verify(mockAdapter)
                 .callMethod(
                         eq(mockVectorStore),
                         eq("create_collection_if_not_exists"),
                         argThat(
-                                kwargs -> {
-                                    assertThat(kwargs).containsKey("name");
-                                    assertThat(kwargs).doesNotContainKey("metadata");
+                                args -> {
+                                    assertThat(args).containsKey("name");
+                                    assertThat(args).doesNotContainKey("metadata");
+                                    assertThat(args.get("name")).isEqualTo(collectionName);
                                     return true;
                                 }));
     }
 
     @Test
-    void testGetOrCreateCollectionWithNullMetadata() throws Exception {
+    void testCreateCollectionIfNotExistsWithNullKwargs() throws Exception {
         String collectionName = "test_collection";
 
-        CollectionManageableVectorStore.Collection expectedCollection =
-                new CollectionManageableVectorStore.Collection(collectionName, null);
-
-        when(mockAdapter.callMethod(
-                        eq(mockVectorStore), eq("create_collection_if_not_exists"), any(Map.class)))
-                .thenReturn(mockPythonCollection);
-        when(mockAdapter.fromPythonCollection(mockPythonCollection)).thenReturn(expectedCollection);
-
-        CollectionManageableVectorStore.Collection result =
-                vectorStore.getOrCreateCollection(collectionName, null);
-
-        assertThat(result).isNotNull();
-        assertThat(result.getName()).isEqualTo(collectionName);
+        vectorStore.createCollectionIfNotExists(collectionName, null);
 
         verify(mockAdapter)
                 .callMethod(
                         eq(mockVectorStore),
                         eq("create_collection_if_not_exists"),
                         argThat(
-                                kwargs -> {
-                                    assertThat(kwargs).containsKey("name");
-                                    assertThat(kwargs).doesNotContainKey("metadata");
+                                args -> {
+                                    assertThat(args).containsKey("name");
+                                    assertThat(args).doesNotContainKey("metadata");
                                     return true;
                                 }));
     }
@@ -190,20 +155,8 @@ public class PythonCollectionManageableVectorStoreTest {
     @Test
     void testDeleteCollection() throws Exception {
         String collectionName = "collection_to_delete";
-        Map<String, Object> metadata = Map.of("status", "deleted");
 
-        CollectionManageableVectorStore.Collection expectedCollection =
-                new CollectionManageableVectorStore.Collection(collectionName, metadata);
-
-        when(mockVectorStore.invokeMethod("delete_collection", collectionName))
-                .thenReturn(mockPythonCollection);
-        when(mockAdapter.fromPythonCollection(mockPythonCollection)).thenReturn(expectedCollection);
-
-        CollectionManageableVectorStore.Collection result =
-                vectorStore.deleteCollection(collectionName);
-
-        assertThat(result).isNotNull();
-        assertThat(result.getName()).isEqualTo(collectionName);
+        vectorStore.deleteCollection(collectionName);
 
         verify(mockVectorStore).invokeMethod("delete_collection", collectionName);
     }
@@ -244,9 +197,38 @@ public class PythonCollectionManageableVectorStoreTest {
     }
 
     @Test
+    void testUpdateDocuments() throws Exception {
+        List<Document> documents =
+                Arrays.asList(
+                        new Document("c1", Map.of("k", "v1"), "doc1"),
+                        new Document("c2", Map.of("k", "v2"), "doc2"));
+        String collection = "test_collection";
+        Map<String, Object> extraArgs = Map.of("batch_size", 5);
+
+        when(mockAdapter.toPythonDocuments(documents)).thenReturn(new Object());
+
+        vectorStore.update(documents, collection, extraArgs);
+
+        verify(mockAdapter).toPythonDocuments(documents);
+        verify(mockAdapter)
+                .callMethod(
+                        eq(mockVectorStore),
+                        eq("update"),
+                        argThat(
+                                kwargs -> {
+                                    assertThat(kwargs).containsKey("documents");
+                                    assertThat(kwargs).containsKey("collection_name");
+                                    assertThat(kwargs).containsKey("batch_size");
+                                    return true;
+                                }));
+    }
+
+    @Test
     void testGetDocuments() throws Exception {
         List<String> ids = Arrays.asList("doc1", "doc2");
         String collection = "test_collection";
+        Map<String, Object> filters = Map.of("user_id", "u1");
+        Integer limit = 50;
         Map<String, Object> extraArgs = new HashMap<>();
 
         List<Document> expectedDocuments =
@@ -255,10 +237,10 @@ public class PythonCollectionManageableVectorStoreTest {
                         new Document("content2", Map.of(), "doc2"));
 
         when(mockAdapter.callMethod(eq(mockVectorStore), eq("get"), any(Map.class)))
-                .thenReturn(Arrays.asList(mockPythonCollection, mockPythonCollection));
+                .thenReturn(Arrays.asList(mockPythonDocument, mockPythonDocument));
         when(mockAdapter.fromPythonDocuments(any())).thenReturn(expectedDocuments);
 
-        List<Document> result = vectorStore.get(ids, collection, extraArgs);
+        List<Document> result = vectorStore.get(ids, collection, filters, limit, extraArgs);
 
         assertThat(result).isNotNull();
         assertThat(result).hasSize(2);
@@ -271,6 +253,10 @@ public class PythonCollectionManageableVectorStoreTest {
                                 kwargs -> {
                                     assertThat(kwargs).containsKey("ids");
                                     assertThat(kwargs).containsKey("collection_name");
+                                    assertThat(kwargs).containsKey("filters");
+                                    assertThat(kwargs).containsKey("limit");
+                                    assertThat(kwargs.get("filters")).isEqualTo(filters);
+                                    assertThat(kwargs.get("limit")).isEqualTo(limit);
                                     return true;
                                 }));
     }
@@ -279,12 +265,13 @@ public class PythonCollectionManageableVectorStoreTest {
     void testDeleteDocuments() throws Exception {
         List<String> ids = Arrays.asList("doc1", "doc2");
         String collection = "test_collection";
+        Map<String, Object> filters = Map.of("category", "stale");
         Map<String, Object> extraArgs = new HashMap<>();
 
         when(mockAdapter.callMethod(eq(mockVectorStore), eq("delete"), any(Map.class)))
                 .thenReturn(null);
 
-        vectorStore.delete(ids, collection, extraArgs);
+        vectorStore.delete(ids, collection, filters, extraArgs);
 
         verify(mockAdapter)
                 .callMethod(
@@ -294,6 +281,8 @@ public class PythonCollectionManageableVectorStoreTest {
                                 kwargs -> {
                                     assertThat(kwargs).containsKey("ids");
                                     assertThat(kwargs).containsKey("collection_name");
+                                    assertThat(kwargs).containsKey("filters");
+                                    assertThat(kwargs.get("filters")).isEqualTo(filters);
                                     return true;
                                 }));
     }

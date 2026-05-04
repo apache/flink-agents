@@ -34,11 +34,6 @@ from flink_agents.runtime.python_java_utils import (
     from_java_vector_store_query_result,
 )
 
-_PRIVATE_HOOK_MSG = (
-    "Protected embedding hooks are never called on the Java wrapper; "
-    "public methods forward directly to the Java resource."
-)
-
 
 class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
     """Java-based implementation of EmbeddingModelSetup that wraps a Java embedding
@@ -84,8 +79,7 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
     ) -> List[str]:
         documents = _maybe_cast_to_list(documents)
         j_documents = [
-            self._j_resource_adapter.fromPythonDocument(document)
-            for document in documents
+            _to_j_document(self._j_resource_adapter, doc) for doc in documents
         ]
 
         return self._j_resource.add(j_documents, collection_name, kwargs)
@@ -95,14 +89,6 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
         j_query = self._j_resource_adapter.fromPythonVectorStoreQuery(query)
         j_query_result = self._j_resource.query(j_query)
         return from_java_vector_store_query_result(j_query_result)
-
-    def size(self, collection_name: str | None = None) -> int:
-        """Return document count, forwarded to the underlying Java store.
-
-        Java-side convenience; not part of :class:`BaseVectorStore`'s
-        contract.
-        """
-        return self._j_resource.size(collection_name)
 
     @override
     def get(
@@ -114,11 +100,7 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
         **kwargs: Any,
     ) -> List[Document]:
         ids = _maybe_cast_to_list(ids)
-        if filters is not None:
-            kwargs = {**kwargs, "filters": filters}
-        if limit is not None:
-            kwargs = {**kwargs, "limit": limit}
-        j_documents = self._j_resource.get(ids, collection_name, kwargs)
+        j_documents = self._j_resource.get(ids, collection_name, filters, limit, kwargs)
         return [from_java_document(j_document) for j_document in j_documents]
 
     @override
@@ -130,9 +112,7 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
         **kwargs: Any,
     ) -> List[str]:
         ids = _maybe_cast_to_list(ids)
-        if filters is not None:
-            kwargs = {**kwargs, "filters": filters}
-        return self._j_resource.delete(ids, collection_name, kwargs)
+        return self._j_resource.delete(ids, collection_name, filters, kwargs)
 
     @override
     def update(
@@ -141,19 +121,19 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
         collection_name: str | None = None,
         **kwargs: Any,
     ) -> None:
-        err_msg = (
-            "Update is not yet supported on the Java VectorStore wrapper. "
-            "Implement it on the Java side first."
-        )
-        raise NotImplementedError(err_msg)
+        documents = _maybe_cast_to_list(documents)
+        j_documents = [
+            _to_j_document(self._j_resource_adapter, doc) for doc in documents
+        ]
+        self._j_resource.update(j_documents, collection_name, kwargs)
 
     @override
     def create_collection_if_not_exists(self, name: str, **kwargs: Any) -> None:
-        """Forward to the Java side. Currently only ``metadata`` is forwarded;
-        the Java API will be widened in a follow-up PR.
+        """Forward to the Java side, passing all kwargs through as a map; the Java
+        ``createCollectionIfNotExists(name, kwargs)`` ignores keys it does not
+        understand (e.g. ``metadata`` for backends that do not support it).
         """
-        metadata = kwargs.get("metadata")
-        self._j_resource.getOrCreateCollection(name, metadata)
+        self._j_resource.createCollectionIfNotExists(name, kwargs)
 
     @override
     def delete_collection(self, name: str) -> None:
@@ -167,13 +147,29 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
         collection_name: str | None = None,
         **kwargs: Any,
     ) -> List[str]:
-        raise NotImplementedError(_PRIVATE_HOOK_MSG)
+        j_documents = [
+            _to_j_document(self._j_resource_adapter, doc) for doc in documents
+        ]
+        return self._j_resource.addEmbedding(j_documents, collection_name, kwargs)
 
     @override
     def _query_embedding(
-        self, embedding: list[float], limit: int = 10, **kwargs: Any
+        self,
+        embedding: list[float],
+        limit: int = 10,
+        collection_name: str | None = None,
+        filters: Dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> list[Document]:
-        raise NotImplementedError(_PRIVATE_HOOK_MSG)
+        # Pemja's Python -> Java float[] converter goes through
+        # JcpPyTuple_AsJObject, which uses PyTuple_Size / PyTuple_GetItem.
+        # Those APIs only work on actual tuples; passing a list (or numpy
+        # array) leads to a JVM segfault inside jni_GetFloatArrayElements.
+        # Coerce to tuple here.
+        j_documents = self._j_resource.queryEmbedding(
+            tuple(embedding), limit, collection_name, filters, kwargs
+        )
+        return [from_java_document(j_document) for j_document in j_documents]
 
     @override
     def _update_embedding(
@@ -183,4 +179,20 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
         collection_name: str | None = None,
         **kwargs: Any,
     ) -> None:
-        raise NotImplementedError(_PRIVATE_HOOK_MSG)
+        j_documents = [
+            _to_j_document(self._j_resource_adapter, doc) for doc in documents
+        ]
+        self._j_resource.updateEmbedding(j_documents, collection_name, kwargs)
+
+
+def _to_j_document(j_resource_adapter: Any, doc: Document) -> Any:
+    """Convert a Python ``Document`` to a Java ``Document`` by passing the
+    fields through to the Java adapter as primitives. This avoids the reverse
+    Java→Python ``getAttr`` path, which crashes the JVM when the call
+    originates from a thread that mem0 (or any other Python consumer) span up
+    outside of Pemja's main interpreter thread state.
+    """
+    embedding = tuple(doc.embedding) if doc.embedding is not None else None
+    return j_resource_adapter.fromPythonDocument(
+        doc.content, doc.metadata, doc.id, embedding, doc.score
+    )

@@ -25,7 +25,6 @@ import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import pemja.core.object.PyObject;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.BiFunction;
@@ -37,13 +36,13 @@ import java.util.function.BiFunction;
  * management operations to the underlying Python implementation.
  *
  * <p>Unlike {@link PythonVectorStore}, this implementation provides additional collection
- * management features, allowing for operations such as creating, listing, and deleting collections
- * within the vector store.
+ * management features, allowing for operations such as creating and deleting collections within the
+ * vector store.
  */
 public class PythonCollectionManageableVectorStore extends PythonVectorStore
         implements CollectionManageableVectorStore {
     /**
-     * Creates a new PythonEmbeddingModelConnection.
+     * Creates a new PythonCollectionManageableVectorStore.
      *
      * @param adapter The Python resource adapter (required by PythonResourceProvider's
      *     reflection-based instantiation but not used directly in this implementation)
@@ -60,33 +59,19 @@ public class PythonCollectionManageableVectorStore extends PythonVectorStore
     }
 
     @Override
-    public Collection getOrCreateCollection(String name, Map<String, Object> metadata)
+    public void createCollectionIfNotExists(String name, Map<String, Object> kwargs)
             throws Exception {
-        Map<String, Object> kwargs = new HashMap<>();
-        kwargs.put("name", name);
-        if (metadata != null && !metadata.isEmpty()) {
-            kwargs.put("metadata", metadata);
+        Map<String, Object> merged = new HashMap<>();
+        merged.put("name", name);
+        if (kwargs != null) {
+            merged.putAll(kwargs);
         }
 
-        this.adapter.callMethod(vectorStore, "create_collection_if_not_exists", kwargs);
-        // TODO: This is a work around for python vector store api has been refactored, but java
-        // hasn't.
-        return new Collection(name, metadata);
+        this.adapter.callMethod(vectorStore, "create_collection_if_not_exists", merged);
     }
 
     @Override
-    public Collection getCollection(String name) throws Exception {
-        // TODO: This is a work around for python vector store api has been refactored, but java
-        // hasn't.
-        throw new UnsupportedOperationException(
-                "PythonVectorStore doesn't support getCollection()");
-    }
-
-    @Override
-    public Collection deleteCollection(String name) throws Exception {
+    public void deleteCollection(String name) throws Exception {
         this.vectorStore.invokeMethod("delete_collection", name);
-        // TODO: This is a work around for python vector store api has been refactored, but java
-        // hasn't.
-        return new Collection(name, Collections.emptyMap());
     }
 }
