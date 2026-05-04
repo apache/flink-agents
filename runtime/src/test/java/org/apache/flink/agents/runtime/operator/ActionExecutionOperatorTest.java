@@ -264,12 +264,9 @@ public class ActionExecutionOperatorTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            // Use reflection to access the action state store for validation
-            Field actionStateStoreField =
-                    ActionExecutionOperator.class.getDeclaredField("actionStateStore");
-            actionStateStoreField.setAccessible(true);
             InMemoryActionStateStore actionStateStore =
-                    (InMemoryActionStateStore) actionStateStoreField.get(operator);
+                    (InMemoryActionStateStore)
+                            operator.getDurableExecutionManager().getActionStateStore();
 
             assertThat(actionStateStore).isNotNull();
             assertThat(actionStateStore.getKeyedActionStates()).isEmpty();
@@ -325,9 +322,7 @@ public class ActionExecutionOperatorTest {
             testHarness.open();
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
-            Field eventLoggerField = ActionExecutionOperator.class.getDeclaredField("eventLogger");
-            eventLoggerField.setAccessible(true);
-            Object eventLogger = eventLoggerField.get(operator);
+            Object eventLogger = operator.getEventRouter().getEventLogger();
             assertThat(eventLogger).isInstanceOf(FileEventLogger.class);
 
             Field configField = FileEventLogger.class.getDeclaredField("config");
@@ -358,12 +353,9 @@ public class ActionExecutionOperatorTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            // Use reflection to access the action state store for validation
-            Field actionStateStoreField =
-                    ActionExecutionOperator.class.getDeclaredField("actionStateStore");
-            actionStateStoreField.setAccessible(true);
             InMemoryActionStateStore actionStateStore =
-                    (InMemoryActionStateStore) actionStateStoreField.get(operator);
+                    (InMemoryActionStateStore)
+                            operator.getDurableExecutionManager().getActionStateStore();
 
             Long inputValue = 3L;
             testHarness.processElement(new StreamRecord<>(inputValue));
@@ -433,12 +425,9 @@ public class ActionExecutionOperatorTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            // Access the action state store
-            java.lang.reflect.Field actionStateStoreField =
-                    ActionExecutionOperator.class.getDeclaredField("actionStateStore");
-            actionStateStoreField.setAccessible(true);
             InMemoryActionStateStore actionStateStore =
-                    (InMemoryActionStateStore) actionStateStoreField.get(operator);
+                    (InMemoryActionStateStore)
+                            operator.getDurableExecutionManager().getActionStateStore();
 
             // Process multiple elements with same key to test state persistence
             testHarness.processElement(new StreamRecord<>(1L));
@@ -502,12 +491,9 @@ public class ActionExecutionOperatorTest {
                     (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(recordOutput.size()).isEqualTo(3);
 
-            // Access the action state store
-            Field actionStateStoreField =
-                    ActionExecutionOperator.class.getDeclaredField("actionStateStore");
-            actionStateStoreField.setAccessible(true);
             InMemoryActionStateStore actionStateStore =
-                    (InMemoryActionStateStore) actionStateStoreField.get(operator);
+                    (InMemoryActionStateStore)
+                            operator.getDurableExecutionManager().getActionStateStore();
             assertThat(actionStateStore.getKeyedActionStates()).isEmpty();
         }
     }
@@ -526,11 +512,9 @@ public class ActionExecutionOperatorTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            // Access the action state store
-            Field actionStateStoreField =
-                    ActionExecutionOperator.class.getDeclaredField("actionStateStore");
-            actionStateStoreField.setAccessible(true);
-            actionStateStore = (InMemoryActionStateStore) actionStateStoreField.get(operator);
+            actionStateStore =
+                    (InMemoryActionStateStore)
+                            operator.getDurableExecutionManager().getActionStateStore();
 
             Long inputValue = 7L;
 
