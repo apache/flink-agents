@@ -65,7 +65,7 @@ pull_model(OLLAMA_EMBEDDING_MODEL)
 
 MODEL = "qwen3.6-plus"
 BASE_URL = os.environ.get("ACTION_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1")
-API_KEY = os.environ.get("ACTION_API_KEY", "sk-sp-a8a3342ff47d4dbfb97693cb2397da9e")
+API_KEY = os.environ.get("ACTION_API_KEY")
 
 # Env var used to hand ``chromadb``'s persist path to the agent-level
 # ``@vector_store`` resource (which is a staticmethod and has no access
