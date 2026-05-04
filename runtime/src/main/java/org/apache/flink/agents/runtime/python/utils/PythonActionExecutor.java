@@ -90,6 +90,10 @@ public class PythonActionExecutor {
         this.jobIdentifier = jobIdentifier;
     }
 
+    public PyObject getPythonRunnerContext() {
+        return pythonRunnerContext;
+    }
+
     public void open() throws Exception {
         interpreter.exec(PYTHON_IMPORTS);
 
