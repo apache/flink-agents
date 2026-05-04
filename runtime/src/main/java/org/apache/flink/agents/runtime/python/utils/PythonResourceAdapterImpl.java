@@ -25,7 +25,6 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
-import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
@@ -172,14 +171,6 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
         List<PyObject> pythonDocuments =
                 (List<PyObject>) pythonVectorStoreQueryResult.getAttr("documents", List.class);
         return new VectorStoreQueryResult(fromPythonDocuments(pythonDocuments));
-    }
-
-    @Override
-    public CollectionManageableVectorStore.Collection fromPythonCollection(
-            PyObject pythonCollection) {
-        return new CollectionManageableVectorStore.Collection(
-                pythonCollection.getAttr("name").toString(),
-                (Map<String, Object>) pythonCollection.getAttr("metadata", Map.class));
     }
 
     @Override

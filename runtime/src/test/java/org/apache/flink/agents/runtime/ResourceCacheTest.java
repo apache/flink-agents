@@ -31,7 +31,6 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
-import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
@@ -169,12 +168,6 @@ public class ResourceCacheTest {
         @Override
         public VectorStoreQueryResult fromPythonVectorStoreQueryResult(
                 PyObject pythonVectorStoreQueryResult) {
-            return null;
-        }
-
-        @Override
-        public CollectionManageableVectorStore.Collection fromPythonCollection(
-                PyObject pythonCollection) {
             return null;
         }
 

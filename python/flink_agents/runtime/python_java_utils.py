@@ -257,6 +257,7 @@ def from_java_vector_store_query(j_query: Any) -> VectorStoreQuery:
         query_text=j_query.getQueryText(),
         limit=j_query.getLimit(),
         collection_name=j_query.getCollection(),
+        filters=j_query.getFilters(),
         extra_args=j_query.getExtraArgs(),
     )
 

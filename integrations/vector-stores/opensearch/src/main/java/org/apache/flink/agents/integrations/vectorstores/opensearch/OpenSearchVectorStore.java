@@ -49,7 +49,6 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -62,9 +61,10 @@ import java.util.function.BiFunction;
  * OpenSearch vector store supporting both OpenSearch Serverless (AOSS) and OpenSearch Service
  * domains, with IAM (SigV4) or basic auth.
  *
- * <p>Implements {@link CollectionManageableVectorStore} for Long-Term Memory support. Collections
- * map to OpenSearch indices. Collection metadata is stored in a dedicated {@code
- * flink_agents_collection_metadata} index.
+ * <p>Implements {@link CollectionManageableVectorStore}: collections map to OpenSearch indices.
+ * OpenSearch does not natively support attaching arbitrary metadata to an index, so this
+ * implementation does not persist any collection-level metadata — callers needing per-document
+ * attributes should put them on the documents themselves.
  *
  * <p>Supported parameters:
  *
@@ -103,7 +103,6 @@ public class OpenSearchVectorStore extends BaseVectorStore
         implements CollectionManageableVectorStore {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final String METADATA_INDEX = "flink_agents_collection_metadata";
 
     private static final int DEFAULT_GET_LIMIT = 10000;
 
@@ -218,60 +217,25 @@ public class OpenSearchVectorStore extends BaseVectorStore
 
     // ---- CollectionManageableVectorStore ----
 
+    /**
+     * Creates the OpenSearch index for the given collection if it does not already exist.
+     *
+     * <p>OpenSearch does not natively support attaching arbitrary metadata to an index, so any
+     * {@code metadata} key in {@code kwargs} is ignored.
+     */
     @Override
-    public Collection getOrCreateCollection(String name, Map<String, Object> metadata)
+    public void createCollectionIfNotExists(String name, Map<String, Object> kwargs)
             throws Exception {
         String idx = sanitizeIndexName(name);
         if (!indexExists(idx)) {
             createKnnIndex(idx);
         }
-        ensureMetadataIndex();
-        ObjectNode doc = MAPPER.createObjectNode();
-        doc.put("collection_name", name);
-        doc.set("metadata", MAPPER.valueToTree(metadata));
-        executeRequest("PUT", "/" + METADATA_INDEX + "/_doc/" + idx, doc.toString());
-        executeRequest("POST", "/" + METADATA_INDEX + "/_refresh", null);
-        return new Collection(name, metadata != null ? metadata : Collections.emptyMap());
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    public Collection getCollection(String name) throws Exception {
+    public void deleteCollection(String name) throws Exception {
         String idx = sanitizeIndexName(name);
-        if (!indexExists(idx)) {
-            throw new RuntimeException("Collection " + name + " not found");
-        }
-        try {
-            ensureMetadataIndex();
-            JsonNode resp = executeRequest("GET", "/" + METADATA_INDEX + "/_doc/" + idx, null);
-            if (resp.has("found") && resp.get("found").asBoolean()) {
-                Map<String, Object> meta =
-                        MAPPER.convertValue(resp.path("_source").path("metadata"), Map.class);
-                return new Collection(name, meta != null ? meta : Collections.emptyMap());
-            }
-        } catch (RuntimeException e) {
-            // metadata index may not exist yet; only ignore 404s
-            if (!e.getMessage().contains("(404)")) {
-                throw e;
-            }
-        }
-        return new Collection(name, Collections.emptyMap());
-    }
-
-    @Override
-    public Collection deleteCollection(String name) throws Exception {
-        String idx = sanitizeIndexName(name);
-        Collection col = getCollection(name);
         executeRequest("DELETE", "/" + idx, null);
-        try {
-            executeRequest("DELETE", "/" + METADATA_INDEX + "/_doc/" + idx, null);
-        } catch (RuntimeException e) {
-            // metadata doc may not exist; only ignore 404s
-            if (!e.getMessage().contains("(404)")) {
-                throw e;
-            }
-        }
-        return col;
     }
 
     private boolean indexExists(String idx) {
@@ -300,22 +264,6 @@ public class OpenSearchVectorStore extends BaseVectorStore
         }
     }
 
-    private void ensureMetadataIndex() {
-        if (!indexExists(METADATA_INDEX)) {
-            try {
-                executeRequest(
-                        "PUT",
-                        "/" + METADATA_INDEX,
-                        "{\"mappings\":{\"properties\":{\"collection_name\":{\"type\":\"keyword\"},"
-                                + "\"metadata\":{\"type\":\"object\"}}}}");
-            } catch (RuntimeException e) {
-                if (!e.getMessage().contains("resource_already_exists_exception")) {
-                    throw e;
-                }
-            }
-        }
-    }
-
     /** Sanitize collection name to valid OpenSearch index name (lowercase, no special chars). */
     private String sanitizeIndexName(String name) {
         return name.toLowerCase(Locale.ROOT)
@@ -334,55 +282,63 @@ public class OpenSearchVectorStore extends BaseVectorStore
     }
 
     @Override
-    public long size(@Nullable String collection) throws Exception {
-        String idx = collection != null ? sanitizeIndexName(collection) : this.index;
-        JsonNode response = executeRequest("GET", "/" + idx + "/_count", null);
-        return response.get("count").asLong();
-    }
-
-    @Override
     public List<Document> get(
-            @Nullable List<String> ids, @Nullable String collection, Map<String, Object> extraArgs)
+            @Nullable List<String> ids,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            @Nullable Integer limit,
+            Map<String, Object> extraArgs)
             throws IOException {
         String idx = collection != null ? sanitizeIndexName(collection) : this.index;
+        ObjectNode body = MAPPER.createObjectNode();
         if (ids != null && !ids.isEmpty()) {
-            ObjectNode body = MAPPER.createObjectNode();
             ArrayNode idsArray = body.putObject("query").putObject("ids").putArray("values");
             ids.forEach(idsArray::add);
             body.put("size", ids.size());
-            return parseHits(executeRequest("POST", "/" + idx + "/_search", body.toString()));
+        } else {
+            int effectiveLimit = limit != null ? limit : DEFAULT_GET_LIMIT;
+            body.put("size", effectiveLimit);
+            JsonNode filterQuery = filtersToBoolQuery(filters);
+            if (filterQuery != null) {
+                body.set("query", filterQuery);
+            } else {
+                body.putObject("query").putObject("match_all");
+            }
         }
-        int limit = DEFAULT_GET_LIMIT;
-        if (extraArgs != null && extraArgs.containsKey("limit")) {
-            limit = ((Number) extraArgs.get("limit")).intValue();
-        }
-        return parseHits(
-                executeRequest(
-                        "POST",
-                        "/" + idx + "/_search",
-                        "{\"query\":{\"match_all\":{}},\"size\":" + limit + "}"));
+        return parseHits(executeRequest("POST", "/" + idx + "/_search", body.toString()));
     }
 
     @Override
     public void delete(
-            @Nullable List<String> ids, @Nullable String collection, Map<String, Object> extraArgs)
+            @Nullable List<String> ids,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            Map<String, Object> extraArgs)
             throws IOException {
         String idx = collection != null ? sanitizeIndexName(collection) : this.index;
+        ObjectNode body = MAPPER.createObjectNode();
         if (ids != null && !ids.isEmpty()) {
-            ObjectNode body = MAPPER.createObjectNode();
             ArrayNode idsArray = body.putObject("query").putObject("ids").putArray("values");
             ids.forEach(idsArray::add);
-            executeRequest("POST", "/" + idx + "/_delete_by_query", body.toString());
         } else {
-            executeRequest(
-                    "POST", "/" + idx + "/_delete_by_query", "{\"query\":{\"match_all\":{}}}");
+            JsonNode filterQuery = filtersToBoolQuery(filters);
+            if (filterQuery != null) {
+                body.set("query", filterQuery);
+            } else {
+                body.putObject("query").putObject("match_all");
+            }
         }
+        executeRequest("POST", "/" + idx + "/_delete_by_query", body.toString());
         executeRequest("POST", "/" + idx + "/_refresh", null);
     }
 
     @Override
-    protected List<Document> queryEmbedding(
-            float[] embedding, int limit, @Nullable String collection, Map<String, Object> args) {
+    public List<Document> queryEmbedding(
+            float[] embedding,
+            int limit,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            Map<String, Object> args) {
         try {
             String idx = collection != null ? sanitizeIndexName(collection) : this.index;
             int k = (int) args.getOrDefault("k", Math.max(1, limit));
@@ -404,8 +360,14 @@ public class OpenSearchVectorStore extends BaseVectorStore
                         .putObject("method_parameters")
                         .put("ef_search", ((Number) args.get("ef_search")).intValue());
             }
-            if (args.containsKey("filter_query")) {
-                fieldQuery.set("filter", MAPPER.readTree((String) args.get("filter_query")));
+            JsonNode rawFilter =
+                    args.containsKey("filter_query")
+                            ? MAPPER.readTree((String) args.get("filter_query"))
+                            : null;
+            JsonNode dslFilter = filtersToBoolQuery(filters);
+            JsonNode combined = combineQueries(rawFilter, dslFilter);
+            if (combined != null) {
+                fieldQuery.set("filter", combined);
             }
 
             return parseHits(executeRequest("POST", "/" + idx + "/_search", body.toString()));
@@ -415,7 +377,17 @@ public class OpenSearchVectorStore extends BaseVectorStore
     }
 
     @Override
-    protected List<String> addEmbedding(
+    public void updateEmbedding(
+            List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
+            throws IOException {
+        // OpenSearch's bulk index operation is upsert-by-id, so addEmbedding doubles as update.
+        // BaseVectorStore.update() already enforces that every document carries an id, so
+        // addEmbedding will not generate new ones here.
+        addEmbedding(documents, collection, extraArgs);
+    }
+
+    @Override
+    public List<String> addEmbedding(
             List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
         String idx = collection != null ? sanitizeIndexName(collection) : this.index;
@@ -478,9 +450,54 @@ public class OpenSearchVectorStore extends BaseVectorStore
             if (source.has("metadata")) {
                 metadata = MAPPER.convertValue(source.get("metadata"), Map.class);
             }
-            docs.add(new Document(content, metadata, id));
+            JsonNode scoreNode = hit.get("_score");
+            Float score =
+                    (scoreNode == null || scoreNode.isNull()) ? null : (float) scoreNode.asDouble();
+            docs.add(new Document(content, metadata, id, null, score));
         }
         return docs;
+    }
+
+    /**
+     * Translate the unified equality-only filter DSL into an OpenSearch {@code bool/must} of {@code
+     * term} clauses against {@code metadata.<key>.keyword}, since metadata is stored under the
+     * {@code metadata} object and OpenSearch dynamic mapping exposes string fields as {@code
+     * <field>.keyword} for exact matching. Returns {@code null} when there is nothing to filter on.
+     */
+    @Nullable
+    private JsonNode filtersToBoolQuery(@Nullable Map<String, Object> filters) {
+        if (filters == null || filters.isEmpty()) {
+            return null;
+        }
+        ObjectNode root = MAPPER.createObjectNode();
+        ArrayNode must = root.putObject("bool").putArray("must");
+        for (Map.Entry<String, Object> entry : filters.entrySet()) {
+            ObjectNode termWrap = MAPPER.createObjectNode();
+            termWrap.putObject("term")
+                    .putPOJO("metadata." + entry.getKey() + ".keyword", entry.getValue());
+            must.add(termWrap);
+        }
+        return root;
+    }
+
+    /**
+     * AND together a raw filter (passed in via {@code extraArgs.filter_query}) and the translated
+     * unified-DSL filter under an outer {@code bool/must}. When only one is present it is returned
+     * as-is.
+     */
+    @Nullable
+    private JsonNode combineQueries(@Nullable JsonNode raw, @Nullable JsonNode dsl) {
+        if (raw == null) {
+            return dsl;
+        }
+        if (dsl == null) {
+            return raw;
+        }
+        ObjectNode root = MAPPER.createObjectNode();
+        ArrayNode must = root.putObject("bool").putArray("must");
+        must.add(raw);
+        must.add(dsl);
+        return root;
     }
 
     private JsonNode executeRequest(String method, String path, @Nullable String body) {
