@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.context;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -27,7 +28,6 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
-import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -39,7 +39,6 @@ import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
-import org.apache.flink.agents.runtime.memory.VectorStoreLongTermMemory;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
@@ -60,7 +59,8 @@ import java.util.concurrent.Callable;
  */
 public class RunnerContextImpl implements RunnerContext {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER =
+            new ObjectMapper().registerModule(new JavaTimeModule());
 
     public static class MemoryContext {
         private final CachedMemoryStore sensoryMemStore;
@@ -118,14 +118,10 @@ public class RunnerContextImpl implements RunnerContext {
         this.mailboxThreadChecker = mailboxThreadChecker;
         this.agentPlan = agentPlan;
         this.resourceCache = resourceCache;
+    }
 
-        LongTermMemoryOptions.LongTermMemoryBackend backend =
-                this.getConfig().get(LongTermMemoryOptions.BACKEND);
-        if (backend == LongTermMemoryOptions.LongTermMemoryBackend.EXTERNAL_VECTOR_STORE) {
-            String vectorStoreName =
-                    this.getConfig().get(LongTermMemoryOptions.EXTERNAL_VECTOR_STORE_NAME);
-            ltm = new VectorStoreLongTermMemory(this, vectorStoreName, jobIdentifier);
-        }
+    public void setLongTermMemory(InteranlBaseLongTermMemory ltm) {
+        this.ltm = ltm;
     }
 
     public void switchActionContext(String actionName, MemoryContext memoryContext, String key) {

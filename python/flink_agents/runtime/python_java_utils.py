@@ -24,6 +24,7 @@ import cloudpickle
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.events.event import Event, InputEvent
+from flink_agents.api.memory.long_term_memory import MemorySet, MemorySetItem
 from flink_agents.api.resource import Resource, ResourceType, get_resource_class
 from flink_agents.api.tools.tool import Tool, ToolMetadata
 from flink_agents.api.tools.utils import (
@@ -290,6 +291,42 @@ def get_java_tool_metadata_from_tool(tool: Tool) -> typing.Dict[str, str]:
 def get_mode_value(query: VectorStoreQuery) -> str:
     """Get the mode value of a VectorStoreQuery."""
     return query.mode.value
+
+
+def get_long_term_memory(ctx: Any) -> Any:
+    """Return ``ctx.long_term_memory`` (or ``None``). Used by the Java side to
+    avoid relying on Pemja's ``PyObject.getAttr`` semantics for attributes that
+    may be ``None`` or wrapped Pydantic BaseModel instances.
+    """
+    return ctx.long_term_memory
+
+
+def to_python_memory_set(name: str) -> MemorySet:
+    """Build a Python ``MemorySet`` from its name. Used by the Java
+    ``Mem0LongTermMemory`` wrapper to forward calls into Python ``Mem0LongTermMemory``,
+    which expects a ``MemorySet`` instance but only reads its ``name`` field.
+    """
+    return MemorySet(name=name)
+
+
+def mem0_items_to_java(
+    items: typing.List[MemorySetItem],
+) -> typing.List[Dict[str, Any]]:
+    """Convert a list of ``MemorySetItem`` to plain dicts so the Java side can
+    consume them without PyObject reflection. Datetimes are serialised to ISO 8601
+    strings; ``None`` fields are preserved.
+    """
+    return [
+        {
+            "memory_set_name": it.memory_set_name,
+            "id": it.id,
+            "value": it.value,
+            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "updated_at": it.updated_at.isoformat() if it.updated_at else None,
+            "additional_metadata": it.additional_metadata,
+        }
+        for it in items
+    ]
 
 
 def call_method(obj: Any, method_name: str, kwargs: Dict[str, Any]) -> Any:

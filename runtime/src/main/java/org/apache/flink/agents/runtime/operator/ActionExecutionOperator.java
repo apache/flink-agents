@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerFactory;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -49,6 +50,7 @@ import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
+import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
@@ -94,6 +96,7 @@ import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pemja.core.PythonInterpreter;
+import pemja.core.object.PyObject;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -106,6 +109,8 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTIO
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.PRETTY_PRINT;
+import static org.apache.flink.agents.plan.actions.Utils.requiredVersions;
+import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -169,6 +174,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     // RunnerContext for Java Actions
     private transient RunnerContextImpl runnerContext;
+
+    // Long-term memory backed by Mem0; non-null only when LongTermMemoryOptions.Mem0 is configured.
+    private transient Mem0LongTermMemory ltm;
 
     // We need to check whether the current thread is the mailbox thread using the mailbox
     // processor.
@@ -634,7 +642,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                                                         instanceof
                                                                         PythonResourceProvider));
 
-        if (containPythonAction || containPythonResource) {
+        boolean mem0Configured = isMem0Configured();
+
+        if (containPythonAction || containPythonResource || mem0Configured) {
             LOG.debug("Begin initialize PythonEnvironmentManager.");
             PythonDependencyInfo dependencyInfo =
                     PythonDependencyInfo.create(
@@ -661,13 +671,61 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             this.jobIdentifier);
 
             javaResourceAdapter = new JavaResourceAdapter(this::getResource, pythonInterpreter);
-            if (containPythonResource) {
+            if (containPythonResource || mem0Configured) {
                 initPythonResourceAdapter();
             }
-            if (containPythonAction) {
+            if (containPythonAction || mem0Configured) {
                 initPythonActionExecutor();
             }
+            if (mem0Configured) {
+                wireLongTermMemory();
+            }
         }
+    }
+
+    private boolean isMem0Configured() {
+        // Mirror Python's `_init_long_term_memory`: mem0 is considered configured only when
+        // all three resource names are present; otherwise the Python side returns None, and
+        // we should not pay the Python interpreter startup cost.
+        var config = agentPlan.getConfig();
+        boolean configured =
+                config.get(LongTermMemoryOptions.Mem0.CHAT_MODEL_SETUP) != null
+                        && config.get(LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP) != null
+                        && config.get(LongTermMemoryOptions.Mem0.VECTOR_STORE) != null;
+
+        // Mem0 will call chat model and embedding model in its own thread executor, this behavior
+        // is same as the async execution for cross-language resources, and also requires the fix
+        // in pemja.
+        if (configured && !supportAsync()) {
+            throw new RuntimeException(
+                    String.format(
+                            "Using Mem0 based Long-Term Memory in java requires flink version higher"
+                                    + "than %s. You can upgrade flink or use python api.",
+                            requiredVersions));
+        }
+        return configured;
+    }
+
+    /**
+     * Pull the {@code long_term_memory} attribute off the Python {@code FlinkRunnerContext} (which
+     * {@code create_flink_runner_context} already initialised via {@code _init_long_term_memory})
+     * and wrap it as a Java {@link Mem0LongTermMemory}.
+     */
+    private void wireLongTermMemory() {
+        PyObject pyCtx = pythonActionExecutor.getPythonRunnerContext();
+        Object pyLtm = pythonInterpreter.invoke("python_java_utils.get_long_term_memory", pyCtx);
+        if (pyLtm == null) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Mem0 long-term memory is configured on the Java side but the Python "
+                                    + "runner context returned no long-term memory. Verify that %s, "
+                                    + "%s, and %s all reference resources that exist and that the "
+                                    + "Python-side _init_long_term_memory succeeded.",
+                            LongTermMemoryOptions.Mem0.CHAT_MODEL_SETUP.getKey(),
+                            LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP.getKey(),
+                            LongTermMemoryOptions.Mem0.VECTOR_STORE.getKey()));
+        }
+        ltm = new Mem0LongTermMemory(pythonResourceAdapter, (PyObject) pyLtm);
     }
 
     private void initPythonActionExecutor() throws Exception {
@@ -1108,6 +1166,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 this.resourceCache,
                                 this.jobIdentifier,
                                 continuationActionExecutor);
+                if (ltm != null) {
+                    runnerContext.setLongTermMemory(ltm);
+                }
             }
             return runnerContext;
         } else {
