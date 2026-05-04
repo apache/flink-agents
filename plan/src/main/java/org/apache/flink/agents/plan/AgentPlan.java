@@ -295,41 +295,7 @@ public class AgentPlan implements Serializable {
                         descriptor.getModule(),
                         JAVA_MCP_SERVER_CLASS_NAME,
                         new HashMap<>(descriptor.getInitialArguments()));
-        JavaResourceProvider provider = new JavaResourceProvider(name, MCP_SERVER, descriptor);
-
-        addResourceProvider(provider);
-        Object mcpServer = provider.provide(null);
-
-        // Call listTools() via reflection
-        Method listToolsMethod = mcpServer.getClass().getMethod("listTools");
-        @SuppressWarnings("unchecked")
-        Iterable<? extends SerializableResource> tools =
-                (Iterable<? extends SerializableResource>) listToolsMethod.invoke(mcpServer);
-
-        for (SerializableResource tool : tools) {
-            Method getNameMethod = tool.getClass().getMethod("getName");
-            String toolName = (String) getNameMethod.invoke(tool);
-            addResourceProvider(
-                    JavaSerializableResourceProvider.createResourceProvider(toolName, TOOL, tool));
-        }
-
-        // Call listPrompts() via reflection
-        Method listPromptsMethod = mcpServer.getClass().getMethod("listPrompts");
-        @SuppressWarnings("unchecked")
-        Iterable<? extends SerializableResource> prompts =
-                (Iterable<? extends SerializableResource>) listPromptsMethod.invoke(mcpServer);
-
-        for (SerializableResource prompt : prompts) {
-            Method getNameMethod = prompt.getClass().getMethod("getName");
-            String promptName = (String) getNameMethod.invoke(prompt);
-            addResourceProvider(
-                    JavaSerializableResourceProvider.createResourceProvider(
-                            promptName, PROMPT, prompt));
-        }
-
-        // Call close() via reflection
-        Method closeMethod = mcpServer.getClass().getMethod("close");
-        closeMethod.invoke(mcpServer);
+        addResourceProvider(new JavaResourceProvider(name, MCP_SERVER, descriptor));
     }
 
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
