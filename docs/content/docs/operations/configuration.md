@@ -72,6 +72,9 @@ Configuration config = agentsEnv.getConfig();
 // Set custom configuration using key (direct string key)
 config.setInt("kafkaActionStateTopicNumPartitions", 128);  // Kafka topic partitions count
 
+// Set the list of event listeners
+config.set(AgentConfigOptions.EVENT_LISTENERS, List.of(MyCustomListener.class.getName()));
+
 // Set framework configuration using ConfigOption (predefined option class)
 config.set(AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY);
 ```
@@ -128,6 +131,7 @@ Here is the list of all built-in core configuration options.
 |---------------------------|----------------------------|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `baseLogDir`              | (none)                     | String                | Base directory for file-based event logs. If not set, uses `java.io.tmpdir/flink-agents`.                                                                                                                                                                       |
 | `prettyPrint`             | false                      | boolean               | Whether to enable pretty-printed JSON format for event logs. When set to `true`, each event is written as formatted multi-line JSON instead of JSONL (JSON Lines) format. {{< hint info >}}Note: enabling this option makes the log file no longer valid JSONL format.  {{< /hint >}} |
+| `event-listeners`         | none                       | `List<String>`        | The list of event listener class names. Each class must implement the EventListener interface and provide a public no-argument constructor. {{< hint warning >}} Note: Currently, custom event listeners are only supported in Java. {{< /hint >}} |
 | `error-handling-strategy` | ErrorHandlingStrategy.FAIL | ErrorHandlingStrategy | Strategy for handling errors during model requests, include timeout and unexpected output schema. <br/>The option value could be:<br/> <ul><li>`ErrorHandlingStrategy.FAIL`</li> <li>`ErrorHandlingStrategy.RETRY`</li> <li>`ErrorHandlingStrategy.IGNORE`</li> |
 | `max-retries`             | 3                          | int                   | Number of retries when using `ErrorHandlingStrategy.RETRY`.                                                                                                                                                                                                     |
 | `retry-wait-interval`     | 1                          | int                   | Base wait interval in seconds between retries when using `ErrorHandlingStrategy.RETRY`. Uses exponential backoff: the actual wait time for the Nth retry is `retry-wait-interval * 2^(N-1)` seconds. For example, with default 1s, waits are 1s, 2s, 4s, etc. Retry count and total wait time are reported in `ChatResponseEvent` and recorded as metrics (`retryCount`, `retryWaitSec`) under the connection name. |
