@@ -39,6 +39,7 @@ import org.apache.flink.agents.runtime.PythonMCPResourceDiscovery;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.actionstate.FlussActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
@@ -106,6 +107,7 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTIO
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.PRETTY_PRINT;
+import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.FLUSS;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -1136,11 +1138,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void maybeInitActionStateStore() {
-        if (actionStateStore == null
-                && KAFKA.getType()
-                        .equalsIgnoreCase(agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND))) {
+        if (actionStateStore != null) {
+            return;
+        }
+        String backend = agentPlan.getConfig().get(ACTION_STATE_STORE_BACKEND);
+        if (KAFKA.getType().equalsIgnoreCase(backend)) {
             LOG.info("Using Kafka as backend of action state store.");
             actionStateStore = new KafkaActionStateStore(agentPlan.getConfig());
+        } else if (FLUSS.getType().equalsIgnoreCase(backend)) {
+            LOG.info("Using Fluss as backend of action state store.");
+            actionStateStore = new FlussActionStateStore(agentPlan.getConfig());
         }
     }
 

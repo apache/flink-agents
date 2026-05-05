@@ -174,7 +174,7 @@ To ensure exactly-once action consistency, you must configure an external action
 The same persisted action state is also used by fine-grained durable execution.
 
 {{< hint info >}}
-**Note**: Currently, Kafka is supported as the external action state store.
+**Note**: Currently, Kafka and Fluss are supported as the external action state store.
 {{< /hint >}}
 
 See [Action State Store Configuration]({{< ref "docs/operations/configuration#action-state-store" >}}) for configuration options.
