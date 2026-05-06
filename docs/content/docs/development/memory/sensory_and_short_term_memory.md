@@ -104,7 +104,8 @@ def process_event(event: Event, ctx: RunnerContext) -> None:
 {{< tab "Java" >}}
 ```java
 @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-public static void processEvent(InputEvent event, RunnerContext ctx) throws Exception {
+public static void processEvent(Event event, RunnerContext ctx) throws Exception {
+    InputEvent inputEvent = InputEvent.fromEvent(event);
     MemoryObject memory = ctx.getSensoryMemory(); // ctx.getShortTermMemory();
     // store primitive
     memory.set("primitive", 123);

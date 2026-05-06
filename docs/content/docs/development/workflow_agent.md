@@ -246,7 +246,8 @@ class ReviewAnalysisAgent(Agent):
 public class ReviewAnalysisAgent extends Agent {
     /** Process input event and send chat request for review analysis. */
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // the action logic
     }
 }
@@ -274,7 +275,8 @@ def process_input(event: Event, ctx: RunnerContext) -> None:
 {{< tab "Java" >}}
 ```java
 @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+public static void processInput(Event event, RunnerContext ctx) throws Exception {
+    InputEvent inputEvent = InputEvent.fromEvent(event);
     // send ChatRequestEvent
     ctx.sendEvent(new ChatRequestEvent("my_model", messages));
     // output data to downstream

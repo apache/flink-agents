@@ -48,7 +48,7 @@ if __name__ == "__main__":
     assert func1.qualname == qualname
     assert func1.method_name == "firstAction"
     assert func1.parameter_types == [
-        "org.apache.flink.agents.api.InputEvent",
+        event,
         runner_context,
     ]
     listen_event_types1 = action1.listen_event_types
