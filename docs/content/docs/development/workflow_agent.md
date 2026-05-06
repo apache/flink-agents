@@ -118,7 +118,7 @@ class ReviewAnalysisAgent(Agent):
             )
         except Exception:
             logging.exception(
-                f"Error processing chat response {event.response.content}"
+                f"Error processing chat response {chat_response.response.content}"
             )
 
             # To fail the agent, you can raise an exception here.
@@ -171,8 +171,9 @@ public class ReviewAnalysisAgent extends Agent {
 
     /** Process input event and send chat request for review analysis. */
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
-        String input = (String) event.getInput();
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        String input = (String) inputEvent.getInput();
         MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         CustomTypesAndResources.ProductReview inputObj =
                 MAPPER.readValue(input, CustomTypesAndResources.ProductReview.class);
@@ -189,9 +190,10 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
-    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
+    public static void processChatResponse(Event event, RunnerContext ctx)
             throws Exception {
-        JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getContent());
         JsonNode scoreNode = jsonNode.findValue("score");
         JsonNode reasonsNode = jsonNode.findValue("reasons");
         if (scoreNode == null || reasonsNode == null) {
@@ -330,21 +332,23 @@ def process_input(event: Event, ctx: RunnerContext) -> None:
 
 You can also pass an optional `reconciler` callable to recover an execution outcome during recovery.
 ```python
-@action(InputEvent)
+@action(InputEvent.EVENT_TYPE)
 @staticmethod
-def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+def process_input(event: Event, ctx: RunnerContext) -> None:
+    input_event = InputEvent.from_event(event)
+
     def submit_payment(order_id: str) -> str:
         return payment_client.submit(order_id)
 
     def payment_reconciler() -> str:
-        status = payment_client.get_status(event.input)
+        status = payment_client.get_status(input_event.input)
         if status == "SUCCEEDED":
-            return payment_client.lookup_completed_payment(event.input)
-        raise payment_client.get_failure(event.input)
+            return payment_client.lookup_completed_payment(input_event.input)
+        raise payment_client.get_failure(input_event.input)
 
     result = ctx.durable_execute(
         submit_payment,
-        event.input,
+        input_event.input,
         reconciler=payment_reconciler,
     )
     ctx.send_event(OutputEvent(output=result))
@@ -355,11 +359,11 @@ def process_input(event: InputEvent, ctx: RunnerContext) -> None:
 Java actions use `DurableCallable<T>` with `ctx.durableExecute(...)`, where `getId()` must be stable and `getResultClass()` supports recovery deserialization.
 ```java
 @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+public static void processInput(Event event, RunnerContext ctx) throws Exception {
+    InputEvent inputEvent = InputEvent.fromEvent(event);
     DurableCallable<String> call = new DurableCallable<>() {
         @Override
         public String getId() {
-            // Stable, deterministic ID for this call
             return "slow_external_call";
         }
 
@@ -371,7 +375,7 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
         @Override
         public String call() throws Exception {
             Thread.sleep(2000);
-            return "Processed: " + event.getInput();
+            return "Processed: " + inputEvent.getInput();
         }
     };
 
@@ -383,7 +387,8 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
 Java actions can also override `reconciler()` to recover an execution outcome during recovery.
 ```java
 @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+public static void processInput(Event event, RunnerContext ctx) throws Exception {
+    InputEvent inputEvent = InputEvent.fromEvent(event);
     DurableCallable<String> call = new DurableCallable<>() {
         @Override
         public String getId() {
@@ -397,17 +402,19 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
 
         @Override
         public String call() {
-            return paymentClient.submit(event.getInput());
+            return paymentClient.submit(inputEvent.getInput());
         }
 
         @Override
         public Callable<String> reconciler() {
             return () -> {
-                PaymentStatus status = paymentClient.getStatus(event.getInput());
+                PaymentStatus status =
+                    paymentClient.getStatus(inputEvent.getInput());
                 if (status == PaymentStatus.SUCCEEDED) {
-                    return paymentClient.lookupCompletedPayment(event.getInput());
+                    return paymentClient.lookupCompletedPayment(
+                        inputEvent.getInput());
                 }
-                throw paymentClient.getFailure(event.getInput());
+                throw paymentClient.getFailure(inputEvent.getInput());
             };
         }
     };
@@ -450,7 +457,8 @@ Use `ctx.durableExecuteAsync(DurableCallable)`; on **JDK 21+** it yields using C
 and on **JDK < 21** it falls back to synchronous execution. The same optional `reconciler()` hook can be used for recovery.
 ```java
 @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+public static void processInput(Event event, RunnerContext ctx) throws Exception {
+    InputEvent inputEvent = InputEvent.fromEvent(event);
     DurableCallable<String> call = new DurableCallable<>() {
         @Override
         public String getId() {
@@ -465,7 +473,7 @@ public static void processInput(InputEvent event, RunnerContext ctx) throws Exce
         @Override
         public String call() throws Exception {
             Thread.sleep(2000);
-            return "Processed: " + event.getInput();
+            return "Processed: " + inputEvent.getInput();
         }
     };
 

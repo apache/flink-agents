@@ -210,13 +210,14 @@ def first_action(event: Event, ctx: RunnerContext):
     ctx.send_event(MyEvent(value=data_ref))
     ...
 
-@action(MyEvent)
+@action(MyEvent.EVENT_TYPE)
 @staticmethod
 def second_action(event: Event, ctx: RunnerContext):
+    my_event = MyEvent.from_event(event)
     ...
-    processed_data: ProcessedData = ctx.sensory_memory.get(event.value)
+    processed_data: ProcessedData = ctx.sensory_memory.get(my_event.value)
     # or
-    processed_data: ProcessedData = event.value.resolve(ctx)
+    processed_data: ProcessedData = my_event.value.resolve(ctx)
     ...
 ```
 {{< /tab >}}
@@ -235,14 +236,15 @@ public static void firstAction(Event event, RunnerContext ctx) throws Exception 
 
 @Action(listenEventTypes = {MyEvent.EVENT_TYPE})
 public static void secondAction(Event event, RunnerContext ctx) throws Exception {
+    MyEvent myEvent = MyEvent.fromEvent(event);
     ...
     MemoryObject sensoryMemory = ctx.getSensoryMemory();
 
     ProcessedData processedData = (ProcessedData) ctx.getSensoryMemory()
-                                                     .get(event.getValue())
+                                                     .get(myEvent.getValue())
                                                      .getValue();
     // or
-    processedData = (ProcessedData) event.getValue().resolve(ctx);
+    processedData = (ProcessedData) myEvent.getValue().resolve(ctx);
     ...
 }
 ```

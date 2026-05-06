@@ -147,8 +147,9 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
+        chat_response = ChatResponseEvent.from_event(event)
         try:
-            json_content = json.loads(event.response.content)
+            json_content = json.loads(chat_response.response.content)
             ctx.send_event(
                 OutputEvent(
                     output=ProductReviewAnalysisRes(
@@ -160,7 +161,7 @@ class ReviewAnalysisAgent(Agent):
             )
         except Exception:
             logging.exception(
-                f"Error processing chat response {event.response.content}"
+                f"Error processing chat response {chat_response.response.content}"
             )
 
             # To fail the agent, you can raise an exception here.
@@ -213,8 +214,9 @@ public class ReviewAnalysisAgent extends Agent {
 
     /** Process input event and send chat request for review analysis. */
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
-        String input = (String) event.getInput();
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        String input = (String) inputEvent.getInput();
         MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         CustomTypesAndResources.ProductReview inputObj =
                 MAPPER.readValue(input, CustomTypesAndResources.ProductReview.class);
@@ -231,9 +233,10 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
-    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
+    public static void processChatResponse(Event event, RunnerContext ctx)
             throws Exception {
-        JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getContent());
         JsonNode scoreNode = jsonNode.findValue("score");
         JsonNode reasonsNode = jsonNode.findValue("reasons");
         if (scoreNode == null || reasonsNode == null) {

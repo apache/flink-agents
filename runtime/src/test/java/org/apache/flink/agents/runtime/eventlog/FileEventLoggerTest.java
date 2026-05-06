@@ -42,7 +42,10 @@ import org.mockito.MockitoAnnotations;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
@@ -547,10 +550,18 @@ class FileEventLoggerTest {
             setAttr("customNumber", customNumber);
         }
 
+        private TestCustomEvent(UUID id, Map<String, Object> attributes) {
+            super(id, EVENT_TYPE, attributes);
+        }
+
         public static TestCustomEvent fromEvent(Event event) {
-            String data = (String) event.getAttr("customData");
-            int number = ((Number) event.getAttr("customNumber")).intValue();
-            return new TestCustomEvent(data, number);
+            TestCustomEvent result =
+                    new TestCustomEvent(
+                            event.getId(), new HashMap<>(event.getAttributes()));
+            if (event.hasSourceTimestamp()) {
+                result.setSourceTimestamp(event.getSourceTimestamp());
+            }
+            return result;
         }
 
         @JsonIgnore

@@ -28,6 +28,10 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -270,11 +274,18 @@ class EventLogRecordJsonSerdeTest {
             setAttr("customFlag", customFlag);
         }
 
+        private CustomTestEvent(UUID id, Map<String, Object> attributes) {
+            super(id, EVENT_TYPE, attributes);
+        }
+
         public static CustomTestEvent fromEvent(Event event) {
-            String data = (String) event.getAttr("customData");
-            int number = ((Number) event.getAttr("customNumber")).intValue();
-            boolean flag = (Boolean) event.getAttr("customFlag");
-            return new CustomTestEvent(data, number, flag);
+            CustomTestEvent result =
+                    new CustomTestEvent(
+                            event.getId(), new HashMap<>(event.getAttributes()));
+            if (event.hasSourceTimestamp()) {
+                result.setSourceTimestamp(event.getSourceTimestamp());
+            }
+            return result;
         }
 
         @JsonIgnore

@@ -162,8 +162,7 @@ public class ChatModelCrossLanguageAgent extends Agent {
                         model,
                         Collections.singletonList(
                                 new ChatMessage(
-                                        MessageRole.USER,
-                                        (String) inputEvent.getInput()))));
+                                        MessageRole.USER, (String) inputEvent.getInput()))));
     }
 
     @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
