@@ -1244,8 +1244,8 @@ public class ActionExecutionOperatorTest {
             }
         }
 
-        public static void action1(InputEvent event, RunnerContext context) {
-            Long inputData = (Long) event.getInput();
+        public static void action1(Event event, RunnerContext context) {
+            Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
                 MemoryObject mem = context.getShortTermMemory();
                 mem.set("tmp", inputData + 1);
@@ -1327,8 +1327,8 @@ public class ActionExecutionOperatorTest {
             };
         }
 
-        public static void asyncAction1(InputEvent event, RunnerContext context) {
-            Long inputData = (Long) event.getInput();
+        public static void asyncAction1(Event event, RunnerContext context) {
+            Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
                 Long result =
                         context.durableExecuteAsync(
@@ -1352,8 +1352,8 @@ public class ActionExecutionOperatorTest {
             }
         }
 
-        public static void multiAsyncAction(InputEvent event, RunnerContext context) {
-            Long inputData = (Long) event.getInput();
+        public static void multiAsyncAction(Event event, RunnerContext context) {
+            Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
                 Long result1 =
                         context.durableExecuteAsync(
@@ -1391,8 +1391,8 @@ public class ActionExecutionOperatorTest {
             }
         }
 
-        public static void durableSyncAction(InputEvent event, RunnerContext context) {
-            Long inputData = (Long) event.getInput();
+        public static void durableSyncAction(Event event, RunnerContext context) {
+            Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
                 Long result =
                         context.durableExecute(
@@ -1437,7 +1437,7 @@ public class ActionExecutionOperatorTest {
                 ReconcileBehavior.SUCCESS;
         public static volatile long MIXED_RECONCILE_RESULT = 50L;
 
-        public static void durableExceptionAction(InputEvent event, RunnerContext context) {
+        public static void durableExceptionAction(Event event, RunnerContext context) {
             try {
                 context.durableExecute(
                         durableCallable(
@@ -1453,8 +1453,8 @@ public class ActionExecutionOperatorTest {
             }
         }
 
-        public static void durableReconcilableAction(InputEvent event, RunnerContext context) {
-            Long inputData = (Long) event.getInput();
+        public static void durableReconcilableAction(Event event, RunnerContext context) {
+            Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
                 Long result =
                         context.durableExecute(
@@ -1483,8 +1483,8 @@ public class ActionExecutionOperatorTest {
             }
         }
 
-        public static void durableMixedRecoveryAction(InputEvent event, RunnerContext context) {
-            Long inputData = (Long) event.getInput();
+        public static void durableMixedRecoveryAction(Event event, RunnerContext context) {
+            Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
                 Long firstResult =
                         context.durableExecute(
@@ -1556,7 +1556,7 @@ public class ActionExecutionOperatorTest {
                                 new JavaFunction(
                                         TestAgent.class,
                                         "action1",
-                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
                                 Collections.singletonList(InputEvent.EVENT_TYPE));
                 Action action2 =
                         new Action(
@@ -1613,7 +1613,7 @@ public class ActionExecutionOperatorTest {
                                     new JavaFunction(
                                             TestAgent.class,
                                             "multiAsyncAction",
-                                            new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                            new Class<?>[] {Event.class, RunnerContext.class}),
                                     Collections.singletonList(InputEvent.EVENT_TYPE));
                     actionsByEvent.put(
                             InputEvent.EVENT_TYPE, Collections.singletonList(multiAsyncAction));
@@ -1626,7 +1626,7 @@ public class ActionExecutionOperatorTest {
                                     new JavaFunction(
                                             TestAgent.class,
                                             "asyncAction1",
-                                            new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                            new Class<?>[] {Event.class, RunnerContext.class}),
                                     Collections.singletonList(InputEvent.EVENT_TYPE));
                     Action action2 =
                             new Action(
@@ -1663,7 +1663,7 @@ public class ActionExecutionOperatorTest {
                                 new JavaFunction(
                                         TestAgent.class,
                                         "durableSyncAction",
-                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
                                 Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
                         InputEvent.EVENT_TYPE, Collections.singletonList(durableSyncAction));
@@ -1687,7 +1687,7 @@ public class ActionExecutionOperatorTest {
                                 new JavaFunction(
                                         TestAgent.class,
                                         "durableReconcilableAction",
-                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
                                 Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
                         InputEvent.EVENT_TYPE, Collections.singletonList(reconcilableAction));
@@ -1711,7 +1711,7 @@ public class ActionExecutionOperatorTest {
                                 new JavaFunction(
                                         TestAgent.class,
                                         "durableMixedRecoveryAction",
-                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
                                 Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
                         InputEvent.EVENT_TYPE, Collections.singletonList(mixedRecoveryAction));
@@ -1735,7 +1735,7 @@ public class ActionExecutionOperatorTest {
                                 new JavaFunction(
                                         TestAgent.class,
                                         "durableExceptionAction",
-                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
                                 Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
                         InputEvent.EVENT_TYPE, Collections.singletonList(exceptionAction));
@@ -1761,7 +1761,7 @@ public class ActionExecutionOperatorTest {
          * Action that uses durableExecute and does NOT catch the exception. This simulates the
          * behavior of built-in actions like ChatModelAction.
          */
-        public static void durableExceptionUncaughtAction(InputEvent event, RunnerContext context) {
+        public static void durableExceptionUncaughtAction(Event event, RunnerContext context) {
             try {
                 context.durableExecute(
                         durableCallable(
@@ -1789,7 +1789,7 @@ public class ActionExecutionOperatorTest {
          * Action that uses durableExecuteAsync and does NOT catch the exception. This simulates
          * async operations that fail.
          */
-        public static void durableAsyncExceptionAction(InputEvent event, RunnerContext context) {
+        public static void durableAsyncExceptionAction(Event event, RunnerContext context) {
             try {
                 context.durableExecuteAsync(
                         durableCallable(
@@ -1815,7 +1815,7 @@ public class ActionExecutionOperatorTest {
                                 new JavaFunction(
                                         TestAgent.class,
                                         "durableExceptionUncaughtAction",
-                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
                                 Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
                         InputEvent.EVENT_TYPE, Collections.singletonList(exceptionAction));
@@ -1839,7 +1839,7 @@ public class ActionExecutionOperatorTest {
                                 new JavaFunction(
                                         TestAgent.class,
                                         "durableAsyncExceptionAction",
-                                        new Class<?>[] {InputEvent.class, RunnerContext.class}),
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
                                 Collections.singletonList(InputEvent.EVENT_TYPE));
                 actionsByEvent.put(
                         InputEvent.EVENT_TYPE, Collections.singletonList(exceptionAction));

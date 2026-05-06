@@ -49,7 +49,7 @@ public class GenerateAgentPlanJson {
     public static class JavaAgentPlanCompatibilityTestAgent extends Agent {
 
         @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-        public void firstAction(InputEvent event, RunnerContext context) {
+        public void firstAction(Event event, RunnerContext context) {
             // Test action implementation
         }
 

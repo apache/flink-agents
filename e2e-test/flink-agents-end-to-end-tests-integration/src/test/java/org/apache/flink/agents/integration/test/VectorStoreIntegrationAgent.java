@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.integration.test;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -93,16 +94,18 @@ public class VectorStoreIntegrationAgent extends Agent {
     }
 
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void inputEvent(InputEvent event, RunnerContext ctx) {
-        final String input = (String) event.getInput();
+    public static void inputEvent(Event event, RunnerContext ctx) {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        final String input = (String) inputEvent.getInput();
 
         ctx.sendEvent(new ContextRetrievalRequestEvent(input, "vectorStore"));
     }
 
     @Action(listenEventTypes = {ContextRetrievalResponseEvent.EVENT_TYPE})
-    public static void contextRetrievalResponseEvent(
-            ContextRetrievalResponseEvent event, RunnerContext ctx) {
-        final List<Document> documents = event.getDocuments();
+    public static void contextRetrievalResponseEvent(Event event, RunnerContext ctx) {
+        ContextRetrievalResponseEvent responseEvent =
+                ContextRetrievalResponseEvent.fromEvent(event);
+        final List<Document> documents = responseEvent.getDocuments();
 
         Map<String, Object> result = new HashMap<>();
         try {

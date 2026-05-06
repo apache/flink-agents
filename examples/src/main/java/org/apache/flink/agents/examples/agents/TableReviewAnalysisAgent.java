@@ -19,6 +19,7 @@ package org.apache.flink.agents.examples.agents;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -108,8 +109,9 @@ public class TableReviewAnalysisAgent extends Agent {
      * column names.
      */
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
-        Row row = (Row) event.getInput();
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        Row row = (Row) inputEvent.getInput();
         String productId = (String) row.getField("id");
         String reviewText = (String) row.getField("review");
 
@@ -125,9 +127,9 @@ public class TableReviewAnalysisAgent extends Agent {
     }
 
     @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
-    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
-            throws Exception {
-        JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());
+    public static void processChatResponse(Event event, RunnerContext ctx) throws Exception {
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getContent());
         JsonNode scoreNode = jsonNode.findValue("score");
         JsonNode reasonsNode = jsonNode.findValue("reasons");
         if (scoreNode == null || reasonsNode == null) {

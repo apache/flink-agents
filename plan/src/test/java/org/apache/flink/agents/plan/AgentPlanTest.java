@@ -125,8 +125,8 @@ public class AgentPlanTest {
     public static class TestAgent extends Agent {
 
         @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-        public void handleInputEvent(InputEvent event, RunnerContext context) {
-            // Test action implementation
+        public void handleInputEvent(Event event, RunnerContext context) {
+            InputEvent inputEvent = InputEvent.fromEvent(event);
         }
 
         @org.apache.flink.agents.api.annotation.Action(
@@ -160,8 +160,8 @@ public class AgentPlanTest {
         @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
         @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-        public void handleInputEvent(InputEvent event, RunnerContext context) {
-            // Test action implementation
+        public void handleInputEvent(Event event, RunnerContext context) {
+            InputEvent inputEvent = InputEvent.fromEvent(event);
         }
     }
 
@@ -198,7 +198,7 @@ public class AgentPlanTest {
         JavaFunction exec = (JavaFunction) inputAction.getExec();
         assertThat(exec.getQualName()).isEqualTo(TestAgent.class.getName());
         assertThat(exec.getMethodName()).isEqualTo("handleInputEvent");
-        assertThat(exec.getParameterTypes()).containsExactly(InputEvent.class, RunnerContext.class);
+        assertThat(exec.getParameterTypes()).containsExactly(Event.class, RunnerContext.class);
 
         // Verify action details for handleMultipleEvents
         Action multiAction = agentPlan.getActions().get("handleMultipleEvents");
@@ -270,7 +270,7 @@ public class AgentPlanTest {
         agent.addAction(
                         new String[] {InputEvent.EVENT_TYPE},
                         TestAgent.class.getMethod(
-                                "handleInputEvent", InputEvent.class, RunnerContext.class))
+                                "handleInputEvent", Event.class, RunnerContext.class))
                 .addAction(
                         new String[] {TestEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE},
                         TestAgent.class.getMethod(

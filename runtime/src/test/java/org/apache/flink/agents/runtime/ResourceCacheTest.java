@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
@@ -124,7 +125,9 @@ public class ResourceCacheTest {
         @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
         @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-        public void handleInputEvent(InputEvent event, RunnerContext context) {}
+        public void handleInputEvent(Event event, RunnerContext context) {
+            InputEvent inputEvent = InputEvent.fromEvent(event);
+        }
     }
 
     public static class TestPythonResourceAdapter implements PythonResourceAdapter {
