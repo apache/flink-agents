@@ -80,22 +80,24 @@ class MyAgent(Agent):
             temperature=0.7
         )
 
-    @action("_input_event")
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        input_event = InputEvent.from_event(event)
         # Create a chat request with user message
         user_message = ChatMessage(
             role=MessageRole.USER,
-            content=f"input: {event.input}"
+            content=f"input: {input_event.input}"
         )
         ctx.send_event(
             ChatRequestEvent(model="ollama_chat_model", messages=[user_message])
         )
 
-    @action("_chat_response_event")
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
-        response_content = event.response.content
+    def process_response(event: Event, ctx: RunnerContext) -> None:
+        chat_response = ChatResponseEvent.from_event(event)
+        response_content = chat_response.response.content
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```
@@ -1024,22 +1026,24 @@ class MyAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action("_input_event")
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        input_event = InputEvent.from_event(event)
         # Create a chat request with user message
         user_message = ChatMessage(
             role=MessageRole.USER,
-            content=f"input: {event.input}"
+            content=f"input: {input_event.input}"
         )
         ctx.send_event(
             ChatRequestEvent(model="java_chat_model", messages=[user_message])
         )
 
-    @action("_chat_response_event")
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
-        response_content = event.response.content
+    def process_response(event: Event, ctx: RunnerContext) -> None:
+        chat_response = ChatResponseEvent.from_event(event)
+        response_content = chat_response.response.content
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```

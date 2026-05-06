@@ -85,11 +85,12 @@ class ReviewAnalysisAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action("_input_event")
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
-        input: ProductReview = event.input
+        input_event = InputEvent.from_event(event)
+        input: ProductReview = input_event.input
         ctx.short_term_memory.set("id", input.id)
 
         content = f"""
@@ -99,12 +100,13 @@ class ReviewAnalysisAgent(Agent):
         msg = ChatMessage(role=MessageRole.USER, extra_args={"input": content})
         ctx.send_event(ChatRequestEvent(model="review_analysis_model", messages=[msg]))
 
-    @action("_chat_response_event")
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
+        chat_response = ChatResponseEvent.from_event(event)
         try:
-            json_content = json.loads(event.response.content)
+            json_content = json.loads(chat_response.response.content)
             ctx.send_event(
                 OutputEvent(
                     output=ProductReviewAnalysisRes(
@@ -230,9 +232,9 @@ The decorated/annotated function signature should be `(Event, RunnerContext) -> 
 {{< tab "Python" >}}
 ```python
 class ReviewAnalysisAgent(Agent):
-    @action("_input_event")
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         # the action logic
 ```
 {{< /tab >}}
@@ -257,9 +259,9 @@ In the function, user can also send new events, to trigger other actions, or out
 
 {{< tab "Python" >}}
 ```python
-@action("_input_event")
+@action(InputEvent.EVENT_TYPE)
 @staticmethod
-def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+def process_input(event: Event, ctx: RunnerContext) -> None:
     # send ChatRequestEvent
     ctx.send_event(ChatRequestEvent(model=xxx, messages=xxx))
     # output data to downstream
@@ -313,15 +315,16 @@ Use a reconciler for durable calls when the original call may already have compl
 {{< tab "Python" >}}
 Python actions can call `ctx.durable_execute(...)` to run a synchronous durable code block.
 ```python
-@action("_input_event")
+@action(InputEvent.EVENT_TYPE)
 @staticmethod
-def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+def process_input(event: Event, ctx: RunnerContext) -> None:
+    input_event = InputEvent.from_event(event)
     def slow_external_call(data: str) -> str:
         time.sleep(2)
         return f"Processed: {data}"
 
     # Synchronous durable execution
-    result = ctx.durable_execute(slow_external_call, event.input)
+    result = ctx.durable_execute(slow_external_call, input_event.input)
     ctx.send_event(OutputEvent(output=result))
 ```
 
@@ -424,14 +427,15 @@ Async execution uses the same durable semantics but yields while waiting for a t
 {{< tab "Python" >}}
 Define an `async def` action and `await ctx.durable_execute_async(...)`. The same optional `reconciler=...` argument is available for recovery.
 ```python
-@action("_input_event")
+@action(InputEvent.EVENT_TYPE)
 @staticmethod
-async def process_with_async(event: InputEvent, ctx: RunnerContext) -> None:
+async def process_with_async(event: Event, ctx: RunnerContext) -> None:
+    input_event = InputEvent.from_event(event)
     def slow_external_call(data: str) -> str:
         time.sleep(2)
         return f"Processed: {data}"
 
-    result = await ctx.durable_execute_async(slow_external_call, event.input)
+    result = await ctx.durable_execute_async(slow_external_call, input_event.input)
     ctx.send_event(OutputEvent(output=result))
 ```
 {{< hint info >}}

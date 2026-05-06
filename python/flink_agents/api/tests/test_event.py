@@ -27,21 +27,21 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 
 
 def test_event_init_serializable() -> None:
-    Event(a=1, b=InputEvent(input=1), c=OutputEvent(output="111"))
+    Event(type="test", a=1, b=InputEvent(input=1), c=OutputEvent(output="111"))
 
 
 def test_event_init_non_serializable() -> None:
     with pytest.raises(ValidationError):
-        Event(a=1, b=Type[InputEvent])
+        Event(type="test", a=1, b=Type[InputEvent])
 
 
 def test_event_setattr_serializable() -> None:
-    event = Event(a=1)
-    event.c = Event()
+    event = Event(type="test", a=1)
+    event.c = Event(type="nested")
 
 
 def test_event_setattr_non_serializable() -> None:
-    event = Event(a=1)
+    event = Event(type="test", a=1)
     with pytest.raises(PydanticSerializationError):
         event.c = Type[InputEvent]
 
@@ -52,15 +52,15 @@ def test_input_event_ignore_row_unserializable() -> None:
 
 def test_event_row_with_non_serializable_fails() -> None:
     with pytest.raises(ValidationError):
-        Event(row_field=Row({"a": 1}), non_serializable_field=Type[InputEvent])
+        Event(type="test", row_field=Row({"a": 1}), non_serializable_field=Type[InputEvent])
 
 
 def test_event_multiple_rows_serializable() -> None:
-    Event(row1=Row({"a": 1}), row2=Row({"b": 2}), normal_field="test")
+    Event(type="test", row1=Row({"a": 1}), row2=Row({"b": 2}), normal_field="test")
 
 
 def test_event_setattr_row_serializable() -> None:
-    event = Event(a=1)
+    event = Event(type="test", a=1)
     event.row_field = Row({"key": "value"})
 
 
@@ -163,12 +163,10 @@ def test_unified_event_creation() -> None:
     assert event.get_type() == "MyEvent"
 
 
-def test_unified_event_get_type_raises_when_no_type() -> None:
-    """Test that get_type() raises ValueError when type is None."""
-    event = Event(a=1)
-    assert event.type is None
-    with pytest.raises(ValueError, match="no type set"):
-        event.get_type()
+def test_event_requires_type() -> None:
+    """Test that Event construction requires a type string."""
+    with pytest.raises(ValidationError):
+        Event(a=1)
 
 
 def test_unified_event_get_attr_set_attr() -> None:

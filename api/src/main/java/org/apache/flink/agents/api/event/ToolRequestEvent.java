@@ -21,8 +21,10 @@ package org.apache.flink.agents.api.event;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.agents.api.Event;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** Event representing a tool call request */
 public class ToolRequestEvent extends Event {
@@ -35,6 +37,10 @@ public class ToolRequestEvent extends Event {
         setAttr("tool_calls", toolCalls);
     }
 
+    public ToolRequestEvent(UUID id, Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, attributes);
+    }
+
     /**
      * Reconstructs a typed ToolRequestEvent from a base Event.
      *
@@ -43,10 +49,12 @@ public class ToolRequestEvent extends Event {
      */
     @SuppressWarnings("unchecked")
     public static ToolRequestEvent fromEvent(Event event) {
-        String model = (String) event.getAttr("model");
-        List<Map<String, Object>> toolCalls =
-                (List<Map<String, Object>>) event.getAttr("tool_calls");
-        return new ToolRequestEvent(model, toolCalls);
+        ToolRequestEvent result =
+                new ToolRequestEvent(event.getId(), new HashMap<>(event.getAttributes()));
+        if (event.hasSourceTimestamp()) {
+            result.setSourceTimestamp(event.getSourceTimestamp());
+        }
+        return result;
     }
 
     @JsonIgnore

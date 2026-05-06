@@ -59,9 +59,9 @@ Here is the user case example:
 {{< tab "Python" >}}
 ```python
 class MyAgent(Agent):
-    @action("_input_event")
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def first_action(event: Event, ctx: RunnerContext):  # noqa D102
+    def first_action(event: Event, ctx: RunnerContext):
         start_time = time.time_ns()
 
         # the action logic
@@ -126,9 +126,9 @@ The Flink Agents' log system uses Flink's logging framework. For more details, p
 For adding logs in Java code, you can refer to [Flink documentation](https://nightlies.apache.org/flink/flink-docs-master/docs/deployment/advanced/logging/#best-practices-for-developers). In Python, you can add logs using `logging`. Here is a specific example:
 
 ```python
-@action("_input_event")
+@action(InputEvent.EVENT_TYPE)
 @staticmethod
-def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+def process_input(event: Event, ctx: RunnerContext) -> None:
     logging.info("Processing input event: %s", event)
     # the action logic
 ```

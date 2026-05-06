@@ -323,14 +323,15 @@ class MyAgent(Agent):
             collection="my_chroma_store"
         )
 
-    @action("_input_event")
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def search_documents(event: InputEvent, ctx: RunnerContext) -> None:
+    def search_documents(event: Event, ctx: RunnerContext) -> None:
         # Get the vector store from the runtime context
         vector_store = ctx.get_resource("chroma_store", ResourceType.VECTOR_STORE)
 
         # Create a semantic search query
-        user_query = str(event.input)
+        input_event = InputEvent.from_event(event)
+        user_query = str(input_event.input)
         query = VectorStoreQuery(
             query_text=user_query,
             limit=3
@@ -662,14 +663,15 @@ class MyAgent(Agent):
             dims=768
         )
 
-    @action("_input_event")
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         # Use Java vector store from Python
+        input_event = InputEvent.from_event(event)
         vector_store = ctx.get_resource("java_vector_store", ResourceType.VECTOR_STORE)
         
         # Perform semantic search
-        query = VectorStoreQuery(query_text=str(event.input), limit=3)
+        query = VectorStoreQuery(query_text=str(input_event.input), limit=3)
         result = vector_store.query(query)
         
         # Process the retrieved documents

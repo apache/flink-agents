@@ -79,8 +79,8 @@ The key of the pairs store in `MemoryObject` must be string, and the value can b
 
 {{< tab "Python" >}}
 ```python
-@action("_input_event")
-def process_event(event: InputEvent, ctx: RunnerContext) -> None:
+@action(InputEvent.EVENT_TYPE)
+def process_event(event: Event, ctx: RunnerContext) -> None:
     memory: MemoryObject = ctx.sensory_memory # or ctx.short_term_memory
     # store primitive
     memory.set("primitive",  123)

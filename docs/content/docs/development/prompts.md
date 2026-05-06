@@ -243,11 +243,12 @@ class ReviewAnalysisAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action("_input_event")
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
-        input: ProductReview = event.input
+        input_event = InputEvent.from_event(event)
+        input: ProductReview = input_event.input
         ctx.short_term_memory.set("id", input.id)
 
         content = f"""

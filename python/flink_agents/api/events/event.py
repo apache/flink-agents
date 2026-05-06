@@ -68,14 +68,14 @@ class Event(BaseModel, extra="allow"):
     id : UUID
         Unique identifier for the event, generated deterministically based on
         event content.
-    type : str | None
-        Event type string used for routing.
+    type : str
+        Event type string used for routing. Required for all events.
     attributes : Dict[str, Any]
         Key-value properties for the event data.
     """
 
     id: UUID = Field(default=None)
-    type: str | None = Field(default=None)
+    type: str
     attributes: Dict[str, Any] = Field(default_factory=dict)
 
     @staticmethod
@@ -128,12 +128,6 @@ class Event(BaseModel, extra="allow"):
 
     def get_type(self) -> str:
         """Return the event type string used for routing."""
-        if self.type is None:
-            msg = (
-                f"{self.__class__.__name__} has no type set. "
-                "All events must have an explicit type string."
-            )
-            raise ValueError(msg)
         return self.type
 
     def get_attr(self, name: str) -> Any:
@@ -173,10 +167,10 @@ class Event(BaseModel, extra="allow"):
             If the ``type`` field is missing or empty.
         """
         data = json.loads(json_str)
-        event = cls.model_validate(data)
-        if event.type is None or event.type == "":
-            msg = "Event JSON must contain a 'type' field."
+        if not data.get("type"):
+            msg = "Event JSON must contain a non-empty 'type' field."
             raise ValueError(msg)
+        event = cls.model_validate(data)
         for key in list(event.attributes):
             event.attributes[key] = _reconstruct_row_if_needed(event.attributes[key])
         return event

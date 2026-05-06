@@ -369,8 +369,8 @@ Long-Term Memory is accessed through the `RunnerContext` object:
 {{< tab "Python" >}}
 
 ```python
-@action("_input_event")
-def process_event(event: InputEvent, ctx: RunnerContext) -> None:
+@action(InputEvent.EVENT_TYPE)
+def process_event(event: Event, ctx: RunnerContext) -> None:
     # Access long-term memory
     ltm = ctx.long_term_memory
     

@@ -21,6 +21,10 @@ package org.apache.flink.agents.api.event;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.agents.api.Event;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
 /** Event representing a request for context retrieval. */
 public class ContextRetrievalRequestEvent extends Event {
 
@@ -39,6 +43,10 @@ public class ContextRetrievalRequestEvent extends Event {
         setAttr("max_results", maxResults);
     }
 
+    public ContextRetrievalRequestEvent(UUID id, Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, attributes);
+    }
+
     /**
      * Reconstructs a typed ContextRetrievalRequestEvent from a base Event.
      *
@@ -46,10 +54,13 @@ public class ContextRetrievalRequestEvent extends Event {
      * @return a typed ContextRetrievalRequestEvent
      */
     public static ContextRetrievalRequestEvent fromEvent(Event event) {
-        String query = (String) event.getAttr("query");
-        String vectorStore = (String) event.getAttr("vector_store");
-        int maxResults = ((Number) event.getAttr("max_results")).intValue();
-        return new ContextRetrievalRequestEvent(query, vectorStore, maxResults);
+        ContextRetrievalRequestEvent result =
+                new ContextRetrievalRequestEvent(
+                        event.getId(), new HashMap<>(event.getAttributes()));
+        if (event.hasSourceTimestamp()) {
+            result.setSourceTimestamp(event.getSourceTimestamp());
+        }
+        return result;
     }
 
     @JsonIgnore

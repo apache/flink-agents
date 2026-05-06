@@ -57,6 +57,10 @@ public class ToolResponseEvent extends Event {
         this(requestId, responses, success, error, Map.of());
     }
 
+    public ToolResponseEvent(UUID id, Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, attributes);
+    }
+
     /**
      * Reconstructs a typed ToolResponseEvent from a base Event, deserializing nested types.
      *
@@ -65,12 +69,14 @@ public class ToolResponseEvent extends Event {
      */
     @SuppressWarnings("unchecked")
     public static ToolResponseEvent fromEvent(Event event) {
-        Object rawId = event.getAttr("request_id");
-        UUID requestId = rawId instanceof String ? UUID.fromString((String) rawId) : (UUID) rawId;
-
-        Map<String, ToolResponse> responses = new HashMap<>();
-        Map<String, ?> rawResponses = (Map<String, ?>) event.getAttr("responses");
+        Map<String, Object> attrs = new HashMap<>(event.getAttributes());
+        Object rawId = attrs.get("request_id");
+        if (rawId instanceof String) {
+            attrs.put("request_id", UUID.fromString((String) rawId));
+        }
+        Map<String, ?> rawResponses = (Map<String, ?>) attrs.get("responses");
         if (rawResponses != null) {
+            Map<String, ToolResponse> responses = new HashMap<>();
             for (Map.Entry<String, ?> entry : rawResponses.entrySet()) {
                 Object v = entry.getValue();
                 if (v instanceof ToolResponse) {
@@ -79,17 +85,13 @@ public class ToolResponseEvent extends Event {
                     responses.put(entry.getKey(), MAPPER.convertValue(v, ToolResponse.class));
                 }
             }
+            attrs.put("responses", responses);
         }
-
-        Map<String, Boolean> success = (Map<String, Boolean>) event.getAttr("success");
-        Map<String, String> error = (Map<String, String>) event.getAttr("error");
-        Map<String, String> externalIds = (Map<String, String>) event.getAttr("external_ids");
-        return new ToolResponseEvent(
-                requestId,
-                responses,
-                success != null ? success : Map.of(),
-                error != null ? error : Map.of(),
-                externalIds != null ? externalIds : Map.of());
+        ToolResponseEvent result = new ToolResponseEvent(event.getId(), attrs);
+        if (event.hasSourceTimestamp()) {
+            result.setSourceTimestamp(event.getSourceTimestamp());
+        }
+        return result;
     }
 
     @JsonIgnore

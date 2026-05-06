@@ -129,14 +129,15 @@ class MyAgent(Agent):
             model="your-embedding-model-here"
         )
 
-    @action("_input_event")
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_text(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_text(event: Event, ctx: RunnerContext) -> None:
         # Get the embedding model from the runtime context
         embedding_model = ctx.get_resource("openai_embedding", ResourceType.EMBEDDING_MODEL)
 
         # Use the embedding model to generate embeddings
-        user_query = str(event.input)
+        input_event = InputEvent.from_event(event)
+        user_query = str(input_event.input)
         embedding = embedding_model.embed(user_query)
 
         # Handle the embedding
@@ -518,12 +519,13 @@ class MyAgent(Agent):
             model="nomic-embed-text"
         )
 
-    @action("_input_event")
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         # Use the Java embedding model from Python
+        input_event = InputEvent.from_event(event)
         embedding_model = ctx.get_resource("java_embedding_model", ResourceType.EMBEDDING_MODEL)
-        embedding = embedding_model.embed(str(event.input))
+        embedding = embedding_model.embed(str(input_event.input))
         # Process the embedding vector as needed
 ```
 

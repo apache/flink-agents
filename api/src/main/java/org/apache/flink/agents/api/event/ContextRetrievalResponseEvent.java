@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.vectorstores.Document;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -42,6 +43,10 @@ public class ContextRetrievalResponseEvent extends Event {
         setAttr("documents", documents);
     }
 
+    public ContextRetrievalResponseEvent(UUID id, Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, attributes);
+    }
+
     /**
      * Reconstructs a typed ContextRetrievalResponseEvent from a base Event, deserializing nested
      * types.
@@ -51,13 +56,14 @@ public class ContextRetrievalResponseEvent extends Event {
      */
     @SuppressWarnings("unchecked")
     public static ContextRetrievalResponseEvent fromEvent(Event event) {
-        Object rawId = event.getAttr("request_id");
-        UUID requestId = rawId instanceof String ? UUID.fromString((String) rawId) : (UUID) rawId;
-        String query = (String) event.getAttr("query");
-
-        List<?> rawDocs = (List<?>) event.getAttr("documents");
-        List<Document> documents = new ArrayList<>();
+        Map<String, Object> attrs = new HashMap<>(event.getAttributes());
+        Object rawId = attrs.get("request_id");
+        if (rawId instanceof String) {
+            attrs.put("request_id", UUID.fromString((String) rawId));
+        }
+        List<?> rawDocs = (List<?>) attrs.get("documents");
         if (rawDocs != null) {
+            List<Document> documents = new ArrayList<>();
             for (Object d : rawDocs) {
                 if (d instanceof Document) {
                     documents.add((Document) d);
@@ -65,8 +71,14 @@ public class ContextRetrievalResponseEvent extends Event {
                     documents.add(MAPPER.convertValue(d, Document.class));
                 }
             }
+            attrs.put("documents", documents);
         }
-        return new ContextRetrievalResponseEvent(requestId, query, documents);
+        ContextRetrievalResponseEvent result =
+                new ContextRetrievalResponseEvent(event.getId(), attrs);
+        if (event.hasSourceTimestamp()) {
+            result.setSourceTimestamp(event.getSourceTimestamp());
+        }
+        return result;
     }
 
     @JsonIgnore

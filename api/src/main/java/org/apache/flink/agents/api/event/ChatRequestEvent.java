@@ -26,8 +26,10 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import javax.annotation.Nullable;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** Event representing a request for chat. */
 public class ChatRequestEvent extends Event {
@@ -50,6 +52,10 @@ public class ChatRequestEvent extends Event {
         this(model, messages, null);
     }
 
+    public ChatRequestEvent(UUID id, Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, attributes);
+    }
+
     /**
      * Reconstructs a typed ChatRequestEvent from a base Event, deserializing nested types.
      *
@@ -58,10 +64,10 @@ public class ChatRequestEvent extends Event {
      */
     @SuppressWarnings("unchecked")
     public static ChatRequestEvent fromEvent(Event event) {
-        String model = (String) event.getAttr("model");
-        List<?> rawMessages = (List<?>) event.getAttr("messages");
-        List<ChatMessage> messages = new ArrayList<>();
+        Map<String, Object> attrs = new HashMap<>(event.getAttributes());
+        List<?> rawMessages = (List<?>) attrs.get("messages");
         if (rawMessages != null) {
+            List<ChatMessage> messages = new ArrayList<>();
             for (Object m : rawMessages) {
                 if (m instanceof ChatMessage) {
                     messages.add((ChatMessage) m);
@@ -69,8 +75,13 @@ public class ChatRequestEvent extends Event {
                     messages.add(MAPPER.convertValue(m, ChatMessage.class));
                 }
             }
+            attrs.put("messages", messages);
         }
-        return new ChatRequestEvent(model, messages, event.getAttr("output_schema"));
+        ChatRequestEvent result = new ChatRequestEvent(event.getId(), attrs);
+        if (event.hasSourceTimestamp()) {
+            result.setSourceTimestamp(event.getSourceTimestamp());
+        }
+        return result;
     }
 
     @JsonIgnore

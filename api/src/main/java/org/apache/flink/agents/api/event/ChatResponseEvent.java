@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -45,6 +46,10 @@ public class ChatResponseEvent extends Event {
         setAttr("total_retry_wait_sec", totalRetryWaitSec);
     }
 
+    public ChatResponseEvent(UUID id, Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, attributes);
+    }
+
     /**
      * Reconstructs a typed ChatResponseEvent from a base Event, deserializing nested types.
      *
@@ -53,22 +58,20 @@ public class ChatResponseEvent extends Event {
      */
     @SuppressWarnings("unchecked")
     public static ChatResponseEvent fromEvent(Event event) {
-        Object rawId = event.getAttr("request_id");
-        UUID requestId = rawId instanceof String ? UUID.fromString((String) rawId) : (UUID) rawId;
-
-        Object rawResponse = event.getAttr("response");
-        ChatMessage response;
-        if (rawResponse instanceof ChatMessage) {
-            response = (ChatMessage) rawResponse;
-        } else if (rawResponse instanceof Map) {
-            response = MAPPER.convertValue(rawResponse, ChatMessage.class);
-        } else {
-            response = null;
+        Map<String, Object> attrs = new HashMap<>(event.getAttributes());
+        Object rawId = attrs.get("request_id");
+        if (rawId instanceof String) {
+            attrs.put("request_id", UUID.fromString((String) rawId));
         }
-
-        int retryCount = ((Number) event.getAttr("retry_count")).intValue();
-        int totalRetryWaitSec = ((Number) event.getAttr("total_retry_wait_sec")).intValue();
-        return new ChatResponseEvent(requestId, response, retryCount, totalRetryWaitSec);
+        Object rawResponse = attrs.get("response");
+        if (rawResponse instanceof Map) {
+            attrs.put("response", MAPPER.convertValue(rawResponse, ChatMessage.class));
+        }
+        ChatResponseEvent result = new ChatResponseEvent(event.getId(), attrs);
+        if (event.hasSourceTimestamp()) {
+            result.setSourceTimestamp(event.getSourceTimestamp());
+        }
+        return result;
     }
 
     @JsonIgnore
