@@ -21,6 +21,10 @@ package org.apache.flink.agents.runtime.resource;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.agents.runtime.skill.SkillManager;
+
+import javax.annotation.Nullable;
 
 import java.util.Collections;
 import java.util.List;
@@ -30,12 +34,16 @@ import java.util.function.BiFunction;
  * Default {@link ResourceContext} implementation that delegates resource lookup to a {@link
  * BiFunction} (typically the underlying {@code ResourceCache::getResource}).
  *
- * <p>Mirrors the Python {@code flink_agents.runtime.resource_context.ResourceContextImpl}. Skill
- * methods return safe defaults; callers without skills configured see empty values.
+ * <p>Mirrors the Python {@code flink_agents.runtime.resource_context.ResourceContextImpl}. The
+ * skill methods lazily build a {@link SkillManager} from the {@code _skills_config} resource — if
+ * no such resource is registered they return safe defaults (empty string / empty list).
  */
 public class ResourceContextImpl implements ResourceContext {
 
     private final BiFunction<String, ResourceType, Resource> getResource;
+
+    @Nullable private volatile SkillManager skillManager;
+    @Nullable private volatile Skills cachedSkillsConfig;
 
     public ResourceContextImpl(BiFunction<String, ResourceType, Resource> getResource) {
         this.getResource = getResource;
@@ -55,11 +63,41 @@ public class ResourceContextImpl implements ResourceContext {
 
     @Override
     public String generateAvailableSkillsPrompt(List<String> skillNames) throws Exception {
-        return "";
+        SkillManager manager = ensureSkillManager();
+        return manager == null ? "" : manager.generateDiscoveryPrompt(skillNames);
     }
 
     @Override
     public List<String> getSkillDirs(List<String> skillNames) throws Exception {
-        return Collections.emptyList();
+        SkillManager manager = ensureSkillManager();
+        return manager == null ? Collections.emptyList() : manager.getSkillDirs(skillNames);
+    }
+
+    /**
+     * Returns the cached {@link SkillManager} for this context, or {@code null} if not configured.
+     */
+    @Nullable
+    public synchronized SkillManager getSkillManager() throws Exception {
+        return ensureSkillManager();
+    }
+
+    @Nullable
+    private synchronized SkillManager ensureSkillManager() throws Exception {
+        Skills config;
+        try {
+            Resource r = getResource(Skills.SKILLS_CONFIG, ResourceType.SKILLS);
+            if (!(r instanceof Skills)) {
+                return null;
+            }
+            config = (Skills) r;
+        } catch (Exception e) {
+            // No skills config registered — that's fine, return null.
+            return null;
+        }
+        if (config != cachedSkillsConfig) {
+            cachedSkillsConfig = config;
+            skillManager = new SkillManager(config);
+        }
+        return skillManager;
     }
 }

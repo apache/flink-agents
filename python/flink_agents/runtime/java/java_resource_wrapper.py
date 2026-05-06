@@ -93,11 +93,17 @@ class JavaResourceContextWrapper(ResourceContext):
 
     @override
     def generate_available_skills_prompt(self, *skill_names: str) -> str:
-        """Generate the skill discovery prompt for the given skill names."""
-        # TODO: Implement after java supports agent skills.
+        """Generate the skill discovery prompt for the given skill names.
+
+        Forwards to the Java ``JavaResourceAdapter#generateAvailableSkillsPrompt``
+        so that a Python chat model running inside a Java agent can use skills
+        declared on the Java side.
+        """
+        result = self._j_resource_adapter.generateAvailableSkillsPrompt(list(skill_names))
+        return result if result is not None else ""
 
     @override
     def get_skill_dirs(self, *skill_names: str) -> List[str]:
         """Return absolute directory paths for the given skill names."""
-        # TODO: Implement after java supports agent skills.
-        return []
+        result = self._j_resource_adapter.getSkillDirs(list(skill_names))
+        return list(result) if result is not None else []
