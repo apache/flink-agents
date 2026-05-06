@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
+import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
@@ -42,6 +43,7 @@ import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.plan.tools.ToolMetadataFactory;
+import org.apache.flink.agents.plan.tools.bash.BashTool;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,6 +58,8 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -337,6 +341,9 @@ public class AgentPlan implements Serializable {
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
         Class<?> agentClass = agent.getClass();
 
+        // Collect Skills declarations from both @Skills methods and Agent.addResource(SKILLS, ...)
+        Map<String, Skills> skillsObjects = new LinkedHashMap<>();
+
         // Scan all fields in the agent class for @Tool and @ChatModel annotations
         for (Field field : agentClass.getDeclaredFields()) {
             field.setAccessible(true); // Allow access to private fields
@@ -411,6 +418,17 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
             } else if (method.isAnnotationPresent(VectorStore.class)) {
                 extractResource(ResourceType.VECTOR_STORE, method);
+            } else if (method.isAnnotationPresent(
+                            org.apache.flink.agents.api.annotation.Skills.class)
+                    && Modifier.isStatic(method.getModifiers())) {
+                Object value = method.invoke(null);
+                if (!(value instanceof Skills)) {
+                    throw new IllegalStateException(
+                            "@Skills method "
+                                    + method.getName()
+                                    + " must return org.apache.flink.agents.api.skills.Skills");
+                }
+                skillsObjects.put(method.getName(), (Skills) value);
             } else if (method.isAnnotationPresent(MCPServer.class)) {
                 // Check the MCPServer annotation version to determine which version to use.
                 MCPServer MCPServerAnnotation = method.getAnnotation(MCPServer.class);
@@ -476,8 +494,52 @@ public class AgentPlan implements Serializable {
                             ((org.apache.flink.agents.api.tools.FunctionTool) kv.getValue())
                                     .getMethod());
                 }
+            } else if (type == ResourceType.SKILLS) {
+                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
+                    if (kv.getValue() instanceof Skills) {
+                        skillsObjects.put(kv.getKey(), (Skills) kv.getValue());
+                    }
+                }
             }
         }
+
+        addSkills(skillsObjects);
+    }
+
+    /**
+     * Mirror of Python {@code _add_skills}: register the merged Skills config under {@link
+     * Skills#SKILLS_CONFIG} plus the built-in {@code load_skill} and {@code bash} tools.
+     *
+     * <p>{@link BashTool} lives in this module so we can reference its class directly; {@code
+     * LoadSkillTool} lives in the runtime module and is referenced by FQN string to avoid a reverse
+     * dependency.
+     */
+    private void addSkills(Map<String, Skills> skillsObjects) throws Exception {
+        if (skillsObjects.isEmpty()) {
+            return;
+        }
+
+        addResourceProvider(
+                new JavaResourceProvider(
+                        Skills.LOAD_SKILL_TOOL,
+                        ResourceType.TOOL,
+                        new ResourceDescriptor(
+                                "org.apache.flink.agents.runtime.skill.LoadSkillTool",
+                                new HashMap<>())));
+        addResourceProvider(
+                new JavaResourceProvider(
+                        Skills.BASH_TOOL,
+                        ResourceType.TOOL,
+                        new ResourceDescriptor(BashTool.class.getName(), new HashMap<>())));
+
+        LinkedHashSet<String> paths = new LinkedHashSet<>();
+        for (Skills s : skillsObjects.values()) {
+            paths.addAll(s.getPaths());
+        }
+        Skills merged = Skills.fromLocalDir(paths.toArray(new String[0]));
+        addResourceProvider(
+                JavaSerializableResourceProvider.createResourceProvider(
+                        Skills.SKILLS_CONFIG, ResourceType.SKILLS, merged));
     }
 
     /**

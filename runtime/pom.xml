@@ -41,6 +41,12 @@ under the License.
             <version>${project.version}</version>
         </dependency>
 
+        <!-- YAML parsing for SKILL.md frontmatter -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+        </dependency>
+
         <!-- flink -->
         <dependency>
             <groupId>org.apache.flink</groupId>

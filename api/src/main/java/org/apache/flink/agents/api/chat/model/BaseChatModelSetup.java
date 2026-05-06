@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.util.Preconditions;
@@ -42,6 +43,10 @@ public abstract class BaseChatModelSetup extends Resource {
     protected String model;
     protected Object prompt;
     protected List<String> toolNames;
+    @Nullable protected List<String> skills;
+    @Nullable protected String skillDiscoveryPrompt;
+    protected List<String> allowedCommands;
+    protected List<String> allowedScriptDirs;
 
     @Nullable protected BaseChatModelConnection connection;
     protected final List<Tool> tools = new ArrayList<>();
@@ -52,6 +57,15 @@ public abstract class BaseChatModelSetup extends Resource {
         this.model = descriptor.getArgument("model");
         this.prompt = descriptor.getArgument("prompt");
         this.toolNames = descriptor.getArgument("tools");
+        this.skills = descriptor.getArgument("skills");
+        List<String> declaredCommands = descriptor.getArgument("allowed_commands");
+        this.allowedCommands =
+                declaredCommands == null ? new ArrayList<>() : new ArrayList<>(declaredCommands);
+        List<String> declaredScriptDirs = descriptor.getArgument("allowed_script_dirs");
+        this.allowedScriptDirs =
+                declaredScriptDirs == null
+                        ? new ArrayList<>()
+                        : new ArrayList<>(declaredScriptDirs);
     }
 
     /**
@@ -70,6 +84,19 @@ public abstract class BaseChatModelSetup extends Resource {
         if (this.prompt != null && this.prompt instanceof String) {
             this.prompt =
                     this.resourceContext.getResource((String) this.prompt, ResourceType.PROMPT);
+        }
+        if (this.skills != null) {
+            this.skillDiscoveryPrompt =
+                    this.resourceContext.generateAvailableSkillsPrompt(this.skills);
+            List<String> mutable =
+                    this.toolNames == null ? new ArrayList<>() : new ArrayList<>(this.toolNames);
+            if (!mutable.contains(Skills.LOAD_SKILL_TOOL)) {
+                mutable.add(Skills.LOAD_SKILL_TOOL);
+            }
+            if (!mutable.contains(Skills.BASH_TOOL)) {
+                mutable.add(Skills.BASH_TOOL);
+            }
+            this.toolNames = mutable;
         }
         if (this.toolNames != null) {
             for (String name : this.toolNames) {
@@ -115,6 +142,13 @@ public abstract class BaseChatModelSetup extends Resource {
             messages = promptMessages;
         }
 
+        if (this.skillDiscoveryPrompt != null && !this.skillDiscoveryPrompt.isEmpty()) {
+            int idx = ChatMessage.findFirstSystemMessage(messages);
+            List<ChatMessage> mutated = new ArrayList<>(messages);
+            mutated.add(idx + 1, new ChatMessage(MessageRole.SYSTEM, this.skillDiscoveryPrompt));
+            messages = mutated;
+        }
+
         Map<String, Object> params = this.getParameters();
         params.putAll(parameters);
         return connection.chat(messages, tools, params);
@@ -143,5 +177,23 @@ public abstract class BaseChatModelSetup extends Resource {
     @VisibleForTesting
     public List<String> getToolNames() {
         return toolNames;
+    }
+
+    @Nullable
+    public List<String> getSkills() {
+        return skills;
+    }
+
+    @Nullable
+    public String getSkillDiscoveryPrompt() {
+        return skillDiscoveryPrompt;
+    }
+
+    public List<String> getAllowedCommands() {
+        return allowedCommands;
+    }
+
+    public List<String> getAllowedScriptDirs() {
+        return allowedScriptDirs;
     }
 }

@@ -36,6 +36,7 @@ import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
@@ -182,6 +183,7 @@ public class ChatModelAction {
             ChatMessage response,
             UUID initialRequestId,
             String model,
+            BaseChatModelSetup chatModel,
             List<ChatMessage> messages,
             Object outputSchema,
             RunnerContext ctx)
@@ -191,6 +193,8 @@ public class ChatModelAction {
                 initialRequestId,
                 messages,
                 Collections.singletonList(response));
+
+        injectBashToolArgs(response.getToolCalls(), chatModel);
 
         ToolRequestEvent toolRequestEvent = new ToolRequestEvent(model, response.getToolCalls());
 
@@ -202,6 +206,46 @@ public class ChatModelAction {
                 outputSchema);
 
         ctx.sendEvent(toolRequestEvent);
+    }
+
+    /**
+     * Inject framework-controlled args ({@code allowed_commands}, {@code allowed_script_dirs}) into
+     * bash tool calls so they remain hidden from the LLM. Mirrors Python {@code
+     * _inject_bash_tool_args}.
+     */
+    @SuppressWarnings("unchecked")
+    private static void injectBashToolArgs(
+            List<Map<String, Object>> toolCalls, BaseChatModelSetup chatModel) throws Exception {
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            return;
+        }
+        List<String> scriptDirs = new ArrayList<>(chatModel.getAllowedScriptDirs());
+        List<String> declaredSkills = chatModel.getSkills();
+        if (declaredSkills != null
+                && !declaredSkills.isEmpty()
+                && chatModel.getResourceContext() != null) {
+            scriptDirs.addAll(chatModel.getResourceContext().getSkillDirs(declaredSkills));
+        }
+        for (Map<String, Object> call : toolCalls) {
+            Object function = call.get("function");
+            if (!(function instanceof Map)) {
+                continue;
+            }
+            Map<String, Object> functionMap = (Map<String, Object>) function;
+            if (!Skills.BASH_TOOL.equals(functionMap.get("name"))) {
+                continue;
+            }
+            Object argsObj = functionMap.get("arguments");
+            Map<String, Object> args;
+            if (argsObj instanceof Map) {
+                args = (Map<String, Object>) argsObj;
+            } else {
+                args = new HashMap<>();
+                functionMap.put("arguments", args);
+            }
+            args.put("allowed_commands", new ArrayList<>(chatModel.getAllowedCommands()));
+            args.put("allowed_script_dirs", scriptDirs);
+        }
     }
 
     static String cleanLlmResponse(String rawResponse) {
@@ -348,7 +392,8 @@ public class ChatModelAction {
         }
 
         if (!Objects.requireNonNull(response).getToolCalls().isEmpty()) {
-            handleToolCalls(response, initialRequestId, model, messages, outputSchema, ctx);
+            handleToolCalls(
+                    response, initialRequestId, model, chatModel, messages, outputSchema, ctx);
         } else {
             Map<String, Long> retryStats = getRetryStats(ctx.getSensoryMemory(), initialRequestId);
             int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();

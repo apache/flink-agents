@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.vectorstores.VectorStoreQueryMode;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
+import java.util.List;
 import java.util.Map;
 
 /** Adapter for managing Java resources and facilitating Python-Java interoperability. */
@@ -52,6 +53,20 @@ public class JavaResourceAdapter {
      */
     public Resource getResource(String name, String typeValue) throws Exception {
         return resourceContext.getResource(name, ResourceType.fromValue(typeValue));
+    }
+
+    /**
+     * Generate the available skills prompt for the given skill names. Used by the Python {@code
+     * JavaResourceContextWrapper} when a Python chat model running in a Java agent needs the skill
+     * discovery prompt.
+     */
+    public String generateAvailableSkillsPrompt(List<String> skillNames) throws Exception {
+        return resourceContext.generateAvailableSkillsPrompt(skillNames);
+    }
+
+    /** Return absolute directory paths for the given skill names. */
+    public List<String> getSkillDirs(List<String> skillNames) throws Exception {
+        return resourceContext.getSkillDirs(skillNames);
     }
 
     /**
