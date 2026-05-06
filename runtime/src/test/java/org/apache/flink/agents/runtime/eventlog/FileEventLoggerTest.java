@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.JobInfo;
 import org.apache.flink.api.common.TaskInfo;
@@ -80,8 +81,8 @@ class FileEventLoggerTest {
         // Create config and logger
         config =
                 EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
+                        .loggerType(LoggerType.FILE)
+                        .property(AgentConfigOptions.BASE_LOG_DIR.getKey(), tempDir.toString())
                         .build();
         logger = new FileEventLogger(config);
         openParams = new EventLoggerOpenParams(runtimeContext);
@@ -301,7 +302,7 @@ class FileEventLoggerTest {
         // Given - config with ACCEPT_ALL filter (default behavior)
         config =
                 EventLoggerConfig.builder()
-                        .loggerType("file")
+                        .loggerType(LoggerType.FILE)
                         .property("baseLogDir", tempDir.toString())
                         .eventFilter(EventFilter.ACCEPT_ALL)
                         .build();
@@ -334,7 +335,7 @@ class FileEventLoggerTest {
         // Given - config with REJECT_ALL filter
         config =
                 EventLoggerConfig.builder()
-                        .loggerType("file")
+                        .loggerType(LoggerType.FILE)
                         .property("baseLogDir", tempDir.toString())
                         .eventFilter(EventFilter.REJECT_ALL)
                         .build();
@@ -361,7 +362,7 @@ class FileEventLoggerTest {
         // Given - config with filter that only accepts InputEvents
         config =
                 EventLoggerConfig.builder()
-                        .loggerType("file")
+                        .loggerType(LoggerType.FILE)
                         .property("baseLogDir", tempDir.toString())
                         .eventFilter(EventFilter.byEventType(InputEvent.class))
                         .build();
@@ -393,7 +394,7 @@ class FileEventLoggerTest {
         // Given - config with filter that accepts InputEvents and OutputEvents
         config =
                 EventLoggerConfig.builder()
-                        .loggerType("file")
+                        .loggerType(LoggerType.FILE)
                         .property("baseLogDir", tempDir.toString())
                         .eventFilter(EventFilter.byEventType(InputEvent.class, OutputEvent.class))
                         .build();
@@ -437,7 +438,7 @@ class FileEventLoggerTest {
 
         config =
                 EventLoggerConfig.builder()
-                        .loggerType("file")
+                        .loggerType(LoggerType.FILE)
                         .property("baseLogDir", tempDir.toString())
                         .eventFilter(customFilter)
                         .build();
@@ -469,7 +470,7 @@ class FileEventLoggerTest {
         // Given - config without explicit eventFilter (should default to ACCEPT_ALL)
         config =
                 EventLoggerConfig.builder()
-                        .loggerType("file")
+                        .loggerType(LoggerType.FILE)
                         .property("baseLogDir", tempDir.toString())
                         .build();
         logger = new FileEventLogger(config);
@@ -500,8 +501,8 @@ class FileEventLoggerTest {
         // Given - config with prettyPrint enabled
         config =
                 EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
+                        .loggerType(LoggerType.FILE)
+                        .property(AgentConfigOptions.BASE_LOG_DIR.getKey(), tempDir.toString())
                         .property(AgentConfigOptions.PRETTY_PRINT.getKey(), true)
                         .build();
         logger = new FileEventLogger(config);

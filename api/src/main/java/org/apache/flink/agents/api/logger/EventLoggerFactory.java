@@ -26,14 +26,10 @@ import java.util.function.Function;
 /**
  * Factory for creating EventLogger instances based on logger type identifiers.
  *
- * <p>This factory uses a string-based registry approach that allows both built-in and custom
- * EventLogger implementations to be created in a flexible manner. Built-in loggers are
- * automatically registered, while custom loggers can be registered using the {@link
- * #registerFactory(String, Function)} method.
- *
- * <p>Logger types are identified by simple string identifiers (e.g., "file", "database", "kafka"),
- * making the factory easy to use with configuration files and providing a clean abstraction for
- * different logger implementations.
+ * <p>This factory uses a registry approach that allows both built-in and custom EventLogger
+ * implementations to be created in a flexible manner. Built-in loggers are automatically
+ * registered, while custom loggers can be registered using the {@link #registerFactory(LoggerType,
+ * Function)} method.
  *
  * <h3>Thread Safety</h3>
  *
@@ -46,20 +42,10 @@ import java.util.function.Function;
  * <pre>{@code
  * // Create built-in file logger
  * EventLoggerConfig fileConfig = EventLoggerConfig.builder()
- *     .loggerType("file")
+ *     .loggerType(LoggerType.FILE)
  *     .property("baseLogDir", "/tmp/flink-agents")
  *     .build();
  * EventLogger fileLogger = EventLoggerFactory.createLogger(fileConfig);
- *
- * // Register and use custom logger
- * EventLoggerFactory.registerFactory("database",
- *     config -> new DatabaseEventLogger(config));
- *
- * EventLoggerConfig dbConfig = EventLoggerConfig.builder()
- *     .loggerType("database")
- *     .property("jdbcUrl", "jdbc:mysql://localhost/logs")
- *     .build();
- * EventLogger customLogger = EventLoggerFactory.createLogger(dbConfig);
  * }</pre>
  *
  * @see EventLogger
@@ -67,8 +53,8 @@ import java.util.function.Function;
  */
 public final class EventLoggerFactory {
 
-    /** Thread-safe registry of factory functions keyed by logger type identifier. */
-    private static final Map<String, Function<EventLoggerConfig, EventLogger>> FACTORIES =
+    /** Thread-safe registry of factory functions keyed by {@link LoggerType}. */
+    private static final Map<LoggerType, Function<EventLoggerConfig, EventLogger>> FACTORIES =
             new ConcurrentHashMap<>();
 
     private EventLoggerFactory() {}
@@ -94,11 +80,7 @@ public final class EventLoggerFactory {
             throw new IllegalArgumentException("EventLoggerConfig cannot be null");
         }
 
-        String loggerType = config.getLoggerType();
-        if (loggerType == null || loggerType.trim().isEmpty()) {
-            throw new IllegalArgumentException("Logger type cannot be null or empty");
-        }
-
+        LoggerType loggerType = config.getLoggerType();
         Function<EventLoggerConfig, EventLogger> factory = FACTORIES.get(loggerType);
 
         if (factory == null) {
@@ -128,18 +110,16 @@ public final class EventLoggerFactory {
      * <p>If a factory is already registered for the given logger type, it will be replaced with the
      * new factory function.
      *
-     * @param loggerType the logger type identifier (e.g., "file", "database", "kafka")
+     * @param loggerType the logger type
      * @param factory the factory function that creates EventLogger instances
-     * @throws IllegalArgumentException if loggerType or factory is null or if loggerType is empty
+     * @throws IllegalArgumentException if loggerType or factory is null
      */
     public static void registerFactory(
-            String loggerType, Function<EventLoggerConfig, EventLogger> factory) {
-        if (loggerType == null || loggerType.trim().isEmpty()) {
-            throw new IllegalArgumentException("Logger type cannot be null or empty");
-        }
+            LoggerType loggerType, Function<EventLoggerConfig, EventLogger> factory) {
+        Objects.requireNonNull(loggerType, "Logger type cannot be null");
         Objects.requireNonNull(factory, "Factory function cannot be null");
 
-        FACTORIES.put(loggerType.trim(), factory);
+        FACTORIES.put(loggerType, factory);
     }
 
     /**
@@ -150,6 +130,36 @@ public final class EventLoggerFactory {
      */
     private static void registerBuiltInFactories() {
         registerFileEventLoggerFactory();
+        registerSlf4jEventLoggerFactory();
+    }
+
+    /**
+     * Registers the built-in SLF4J event logger factory.
+     *
+     * <p>This uses reflection to avoid hard dependencies on the runtime module, allowing the API
+     * module to be used independently.
+     */
+    private static void registerSlf4jEventLoggerFactory() {
+        try {
+            Class<?> slf4jLoggerClass =
+                    Class.forName("org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger");
+
+            registerFactory(
+                    LoggerType.SLF4J,
+                    config -> {
+                        try {
+                            return (EventLogger)
+                                    slf4jLoggerClass
+                                            .getConstructor(EventLoggerConfig.class)
+                                            .newInstance(config);
+                        } catch (Exception e) {
+                            throw new RuntimeException("Failed to create Slf4jEventLogger", e);
+                        }
+                    });
+        } catch (ClassNotFoundException e) {
+            // Slf4jEventLogger not found, skip registration
+            // This is expected if the runtime module is not on the classpath
+        }
     }
 
     /**
@@ -165,7 +175,7 @@ public final class EventLoggerFactory {
                     Class.forName("org.apache.flink.agents.runtime.eventlog.FileEventLogger");
 
             registerFactory(
-                    "file",
+                    LoggerType.FILE,
                     config -> {
                         try {
                             // FileEventLogger now takes unified EventLoggerConfig directly

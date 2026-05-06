@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.EventFilter;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
@@ -75,8 +76,6 @@ import java.nio.file.Paths;
  * </pre>
  */
 public class FileEventLogger implements EventLogger {
-    public static final String BASE_LOG_DIR_PROPERTY_KEY = "baseLogDir";
-    public static final String PRETTY_PRINT_PROPERTY_KEY = "prettyPrint";
     // The default base log directory if not specified in the configuration
     private static final String DEFAULT_BASE_LOG_DIR =
             Paths.get(System.getProperty("java.io.tmpdir"), "flink-agents").toString();
@@ -104,7 +103,9 @@ public class FileEventLogger implements EventLogger {
         // Create writer in append mode
         writer = new PrintWriter(new BufferedWriter(new FileWriter(logFilePath, true)));
         prettyPrint =
-                (Boolean) config.getProperties().getOrDefault(PRETTY_PRINT_PROPERTY_KEY, false);
+                (Boolean)
+                        config.getProperties()
+                                .getOrDefault(AgentConfigOptions.PRETTY_PRINT.getKey(), false);
     }
 
     private String generateSubTaskLogFilePath(EventLoggerOpenParams params) {
@@ -112,7 +113,9 @@ public class FileEventLogger implements EventLogger {
         String baseLogDir =
                 (String)
                         config.getProperties()
-                                .getOrDefault(BASE_LOG_DIR_PROPERTY_KEY, DEFAULT_BASE_LOG_DIR);
+                                .getOrDefault(
+                                        AgentConfigOptions.BASE_LOG_DIR.getKey(),
+                                        DEFAULT_BASE_LOG_DIR);
         String jobId = params.getRuntimeContext().getJobInfo().getJobId().toString();
         String taskName =
                 params.getRuntimeContext()

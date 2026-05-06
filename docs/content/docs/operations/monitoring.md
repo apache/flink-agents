@@ -141,11 +141,19 @@ We can check the log result in the WebUI of Flink Job:
 
 ## Event Log
 
-Currently, the system supports **File-based Event Log** as the default implementation. Future releases will introduce support for additional types of event logs and provide configuration options to let users choose their preferred logging mechanism.
+The system supports two types of event loggers: **SLF4J Event Log** (default) and **File Event Log**.
+
+By default, the SLF4J Event Log is used. If `baseLogDir` is configured, the system automatically switches to the File Event Log.
+
+### SLF4J Event Log (Default)
+
+The **SLF4J Event Log** outputs events through a dedicated SLF4J logger (`org.apache.flink.agents.EventLog`). On startup, the logger **automatically configures** log4j2 to write events to a separate file (`{log.file}.event-log.log`) in Flink's log directory, making them visible in Flink's Web UI **Logs** tab. **No manual log4j2 configuration is required.**
+
+Each event is recorded as a JSON object containing `timestamp`, `event`, along with subtask context fields (`jobId`, `taskName`, `subtaskId`) to distinguish events from different subtasks.
 
 ### File Event Log
 
-The **File Event Log** is a file-based event logging system that stores events in structured files within a flat directory. 
+The **File Event Log** is a file-based event logging system that stores events in structured files within a flat directory. To use it, configure `baseLogDir` in your Flink `config.yaml`.
 
 By default, each event is recorded in **JSON Lines (JSONL)** format, with one JSON object per line. When [`prettyPrint`]({{< ref "docs/operations/configuration#core-options" >}}) is enabled, each event is written as formatted multi-line JSON instead, and the log file is no longer in valid JSONL format.
 
