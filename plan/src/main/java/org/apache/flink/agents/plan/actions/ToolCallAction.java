@@ -110,7 +110,6 @@ public class ToolCallAction {
             }
         }
         ctx.sendEvent(
-                new ToolResponseEvent(
-                        toolRequest.getId(), responses, success, error, externalIds));
+                new ToolResponseEvent(toolRequest.getId(), responses, success, error, externalIds));
     }
 }
