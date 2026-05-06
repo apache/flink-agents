@@ -160,7 +160,8 @@ public class ReActAgent extends Agent {
 
         if (schmaPrompt != null) {
             List<ChatMessage> instruct = schmaPrompt.formatMessages(MessageRole.SYSTEM, Map.of());
-            inputMessages.addAll(0, instruct);
+            int index = ChatMessage.findFirstSystemMessage(inputMessages);
+            inputMessages.addAll(index + 1, instruct);
         }
 
         Object outputSchema = ctx.getActionConfigValue("output_schema");
