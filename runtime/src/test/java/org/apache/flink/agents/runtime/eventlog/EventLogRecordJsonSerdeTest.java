@@ -280,8 +280,7 @@ class EventLogRecordJsonSerdeTest {
 
         public static CustomTestEvent fromEvent(Event event) {
             CustomTestEvent result =
-                    new CustomTestEvent(
-                            event.getId(), new HashMap<>(event.getAttributes()));
+                    new CustomTestEvent(event.getId(), new HashMap<>(event.getAttributes()));
             if (event.hasSourceTimestamp()) {
                 result.setSourceTimestamp(event.getSourceTimestamp());
             }

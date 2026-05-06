@@ -556,8 +556,7 @@ class FileEventLoggerTest {
 
         public static TestCustomEvent fromEvent(Event event) {
             TestCustomEvent result =
-                    new TestCustomEvent(
-                            event.getId(), new HashMap<>(event.getAttributes()));
+                    new TestCustomEvent(event.getId(), new HashMap<>(event.getAttributes()));
             if (event.hasSourceTimestamp()) {
                 result.setSourceTimestamp(event.getSourceTimestamp());
             }
