@@ -37,9 +37,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 
 import java.time.Duration;
@@ -49,7 +48,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 /**
@@ -87,8 +85,8 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     private final String defaultModel;
 
     public AnthropicChatModelConnection(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
 
         String apiKey = descriptor.getArgument("api_key");
         if (apiKey == null || apiKey.isBlank()) {

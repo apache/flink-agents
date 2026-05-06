@@ -18,15 +18,13 @@
 package org.apache.flink.agents.integrations.chatmodels.anthropic;
 
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.BiFunction;
 
 /**
  * Chat model setup for the Anthropic Messages API.
@@ -85,9 +83,8 @@ public class AnthropicChatModelSetup extends BaseChatModelSetup {
     private final Boolean strictTools;
     private final Map<String, Object> additionalArguments;
 
-    public AnthropicChatModelSetup(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+    public AnthropicChatModelSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.temperature =
                 Optional.ofNullable(descriptor.<Number>getArgument("temperature"))
                         .map(Number::doubleValue)
@@ -129,10 +126,10 @@ public class AnthropicChatModelSetup extends BaseChatModelSetup {
             long maxTokens,
             Map<String, Object> additionalArguments,
             List<String> tools,
-            BiFunction<String, ResourceType, Resource> getResource) {
+            ResourceContext resourceContext) {
         this(
                 createDescriptor(model, temperature, maxTokens, additionalArguments, tools),
-                getResource);
+                resourceContext);
     }
 
     @Override

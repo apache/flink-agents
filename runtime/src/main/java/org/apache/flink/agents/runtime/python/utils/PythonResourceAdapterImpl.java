@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
@@ -35,7 +36,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 public class PythonResourceAdapterImpl implements PythonResourceAdapter {
 
@@ -72,16 +72,16 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     static final String FROM_JAVA_VECTOR_STORE_QUERY =
             PYTHON_MODULE_PREFIX + "from_java_vector_store_query";
 
-    private final BiFunction<String, ResourceType, Resource> getResource;
+    private final ResourceContext resourceContext;
     private final PythonInterpreter interpreter;
     private final JavaResourceAdapter javaResourceAdapter;
     private PyObject pythonResourceContext;
 
     public PythonResourceAdapterImpl(
-            BiFunction<String, ResourceType, Resource> getResource,
+            ResourceContext resourceContext,
             PythonInterpreter interpreter,
             JavaResourceAdapter javaResourceAdapter) {
-        this.getResource = getResource;
+        this.resourceContext = resourceContext;
         this.interpreter = interpreter;
         this.javaResourceAdapter = javaResourceAdapter;
     }
@@ -92,8 +92,16 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     }
 
     public Object getResource(String resourceName, String resourceType) {
-        Resource resource =
-                this.getResource.apply(resourceName, ResourceType.fromValue(resourceType));
+        Resource resource;
+        try {
+            resource =
+                    this.resourceContext.getResource(
+                            resourceName, ResourceType.fromValue(resourceType));
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
         if (resource instanceof PythonResourceWrapper) {
             PythonResourceWrapper pythonResource = (PythonResourceWrapper) resource;
             return pythonResource.getPythonResource();

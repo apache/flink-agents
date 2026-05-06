@@ -23,9 +23,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.RetryExecutor;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -55,7 +54,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.function.BiFunction;
 
 /**
  * OpenSearch vector store supporting both OpenSearch Serverless (AOSS) and OpenSearch Service
@@ -123,9 +121,8 @@ public class OpenSearchVectorStore extends BaseVectorStore
     private final DefaultCredentialsProvider credentialsProvider;
     private final RetryExecutor retryExecutor;
 
-    public OpenSearchVectorStore(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+    public OpenSearchVectorStore(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
 
         this.endpoint = descriptor.getArgument("endpoint");
         if (this.endpoint == null || this.endpoint.isBlank()) {

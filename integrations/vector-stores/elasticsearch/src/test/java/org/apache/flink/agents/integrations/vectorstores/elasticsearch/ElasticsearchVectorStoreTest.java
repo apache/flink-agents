@@ -20,6 +20,7 @@ package org.apache.flink.agents.integrations.vectorstores.elasticsearch;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
@@ -73,7 +74,8 @@ public class ElasticsearchVectorStoreTest {
                         .addInitialArgument("password", System.getenv("ES_PASSWORD"));
         store =
                 new ElasticsearchVectorStore(
-                        builder.build(), ElasticsearchVectorStoreTest::getResource);
+                        builder.build(),
+                        ResourceContext.fromGetResource(ElasticsearchVectorStoreTest::getResource));
     }
 
     @Test

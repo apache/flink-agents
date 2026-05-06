@@ -19,13 +19,11 @@
 package org.apache.flink.agents.integrations.embeddingmodels.bedrock;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /**
  * Embedding model setup for Bedrock Titan Text Embeddings.
@@ -56,8 +54,8 @@ public class BedrockEmbeddingModelSetup extends BaseEmbeddingModelSetup {
     private final Integer dimensions;
 
     public BedrockEmbeddingModelSetup(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.dimensions = descriptor.getArgument("dimensions");
     }
 

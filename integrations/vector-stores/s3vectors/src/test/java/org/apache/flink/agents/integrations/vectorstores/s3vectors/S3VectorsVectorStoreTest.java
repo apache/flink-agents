@@ -20,6 +20,7 @@ package org.apache.flink.agents.integrations.vectorstores.s3vectors;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
@@ -35,7 +36,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -46,7 +46,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 public class S3VectorsVectorStoreTest {
 
-    private static final BiFunction<String, ResourceType, Resource> NOOP = (a, b) -> null;
+    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
     @Test
     @DisplayName("Constructor creates store")
@@ -114,7 +114,10 @@ public class S3VectorsVectorStoreTest {
                         .addInitialArgument(
                                 "region", System.getenv().getOrDefault("AWS_REGION", "us-east-1"))
                         .build();
-        store = new S3VectorsVectorStore(desc, S3VectorsVectorStoreTest::getResource);
+        store =
+                new S3VectorsVectorStore(
+                        desc,
+                        ResourceContext.fromGetResource(S3VectorsVectorStoreTest::getResource));
     }
 
     @Test

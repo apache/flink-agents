@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.embedding.model;
 
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.annotation.VisibleForTesting;
@@ -29,7 +30,6 @@ import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /**
  * Base class for embedding model setup configurations.
@@ -43,9 +43,8 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
 
     @Nullable protected BaseEmbeddingModelConnection connection;
 
-    public BaseEmbeddingModelSetup(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+    public BaseEmbeddingModelSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.connectionName = descriptor.getArgument("connection");
         this.model = descriptor.getArgument("model");
     }
@@ -58,10 +57,11 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
      * resources object out of the method to be async executed and invoking it in the main thread.
      */
     @Override
-    public void open() {
+    public void open() throws Exception {
         this.connection =
                 (BaseEmbeddingModelConnection)
-                        getResource.apply(connectionName, ResourceType.EMBEDDING_MODEL_CONNECTION);
+                        resourceContext.getResource(
+                                connectionName, ResourceType.EMBEDDING_MODEL_CONNECTION);
     }
 
     public abstract Map<String, Object> getParameters();

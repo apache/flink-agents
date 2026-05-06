@@ -19,14 +19,12 @@
 package org.apache.flink.agents.integrations.chatmodels.ollama;
 
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /**
  * A chat model integration for Ollama powered by the ollama4j client.
@@ -59,9 +57,8 @@ public class OllamaChatModelSetup extends BaseChatModelSetup {
     private final Object think;
     private final boolean extractReasoning;
 
-    public OllamaChatModelSetup(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+    public OllamaChatModelSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.model = descriptor.getArgument("model");
         this.think = descriptor.getArgument("think", true);
         this.extractReasoning = descriptor.getArgument("extract_reasoning", true);
@@ -77,15 +74,12 @@ public class OllamaChatModelSetup extends BaseChatModelSetup {
      * @throws IllegalArgumentException if endpoint is null or empty
      */
     public OllamaChatModelSetup(
-            String model,
-            String prompt,
-            List<String> tools,
-            BiFunction<String, ResourceType, Resource> getResource) {
+            String model, String prompt, List<String> tools, ResourceContext resourceContext) {
         this(
                 new ResourceDescriptor(
                         OllamaChatModelSetup.class.getName(),
                         Map.of("model", model, "prompt", prompt, "tools", tools)),
-                getResource);
+                resourceContext);
     }
 
     @Override

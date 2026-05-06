@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -87,13 +88,14 @@ public class ResourceCache implements AutoCloseable {
 
         Resource resource =
                 provider.provide(
-                        (anotherName, anotherType) -> {
-                            try {
-                                return this.getResource(anotherName, anotherType);
-                            } catch (Exception e) {
-                                throw new RuntimeException(e);
-                            }
-                        });
+                        new ResourceContextImpl(
+                                (anotherName, anotherType) -> {
+                                    try {
+                                        return this.getResource(anotherName, anotherType);
+                                    } catch (Exception e) {
+                                        throw new RuntimeException(e);
+                                    }
+                                }));
         resource.open();
         cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
         return resource;

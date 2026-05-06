@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.python.utils;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
@@ -28,17 +29,15 @@ import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /** Adapter for managing Java resources and facilitating Python-Java interoperability. */
 public class JavaResourceAdapter {
-    private final BiFunction<String, ResourceType, Resource> getResource;
+    private final ResourceContext resourceContext;
 
     private final transient PythonInterpreter interpreter;
 
-    public JavaResourceAdapter(
-            BiFunction<String, ResourceType, Resource> getResource, PythonInterpreter interpreter) {
-        this.getResource = getResource;
+    public JavaResourceAdapter(ResourceContext resourceContext, PythonInterpreter interpreter) {
+        this.resourceContext = resourceContext;
         this.interpreter = interpreter;
     }
 
@@ -52,7 +51,7 @@ public class JavaResourceAdapter {
      * @throws Exception if the resource cannot be retrieved
      */
     public Resource getResource(String name, String typeValue) throws Exception {
-        return getResource.apply(name, ResourceType.fromValue(typeValue));
+        return resourceContext.getResource(name, ResourceType.fromValue(typeValue));
     }
 
     /**

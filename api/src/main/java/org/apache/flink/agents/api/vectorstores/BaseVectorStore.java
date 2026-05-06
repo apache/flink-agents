@@ -20,6 +20,7 @@ package org.apache.flink.agents.api.vectorstores;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
@@ -28,7 +29,6 @@ import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /**
  * Base abstract class for vector store. Provides vector store functionality that integrates
@@ -78,9 +78,8 @@ public abstract class BaseVectorStore extends Resource {
      */
     protected final @Nullable String collection;
 
-    public BaseVectorStore(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+    public BaseVectorStore(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.embeddingModelName = descriptor.getArgument("embedding_model");
         this.collection = descriptor.getArgument("collection");
     }
@@ -93,11 +92,11 @@ public abstract class BaseVectorStore extends Resource {
      * resources object out of the method to be async executed and invoking it in the main thread.
      */
     @Override
-    public void open() {
+    public void open() throws Exception {
         if (this.embeddingModelName != null) {
             this.embeddingModel =
                     (BaseEmbeddingModelSetup)
-                            this.getResource.apply(
+                            this.resourceContext.getResource(
                                     this.embeddingModelName, ResourceType.EMBEDDING_MODEL);
         }
     }

@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -125,9 +126,11 @@ class AgentPlanDeclareToolFieldTest {
                 .get(type)
                 .get(name)
                 .provide(
-                        (n, t) -> {
-                            throw new UnsupportedOperationException("No dependencies expected");
-                        });
+                        ResourceContext.fromGetResource(
+                                (n, t) -> {
+                                    throw new UnsupportedOperationException(
+                                            "No dependencies expected");
+                                }));
     }
 
     @Test

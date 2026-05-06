@@ -21,11 +21,10 @@ package org.apache.flink.agents.plan.resourceprovider;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.serializer.ResourceProviderJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.ResourceProviderJsonSerializer;
-
-import java.util.function.BiFunction;
 
 /**
  * Resource provider that carries resource metadata to create Resource objects at runtime.
@@ -66,10 +65,10 @@ public abstract class ResourceProvider implements java.io.Serializable {
     /**
      * Create resource at runtime.
      *
-     * @param getResource helper function to get other resources declared in the same Agent
+     * @param resourceContext context exposing helper for fetching other resources declared in the
+     *     same Agent and skill-related capabilities
      * @return the created resource
      * @throws Exception if the resource cannot be created
      */
-    public abstract Resource provide(BiFunction<String, ResourceType, Resource> getResource)
-            throws Exception;
+    public abstract Resource provide(ResourceContext resourceContext) throws Exception;
 }

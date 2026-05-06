@@ -18,9 +18,8 @@
 
 package org.apache.flink.agents.api.vectorstores.python;
 
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -35,7 +34,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -51,7 +49,7 @@ public class PythonCollectionManageableVectorStoreTest {
 
     @Mock private ResourceDescriptor mockDescriptor;
 
-    @Mock private BiFunction<String, ResourceType, Resource> mockGetResource;
+    @Mock private ResourceContext mockGetResource;
 
     @Mock private PyObject mockPythonDocument;
 

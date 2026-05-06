@@ -28,13 +28,11 @@ import io.github.ollama4j.tools.Tools;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 
 import java.util.*;
-import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 /**
@@ -71,8 +69,8 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * @throws IllegalArgumentException if endpoint is null or empty
      */
     public OllamaChatModelConnection(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         String endpoint = descriptor.getArgument("endpoint");
         if (endpoint == null || endpoint.isEmpty()) {
             throw new IllegalArgumentException("endpoint should not be null or empty.");
@@ -90,12 +88,11 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * @param getResource a function to resolve resources (e.g., tools) by name and type
      * @throws IllegalArgumentException if endpoint is null or empty
      */
-    public OllamaChatModelConnection(
-            String endpoint, BiFunction<String, ResourceType, Resource> getResource) {
+    public OllamaChatModelConnection(String endpoint, ResourceContext resourceContext) {
         this(
                 new ResourceDescriptor(
                         OllamaChatModelConnection.class.getName(), Map.of("endpoint", endpoint)),
-                getResource);
+                resourceContext);
     }
 
     /**

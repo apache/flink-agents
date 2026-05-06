@@ -19,9 +19,8 @@
 package org.apache.flink.agents.integrations.vectorstores.s3vectors;
 
 import org.apache.flink.agents.api.RetryExecutor;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
@@ -47,7 +46,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.BiFunction;
 
 /**
  * Amazon S3 Vectors vector store for flink-agents.
@@ -87,9 +85,8 @@ public class S3VectorsVectorStore extends BaseVectorStore {
     private final String vectorIndex;
     private final RetryExecutor retryExecutor;
 
-    public S3VectorsVectorStore(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+    public S3VectorsVectorStore(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
 
         this.vectorBucket = descriptor.getArgument("vector_bucket");
         if (this.vectorBucket == null || this.vectorBucket.isBlank()) {

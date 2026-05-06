@@ -19,21 +19,19 @@
 package org.apache.flink.agents.integrations.chatmodels.bedrock;
 
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Tests for {@link BedrockChatModelSetup}. */
 class BedrockChatModelSetupTest {
 
-    private static final BiFunction<String, ResourceType, Resource> NOOP = (a, b) -> null;
+    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
     @Test
     @DisplayName("getParameters includes model and default temperature")

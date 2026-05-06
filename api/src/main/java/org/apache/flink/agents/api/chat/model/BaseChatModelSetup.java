@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
@@ -35,7 +36,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 public abstract class BaseChatModelSetup extends Resource {
     protected final String connectionName;
@@ -46,9 +46,8 @@ public abstract class BaseChatModelSetup extends Resource {
     @Nullable protected BaseChatModelConnection connection;
     protected final List<Tool> tools = new ArrayList<>();
 
-    public BaseChatModelSetup(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+    public BaseChatModelSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.connectionName = descriptor.getArgument("connection");
         this.model = descriptor.getArgument("model");
         this.prompt = descriptor.getArgument("prompt");
@@ -66,14 +65,15 @@ public abstract class BaseChatModelSetup extends Resource {
     public void open() throws Exception {
         this.connection =
                 (BaseChatModelConnection)
-                        this.getResource.apply(
+                        this.resourceContext.getResource(
                                 this.connectionName, ResourceType.CHAT_MODEL_CONNECTION);
         if (this.prompt != null && this.prompt instanceof String) {
-            this.prompt = this.getResource.apply((String) this.prompt, ResourceType.PROMPT);
+            this.prompt =
+                    this.resourceContext.getResource((String) this.prompt, ResourceType.PROMPT);
         }
         if (this.toolNames != null) {
             for (String name : this.toolNames) {
-                this.tools.add((Tool) this.getResource.apply(name, ResourceType.TOOL));
+                this.tools.add((Tool) this.resourceContext.getResource(name, ResourceType.TOOL));
             }
         }
     }

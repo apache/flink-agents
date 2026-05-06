@@ -18,16 +18,14 @@
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.BiFunction;
 
 /**
  * Chat model setup for the OpenAI Chat Completions API.
@@ -74,9 +72,8 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
     private final String reasoningEffort;
     private final Map<String, Object> additionalArguments;
 
-    public OpenAICompletionsSetup(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+    public OpenAICompletionsSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.temperature =
                 Optional.ofNullable(descriptor.<Number>getArgument("temperature"))
                         .map(Number::doubleValue)
@@ -136,7 +133,7 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
             String reasoningEffort,
             Map<String, Object> additionalArguments,
             List<String> tools,
-            BiFunction<String, ResourceType, Resource> getResource) {
+            ResourceContext resourceContext) {
         this(
                 createDescriptor(
                         model,
@@ -148,7 +145,7 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
                         reasoningEffort,
                         additionalArguments,
                         tools),
-                getResource);
+                resourceContext);
     }
 
     @Override

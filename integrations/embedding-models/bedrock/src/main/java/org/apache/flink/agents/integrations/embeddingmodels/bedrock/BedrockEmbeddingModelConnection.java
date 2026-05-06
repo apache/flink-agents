@@ -23,9 +23,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.RetryExecutor;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.regions.Region;
@@ -39,7 +38,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.function.BiFunction;
 
 /**
  * Bedrock embedding model connection using Amazon Titan Text Embeddings V2.
@@ -80,8 +78,8 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
     private final RetryExecutor retryExecutor;
 
     public BedrockEmbeddingModelConnection(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
 
         String region = descriptor.getArgument("region");
         if (region == null || region.isBlank()) {

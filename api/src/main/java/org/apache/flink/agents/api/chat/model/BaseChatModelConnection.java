@@ -21,13 +21,13 @@ package org.apache.flink.agents.api.chat.model;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /**
  * Abstraction of chat model connection.
@@ -37,9 +37,8 @@ import java.util.function.BiFunction;
  */
 public abstract class BaseChatModelConnection extends Resource {
 
-    public BaseChatModelConnection(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+    public BaseChatModelConnection(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
     }
 
     @Override

@@ -18,6 +18,7 @@
 package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
@@ -27,7 +28,6 @@ import pemja.core.object.PyObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.function.BiFunction;
 
 public class PythonMCPServer extends Resource implements PythonResourceWrapper {
     private final PyObject server;
@@ -46,8 +46,8 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
             PythonResourceAdapter adapter,
             PyObject server,
             ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.server = server;
         this.adapter = adapter;
     }

@@ -18,16 +18,14 @@
 
 package org.apache.flink.agents.api.vectorstores.python;
 
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import pemja.core.object.PyObject;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /**
  * Python-based implementation of VectorStore with collection management capabilities that bridges
@@ -54,8 +52,8 @@ public class PythonCollectionManageableVectorStore extends PythonVectorStore
             PythonResourceAdapter adapter,
             PyObject vectorStore,
             ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
-        super(adapter, vectorStore, descriptor, getResource);
+            ResourceContext resourceContext) {
+        super(adapter, vectorStore, descriptor, resourceContext);
     }
 
     @Override

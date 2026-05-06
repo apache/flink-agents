@@ -19,9 +19,8 @@ package org.apache.flink.agents.api.embedding.model.python;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.EmbeddingModelUtils;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import pemja.core.object.PyObject;
@@ -30,7 +29,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.apache.flink.util.Preconditions.checkState;
 
@@ -59,8 +57,8 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
             PythonResourceAdapter adapter,
             PyObject embeddingModel,
             ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.embeddingModel = embeddingModel;
         this.adapter = adapter;
     }

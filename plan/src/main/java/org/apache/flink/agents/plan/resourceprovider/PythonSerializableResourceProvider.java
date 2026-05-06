@@ -19,6 +19,7 @@
 package org.apache.flink.agents.plan.resourceprovider;
 
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.plan.resource.python.PythonPrompt;
@@ -26,7 +27,6 @@ import org.apache.flink.agents.plan.resource.python.PythonTool;
 
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.BiFunction;
 
 /**
  * Resource Provider that carries Resource object or serialized object.
@@ -68,8 +68,7 @@ public class PythonSerializableResourceProvider extends SerializableResourceProv
     }
 
     @Override
-    public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
-            throws Exception {
+    public Resource provide(ResourceContext resourceContext) throws Exception {
         if (resource == null) {
             if (this.getType() == ResourceType.PROMPT) {
                 resource = PythonPrompt.fromSerializedMap(serialized);

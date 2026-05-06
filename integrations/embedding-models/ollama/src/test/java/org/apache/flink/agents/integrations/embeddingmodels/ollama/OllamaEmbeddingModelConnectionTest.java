@@ -20,15 +20,13 @@ package org.apache.flink.agents.integrations.embeddingmodels.ollama;
 
 import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -41,7 +39,7 @@ class OllamaEmbeddingModelConnectionTest {
                 .build();
     }
 
-    private static BiFunction<String, ResourceType, Resource> dummyResource = (a, b) -> null;
+    private static ResourceContext dummyResource = ResourceContext.fromGetResource((a, b) -> null);
 
     @Test
     @DisplayName("Create OllamaEmbeddingModelConnection and check embed method")
@@ -63,10 +61,8 @@ class OllamaEmbeddingModelConnectionTest {
     @DisplayName("Test EmbeddingModelSetup annotation presence on setup class")
     void testSetupAnnotationPresence() {
         class DummySetup extends BaseEmbeddingModelSetup {
-            public DummySetup(
-                    ResourceDescriptor descriptor,
-                    BiFunction<String, ResourceType, Resource> getResource) {
-                super(descriptor, getResource);
+            public DummySetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+                super(descriptor, resourceContext);
             }
 
             public Map<String, Object> getParameters() {

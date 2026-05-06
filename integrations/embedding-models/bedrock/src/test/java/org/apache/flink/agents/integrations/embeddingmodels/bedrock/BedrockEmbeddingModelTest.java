@@ -20,14 +20,12 @@ package org.apache.flink.agents.integrations.embeddingmodels.bedrock;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -35,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 /** Tests for {@link BedrockEmbeddingModelConnection} and {@link BedrockEmbeddingModelSetup}. */
 class BedrockEmbeddingModelTest {
 
-    private static final BiFunction<String, ResourceType, Resource> NOOP = (a, b) -> null;
+    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
     private static ResourceDescriptor connDescriptor(String region) {
         ResourceDescriptor.Builder b =

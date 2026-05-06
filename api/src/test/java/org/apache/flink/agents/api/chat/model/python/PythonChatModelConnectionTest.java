@@ -19,9 +19,8 @@ package org.apache.flink.agents.api.chat.model.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
@@ -36,7 +35,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -48,7 +46,7 @@ public class PythonChatModelConnectionTest {
 
     @Mock private ResourceDescriptor mockDescriptor;
 
-    @Mock private BiFunction<String, ResourceType, Resource> mockGetResource;
+    @Mock private ResourceContext mockGetResource;
 
     private PythonChatModelConnection pythonChatModelConnection;
     private AutoCloseable mocks;
