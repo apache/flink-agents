@@ -154,4 +154,14 @@ public class ChatMessage {
     public String toString() {
         return role.getValue() + ": " + content;
     }
+
+    /** Return the index of the first system message in the list, or -1 if none. */
+    public static int findFirstSystemMessage(List<ChatMessage> messages) {
+        for (int i = 0; i < messages.size(); i++) {
+            if (messages.get(i).getRole() == MessageRole.SYSTEM) {
+                return i;
+            }
+        }
+        return -1;
+    }
 }

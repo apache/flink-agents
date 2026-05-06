@@ -23,6 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -148,5 +149,25 @@ class ChatMessageTest {
 
         message.setRole(MessageRole.ASSISTANT);
         assertEquals(MessageRole.ASSISTANT, message.getRole());
+    }
+
+    @Test
+    @DisplayName("findFirstSystemMessage returns the index of the first system message")
+    void testFindFirstSystemMessage() {
+        assertEquals(-1, ChatMessage.findFirstSystemMessage(List.of()));
+        assertEquals(
+                -1, ChatMessage.findFirstSystemMessage(List.of(userMessage, assistantMessage)));
+        assertEquals(0, ChatMessage.findFirstSystemMessage(List.of(systemMessage, userMessage)));
+        assertEquals(
+                1,
+                ChatMessage.findFirstSystemMessage(
+                        List.of(userMessage, systemMessage, assistantMessage)));
+        assertEquals(
+                0,
+                ChatMessage.findFirstSystemMessage(
+                        List.of(
+                                systemMessage,
+                                new ChatMessage(MessageRole.SYSTEM, "second system"),
+                                userMessage)));
     }
 }
