@@ -25,6 +25,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
@@ -96,10 +97,11 @@ class FunctionToolPlanTest {
                                 .get(ResourceType.TOOL)
                                 .get("javaTool")
                                 .provide(
-                                        (n, t) -> {
-                                            throw new UnsupportedOperationException(
-                                                    "No dependencies expected");
-                                        });
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
         ToolResponse ok =
                 javaTool.call(
                         new ToolParameters(
@@ -117,10 +119,11 @@ class FunctionToolPlanTest {
                                 .get(ResourceType.TOOL)
                                 .get("pyTool")
                                 .provide(
-                                        (n, t) -> {
-                                            throw new UnsupportedOperationException(
-                                                    "No dependencies expected");
-                                        });
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
         ToolResponse err = pyTool.call(new ToolParameters(new HashMap<>(Map.of("x", 1))));
         assertFalse(err.isSuccess());
     }

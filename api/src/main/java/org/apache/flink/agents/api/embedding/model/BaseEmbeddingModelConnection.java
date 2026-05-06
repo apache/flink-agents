@@ -19,12 +19,12 @@
 package org.apache.flink.agents.api.embedding.model;
 
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /**
  * Abstraction of embedding model connection.
@@ -45,8 +45,8 @@ import java.util.function.BiFunction;
 public abstract class BaseEmbeddingModelConnection extends Resource {
 
     public BaseEmbeddingModelConnection(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
     }
 
     @Override

@@ -20,22 +20,19 @@ package org.apache.flink.agents.api.resource;
 
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 
-import java.util.function.BiFunction;
-
 /**
  * Base interface for all kinds of resources, including chat models, tools, prompts and so on.
  *
  * <p>Resources are components that can be used by agents during action execution.
  */
 public abstract class Resource {
-    protected BiFunction<String, ResourceType, Resource> getResource;
+    protected ResourceContext resourceContext;
 
     /** The metric group bound to this resource, injected by RunnerContext.getResource(). */
     private transient FlinkAgentsMetricGroup metricGroup;
 
-    protected Resource(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        this.getResource = getResource;
+    protected Resource(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        this.resourceContext = resourceContext;
     }
 
     protected Resource() {}
@@ -46,6 +43,15 @@ public abstract class Resource {
      * @return the resource type
      */
     public abstract ResourceType getResourceType();
+
+    /**
+     * Get the {@link ResourceContext} bound to this resource at construction time.
+     *
+     * @return the bound resource context, or {@code null} if not bound
+     */
+    public ResourceContext getResourceContext() {
+        return resourceContext;
+    }
 
     /**
      * Set the metric group for this resource.

@@ -19,20 +19,18 @@
 package org.apache.flink.agents.integrations.embeddingmodels.ollama;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /** An embedding model setup for Ollama powered by the ollama4j client. */
 public class OllamaEmbeddingModelSetup extends BaseEmbeddingModelSetup {
 
     public OllamaEmbeddingModelSetup(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
     }
 
     @Override

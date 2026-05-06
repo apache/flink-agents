@@ -1150,11 +1150,11 @@ public class MyChatModelConnection extends BaseChatModelConnection {
      * Creates a new chat model connection.
      *
      * @param descriptor a resource descriptor contains the initial parameters
-     * @param getResource a function to resolve resources (e.g., tools) by name and type
+     * @param resourceContext context for resolving resources (e.g., tools) by name and type
      */
     public MyChatModelConnection(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         // get custom arguments from descriptor
         String endpoint = descriptor.getArgument("endpoint");
         ...

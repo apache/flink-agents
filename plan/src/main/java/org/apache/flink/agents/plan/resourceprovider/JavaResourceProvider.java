@@ -19,11 +19,11 @@
 package org.apache.flink.agents.plan.resourceprovider;
 
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.lang.reflect.Constructor;
-import java.util.function.BiFunction;
 
 /** Java Resource provider that carries resource instance to be used at runtime. */
 public class JavaResourceProvider extends ResourceProvider {
@@ -35,8 +35,7 @@ public class JavaResourceProvider extends ResourceProvider {
     }
 
     @Override
-    public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
-            throws Exception {
+    public Resource provide(ResourceContext resourceContext) throws Exception {
         String clazzName;
         if (descriptor.getModule() == null || descriptor.getModule().isEmpty()) {
             clazzName = descriptor.getClazz();
@@ -46,8 +45,8 @@ public class JavaResourceProvider extends ResourceProvider {
         Class<?> clazz =
                 Class.forName(clazzName, true, Thread.currentThread().getContextClassLoader());
         Constructor<?> constructor =
-                clazz.getConstructor(ResourceDescriptor.class, BiFunction.class);
-        return (Resource) constructor.newInstance(descriptor, getResource);
+                clazz.getConstructor(ResourceDescriptor.class, ResourceContext.class);
+        return (Resource) constructor.newInstance(descriptor, resourceContext);
     }
 
     public ResourceDescriptor getDescriptor() {

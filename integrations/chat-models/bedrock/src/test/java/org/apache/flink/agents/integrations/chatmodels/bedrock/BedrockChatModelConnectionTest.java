@@ -21,14 +21,12 @@ package org.apache.flink.agents.integrations.chatmodels.bedrock;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
-import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -37,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 /** Tests for {@link BedrockChatModelConnection}. */
 class BedrockChatModelConnectionTest {
 
-    private static final BiFunction<String, ResourceType, Resource> NOOP = (a, b) -> null;
+    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
     private static ResourceDescriptor descriptor(String region, String model) {
         ResourceDescriptor.Builder b =

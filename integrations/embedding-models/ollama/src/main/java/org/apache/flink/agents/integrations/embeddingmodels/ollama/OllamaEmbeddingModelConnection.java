@@ -24,12 +24,10 @@ import io.github.ollama4j.models.embed.OllamaEmbedRequest;
 import io.github.ollama4j.models.embed.OllamaEmbedResult;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.EmbeddingModelUtils;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.*;
-import java.util.function.BiFunction;
 
 /** An embedding model integration for Ollama powered by the ollama4j client. */
 public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection {
@@ -38,8 +36,8 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
     private final String defaultModel;
 
     public OllamaEmbeddingModelConnection(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         String host =
                 descriptor.getArgument("host") != null
                         ? descriptor.getArgument("host")

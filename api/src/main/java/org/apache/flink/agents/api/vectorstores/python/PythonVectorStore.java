@@ -18,9 +18,8 @@
 
 package org.apache.flink.agents.api.vectorstores.python;
 
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
@@ -36,7 +35,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /**
  * Python-based implementation of VectorStore that bridges Java and Python vector store
@@ -69,8 +67,8 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
             PythonResourceAdapter adapter,
             PyObject vectorStore,
             ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.vectorStore = vectorStore;
         this.adapter = adapter;
     }

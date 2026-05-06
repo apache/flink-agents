@@ -21,7 +21,7 @@ package org.apache.flink.agents.api.chat.model;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +33,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -51,10 +50,8 @@ class BaseChatModelTest {
     private static class TestChatModel extends BaseChatModelSetup {
         private String responsePrefix = "Test Response: ";
 
-        public TestChatModel(
-                ResourceDescriptor descriptor,
-                BiFunction<String, ResourceType, Resource> getResource) {
-            super(descriptor, getResource);
+        public TestChatModel(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
         }
 
         @Override

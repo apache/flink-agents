@@ -32,6 +32,7 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
@@ -43,7 +44,6 @@ import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -52,10 +52,8 @@ class AgentPlanDeclareChatModelTest {
     private AgentPlan agentPlan;
 
     public static class MockChatModel extends BaseChatModelSetup {
-        public MockChatModel(
-                ResourceDescriptor descriptor,
-                BiFunction<String, ResourceType, Resource> getResource) {
-            super(descriptor, getResource);
+        public MockChatModel(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
         }
 
         @Override
@@ -105,9 +103,11 @@ class AgentPlanDeclareChatModelTest {
                 .get(type)
                 .get(name)
                 .provide(
-                        (n, t) -> {
-                            throw new UnsupportedOperationException("No dependencies expected");
-                        });
+                        ResourceContext.fromGetResource(
+                                (n, t) -> {
+                                    throw new UnsupportedOperationException(
+                                            "No dependencies expected");
+                                }));
     }
 
     @Test
@@ -147,10 +147,11 @@ class AgentPlanDeclareChatModelTest {
                                 .get(ResourceType.CHAT_MODEL)
                                 .get("testChatModel")
                                 .provide(
-                                        (n, t) -> {
-                                            throw new UnsupportedOperationException(
-                                                    "No dependencies expected");
-                                        });
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
         ChatMessage reply =
                 model.chat(Prompt.fromText("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
         assertEquals("ok:Hi", reply.getContent());
@@ -177,10 +178,11 @@ class AgentPlanDeclareChatModelTest {
                                 .get(ResourceType.CHAT_MODEL)
                                 .get("testChatModel")
                                 .provide(
-                                        (n, t) -> {
-                                            throw new UnsupportedOperationException(
-                                                    "No dependencies expected");
-                                        });
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
         BaseChatModelSetup expectedChatModel =
                 (BaseChatModelSetup) resolveResource("testChatModel", ResourceType.CHAT_MODEL);
         Assertions.assertEquals(expectedChatModel.getClass(), actualChatModel.getClass());

@@ -33,6 +33,7 @@ import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.JavaResourceAdapter;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
+import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.python.env.PythonDependencyInfo;
@@ -160,13 +161,14 @@ class PythonBridgeManager implements AutoCloseable {
 
             javaResourceAdapter =
                     new JavaResourceAdapter(
-                            (name, type) -> {
-                                try {
-                                    return resourceCache.getResource(name, type);
-                                } catch (Exception e) {
-                                    throw new RuntimeException(e);
-                                }
-                            },
+                            new ResourceContextImpl(
+                                    (name, type) -> {
+                                        try {
+                                            return resourceCache.getResource(name, type);
+                                        } catch (Exception e) {
+                                            throw new RuntimeException(e);
+                                        }
+                                    }),
                             pythonInterpreter);
             if (containPythonResource || mem0Configured) {
                 initPythonResourceAdapter(agentPlan, resourceCache);
@@ -255,13 +257,14 @@ class PythonBridgeManager implements AutoCloseable {
             throws Exception {
         pythonResourceAdapter =
                 new PythonResourceAdapterImpl(
-                        (String anotherName, ResourceType anotherType) -> {
-                            try {
-                                return resourceCache.getResource(anotherName, anotherType);
-                            } catch (Exception e) {
-                                throw new RuntimeException(e);
-                            }
-                        },
+                        new ResourceContextImpl(
+                                (String anotherName, ResourceType anotherType) -> {
+                                    try {
+                                        return resourceCache.getResource(anotherName, anotherType);
+                                    } catch (Exception e) {
+                                        throw new RuntimeException(e);
+                                    }
+                                }),
                         pythonInterpreter,
                         javaResourceAdapter);
         pythonResourceAdapter.open();

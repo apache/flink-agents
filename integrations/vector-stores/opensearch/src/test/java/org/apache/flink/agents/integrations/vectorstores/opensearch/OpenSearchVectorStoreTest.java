@@ -20,6 +20,7 @@ package org.apache.flink.agents.integrations.vectorstores.opensearch;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
@@ -37,7 +38,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -49,7 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 public class OpenSearchVectorStoreTest {
 
-    private static final BiFunction<String, ResourceType, Resource> NOOP = (a, b) -> null;
+    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
     @Test
     @DisplayName("Constructor creates store with IAM auth")
@@ -164,7 +164,10 @@ public class OpenSearchVectorStoreTest {
             builder.addInitialArgument("username", System.getenv("OPENSEARCH_USERNAME"));
             builder.addInitialArgument("password", System.getenv("OPENSEARCH_PASSWORD"));
         }
-        store = new OpenSearchVectorStore(builder.build(), OpenSearchVectorStoreTest::getResource);
+        store =
+                new OpenSearchVectorStore(
+                        builder.build(),
+                        ResourceContext.fromGetResource(OpenSearchVectorStoreTest::getResource));
     }
 
     @Test

@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.python.utils;
 import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
@@ -33,7 +34,6 @@ import pemja.core.object.PyObject;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -41,7 +41,7 @@ import static org.mockito.Mockito.*;
 public class PythonResourceAdapterImplTest {
     @Mock private PythonInterpreter mockInterpreter;
 
-    @Mock private BiFunction<String, ResourceType, Resource> getResource;
+    @Mock private ResourceContext resourceContext;
 
     private PythonResourceAdapterImpl pythonResourceAdapter;
     private AutoCloseable mocks;
@@ -49,7 +49,8 @@ public class PythonResourceAdapterImplTest {
     @BeforeEach
     void setUp() throws Exception {
         mocks = MockitoAnnotations.openMocks(this);
-        pythonResourceAdapter = new PythonResourceAdapterImpl(getResource, mockInterpreter, null);
+        pythonResourceAdapter =
+                new PythonResourceAdapterImpl(resourceContext, mockInterpreter, null);
     }
 
     @AfterEach
@@ -91,66 +92,67 @@ public class PythonResourceAdapterImplTest {
     }
 
     @Test
-    void testGetResourceWithPythonResourceWrapper() {
+    void testGetResourceWithPythonResourceWrapper() throws Exception {
         String resourceName = "test_resource";
         String resourceType = "chat_model";
         PythonResourceWrapper mockPythonChatModelSetup = mock(PythonChatModelSetup.class);
         Object expectedPythonResource = new Object();
 
-        when(getResource.apply(resourceName, ResourceType.CHAT_MODEL))
+        when(resourceContext.getResource(resourceName, ResourceType.CHAT_MODEL))
                 .thenReturn((Resource) mockPythonChatModelSetup);
         when(mockPythonChatModelSetup.getPythonResource()).thenReturn(expectedPythonResource);
 
         Object result = pythonResourceAdapter.getResource(resourceName, resourceType);
 
         assertThat(result).isEqualTo(expectedPythonResource);
-        verify(getResource).apply(resourceName, ResourceType.CHAT_MODEL);
+        verify(resourceContext).getResource(resourceName, ResourceType.CHAT_MODEL);
         verify(mockPythonChatModelSetup).getPythonResource();
     }
 
     @Test
-    void testGetResourceWithTool() {
+    void testGetResourceWithTool() throws Exception {
         String resourceName = "test_tool";
         String resourceType = "tool";
         Tool mockTool = mock(Tool.class);
         Object expectedPythonTool = new Object();
 
-        when(getResource.apply(resourceName, ResourceType.TOOL)).thenReturn(mockTool);
+        when(resourceContext.getResource(resourceName, ResourceType.TOOL)).thenReturn(mockTool);
         when(mockInterpreter.invoke(PythonResourceAdapterImpl.FROM_JAVA_TOOL, mockTool))
                 .thenReturn(expectedPythonTool);
 
         Object result = pythonResourceAdapter.getResource(resourceName, resourceType);
 
         assertThat(result).isEqualTo(expectedPythonTool);
-        verify(getResource).apply(resourceName, ResourceType.TOOL);
+        verify(resourceContext).getResource(resourceName, ResourceType.TOOL);
         verify(mockInterpreter).invoke(PythonResourceAdapterImpl.FROM_JAVA_TOOL, mockTool);
     }
 
     @Test
-    void testGetResourceWithPrompt() {
+    void testGetResourceWithPrompt() throws Exception {
         String resourceName = "test_prompt";
         String resourceType = "prompt";
         Prompt mockPrompt = mock(Prompt.class);
         Object expectedPythonPrompt = new Object();
 
-        when(getResource.apply(resourceName, ResourceType.PROMPT)).thenReturn(mockPrompt);
+        when(resourceContext.getResource(resourceName, ResourceType.PROMPT)).thenReturn(mockPrompt);
         when(mockInterpreter.invoke(PythonResourceAdapterImpl.FROM_JAVA_PROMPT, mockPrompt))
                 .thenReturn(expectedPythonPrompt);
 
         Object result = pythonResourceAdapter.getResource(resourceName, resourceType);
 
         assertThat(result).isEqualTo(expectedPythonPrompt);
-        verify(getResource).apply(resourceName, ResourceType.PROMPT);
+        verify(resourceContext).getResource(resourceName, ResourceType.PROMPT);
         verify(mockInterpreter).invoke(PythonResourceAdapterImpl.FROM_JAVA_PROMPT, mockPrompt);
     }
 
     @Test
-    void testGetResourceWithRegularResource() {
+    void testGetResourceWithRegularResource() throws Exception {
         String resourceName = "test_resource";
         String resourceType = "chat_model";
         Resource mockResource = mock(Resource.class);
 
-        when(getResource.apply(resourceName, ResourceType.CHAT_MODEL)).thenReturn(mockResource);
+        when(resourceContext.getResource(resourceName, ResourceType.CHAT_MODEL))
+                .thenReturn(mockResource);
 
         pythonResourceAdapter.getResource(resourceName, resourceType);
 
