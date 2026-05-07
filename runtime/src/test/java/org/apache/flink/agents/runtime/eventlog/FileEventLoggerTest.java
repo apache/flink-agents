@@ -22,7 +22,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.EventFilter;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
@@ -41,7 +40,9 @@ import org.mockito.MockitoAnnotations;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
@@ -297,205 +298,6 @@ class FileEventLoggerTest {
     }
 
     @Test
-    void testEventFilterAcceptAll() throws Exception {
-        // Given - config with ACCEPT_ALL filter (default behavior)
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property("baseLogDir", tempDir.toString())
-                        .eventFilter(EventFilter.ACCEPT_ALL)
-                        .build();
-        logger = new FileEventLogger(config);
-
-        logger.open(openParams);
-        InputEvent inputEvent = new InputEvent("input data");
-        OutputEvent outputEvent = new OutputEvent("output data");
-
-        // When
-        logger.append(new EventContext(inputEvent), inputEvent);
-        logger.append(new EventContext(outputEvent), outputEvent);
-        logger.flush();
-
-        // Then - both events should be logged
-        Path logFile = getExpectedLogFilePath();
-        List<String> lines = Files.readAllLines(logFile);
-        assertEquals(2, lines.size(), "Both events should be logged with ACCEPT_ALL filter");
-
-        // Verify both events were deserialized correctly
-        EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertInstanceOf(InputEvent.class, inputRecord.getEvent());
-
-        EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
-        assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
-    }
-
-    @Test
-    void testEventFilterRejectAll() throws Exception {
-        // Given - config with REJECT_ALL filter
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property("baseLogDir", tempDir.toString())
-                        .eventFilter(EventFilter.REJECT_ALL)
-                        .build();
-        logger = new FileEventLogger(config);
-
-        logger.open(openParams);
-        InputEvent inputEvent = new InputEvent("input data");
-        OutputEvent outputEvent = new OutputEvent("output data");
-
-        // When
-        logger.append(new EventContext(inputEvent), inputEvent);
-        logger.append(new EventContext(outputEvent), outputEvent);
-        logger.flush();
-
-        // Then - no events should be logged (file should not exist or be empty)
-        Path logFile = getExpectedLogFilePath();
-        assertTrue(
-                !Files.exists(logFile) || Files.readAllLines(logFile).isEmpty(),
-                "No events should be logged with REJECT_ALL filter");
-    }
-
-    @Test
-    void testEventFilterByEventType() throws Exception {
-        // Given - config with filter that only accepts InputEvents
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property("baseLogDir", tempDir.toString())
-                        .eventFilter(EventFilter.byEventType(InputEvent.class))
-                        .build();
-        logger = new FileEventLogger(config);
-
-        logger.open(openParams);
-        InputEvent inputEvent = new InputEvent("input data");
-        OutputEvent outputEvent = new OutputEvent("output data");
-        TestCustomEvent customEvent = new TestCustomEvent("custom data", 42);
-
-        // When
-        logger.append(new EventContext(inputEvent), inputEvent);
-        logger.append(new EventContext(outputEvent), outputEvent);
-        logger.append(new EventContext(customEvent), customEvent);
-        logger.flush();
-
-        // Then - only InputEvent should be logged
-        Path logFile = getExpectedLogFilePath();
-        List<String> lines = Files.readAllLines(logFile);
-        assertEquals(1, lines.size(), "Only InputEvent should be logged");
-
-        EventLogRecord record = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertInstanceOf(InputEvent.class, record.getEvent());
-        assertEquals("input data", ((InputEvent) record.getEvent()).getInput());
-    }
-
-    @Test
-    void testEventFilterByMultipleEventTypes() throws Exception {
-        // Given - config with filter that accepts InputEvents and OutputEvents
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property("baseLogDir", tempDir.toString())
-                        .eventFilter(EventFilter.byEventType(InputEvent.class, OutputEvent.class))
-                        .build();
-        logger = new FileEventLogger(config);
-
-        logger.open(openParams);
-        InputEvent inputEvent = new InputEvent("input data");
-        OutputEvent outputEvent = new OutputEvent("output data");
-        TestCustomEvent customEvent = new TestCustomEvent("custom data", 42);
-
-        // When
-        logger.append(new EventContext(inputEvent), inputEvent);
-        logger.append(new EventContext(outputEvent), outputEvent);
-        logger.append(new EventContext(customEvent), customEvent);
-        logger.flush();
-
-        // Then - InputEvent and OutputEvent should be logged, but not TestCustomEvent
-        Path logFile = getExpectedLogFilePath();
-        List<String> lines = Files.readAllLines(logFile);
-        assertEquals(2, lines.size(), "InputEvent and OutputEvent should be logged");
-
-        EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertInstanceOf(InputEvent.class, inputRecord.getEvent());
-        assertEquals("input data", ((InputEvent) inputRecord.getEvent()).getInput());
-
-        EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
-        assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
-        assertEquals("output data", ((OutputEvent) outputRecord.getEvent()).getOutput());
-    }
-
-    @Test
-    void testCustomEventFilter() throws Exception {
-        // Given - config with custom filter that only accepts events with specific content
-        EventFilter customFilter =
-                (event, context) -> {
-                    if (event instanceof InputEvent) {
-                        return ((InputEvent) event).getInput().toString().contains("important");
-                    }
-                    return false;
-                };
-
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property("baseLogDir", tempDir.toString())
-                        .eventFilter(customFilter)
-                        .build();
-        logger = new FileEventLogger(config);
-
-        logger.open(openParams);
-        InputEvent importantEvent = new InputEvent("important data");
-        InputEvent regularEvent = new InputEvent("regular data");
-        OutputEvent outputEvent = new OutputEvent("output data");
-
-        // When
-        logger.append(new EventContext(importantEvent), importantEvent);
-        logger.append(new EventContext(regularEvent), regularEvent);
-        logger.append(new EventContext(outputEvent), outputEvent);
-        logger.flush();
-
-        // Then - only the "important" InputEvent should be logged
-        Path logFile = getExpectedLogFilePath();
-        List<String> lines = Files.readAllLines(logFile);
-        assertEquals(1, lines.size(), "Only important InputEvent should be logged");
-
-        EventLogRecord record = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertInstanceOf(InputEvent.class, record.getEvent());
-        assertEquals("important data", ((InputEvent) record.getEvent()).getInput());
-    }
-
-    @Test
-    void testDefaultEventFilterBehavior() throws Exception {
-        // Given - config without explicit eventFilter (should default to ACCEPT_ALL)
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property("baseLogDir", tempDir.toString())
-                        .build();
-        logger = new FileEventLogger(config);
-
-        logger.open(openParams);
-        InputEvent inputEvent = new InputEvent("input data");
-        OutputEvent outputEvent = new OutputEvent("output data");
-
-        // When
-        logger.append(new EventContext(inputEvent), inputEvent);
-        logger.append(new EventContext(outputEvent), outputEvent);
-        logger.flush();
-
-        // Then - both events should be logged (default ACCEPT_ALL behavior)
-        Path logFile = getExpectedLogFilePath();
-        List<String> lines = Files.readAllLines(logFile);
-        assertEquals(2, lines.size(), "Both events should be logged with default filter");
-
-        EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertInstanceOf(InputEvent.class, inputRecord.getEvent());
-
-        EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
-        assertInstanceOf(OutputEvent.class, outputRecord.getEvent());
-    }
-
-    @Test
     void testPrettyPrintOutputsFormattedJson() throws Exception {
         // Given - config with prettyPrint enabled
         config =
@@ -525,6 +327,228 @@ class FileEventLoggerTest {
         assertDoesNotThrow(
                 () -> objectMapper.readValue(content, EventLogRecord.class),
                 "Pretty-printed output should be valid JSON deserializable to EventLogRecord");
+    }
+
+    @Test
+    void testStandardLevelTruncation() throws Exception {
+        // Given - config with STANDARD level and a small max-string-length for easy testing
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put("event-log.level", "STANDARD");
+        agentConfig.put("event-log.standard.max-string-length", 10);
+        agentConfig.put("event-log.standard.max-array-elements", 20);
+        agentConfig.put("event-log.standard.max-depth", 5);
+
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
+                        .property(FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
+                        .build();
+        logger = new FileEventLogger(config);
+        logger.open(openParams);
+
+        // Use a custom event with a very long string field
+        TestCustomEvent event =
+                new TestCustomEvent("this is a very long string that exceeds 10", 1);
+        EventContext context = new EventContext(event);
+
+        logger.append(context, event);
+        logger.flush();
+
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size());
+
+        JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+        assertEquals("STANDARD", jsonNode.get("logLevel").asText());
+
+        // The customData field should be truncated
+        JsonNode eventNode = jsonNode.get("event");
+        JsonNode customDataNode = eventNode.get("customData");
+        assertTrue(
+                customDataNode.has("truncatedString"),
+                "Long string should be truncated at STANDARD level");
+        assertTrue(customDataNode.has("omittedChars"));
+    }
+
+    @Test
+    void testVerboseLevelNoTruncation() throws Exception {
+        // Given - config with VERBOSE level
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put("event-log.level", "VERBOSE");
+        agentConfig.put("event-log.standard.max-string-length", 10);
+
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
+                        .property(FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
+                        .build();
+        logger = new FileEventLogger(config);
+        logger.open(openParams);
+
+        TestCustomEvent event =
+                new TestCustomEvent("this is a very long string that exceeds 10", 1);
+        EventContext context = new EventContext(event);
+
+        logger.append(context, event);
+        logger.flush();
+
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size());
+
+        JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+        assertEquals("VERBOSE", jsonNode.get("logLevel").asText());
+
+        // The customData field should NOT be truncated
+        JsonNode eventNode = jsonNode.get("event");
+        assertTrue(
+                eventNode.get("customData").isTextual(),
+                "String should be preserved at VERBOSE level");
+        assertEquals(
+                "this is a very long string that exceeds 10", eventNode.get("customData").asText());
+    }
+
+    @Test
+    void testOffLevelSkipsEvent() throws Exception {
+        // Given - config with OFF level
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put("event-log.level", "OFF");
+
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
+                        .property(FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
+                        .build();
+        logger = new FileEventLogger(config);
+        logger.open(openParams);
+
+        InputEvent event = new InputEvent("should not be logged");
+        EventContext context = new EventContext(event);
+
+        logger.append(context, event);
+        logger.flush();
+
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(0, lines.size(), "OFF level should produce no output");
+    }
+
+    @Test
+    void testPerTypeLevelOverride() throws Exception {
+        // Given - root is STANDARD but InputEvent is set to VERBOSE
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put("event-log.level", "STANDARD");
+        agentConfig.put("event-log.standard.max-string-length", 10);
+        agentConfig.put("event-log.type.org.apache.flink.agents.api.InputEvent.level", "VERBOSE");
+
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
+                        .property(FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
+                        .build();
+        logger = new FileEventLogger(config);
+        logger.open(openParams);
+
+        // InputEvent should be VERBOSE (no truncation)
+        InputEvent inputEvent = new InputEvent("this is a very long string that exceeds 10");
+        logger.append(new EventContext(inputEvent), inputEvent);
+
+        // TestCustomEvent should be STANDARD (truncated)
+        TestCustomEvent customEvent =
+                new TestCustomEvent("this is a very long string that exceeds 10", 1);
+        logger.append(new EventContext(customEvent), customEvent);
+        logger.flush();
+
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(2, lines.size());
+
+        // InputEvent at VERBOSE - no truncation
+        JsonNode inputJson = objectMapper.readTree(lines.get(0));
+        assertEquals("VERBOSE", inputJson.get("logLevel").asText());
+        assertTrue(inputJson.get("event").get("input").isTextual());
+
+        // TestCustomEvent at STANDARD - truncated
+        JsonNode customJson = objectMapper.readTree(lines.get(1));
+        assertEquals("STANDARD", customJson.get("logLevel").asText());
+        assertTrue(customJson.get("event").get("customData").has("truncatedString"));
+    }
+
+    @Test
+    void testJsonOutputHasNewFields() throws Exception {
+        // Given - default config
+        logger.open(openParams);
+        InputEvent event = new InputEvent("test");
+        EventContext context = new EventContext(event);
+
+        logger.append(context, event);
+        logger.flush();
+
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+
+        // Verify new top-level fields exist
+        assertTrue(jsonNode.has("logLevel"), "JSON should have logLevel field");
+        assertTrue(jsonNode.has("eventType"), "JSON should have eventType field");
+        assertEquals("org.apache.flink.agents.api.InputEvent", jsonNode.get("eventType").asText());
+        assertNotNull(jsonNode.get("logLevel").asText());
+    }
+
+    @Test
+    void testBackwardCompatibleDeserialization() throws Exception {
+        // Simulate old-format JSON without logLevel field
+        String oldFormatJson =
+                "{\"timestamp\":\"2024-01-15T10:30:00Z\","
+                        + "\"event\":{\"eventType\":\"org.apache.flink.agents.api.InputEvent\","
+                        + "\"id\":null,\"attributes\":{},\"input\":\"test\"}}";
+
+        EventLogRecord record = objectMapper.readValue(oldFormatJson, EventLogRecord.class);
+        assertNotNull(record.getEvent());
+        assertInstanceOf(InputEvent.class, record.getEvent());
+        assertEquals(
+                "test",
+                ((InputEvent) record.getEvent()).getInput(),
+                "Old-format JSON without logLevel should still deserialize the event payload");
+    }
+
+    @Test
+    void testHierarchicalInheritance() throws Exception {
+        // Set package-level OFF, but specific type VERBOSE
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put("event-log.level", "STANDARD");
+        agentConfig.put("event-log.type.org.apache.flink.agents.api.level", "OFF");
+        agentConfig.put("event-log.type.org.apache.flink.agents.api.InputEvent.level", "VERBOSE");
+
+        config =
+                EventLoggerConfig.builder()
+                        .loggerType("file")
+                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
+                        .property(FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
+                        .build();
+        logger = new FileEventLogger(config);
+        logger.open(openParams);
+
+        // InputEvent has explicit VERBOSE override — should be logged
+        InputEvent inputEvent = new InputEvent("should be logged");
+        logger.append(new EventContext(inputEvent), inputEvent);
+
+        // OutputEvent inherits OFF from package level — should NOT be logged
+        OutputEvent outputEvent = new OutputEvent("should not be logged");
+        logger.append(new EventContext(outputEvent), outputEvent);
+        logger.flush();
+
+        Path logFile = getExpectedLogFilePath();
+        List<String> lines = Files.readAllLines(logFile);
+        assertEquals(1, lines.size(), "Only InputEvent (VERBOSE override) should be logged");
+
+        JsonNode json = objectMapper.readTree(lines.get(0));
+        assertEquals("VERBOSE", json.get("logLevel").asText());
+        assertEquals("org.apache.flink.agents.api.InputEvent", json.get("eventType").asText());
     }
 
     private Path getExpectedLogFilePath() {

@@ -18,8 +18,6 @@
 
 package org.apache.flink.agents.api.logger;
 
-import org.apache.flink.agents.api.EventFilter;
-
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -45,14 +43,11 @@ import java.util.Objects;
 public final class EventLoggerConfig {
 
     private final String loggerType;
-    private final EventFilter eventFilter;
     private final Map<String, Object> properties;
 
     /** Private constructor - use {@link #builder()} to create instances. */
-    private EventLoggerConfig(
-            String loggerType, EventFilter eventFilter, Map<String, Object> properties) {
+    private EventLoggerConfig(String loggerType, Map<String, Object> properties) {
         this.loggerType = Objects.requireNonNull(loggerType, "Logger type cannot be null");
-        this.eventFilter = eventFilter == null ? EventFilter.ACCEPT_ALL : eventFilter;
         this.properties = Collections.unmodifiableMap(new HashMap<>(properties));
     }
 
@@ -82,15 +77,6 @@ public final class EventLoggerConfig {
     }
 
     /**
-     * Gets the event filter for this logger configuration.
-     *
-     * @return the EventFilter to apply, never null
-     */
-    public EventFilter getEventFilter() {
-        return eventFilter;
-    }
-
-    /**
      * Gets the implementation-specific properties for this logger configuration.
      *
      * <p>These properties contain logger-specific configuration parameters that are not common
@@ -113,13 +99,12 @@ public final class EventLoggerConfig {
         if (o == null || getClass() != o.getClass()) return false;
         EventLoggerConfig that = (EventLoggerConfig) o;
         return Objects.equals(loggerType, that.loggerType)
-                && Objects.equals(eventFilter, that.eventFilter)
                 && Objects.equals(properties, that.properties);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(loggerType, eventFilter, properties);
+        return Objects.hash(loggerType, properties);
     }
 
     @Override
@@ -128,8 +113,6 @@ public final class EventLoggerConfig {
                 + "loggerType='"
                 + loggerType
                 + '\''
-                + ", eventFilter="
-                + eventFilter
                 + ", properties="
                 + properties
                 + '}';
@@ -143,7 +126,6 @@ public final class EventLoggerConfig {
      */
     public static final class Builder {
         private String loggerType = "file"; // Default to file logger
-        private EventFilter eventFilter = EventFilter.ACCEPT_ALL; // Default to accept all
         private final Map<String, Object> properties = new HashMap<>();
 
         private Builder() {}
@@ -160,18 +142,6 @@ public final class EventLoggerConfig {
                 throw new IllegalArgumentException("Logger type cannot be null or empty");
             }
             this.loggerType = loggerType.trim();
-            return this;
-        }
-
-        /**
-         * Sets the event filter for this configuration.
-         *
-         * @param eventFilter the EventFilter to apply
-         * @return this Builder instance for method chaining
-         * @throws IllegalArgumentException if eventFilter is null
-         */
-        public Builder eventFilter(EventFilter eventFilter) {
-            this.eventFilter = Objects.requireNonNull(eventFilter, "Event filter cannot be null");
             return this;
         }
 
@@ -213,7 +183,7 @@ public final class EventLoggerConfig {
          * @return a new EventLoggerConfig instance
          */
         public EventLoggerConfig build() {
-            return new EventLoggerConfig(loggerType, eventFilter, properties);
+            return new EventLoggerConfig(loggerType, properties);
         }
     }
 }

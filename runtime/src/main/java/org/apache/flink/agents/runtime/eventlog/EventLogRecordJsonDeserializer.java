@@ -58,7 +58,8 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
             throw new IOException("Missing 'timestamp' field in EventLogRecord JSON");
         }
 
-        // Deserialize event using eventType from event node
+        // Deserialize event using eventType from event node. Any top-level "logLevel" field
+        // present in older log files is silently ignored — it is no longer part of the record.
         JsonNode eventNode = rootNode.get("event");
         if (eventNode == null) {
             throw new IOException("Missing 'event' field in EventLogRecord JSON");
