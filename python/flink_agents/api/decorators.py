@@ -17,16 +17,16 @@
 #################################################################################
 from typing import Callable, Type
 
-from flink_agents.api.events.event import Event
 
-
-def action(*listen_events: Type[Event]) -> Callable:
+def action(*listen_events: str) -> Callable:
     """Decorator for marking a function as an agent action.
+
+    Each argument is a type-identifier string that this action responds to.
 
     Parameters
     ----------
-    listen_events : list[Type[Event]]
-        List of event types that this action should respond to.
+    listen_events : str
+        Type-identifier strings that this action responds to.
 
     Returns:
     -------
@@ -36,14 +36,16 @@ def action(*listen_events: Type[Event]) -> Callable:
     Raises:
     ------
     AssertionError
-        If no events are provided to listen to.
+        If no events are provided or if an argument is not a string.
     """
     assert len(listen_events) > 0, (
         "action must have at least one event type to listen to"
     )
 
-    for event in listen_events:
-        assert issubclass(event, Event), "action must only listen to event types."
+    for evt in listen_events:
+        assert isinstance(evt, str), (
+            f"action must listen to string type identifiers, got {evt!r}"
+        )
 
     def decorator(func: Callable) -> Callable:
         func._listen_events = listen_events

@@ -46,6 +46,8 @@ class FlinkMemoryObject(MemoryObject):
         Return None if the field does not exist.
         """
         try:
+            if isinstance(path_or_ref, dict) and "path" in path_or_ref:
+                path_or_ref = MemoryRef.model_validate(path_or_ref)
             path_to_get: str
             if isinstance(path_or_ref, MemoryRef):
                 path_to_get = path_or_ref.path

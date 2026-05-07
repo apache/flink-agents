@@ -17,7 +17,7 @@
 #################################################################################
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel
 
@@ -39,7 +39,25 @@ class ProcessedData(BaseModel):
 
 
 class MyEvent(Event):
-    value: Any
+    EVENT_TYPE: ClassVar[str] = "_my_event"
+
+    def __init__(self, value: Any) -> None:
+        """Create a MyEvent with the given value."""
+        super().__init__(
+            type=MyEvent.EVENT_TYPE,
+            attributes={"value": value},
+        )
+
+    @classmethod
+    def from_event(cls, event: "Event") -> "MyEvent":
+        """Reconstruct a MyEvent from a generic Event."""
+        assert "value" in event.attributes, "Missing 'value' in event attributes"
+        return cls(value=event.attributes["value"])
+
+    @property
+    def value(self) -> Any:
+        """Return the event value."""
+        return self.attributes["value"]
 
 
 # TODO: Replace this agent with more practical example.
@@ -50,11 +68,11 @@ class MyAgent(Agent):
     validation.
     """
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def first_action(event: Event, ctx: RunnerContext):  # noqa D102
+    def first_action(event: Event, ctx: RunnerContext) -> None:
         key = ctx.key
-        input_message = event.input
+        input_message = InputEvent.from_event(event).input
         memory = ctx.short_term_memory
 
         data_path = f"user_data.{key}"
@@ -71,10 +89,10 @@ class MyAgent(Agent):
         key_with_count = f"(visit {new_count} times)"
         ctx.send_event(OutputEvent(output={key_with_count: processed_content}))
 
-    @action(MyEvent)
+    @action(MyEvent.EVENT_TYPE)
     @staticmethod
-    def second_action(event: Event, ctx: RunnerContext):  # noqa D102
-        content_ref: MemoryRef = event.value
+    def second_action(event: Event, ctx: RunnerContext) -> None:
+        content_ref: MemoryRef = MyEvent.from_event(event).value
         memory = ctx.short_term_memory
 
         processed_data: ProcessedData = memory.get(content_ref)

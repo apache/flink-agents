@@ -114,7 +114,7 @@ class ChatModelActionRetryTest {
                 mockCtx);
 
         assertThat(sentEvents).hasSize(1);
-        ChatResponseEvent responseEvent = (ChatResponseEvent) sentEvents.get(0);
+        ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(responseEvent.getRetryCount()).isEqualTo(0);
         assertThat(responseEvent.getTotalRetryWaitSec()).isEqualTo(0);
 
@@ -150,7 +150,7 @@ class ChatModelActionRetryTest {
         long elapsed = System.currentTimeMillis() - startTime;
 
         assertThat(sentEvents).hasSize(1);
-        ChatResponseEvent responseEvent = (ChatResponseEvent) sentEvents.get(0);
+        ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(responseEvent.getRetryCount()).isEqualTo(1);
         // Exponential backoff: 1000ms (1s * 2^0) total
         // 1 retry with 1s interval = 1s total

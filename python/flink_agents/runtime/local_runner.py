@@ -344,7 +344,7 @@ class LocalRunner(AgentRunner):
             if isinstance(event, OutputEvent):
                 self.__outputs.append({key: event.output})
                 continue
-            event_type = f"{event.__class__.__module__}.{event.__class__.__name__}"
+            event_type = event.get_type()
             for action in self.__agent_plan.get_actions(event_type):
                 logger.info("key: %s, performing action: %s", key, action.name)
                 context.action_name = action.name

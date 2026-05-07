@@ -31,7 +31,7 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
 )
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import (
@@ -103,11 +103,11 @@ Please provide a helpful answer based on the context provided."""
             model=OLLAMA_CHAT_MODEL,
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process user input and retrieve relevant context."""
-        user_query = str(event.input)
+        user_query = str(InputEvent.from_event(event).input)
         ctx.send_event(
             ContextRetrievalRequestEvent(
                 query=user_query,
@@ -116,14 +116,15 @@ Please provide a helpful answer based on the context provided."""
             )
         )
 
-    @action(ContextRetrievalResponseEvent)
+    @action(ContextRetrievalResponseEvent.EVENT_TYPE)
     @staticmethod
     def process_retrieved_context(
-        event: ContextRetrievalResponseEvent, ctx: RunnerContext
+        event: Event, ctx: RunnerContext
     ) -> None:
         """Process retrieved context and create enhanced chat request."""
-        user_query = event.query
-        retrieved_docs = event.documents
+        retrieval_event = ContextRetrievalResponseEvent.from_event(event)
+        user_query = retrieval_event.query
+        retrieved_docs = retrieval_event.documents
 
         # Create context from retrieved documents
         context_text = "\n\n".join(
@@ -146,12 +147,13 @@ Please provide a helpful answer based on the context provided."""
             )
         )
 
-    @action(ChatResponseEvent)
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat model response and generate output."""
-        if event.response and event.response.content:
-            ctx.send_event(OutputEvent(output=event.response.content))
+        chat_response = ChatResponseEvent.from_event(event)
+        if chat_response.response and chat_response.response.content:
+            ctx.send_event(OutputEvent(output=chat_response.response.content))
 
 
 if __name__ == "__main__":

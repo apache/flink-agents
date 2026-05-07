@@ -45,7 +45,7 @@ from flink_agents.api.decorators import (
     mcp_server,
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import (
     ResourceDescriptor,
@@ -106,15 +106,15 @@ class MyMCPAgent(Agent):
             )
         return ResourceDescriptor(**descriptor_kwargs)
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input and send chat request.
 
         Uses MCP prompt if MCP_SERVER_MODE is "with_prompts",
         otherwise sends direct content message.
         """
-        input_data: CalculationInput = event.input
+        input_data = CalculationInput.model_validate(InputEvent.from_event(event).input)
         mcp_mode = os.environ.get("MCP_SERVER_MODE", "with_prompts")
 
         if mcp_mode == "with_prompts":
@@ -133,11 +133,11 @@ class MyMCPAgent(Agent):
 
         ctx.send_event(ChatRequestEvent(model="math_chat_model", messages=[msg]))
 
-    @action(ChatResponseEvent)
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response and output result."""
-        response = event.response
+        response = ChatResponseEvent.from_event(event).response
         if response and response.content:
             ctx.send_event(OutputEvent(output=response.content))
 

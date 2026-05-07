@@ -25,7 +25,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
 
 import java.io.IOException;
 import java.util.Iterator;
@@ -48,8 +47,8 @@ import java.util.Map;
  * {
  *   "timestamp": "2024-01-15T10:30:00Z",
  *   "event": {
- *     "eventType": "org.apache.flink.agents.api.InputEvent"
- *     // Event-specific fields serialized normally
+ *     "eventType": "_input_event",
+ *     // Event fields serialized normally
  *   }
  * }
  * }</pre>
@@ -80,55 +79,24 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
     }
 
     private JsonNode buildEventNode(Event event, ObjectMapper mapper) {
-        if (event instanceof PythonEvent) {
-            return buildPythonEventNode((PythonEvent) event, mapper);
-        }
         JsonNode eventNode = mapper.valueToTree(event);
         if (eventNode.isObject()) {
             ObjectNode objectNode = (ObjectNode) eventNode;
-            objectNode.put("eventType", event.getClass().getName());
+            objectNode.put("eventType", event.getType());
             objectNode.remove("sourceTimestamp");
         }
         return eventNode;
     }
 
-    private JsonNode buildPythonEventNode(PythonEvent event, ObjectMapper mapper) {
-        String eventJsonStr = event.getEventJsonStr();
-        if (eventJsonStr != null) {
-            try {
-                JsonNode parsed = mapper.readTree(eventJsonStr);
-                if (parsed.isObject()) {
-                    ObjectNode objectNode = (ObjectNode) parsed;
-                    objectNode.remove("sourceTimestamp");
-                    return objectNode;
-                }
-                return parsed;
-            } catch (IOException ignored) {
-                // Fallback to raw eventJsonStr
-            }
-        }
-        ObjectNode fallback = mapper.createObjectNode();
-        if (event.getEventType() != null) {
-            fallback.put("eventType", event.getEventType());
-        }
-        fallback.put("id", event.getId().toString());
-        fallback.put("rawEventJsonStr", eventJsonStr);
-        return fallback;
-    }
-
     private ObjectNode reorderEventFields(ObjectNode original, Event event, ObjectMapper mapper) {
         ObjectNode ordered = mapper.createObjectNode();
 
+        // eventType — routing key (user-defined string)
         JsonNode eventTypeNode = original.get("eventType");
         if (eventTypeNode != null) {
             ordered.set("eventType", eventTypeNode);
-        } else if (event instanceof PythonEvent) {
-            String eventType = ((PythonEvent) event).getEventType();
-            if (eventType != null) {
-                ordered.put("eventType", eventType);
-            }
         } else {
-            ordered.put("eventType", event.getClass().getName());
+            ordered.put("eventType", event.getType());
         }
 
         JsonNode idNode = original.get("id");

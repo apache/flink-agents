@@ -72,7 +72,7 @@ public class ChatModelAction {
                         ChatModelAction.class,
                         "processChatRequestOrToolResponse",
                         new Class[] {Event.class, RunnerContext.class}),
-                List.of(ChatRequestEvent.class.getName(), ToolResponseEvent.class.getName()));
+                List.of(ChatRequestEvent.EVENT_TYPE, ToolResponseEvent.EVENT_TYPE));
     }
 
     @SuppressWarnings("unchecked")
@@ -427,10 +427,10 @@ public class ChatModelAction {
     public static void processChatRequestOrToolResponse(Event event, RunnerContext ctx)
             throws Exception {
         MemoryObject sensoryMem = ctx.getSensoryMemory();
-        if (event instanceof ChatRequestEvent) {
-            processChatRequest((ChatRequestEvent) event, ctx);
-        } else if (event instanceof ToolResponseEvent) {
-            processToolResponse((ToolResponseEvent) event, ctx);
+        if (ChatRequestEvent.EVENT_TYPE.equals(event.getType())) {
+            processChatRequest(ChatRequestEvent.fromEvent(event), ctx);
+        } else if (ToolResponseEvent.EVENT_TYPE.equals(event.getType())) {
+            processToolResponse(ToolResponseEvent.fromEvent(event), ctx);
         } else {
             throw new RuntimeException(String.format("Unexpected type event %s", event));
         }

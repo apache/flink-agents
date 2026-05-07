@@ -323,14 +323,15 @@ class MyAgent(Agent):
             collection="my_chroma_store"
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def search_documents(event: InputEvent, ctx: RunnerContext) -> None:
+    def search_documents(event: Event, ctx: RunnerContext) -> None:
         # Get the vector store from the runtime context
         vector_store = ctx.get_resource("chroma_store", ResourceType.VECTOR_STORE)
 
         # Create a semantic search query
-        user_query = str(event.input)
+        input_event = InputEvent.from_event(event)
+        user_query = str(input_event.input)
         query = VectorStoreQuery(
             query_text=user_query,
             limit=3
@@ -376,11 +377,12 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = InputEvent.class)
-    public static void searchDocuments(InputEvent event, RunnerContext ctx) {
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void searchDocuments(Event event, RunnerContext ctx) {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // Option 1: Manual search via the vector store
         VectorStore vectorStore = (VectorStore) ctx.getResource("vectorStore", ResourceType.VECTOR_STORE);
-        String queryText = (String) event.getInput();
+        String queryText = (String) inputEvent.getInput();
         VectorStoreQuery query = new VectorStoreQuery(queryText, 3);
         VectorStoreQueryResult result = vectorStore.query(query);
 
@@ -388,9 +390,10 @@ public class MyAgent extends Agent {
         ctx.sendEvent(new ContextRetrievalRequestEvent(queryText, "vectorStore"));
     }
 
-    @Action(listenEvents = ContextRetrievalResponseEvent.class)
-    public static void onSearchResponse(ContextRetrievalResponseEvent event, RunnerContext ctx) {
-        List<Document> documents = event.getDocuments();
+    @Action(listenEventTypes = {ContextRetrievalResponseEvent.EVENT_TYPE})
+    public static void onSearchResponse(Event event, RunnerContext ctx) {
+        ContextRetrievalResponseEvent response = ContextRetrievalResponseEvent.fromEvent(event);
+        List<Document> documents = response.getDocuments();
         // Process the retrieved documents...
     }
 }
@@ -662,14 +665,15 @@ class MyAgent(Agent):
             dims=768
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         # Use Java vector store from Python
+        input_event = InputEvent.from_event(event)
         vector_store = ctx.get_resource("java_vector_store", ResourceType.VECTOR_STORE)
         
         # Perform semantic search
-        query = VectorStoreQuery(query_text=str(event.input), limit=3)
+        query = VectorStoreQuery(query_text=str(input_event.input), limit=3)
         result = vector_store.query(query)
         
         # Process the retrieved documents
@@ -708,14 +712,15 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // Use Python vector store from Java
         VectorStore vectorStore = 
             (VectorStore) ctx.getResource("pythonVectorStore", ResourceType.VECTOR_STORE);
         
         // Perform semantic search
-        VectorStoreQuery query = new VectorStoreQuery((String) event.getInput(), 3);
+        VectorStoreQuery query = new VectorStoreQuery((String) inputEvent.getInput(), 3);
         VectorStoreQueryResult result = vectorStore.query(query);
         
         // Process the retrieved documents

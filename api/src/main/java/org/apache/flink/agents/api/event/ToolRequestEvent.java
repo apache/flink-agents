@@ -18,45 +18,64 @@
 
 package org.apache.flink.agents.api.event;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.agents.api.Event;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** Event representing a tool call request */
 public class ToolRequestEvent extends Event {
-    private final String model;
-    private final List<Map<String, Object>> toolCalls;
-    private final long timestamp;
+
+    public static final String EVENT_TYPE = "_tool_request_event";
 
     public ToolRequestEvent(String model, List<Map<String, Object>> toolCalls) {
-        this.model = model;
-        this.toolCalls = toolCalls;
-        this.timestamp = System.currentTimeMillis();
+        super(EVENT_TYPE);
+        setAttr("model", model);
+        setAttr("tool_calls", toolCalls);
     }
 
+    public ToolRequestEvent(UUID id, Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, attributes);
+    }
+
+    /**
+     * Reconstructs a typed ToolRequestEvent from a base Event.
+     *
+     * @param event the base event containing tool request data in attributes
+     * @return a typed ToolRequestEvent
+     */
+    @SuppressWarnings("unchecked")
+    public static ToolRequestEvent fromEvent(Event event) {
+        ToolRequestEvent result =
+                new ToolRequestEvent(event.getId(), new HashMap<>(event.getAttributes()));
+        if (event.hasSourceTimestamp()) {
+            result.setSourceTimestamp(event.getSourceTimestamp());
+        }
+        return result;
+    }
+
+    @JsonIgnore
     public String getModel() {
-        return model;
+        return (String) getAttr("model");
     }
 
+    @JsonIgnore
+    @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getToolCalls() {
-        return toolCalls;
-    }
-
-    public long getTimestamp() {
-        return timestamp;
+        return (List<Map<String, Object>>) getAttr("tool_calls");
     }
 
     @Override
     public String toString() {
         return "ToolRequestEvent{"
                 + "model='"
-                + model
+                + getModel()
                 + '\''
                 + ", toolCalls="
-                + toolCalls
-                + ", timestamp="
-                + timestamp
+                + getToolCalls()
                 + '}';
     }
 }

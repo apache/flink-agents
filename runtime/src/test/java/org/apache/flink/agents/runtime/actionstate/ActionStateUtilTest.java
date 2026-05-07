@@ -221,7 +221,7 @@ public class ActionStateUtilTest {
                             TestAction.class.getName(),
                             "doNothing",
                             new Class[] {Event.class, RunnerContext.class}),
-                    List.of(InputEvent.class.getName()));
+                    List.of(InputEvent.EVENT_TYPE));
         }
     }
 }

@@ -18,8 +18,6 @@
 
 package org.apache.flink.agents.api.annotation;
 
-import org.apache.flink.agents.api.Event;
-
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -31,23 +29,27 @@ import java.lang.annotation.Target;
  * <p>This annotation specifies which event types the action should respond to. The annotated method
  * will be triggered when any of the specified event types occur.
  *
+ * <p>Events are specified as type strings via {@link #listenEventTypes()}. Use the {@code
+ * EVENT_TYPE} constants on built-in event classes for standard events, or plain strings for custom
+ * events.
+ *
  * <p>Example usage:
  *
  * <pre>{@code
- * @Action(listenEvents = {InputEvent.class, CustomEvent.class})
- * public void handleEvents(Event event) {
- *     // Action logic here
- * }
+ * @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+ * public void handleInput(Event event, RunnerContext ctx) { ... }
+ *
+ * @Action(listenEventTypes = {InputEvent.EVENT_TYPE, "MyCustomEvent"})
+ * public void handleMultiple(Event event, RunnerContext ctx) { ... }
  * }</pre>
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Action {
     /**
-     * List of event types that this action should respond to. At least one event type must be
-     * specified.
+     * List of event type strings that this action should respond to.
      *
-     * @return Array of Event classes that this action listens to
+     * @return Array of event type strings
      */
-    Class<? extends Event>[] listenEvents();
+    String[] listenEventTypes();
 }

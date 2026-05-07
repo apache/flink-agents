@@ -17,7 +17,7 @@
 #################################################################################
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, ClassVar, Dict, List, Sequence
 
 import pytest
 
@@ -49,10 +49,10 @@ from flink_agents.runtime.resource_cache import ResourceCache
 
 
 class AgentForTest(Agent):
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def increment(event: Event, ctx: RunnerContext) -> None:
-        value = event.input
+        value = InputEvent.from_event(event).input
         value += 1
         ctx.send_event(OutputEvent(output=value))
 
@@ -60,8 +60,7 @@ class AgentForTest(Agent):
 def test_from_agent():
     agent = AgentForTest()
     agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())
-    event_type = f"{InputEvent.__module__}.{InputEvent.__name__}"
-    actions = agent_plan.get_actions(event_type)
+    actions = agent_plan.get_actions(InputEvent.EVENT_TYPE)
     assert len(actions) == 1
     action = actions[0]
     assert action.name == "increment"
@@ -69,11 +68,11 @@ def test_from_agent():
     assert isinstance(func, PythonFunction)
     assert func.module == "flink_agents.plan.tests.test_agent_plan"
     assert func.qualname == "AgentForTest.increment"
-    assert action.listen_event_types == [event_type]
+    assert action.listen_event_types == [InputEvent.EVENT_TYPE]
 
 
 class InvalidAgent(Agent):
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def invalid_signature_action(event: Event) -> None:
         pass
@@ -87,6 +86,12 @@ def test_to_agent_invalid_signature() -> None:
 
 class MyEvent(Event):
     """Event for testing purposes."""
+
+    EVENT_TYPE: ClassVar[str] = "_my_event"
+
+    def __init__(self) -> None:
+        """Create a MyEvent."""
+        super().__init__(type=MyEvent.EVENT_TYPE)
 
 
 class MockChatModelImpl(BaseChatModelSetup):
@@ -230,14 +235,14 @@ class MyAgent(Agent):
             collection_name="test_collection",
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def first_action(event: InputEvent, ctx: RunnerContext) -> None:
+    def first_action(event: Event, ctx: RunnerContext) -> None:
         pass
 
-    @action(InputEvent, MyEvent)
+    @action("_input_event", "_my_event")
     @staticmethod
-    def second_action(event: InputEvent, ctx: RunnerContext) -> None:
+    def second_action(event: Event, ctx: RunnerContext) -> None:
         pass
 
 
@@ -280,10 +285,10 @@ def test_get_resource() -> None:
 def test_add_action_and_resource_to_agent() -> None:
     my_agent = Agent()
     my_agent.add_action(
-        name="first_action", events=[InputEvent], func=MyAgent.first_action
+        name="first_action", events=["_input_event"], func=MyAgent.first_action
     )
     my_agent.add_action(
-        name="second_action", events=[InputEvent, MyEvent], func=MyAgent.second_action
+        name="second_action", events=["_input_event", "_my_event"], func=MyAgent.second_action
     )
     my_agent.add_resource(
         name="mock",
@@ -333,3 +338,32 @@ def test_add_action_and_resource_to_agent() -> None:
     actual = json.loads(json_value)
     expected = json.loads(expected_json)
     assert actual == expected
+
+
+# ── String identifier tests ──────────────────────────────────────────────
+
+
+class StringIdAgent(Agent):
+    """Agent with actions listening to string identifiers."""
+
+    @action("CustomEvent")
+    @staticmethod
+    def handle_custom(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(OutputEvent(output=event.get_attr("msg")))
+
+
+def test_from_agent_with_string_identifier() -> None:
+    """Test that AgentPlan correctly handles string identifiers."""
+    agent = StringIdAgent()
+    agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())
+
+    # The string identifier should be preserved as-is
+    actions = agent_plan.get_actions("CustomEvent")
+    assert len(actions) == 1
+    assert actions[0].name == "handle_custom"
+    assert "CustomEvent" in actions[0].listen_event_types
+
+    # Verify serialization roundtrip preserves the string identifier
+    json_str = agent_plan.model_dump_json(serialize_as_any=True)
+    restored = AgentPlan.model_validate_json(json_str)
+    assert restored.get_actions("CustomEvent")[0].name == "handle_custom"

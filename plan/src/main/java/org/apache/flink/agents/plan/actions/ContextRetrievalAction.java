@@ -45,16 +45,16 @@ public class ContextRetrievalAction {
                         ContextRetrievalAction.class,
                         "processContextRetrievalRequest",
                         new Class[] {Event.class, RunnerContext.class}),
-                List.of(ContextRetrievalRequestEvent.class.getName()));
+                List.of(ContextRetrievalRequestEvent.EVENT_TYPE));
     }
 
     public static void processContextRetrievalRequest(Event event, RunnerContext ctx)
             throws Exception {
-        if (event instanceof ContextRetrievalRequestEvent) {
+        if (ContextRetrievalRequestEvent.EVENT_TYPE.equals(event.getType())) {
             boolean ragAsync = ctx.getConfig().get(AgentExecutionOptions.RAG_ASYNC);
 
             final ContextRetrievalRequestEvent contextRetrievalRequestEvent =
-                    (ContextRetrievalRequestEvent) event;
+                    ContextRetrievalRequestEvent.fromEvent(event);
 
             final BaseVectorStore vectorStore =
                     (BaseVectorStore)

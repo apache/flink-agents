@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, Sequence
+from typing import Any, ClassVar, Dict, Sequence
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage
@@ -28,6 +28,12 @@ from flink_agents.api.runner_context import RunnerContext
 
 class MyEvent(Event):
     """Test event."""
+
+    EVENT_TYPE: ClassVar[str] = "_my_event"
+
+    def __init__(self) -> None:
+        """Create a MyEvent."""
+        super().__init__(type=MyEvent.EVENT_TYPE)
 
 
 class MockChatModel(BaseChatModelSetup):
@@ -45,14 +51,14 @@ class MockChatModel(BaseChatModelSetup):
 class PythonAgentPlanCompatibilityTestAgent(Agent):
     """Agent for generating python agent plan json."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def first_action(event: InputEvent, ctx: RunnerContext) -> None:
+    def first_action(event: Event, ctx: RunnerContext) -> None:
         """Test implementation."""
 
-    @action(InputEvent, MyEvent)
+    @action("_input_event", "_my_event")
     @staticmethod
-    def second_action(event: InputEvent, ctx: RunnerContext) -> None:
+    def second_action(event: Event, ctx: RunnerContext) -> None:
         """Test implementation."""
 
     @chat_model_setup

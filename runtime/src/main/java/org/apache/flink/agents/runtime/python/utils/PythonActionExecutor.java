@@ -19,15 +19,15 @@ package org.apache.flink.agents.runtime.python.utils;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
-import org.apache.flink.agents.runtime.utils.EventUtil;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
+import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.apache.flink.util.Preconditions.checkState;
@@ -62,8 +62,8 @@ public class PythonActionExecutor {
     private static final AtomicLong PYTHON_AWAITABLE_VAR_ID = new AtomicLong(0);
 
     // =========== PYTHON AND JAVA OBJECT CONVERT ===========
-    private static final String CONVERT_TO_PYTHON_OBJECT =
-            "python_java_utils.convert_to_python_object";
+    private static final String CONVERT_JSON_TO_PYTHON_EVENT =
+            "python_java_utils.convert_json_to_python_event";
     private static final String WRAP_TO_INPUT_EVENT = "python_java_utils.wrap_to_input_event";
     private static final String GET_OUTPUT_FROM_OUTPUT_EVENT =
             "python_java_utils.get_output_from_output_event";
@@ -124,7 +124,7 @@ public class PythonActionExecutor {
      * @return The name of the Python awaitable variable. It may be null if the Python function does
      *     not return a coroutine.
      */
-    public String executePythonFunction(PythonFunction function, PythonEvent event, int hashOfKey)
+    public String executePythonFunction(PythonFunction function, Event event, int hashOfKey)
             throws Exception {
         runnerContext.checkNoPendingEvents();
         function.setInterpreter(interpreter);
@@ -132,7 +132,8 @@ public class PythonActionExecutor {
         interpreter.invoke(
                 FLINK_RUNNER_CONTEXT_SWITCH_ACTION_CONTEXT, pythonRunnerContext, hashOfKey);
 
-        Object pythonEventObject = interpreter.invoke(CONVERT_TO_PYTHON_OBJECT, event.getEvent());
+        String eventJson = new ObjectMapper().writeValueAsString(event);
+        Object pythonEventObject = interpreter.invoke(CONVERT_JSON_TO_PYTHON_EVENT, eventJson);
 
         try {
             Object calledResult = function.call(pythonEventObject, pythonRunnerContext);
@@ -152,19 +153,16 @@ public class PythonActionExecutor {
         }
     }
 
-    public PythonEvent wrapToInputEvent(Object eventData) {
+    public Event wrapToInputEvent(Object eventData) throws IOException {
         checkState(eventData instanceof byte[]);
-        // wrap_to_input_event returns a tuple of (bytes, str)
+        // wrap_to_input_event returns a JSON string
         Object result = interpreter.invoke(WRAP_TO_INPUT_EVENT, eventData);
-        checkState(result.getClass().isArray() && ((Object[]) result).length == 2);
-        Object[] resultArray = (Object[]) result;
-        byte[] eventBytes = (byte[]) resultArray[0];
-        String eventJsonStr = (String) resultArray[1];
-        return new PythonEvent(eventBytes, EventUtil.PYTHON_INPUT_EVENT_NAME, eventJsonStr);
+        checkState(result instanceof String);
+        return Event.fromJson((String) result);
     }
 
-    public Object getOutputFromOutputEvent(byte[] pythonOutputEvent) {
-        return interpreter.invoke(GET_OUTPUT_FROM_OUTPUT_EVENT, pythonOutputEvent);
+    public Object getOutputFromOutputEvent(String eventJson) {
+        return interpreter.invoke(GET_OUTPUT_FROM_OUTPUT_EVENT, eventJson);
     }
 
     /**

@@ -485,9 +485,12 @@ public class RescalingTest extends TestLogger {
 
     /** Test event class for testing. */
     public static class TestEvent extends Event {
+        public static final String EVENT_TYPE = "TestEvent";
+
         private final int data;
 
         public TestEvent(int data) {
+            super(EVENT_TYPE);
             this.data = data;
         }
 
@@ -501,17 +504,18 @@ public class RescalingTest extends TestLogger {
 
         public static final AtomicInteger numProcessedEvent = new AtomicInteger(0);
 
-        @Action(listenEvents = {InputEvent.class})
-        public static void handleInputEvent(InputEvent event, RunnerContext context) {
-            // Test action implementation
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        public static void handleInputEvent(Event event, RunnerContext context) {
+            InputEvent inputEvent = InputEvent.fromEvent(event);
             numProcessedEvent.incrementAndGet();
-            context.sendEvent(new TestEvent((Integer) event.getInput()));
+            context.sendEvent(new TestEvent((Integer) inputEvent.getInput()));
         }
 
-        @Action(listenEvents = {TestEvent.class})
-        public static void handleTestEvent(TestEvent event, RunnerContext context) {
+        @Action(listenEventTypes = {TestEvent.EVENT_TYPE})
+        public static void handleTestEvent(Event event, RunnerContext context) {
+            TestEvent testEvent = (TestEvent) event;
             numProcessedEvent.incrementAndGet();
-            context.sendEvent(new OutputEvent(event.data));
+            context.sendEvent(new OutputEvent(testEvent.data));
         }
     }
 }

@@ -41,7 +41,7 @@ from flink_agents.api.decorators import (
     skills,
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
@@ -107,11 +107,12 @@ class SkillTestAgent(Agent):
             ],
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
-        if isinstance(event.input, Operation):
-            input: Operation = event.input
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        input_event = InputEvent.from_event(event)
+        if isinstance(input_event.input, Operation):
+            input: Operation = input_event.input
             ctx.send_event(
                 ChatRequestEvent(
                     model="openai_setup",
@@ -124,7 +125,7 @@ class SkillTestAgent(Agent):
                 )
             )
         else:
-            input: str = event.input
+            input: str = input_event.input
             ctx.send_event(
                 ChatRequestEvent(
                     model="openai_setup",
@@ -137,11 +138,11 @@ class SkillTestAgent(Agent):
                 )
             )
 
-    @action(ChatResponseEvent)
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
-        input = event.response
-        ctx.send_event(OutputEvent(output=input.content))
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
+        chat_response = ChatResponseEvent.from_event(event)
+        ctx.send_event(OutputEvent(output=chat_response.response.content))
 
 
 @pytest.mark.skipif(not API_KEY, reason="openai api key is required.")

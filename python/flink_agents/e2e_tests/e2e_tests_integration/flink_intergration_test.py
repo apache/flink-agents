@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import os
 import sysconfig
 from pathlib import Path
@@ -82,7 +83,7 @@ def test_from_datastream_to_datastream(tmp_path: Path) -> None:
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    output_datastream.map(lambda x: x.model_dump_json(), Types.STRING()).add_sink(
+    output_datastream.map(lambda x: json.dumps(x), Types.STRING()).add_sink(
         StreamingFileSink.for_row_format(
             base_path=str(result_dir.absolute()),
             encoder=Encoder.simple_string_encoder(),

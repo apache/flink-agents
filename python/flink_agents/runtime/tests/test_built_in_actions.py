@@ -32,7 +32,7 @@ from flink_agents.api.decorators import (
     tool,
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
@@ -167,14 +167,14 @@ class MyAgent(Agent):
         """
         return a + b
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing input.
 
         In this action, we will send ChatRequestEvent to trigger built-in actions.
         """
-        input = event.input
+        input = InputEvent.from_event(event).input
         ctx.send_event(
             ChatRequestEvent(
                 model="mock_chat_model",
@@ -186,11 +186,11 @@ class MyAgent(Agent):
             )
         )
 
-    @action(ChatResponseEvent)
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing chat model response."""
-        input = event.response
+        input = ChatResponseEvent.from_event(event).response
         ctx.send_event(OutputEvent(output=input.content))
 
 
