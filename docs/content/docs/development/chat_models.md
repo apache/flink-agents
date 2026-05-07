@@ -122,16 +122,18 @@ public class MyAgent extends Agent {
     }
 
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         ChatMessage userMessage =
-                new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
+                new ChatMessage(MessageRole.USER, String.format("input: {%s}", inputEvent.getInput()));
         ctx.sendEvent(new ChatRequestEvent("ollamaChatModel", List.of(userMessage)));
     }
 
     @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
-    public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
+    public static void processResponse(Event event, RunnerContext ctx)
             throws Exception {
-        String response = event.getResponse().getContent();
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        String response = chatResponse.getResponse().getContent();
         // Handle the LLM's response
         // Process the response as needed for your use case
     }
@@ -1086,16 +1088,18 @@ public class MyAgent extends Agent {
     }
 
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         ChatMessage userMessage =
-                new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
+                new ChatMessage(MessageRole.USER, String.format("input: {%s}", inputEvent.getInput()));
         ctx.sendEvent(new ChatRequestEvent("pythonChatModel", List.of(userMessage)));
     }
 
     @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
-    public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
+    public static void processResponse(Event event, RunnerContext ctx)
             throws Exception {
-        String response = event.getResponse().getContent();
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        String response = chatResponse.getResponse().getContent();
         // Handle the LLM's response
         // Process the response as needed for your use case
     }

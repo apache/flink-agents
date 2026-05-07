@@ -387,7 +387,7 @@ def process_event(event: Event, ctx: RunnerContext) -> None:
 {{< tab "Java" >}}
 ```java
 @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-public static void processEvent(InputEvent event, RunnerContext ctx) throws Exception {
+public static void processEvent(Event event, RunnerContext ctx) throws Exception {
     // Access long-term memory
     BaseLongTermMemory ltm = ctx.getLongTermMemory();
 

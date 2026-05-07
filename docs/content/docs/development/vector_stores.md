@@ -378,10 +378,11 @@ public class MyAgent extends Agent {
     }
 
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void searchDocuments(InputEvent event, RunnerContext ctx) {
+    public static void searchDocuments(Event event, RunnerContext ctx) {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // Option 1: Manual search via the vector store
         VectorStore vectorStore = (VectorStore) ctx.getResource("vectorStore", ResourceType.VECTOR_STORE);
-        String queryText = (String) event.getInput();
+        String queryText = (String) inputEvent.getInput();
         VectorStoreQuery query = new VectorStoreQuery(queryText, 3);
         VectorStoreQueryResult result = vectorStore.query(query);
 
@@ -390,8 +391,9 @@ public class MyAgent extends Agent {
     }
 
     @Action(listenEventTypes = {ContextRetrievalResponseEvent.EVENT_TYPE})
-    public static void onSearchResponse(ContextRetrievalResponseEvent event, RunnerContext ctx) {
-        List<Document> documents = event.getDocuments();
+    public static void onSearchResponse(Event event, RunnerContext ctx) {
+        ContextRetrievalResponseEvent response = ContextRetrievalResponseEvent.fromEvent(event);
+        List<Document> documents = response.getDocuments();
         // Process the retrieved documents...
     }
 }
@@ -711,13 +713,14 @@ public class MyAgent extends Agent {
     }
 
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // Use Python vector store from Java
         VectorStore vectorStore = 
             (VectorStore) ctx.getResource("pythonVectorStore", ResourceType.VECTOR_STORE);
         
         // Perform semantic search
-        VectorStoreQuery query = new VectorStoreQuery((String) event.getInput(), 3);
+        VectorStoreQuery query = new VectorStoreQuery((String) inputEvent.getInput(), 3);
         VectorStoreQueryResult result = vectorStore.query(query);
         
         // Process the retrieved documents

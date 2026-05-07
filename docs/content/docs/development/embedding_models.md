@@ -166,15 +166,16 @@ public class MyAgent extends Agent {
     }
 
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void processText(InputEvent event, RunnerContext ctx)
+    public static void processText(Event event, RunnerContext ctx)
             throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // Get the embedding model from the runtime context
         BaseEmbeddingModelSetup embeddingModel =
                 (BaseEmbeddingModelSetup)
                         ctx.getResource("embeddingModel", ResourceType.EMBEDDING_MODEL);
 
         // Use the embedding model to generate embeddings
-        String input = (String) event.getInput();
+        String input = (String) inputEvent.getInput();
         float[] embedding = embeddingModel.embed(input);
 
         // Handle the embedding
@@ -565,13 +566,14 @@ public class MyAgent extends Agent {
     }
 
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // Use the Python embedding model from Java
         BaseEmbeddingModelSetup embeddingModel = 
             (BaseEmbeddingModelSetup) ctx.getResource(
                 "pythonEmbeddingModel", 
                 ResourceType.EMBEDDING_MODEL);
-        float[] embedding = embeddingModel.embed((String) event.getInput());
+        float[] embedding = embeddingModel.embed((String) inputEvent.getInput());
         // Process the embedding vector as needed
     }
 }
