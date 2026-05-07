@@ -19,6 +19,7 @@ package org.apache.flink.agents.integration.test;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -129,10 +130,10 @@ public class EmbeddingIntegrationAgent extends Agent {
     }
 
     /** Main test action that processes input and validates embedding generation. */
-    @Action(listenEvents = {InputEvent.class})
-    public static void testEmbeddingGeneration(InputEvent event, RunnerContext ctx)
-            throws Exception {
-        String input = (String) event.getInput();
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void testEmbeddingGeneration(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        String input = (String) inputEvent.getInput();
         MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
         // Parse test input

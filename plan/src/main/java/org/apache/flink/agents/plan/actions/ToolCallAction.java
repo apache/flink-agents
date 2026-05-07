@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -40,19 +41,20 @@ public class ToolCallAction {
                 new JavaFunction(
                         ToolCallAction.class,
                         "processToolRequest",
-                        new Class[] {ToolRequestEvent.class, RunnerContext.class}),
-                List.of(ToolRequestEvent.class.getName()));
+                        new Class[] {Event.class, RunnerContext.class}),
+                List.of(ToolRequestEvent.EVENT_TYPE));
     }
 
     @SuppressWarnings("unchecked")
-    public static void processToolRequest(ToolRequestEvent event, RunnerContext ctx) {
+    public static void processToolRequest(Event event, RunnerContext ctx) {
+        ToolRequestEvent toolRequest = ToolRequestEvent.fromEvent(event);
         boolean toolCallAsync = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_ASYNC);
 
         Map<String, Boolean> success = new HashMap<>();
         Map<String, String> error = new HashMap<>();
         Map<String, ToolResponse> responses = new HashMap<>();
         Map<String, String> externalIds = new HashMap<>();
-        for (Map<String, Object> toolCall : event.getToolCalls()) {
+        for (Map<String, Object> toolCall : toolRequest.getToolCalls()) {
             String id = String.valueOf(toolCall.get("id"));
             Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
             String name = (String) function.get("name");
@@ -107,6 +109,7 @@ public class ToolCallAction {
                 }
             }
         }
-        ctx.sendEvent(new ToolResponseEvent(event.getId(), responses, success, error, externalIds));
+        ctx.sendEvent(
+                new ToolResponseEvent(toolRequest.getId(), responses, success, error, externalIds));
     }
 }

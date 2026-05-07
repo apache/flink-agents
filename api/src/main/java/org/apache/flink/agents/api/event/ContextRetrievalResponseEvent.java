@@ -18,47 +18,99 @@
 
 package org.apache.flink.agents.api.event;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.vectorstores.Document;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /** Event representing retrieved context results. */
 public class ContextRetrievalResponseEvent extends Event {
 
-    private final UUID requestId;
-    private final String query;
-    private final List<Document> documents;
+    public static final String EVENT_TYPE = "_context_retrieval_response_event";
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public ContextRetrievalResponseEvent(UUID requestId, String query, List<Document> documents) {
-        this.requestId = requestId;
-        this.query = query;
-        this.documents = documents;
+        super(EVENT_TYPE);
+        setAttr("request_id", requestId);
+        setAttr("query", query);
+        setAttr("documents", documents);
     }
 
+    public ContextRetrievalResponseEvent(UUID id, Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, attributes);
+    }
+
+    /**
+     * Reconstructs a typed ContextRetrievalResponseEvent from a base Event, deserializing nested
+     * types.
+     *
+     * @param event the base event containing context retrieval response data in attributes
+     * @return a typed ContextRetrievalResponseEvent
+     */
+    @SuppressWarnings("unchecked")
+    public static ContextRetrievalResponseEvent fromEvent(Event event) {
+        Map<String, Object> attrs = new HashMap<>(event.getAttributes());
+        Object rawId = attrs.get("request_id");
+        if (rawId instanceof String) {
+            attrs.put("request_id", UUID.fromString((String) rawId));
+        }
+        List<?> rawDocs = (List<?>) attrs.get("documents");
+        if (rawDocs != null) {
+            List<Document> documents = new ArrayList<>();
+            for (Object d : rawDocs) {
+                if (d instanceof Document) {
+                    documents.add((Document) d);
+                } else if (d instanceof Map) {
+                    documents.add(MAPPER.convertValue(d, Document.class));
+                }
+            }
+            attrs.put("documents", documents);
+        }
+        ContextRetrievalResponseEvent result =
+                new ContextRetrievalResponseEvent(event.getId(), attrs);
+        if (event.hasSourceTimestamp()) {
+            result.setSourceTimestamp(event.getSourceTimestamp());
+        }
+        return result;
+    }
+
+    @JsonIgnore
     public UUID getRequestId() {
-        return requestId;
+        Object val = getAttr("request_id");
+        if (val instanceof String) {
+            return UUID.fromString((String) val);
+        }
+        return (UUID) val;
     }
 
+    @JsonIgnore
     public String getQuery() {
-        return query;
+        return (String) getAttr("query");
     }
 
+    @JsonIgnore
+    @SuppressWarnings("unchecked")
     public List<Document> getDocuments() {
-        return documents;
+        return (List<Document>) getAttr("documents");
     }
 
     @Override
     public String toString() {
         return "ContextRetrievalResponseEvent{"
                 + "requestId="
-                + requestId
+                + getRequestId()
                 + ", query='"
-                + query
+                + getQuery()
                 + '\''
                 + ", documents="
-                + documents
+                + getDocuments()
                 + '}';
     }
 }

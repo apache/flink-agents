@@ -24,6 +24,8 @@ from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 
+__all__ = ["AsyncExecutionResult", "RunnerContext"]
+
 if TYPE_CHECKING:
     from flink_agents.api.memory_object import MemoryObject
 
@@ -88,7 +90,7 @@ class RunnerContext(ABC):
         Parameters
         ----------
         event : Event
-            The event to be processed by the agent system.
+            The event to be sent.
         """
 
     @abstractmethod

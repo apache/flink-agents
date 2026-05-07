@@ -16,9 +16,8 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC
-from typing import Any, Callable, Dict, List, Tuple, Type
+from typing import Any, Callable, Dict, List, Tuple
 
-from flink_agents.api.events.event import Event
 from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
@@ -39,7 +38,7 @@ class Agent(ABC):
         ::
 
             class MyAgent(Agent):
-                @action(InputEvent)
+                @action(InputEvent.EVENT_TYPE)
                 @staticmethod
                 def my_action(event: Event, ctx: RunnerContext) -> None:
                     action logic
@@ -62,7 +61,7 @@ class Agent(ABC):
 
             my_agent = Agent()
             my_agent.add_action(name="my_action",
-                                events=[InputEvent],
+                                events=["_input_event"],
                                 func=action_function)
                     .add_resource(name="my_connection",
                                   instance=ResourceDescriptor(
@@ -85,7 +84,9 @@ class Agent(ABC):
                     )
     """
 
-    _actions: Dict[str, Tuple[List[Type[Event]], Callable, Dict[str, Any]]]
+    _actions: Dict[
+        str, Tuple[List[str], Callable, Dict[str, Any]]
+    ]
     _resources: Dict[ResourceType, Dict[str, Any]]
 
     def __init__(self) -> None:
@@ -96,7 +97,9 @@ class Agent(ABC):
             self._resources[type] = {}
 
     @property
-    def actions(self) -> Dict[str, Tuple[List[Type[Event]], Callable, Dict[str, Any]]]:
+    def actions(
+        self,
+    ) -> Dict[str, Tuple[List[str], Callable, Dict[str, Any]]]:
         """Get added actions."""
         return self._actions
 
@@ -106,7 +109,11 @@ class Agent(ABC):
         return self._resources
 
     def add_action(
-        self, name: str, events: List[Type[Event]], func: Callable, **config: Any
+        self,
+        name: str,
+        events: List[str],
+        func: Callable,
+        **config: Any,
     ) -> "Agent":
         """Add action to agent.
 
@@ -114,11 +121,11 @@ class Agent(ABC):
         ----------
         name : str
             The name of the action, should be unique in the same Agent.
-        events: List[Type[Event]]
-            The type of events listened by this action.
-        func: Callable
+        events : list[str]
+            Type-identifier strings listened by this action.
+        func : Callable
             The function to be executed when receive listened events.
-        **config: Any
+        **config : Any
             Key named arguments can be used by this action in runtime.
 
         Returns:

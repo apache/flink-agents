@@ -83,7 +83,7 @@ class AgentPlanDeclareToolMethodTest {
                     location, temp, "fahrenheit".equals(units) ? "F" : "C");
         }
 
-        @Action(listenEvents = {InputEvent.class})
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public void process(Event event, RunnerContext ctx) {
             // no-op
         }

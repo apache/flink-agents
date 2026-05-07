@@ -72,9 +72,12 @@ public class AsyncExecutionAgent {
 
     /** Custom event type for internal agent communication. */
     public static class AsyncProcessedEvent extends Event {
+        public static final String EVENT_TYPE = "AsyncProcessedEvent";
+
         private final String processedResult;
 
         public AsyncProcessedEvent(String processedResult) {
+            super(EVENT_TYPE);
             this.processedResult = processedResult;
         }
 
@@ -91,9 +94,9 @@ public class AsyncExecutionAgent {
      */
     public static class SimpleAsyncAgent extends Agent {
 
-        @Action(listenEvents = {InputEvent.class})
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public static void processInput(Event event, RunnerContext ctx) throws Exception {
-            InputEvent inputEvent = (InputEvent) event;
+            InputEvent inputEvent = InputEvent.fromEvent(event);
             AsyncRequest request = (AsyncRequest) inputEvent.getInput();
 
             String result =
@@ -132,7 +135,7 @@ public class AsyncExecutionAgent {
          * @param event The processed event
          * @param ctx The runner context for sending events
          */
-        @Action(listenEvents = {AsyncProcessedEvent.class})
+        @Action(listenEventTypes = {AsyncProcessedEvent.EVENT_TYPE})
         public static void generateOutput(Event event, RunnerContext ctx) throws Exception {
             AsyncProcessedEvent processedEvent = (AsyncProcessedEvent) event;
 
@@ -150,10 +153,10 @@ public class AsyncExecutionAgent {
     /** Agent that chains multiple durableExecuteAsync calls. */
     public static class MultiAsyncAgent extends Agent {
 
-        @Action(listenEvents = {InputEvent.class})
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public static void processWithMultipleAsync(Event event, RunnerContext ctx)
                 throws Exception {
-            InputEvent inputEvent = (InputEvent) event;
+            InputEvent inputEvent = InputEvent.fromEvent(event);
             AsyncRequest request = (AsyncRequest) inputEvent.getInput();
 
             String step1Result =
@@ -258,9 +261,9 @@ public class AsyncExecutionAgent {
             return timestampDir;
         }
 
-        @Action(listenEvents = {InputEvent.class})
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public static void processWithTiming(Event event, RunnerContext ctx) throws Exception {
-            InputEvent inputEvent = (InputEvent) event;
+            InputEvent inputEvent = InputEvent.fromEvent(event);
             AsyncRequest request = (AsyncRequest) inputEvent.getInput();
 
             String result =
@@ -300,9 +303,9 @@ public class AsyncExecutionAgent {
     /** Agent that uses durableExecute (sync) for simulating slow operations. */
     public static class SyncDurableAgent extends Agent {
 
-        @Action(listenEvents = {InputEvent.class})
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public static void processInputSync(Event event, RunnerContext ctx) throws Exception {
-            InputEvent inputEvent = (InputEvent) event;
+            InputEvent inputEvent = InputEvent.fromEvent(event);
             AsyncRequest request = (AsyncRequest) inputEvent.getInput();
 
             String result =

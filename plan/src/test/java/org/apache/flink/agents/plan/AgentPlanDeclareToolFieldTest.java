@@ -85,7 +85,7 @@ class AgentPlanDeclareToolFieldTest {
         @org.apache.flink.agents.api.annotation.Tool
         private final Tool weather = createWeatherTool();
 
-        @Action(listenEvents = {InputEvent.class})
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public void onInput(Event e, RunnerContext ctx) {
             /* no-op */
         }

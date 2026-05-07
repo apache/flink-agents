@@ -51,7 +51,6 @@ from flink_agents.runtime.memory.internal_base_long_term_memory import (
 from flink_agents.runtime.memory.mem0.mem0_long_term_memory import (
     Mem0LongTermMemory,
 )
-from flink_agents.runtime.python_java_utils import _build_event_log_string
 from flink_agents.runtime.resource_cache import ResourceCache
 from flink_agents.runtime.resource_context import ResourceContextImpl
 
@@ -294,18 +293,24 @@ class FlinkRunnerContext(RunnerContext):
     def send_event(self, event: Event) -> None:
         """Send an event to the agent for processing.
 
+        All events are serialized as JSON and sent via ``sendEventJson``
+        so that any language can reconstruct them.
+
         Parameters
         ----------
         event : Event
             The event to be processed by the agent system.
         """
-        class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
-        event_bytes = cloudpickle.dumps(event)
-        event_json_str = _build_event_log_string(event, class_path)
+        event_json = event.model_dump_json()
         try:
-            self._j_runner_context.sendEvent(class_path, event_bytes, event_json_str)
+            self._j_runner_context.sendEventJson(event_json)
         except Exception as e:
-            err_msg = "Failed to send event " + class_path + " to runner context"
+            err_msg = (
+                "Failed to send event '"
+                + event.get_type()
+                + "' to runner context: "
+                + event_json
+            )
             raise RuntimeError(err_msg) from e
 
     @override

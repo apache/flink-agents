@@ -129,14 +129,15 @@ class MyAgent(Agent):
             model="your-embedding-model-here"
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_text(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_text(event: Event, ctx: RunnerContext) -> None:
         # Get the embedding model from the runtime context
         embedding_model = ctx.get_resource("openai_embedding", ResourceType.EMBEDDING_MODEL)
 
         # Use the embedding model to generate embeddings
-        user_query = str(event.input)
+        input_event = InputEvent.from_event(event)
+        user_query = str(input_event.input)
         embedding = embedding_model.embed(user_query)
 
         # Handle the embedding
@@ -164,16 +165,17 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void processText(InputEvent event, RunnerContext ctx)
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void processText(Event event, RunnerContext ctx)
             throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // Get the embedding model from the runtime context
         BaseEmbeddingModelSetup embeddingModel =
                 (BaseEmbeddingModelSetup)
                         ctx.getResource("embeddingModel", ResourceType.EMBEDDING_MODEL);
 
         // Use the embedding model to generate embeddings
-        String input = (String) event.getInput();
+        String input = (String) inputEvent.getInput();
         float[] embedding = embeddingModel.embed(input);
 
         // Handle the embedding
@@ -518,12 +520,13 @@ class MyAgent(Agent):
             model="nomic-embed-text"
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         # Use the Java embedding model from Python
+        input_event = InputEvent.from_event(event)
         embedding_model = ctx.get_resource("java_embedding_model", ResourceType.EMBEDDING_MODEL)
-        embedding = embedding_model.embed(str(event.input))
+        embedding = embedding_model.embed(str(input_event.input))
         # Process the embedding vector as needed
 ```
 
@@ -562,14 +565,15 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // Use the Python embedding model from Java
         BaseEmbeddingModelSetup embeddingModel = 
             (BaseEmbeddingModelSetup) ctx.getResource(
                 "pythonEmbeddingModel", 
                 ResourceType.EMBEDDING_MODEL);
-        float[] embedding = embeddingModel.embed((String) event.getInput());
+        float[] embedding = embeddingModel.embed((String) inputEvent.getInput());
         // Process the embedding vector as needed
     }
 }

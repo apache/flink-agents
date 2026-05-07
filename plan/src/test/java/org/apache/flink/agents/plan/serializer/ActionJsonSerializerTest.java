@@ -19,6 +19,7 @@
 package org.apache.flink.agents.plan.serializer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -47,10 +48,10 @@ public class ActionJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class, RunnerContext.class});
+                        new Class[] {Event.class, RunnerContext.class});
 
         // Create an Action
-        Action action = new Action("testAction", function, List.of(InputEvent.class.getName()));
+        Action action = new Action("testAction", function, List.of(InputEvent.EVENT_TYPE));
 
         // Serialize the action to JSON
         String json = new ObjectMapper().writeValueAsString(action);
@@ -70,8 +71,8 @@ public class ActionJsonSerializerTest {
                 json.contains("\"listen_event_types\":["),
                 "JSON should contain the listen event types");
         assertTrue(
-                json.contains("\"org.apache.flink.agents.api.InputEvent\""),
-                "JSON should contain the event type class name");
+                json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
+                "JSON should contain the event type string");
         assertTrue(
                 json.contains("\"org.apache.flink.agents.api.context.RunnerContext\""),
                 "JSON should contain the runner context class name");
@@ -83,8 +84,7 @@ public class ActionJsonSerializerTest {
         PythonFunction function = new PythonFunction("test_module", "test_function");
 
         // Create an Action
-        Action action =
-                new Action("testPythonAction", function, List.of(InputEvent.class.getName()));
+        Action action = new Action("testPythonAction", function, List.of(InputEvent.EVENT_TYPE));
 
         // Serialize the action to JSON
         String json = new ObjectMapper().writeValueAsString(action);
@@ -106,8 +106,8 @@ public class ActionJsonSerializerTest {
                 json.contains("\"listen_event_types\":["),
                 "JSON should contain the listen event types");
         assertTrue(
-                json.contains("\"org.apache.flink.agents.api.InputEvent\""),
-                "JSON should contain the event type class name");
+                json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
+                "JSON should contain the event type string");
     }
 
     @Test
@@ -117,12 +117,12 @@ public class ActionJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class, RunnerContext.class});
+                        new Class[] {Event.class, RunnerContext.class});
 
         // Create an Action with multiple event types
         List<String> eventTypes = new ArrayList<>();
-        eventTypes.add(InputEvent.class.getName());
-        eventTypes.add(OutputEvent.class.getName());
+        eventTypes.add(InputEvent.EVENT_TYPE);
+        eventTypes.add(OutputEvent.EVENT_TYPE);
         Action action = new Action("multiEventAction", function, eventTypes);
 
         // Serialize the action to JSON
@@ -136,11 +136,11 @@ public class ActionJsonSerializerTest {
                 json.contains("\"listen_event_types\":["),
                 "JSON should contain the listen event types");
         assertTrue(
-                json.contains("\"org.apache.flink.agents.api.InputEvent\""),
-                "JSON should contain the InputEvent class name");
+                json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
+                "JSON should contain the InputEvent type string");
         assertTrue(
-                json.contains("\"org.apache.flink.agents.api.OutputEvent\""),
-                "JSON should contain the OutputEvent class name");
+                json.contains("\"" + OutputEvent.EVENT_TYPE + "\""),
+                "JSON should contain the OutputEvent type string");
         assertTrue(
                 json.contains("\"org.apache.flink.agents.api.context.RunnerContext\""),
                 "JSON should contain the runner context class name");
@@ -153,7 +153,7 @@ public class ActionJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class, RunnerContext.class});
+                        new Class[] {Event.class, RunnerContext.class});
 
         // Create an Action with an empty event types list
         Action action = new Action("emptyEventsAction", function, Collections.emptyList());
@@ -177,11 +177,11 @@ public class ActionJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class, RunnerContext.class});
+                        new Class[] {Event.class, RunnerContext.class});
 
         // Create an Action
         Action originalAction =
-                new Action("roundTripAction", function, List.of(InputEvent.class.getName()));
+                new Action("roundTripAction", function, List.of(InputEvent.EVENT_TYPE));
 
         // Serialize the action to JSON
         ObjectMapper mapper = new ObjectMapper();
@@ -197,10 +197,10 @@ public class ActionJsonSerializerTest {
         assertEquals("org.apache.flink.agents.plan.TestAction", deserializedFunction.getQualName());
         assertEquals("legal", deserializedFunction.getMethodName());
         assertEquals(2, deserializedFunction.getParameterTypes().length);
-        assertEquals(InputEvent.class, deserializedFunction.getParameterTypes()[0]);
+        assertEquals(Event.class, deserializedFunction.getParameterTypes()[0]);
         assertEquals(RunnerContext.class, deserializedFunction.getParameterTypes()[1]);
         assertEquals(1, deserializedAction.getListenEventTypes().size());
-        assertEquals(InputEvent.class.getName(), deserializedAction.getListenEventTypes().get(0));
+        assertEquals(InputEvent.EVENT_TYPE, deserializedAction.getListenEventTypes().get(0));
     }
 
     @Test
@@ -210,7 +210,7 @@ public class ActionJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class, RunnerContext.class});
+                        new Class[] {Event.class, RunnerContext.class});
 
         Map<String, Object> config = new HashMap<>();
         InputEvent arg0 = new InputEvent("123");
@@ -221,8 +221,7 @@ public class ActionJsonSerializerTest {
         config.put("arg2", arg2);
 
         // Create an Action
-        Action action =
-                new Action("testAction", function, List.of(InputEvent.class.getName()), config);
+        Action action = new Action("testAction", function, List.of(InputEvent.EVENT_TYPE), config);
 
         // Serialize the action to JSON
         ObjectMapper mapper = new ObjectMapper();

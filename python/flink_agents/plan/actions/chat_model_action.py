@@ -77,16 +77,15 @@ def _update_tool_call_context(
     #  After memory supports remove, we can use "TOOL_CALL_CONTEXT/request_id"
     #  to store and remove the specific tool context directly.
 
-    # init if not exists
+    key = str(initial_request_id)
     tool_call_context = sensory_memory.get(_TOOL_CALL_CONTEXT) or {}
-    if initial_request_id not in tool_call_context and initial_messages is not None:
-        tool_call_context[initial_request_id] = copy.deepcopy(initial_messages)
+    if key not in tool_call_context and initial_messages is not None:
+        tool_call_context[key] = copy.deepcopy(initial_messages)
 
-    tool_call_context[initial_request_id].extend(added_messages)
+    tool_call_context[key].extend(added_messages)
 
-    # update tool call context
     sensory_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
-    return tool_call_context[initial_request_id]
+    return tool_call_context[key]
 
 
 def _save_tool_request_event_context(
@@ -98,7 +97,7 @@ def _save_tool_request_event_context(
 ) -> None:
     """Save the context for a specific tool request event."""
     context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
-    context[tool_request_event_id] = {
+    context[str(tool_request_event_id)] = {
         "initial_request_id": initial_request_id,
         "model": model,
         "output_schema": output_schema,
@@ -111,7 +110,7 @@ def _get_tool_request_event_context(
 ) -> Dict:
     """Get and remove the context for a specific tool request event."""
     context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
-    removed_context = context.pop(request_id, {})
+    removed_context = context.pop(str(request_id), {})
     return removed_context
 
 
@@ -122,9 +121,10 @@ def _accumulate_retry_stats(
     retry_wait_sec: int,
 ) -> None:
     """Accumulate retry stats for a given initial request across tool call rounds."""
+    key = str(initial_request_id)
     retry_stats_context = sensory_memory.get(_RETRY_STATS_CONTEXT) or {}
     stats = retry_stats_context.get(
-        initial_request_id,
+        key,
         {
             "total_retry_count": 0,
             "total_retry_wait_sec": 0,
@@ -132,7 +132,7 @@ def _accumulate_retry_stats(
     )
     stats["total_retry_count"] += retry_count
     stats["total_retry_wait_sec"] += retry_wait_sec
-    retry_stats_context[initial_request_id] = stats
+    retry_stats_context[key] = stats
     sensory_memory.set(_RETRY_STATS_CONTEXT, retry_stats_context)
 
 
@@ -143,7 +143,7 @@ def _get_retry_stats(
     """Get accumulated retry stats for a given initial request."""
     retry_stats_context = sensory_memory.get(_RETRY_STATS_CONTEXT) or {}
     return retry_stats_context.get(
-        initial_request_id,
+        str(initial_request_id),
         {
             "total_retry_count": 0,
             "total_retry_wait_sec": 0,
@@ -432,17 +432,17 @@ async def process_chat_request_or_tool_response(
     """
     # To avoid https://github.com/alibaba/pemja/issues/88, we log a message here.
     logging.debug("Processing chat request asynchronously.")
-    if isinstance(event, ChatRequestEvent):
-        await _process_chat_request(event, ctx)
-    elif isinstance(event, ToolResponseEvent):
-        await _process_tool_response(event, ctx)
+    if event.type == ChatRequestEvent.EVENT_TYPE:
+        await _process_chat_request(ChatRequestEvent.from_event(event), ctx)
+    elif event.type == ToolResponseEvent.EVENT_TYPE:
+        await _process_tool_response(ToolResponseEvent.from_event(event), ctx)
 
 
 CHAT_MODEL_ACTION = Action(
     name="chat_model_action",
     exec=PythonFunction.from_callable(process_chat_request_or_tool_response),
     listen_event_types=[
-        f"{ChatRequestEvent.__module__}.{ChatRequestEvent.__name__}",
-        f"{ToolResponseEvent.__module__}.{ToolResponseEvent.__name__}",
+        ChatRequestEvent.EVENT_TYPE,
+        ToolResponseEvent.EVENT_TYPE,
     ],
 )

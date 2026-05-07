@@ -17,11 +17,11 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.MapperFeature;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.actions.Action;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.util.Preconditions;
 
 import javax.annotation.Nonnull;
@@ -34,7 +34,11 @@ import java.util.UUID;
 /** Utility class for action state related operations. */
 public class ActionStateUtil {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final JsonMapper MAPPER =
+            JsonMapper.builder()
+                    .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
+                    .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
+                    .build();
     private static final String KEY_SEPARATOR = "_";
 
     public static String generateKey(
@@ -59,20 +63,8 @@ public class ActionStateUtil {
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {
-        if (event instanceof PythonEvent) {
-            PythonEvent pythonEvent = (PythonEvent) event;
-            return String.valueOf(UUID.nameUUIDFromBytes(pythonEvent.getEvent()));
-        } else if (event instanceof InputEvent) {
-            InputEvent inputEvent = (InputEvent) event;
-            byte[] inputEventBytes =
-                    MAPPER.writeValueAsBytes(
-                            new Object[] {inputEvent.getInput(), inputEvent.getAttributes()});
-            return String.valueOf(UUID.nameUUIDFromBytes(inputEventBytes));
-        } else {
-            return String.valueOf(
-                    UUID.nameUUIDFromBytes(
-                            event.getAttributes().toString().getBytes(StandardCharsets.UTF_8)));
-        }
+        return String.valueOf(
+                UUID.nameUUIDFromBytes(MAPPER.writeValueAsBytes(event.getAttributes())));
     }
 
     private static String generateUUIDForAction(Action action) throws IOException {

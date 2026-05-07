@@ -21,7 +21,7 @@ from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import action, chat_model_setup, tool
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -73,10 +73,10 @@ class MyAgent(Agent):
         """
         return input + " mock tools just for testing."
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def mock_action(event: InputEvent, ctx: RunnerContext) -> None:
-        input = event.input
+    def mock_action(event: Event, ctx: RunnerContext) -> None:
+        input = InputEvent.from_event(event).input
         mock_chat_model = ctx.get_resource(
             type=ResourceType.CHAT_MODEL, name="mock_chat_model"
         )

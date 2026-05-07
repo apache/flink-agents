@@ -17,6 +17,7 @@
 #################################################################################
 """E2E tests for durable_execute() method in Flink execution environment."""
 
+import json
 import os
 import sysconfig
 from pathlib import Path
@@ -84,7 +85,7 @@ def test_durable_execute_basic_flink(tmp_path: Path) -> None:
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    output_datastream.map(lambda x: x.model_dump_json(), Types.STRING()).add_sink(
+    output_datastream.map(lambda x: json.dumps(x), Types.STRING()).add_sink(
         StreamingFileSink.for_row_format(
             base_path=str(result_dir.absolute()),
             encoder=Encoder.simple_string_encoder(),
@@ -136,7 +137,7 @@ def test_durable_execute_multiple_calls_flink(tmp_path: Path) -> None:
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    output_datastream.map(lambda x: x.model_dump_json(), Types.STRING()).add_sink(
+    output_datastream.map(lambda x: json.dumps(x), Types.STRING()).add_sink(
         StreamingFileSink.for_row_format(
             base_path=str(result_dir.absolute()),
             encoder=Encoder.simple_string_encoder(),
@@ -188,7 +189,7 @@ def test_durable_execute_with_async_flink(tmp_path: Path) -> None:
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    output_datastream.map(lambda x: x.model_dump_json(), Types.STRING()).add_sink(
+    output_datastream.map(lambda x: json.dumps(x), Types.STRING()).add_sink(
         StreamingFileSink.for_row_format(
             base_path=str(result_dir.absolute()),
             encoder=Encoder.simple_string_encoder(),
@@ -240,7 +241,7 @@ def test_durable_execute_async_exception_flink(tmp_path: Path) -> None:
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    output_datastream.map(lambda x: x.model_dump_json(), Types.STRING()).add_sink(
+    output_datastream.map(lambda x: json.dumps(x), Types.STRING()).add_sink(
         StreamingFileSink.for_row_format(
             base_path=str(result_dir.absolute()),
             encoder=Encoder.simple_string_encoder(),

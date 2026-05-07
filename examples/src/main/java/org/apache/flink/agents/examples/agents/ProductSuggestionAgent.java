@@ -20,6 +20,7 @@ package org.apache.flink.agents.examples.agents;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -71,9 +72,10 @@ public class ProductSuggestionAgent extends Agent {
     }
 
     /** Process input event. */
-    @Action(listenEvents = {InputEvent.class})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
-        String input = (String) event.getInput();
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        String input = (String) inputEvent.getInput();
 
         ProductReviewSummary summary = MAPPER.readValue(input, ProductReviewSummary.class);
 
@@ -91,10 +93,10 @@ public class ProductSuggestionAgent extends Agent {
     }
 
     /** Process chat response event. */
-    @Action(listenEvents = {ChatResponseEvent.class})
-    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
-            throws Exception {
-        JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    public static void processChatResponse(Event event, RunnerContext ctx) throws Exception {
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getContent());
         JsonNode suggestionsNode = jsonNode.findValue("suggestion_list");
         List<String> suggestions = new ArrayList<>();
         if (suggestionsNode.isArray()) {

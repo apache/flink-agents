@@ -42,12 +42,11 @@ def raise_exception(msg: str) -> None:
 class AgentWithDurableExecute(Agent):
     """Agent that uses synchronous durable_execute() method."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event using durable_execute()."""
-        input_val = event.input
-        # Use synchronous durable execute
+        input_val = InputEvent.from_event(event).input
         result = ctx.durable_execute(slow_computation, input_val, 10)
         ctx.send_event(OutputEvent(output=result))
 
@@ -55,11 +54,11 @@ class AgentWithDurableExecute(Agent):
 class AgentWithMultipleDurableExecute(Agent):
     """Agent that makes multiple durable_execute() calls."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event with multiple durable_execute() calls."""
-        input_val = event.input
+        input_val = InputEvent.from_event(event).input
         result1 = ctx.durable_execute(slow_computation, input_val, 5)
         result2 = ctx.durable_execute(multiply, result1, 2)
         ctx.send_event(OutputEvent(output=result2))
@@ -68,11 +67,11 @@ class AgentWithMultipleDurableExecute(Agent):
 class AgentWithDurableExecuteAndAsync(Agent):
     """Agent that uses both durable_execute() and durable_execute_async()."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     async def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event using both durable_execute() and durable_execute_async()."""
-        input_val = event.input
+        input_val = InputEvent.from_event(event).input
         # Use synchronous durable execute
         sync_result = ctx.durable_execute(slow_computation, input_val, 5)
         # Use async durable execute
@@ -83,11 +82,11 @@ class AgentWithDurableExecuteAndAsync(Agent):
 class AgentWithDurableExecuteException(Agent):
     """Agent that uses durable_execute() with a function that raises an exception."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event where durable_execute() raises an exception."""
-        input_val = event.input
+        input_val = InputEvent.from_event(event).input
         try:
             ctx.durable_execute(raise_exception, f"Test error: {input_val}")
         except ValueError as e:
@@ -97,11 +96,11 @@ class AgentWithDurableExecuteException(Agent):
 class AgentWithKwargs(Agent):
     """Agent that uses durable_execute() with keyword arguments."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event using durable_execute() with kwargs."""
-        input_val = event.input
+        input_val = InputEvent.from_event(event).input
         result = ctx.durable_execute(slow_computation, x=input_val, y=20)
         ctx.send_event(OutputEvent(output=result))
 
