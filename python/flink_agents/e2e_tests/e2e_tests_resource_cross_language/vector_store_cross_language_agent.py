@@ -181,9 +181,7 @@ class VectorStoreCrossLanguageAgent(Agent):
                 # ES is eventually consistent; allow a few retries.
                 retry_time = 0
                 filtered_docs = vector_store.query(filtered_query).documents
-                while (
-                    len(filtered_docs) != 1 and retry_time < MAX_RETRIES_TIMES
-                ):
+                while len(filtered_docs) != 1 and retry_time < MAX_RETRIES_TIMES:
                     retry_time += 1
                     time.sleep(2)
                     filtered_docs = vector_store.query(filtered_query).documents

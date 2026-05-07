@@ -693,13 +693,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         && config.get(LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP) != null
                         && config.get(LongTermMemoryOptions.Mem0.VECTOR_STORE) != null;
 
+        boolean containJavaAction =
+                agentPlan.getActions().values().stream()
+                        .anyMatch(action -> action.getExec() instanceof JavaFunction);
+
         // Mem0 will call chat model and embedding model in its own thread executor, this behavior
         // is same as the async execution for cross-language resources, and also requires the fix
         // in pemja.
-        if (configured && !supportAsync()) {
+        if (configured && containJavaAction && !supportAsync()) {
             throw new RuntimeException(
                     String.format(
-                            "Using Mem0 based Long-Term Memory in java requires flink version higher"
+                            "Using Mem0 based Long-Term Memory in java requires flink version higher "
                                     + "than %s. You can upgrade flink or use python api.",
                             requiredVersions));
         }

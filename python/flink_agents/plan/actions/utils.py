@@ -27,7 +27,7 @@ from packaging import version as pkg_version
 # The async execution for cross language resource
 # is not supported.
 UNSUPPORTED_RANGES: List[Tuple[str, str]] = [
-    ("1.0.0", "1.20.3"),
+    ("1.0.0", "1.20.4"),
     ("2.0.0", "2.0.1"),
     ("2.1.0", "2.1.1"),
     ("2.2.0", "2.2.0"),

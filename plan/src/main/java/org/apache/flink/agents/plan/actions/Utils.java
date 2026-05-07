@@ -30,7 +30,7 @@ public final class Utils {
     private static final Logger LOG = LoggerFactory.getLogger(Utils.class);
     private static final String DEFAULT_VALUE = "<unknown>";
     public static final List<String> requiredVersions =
-            List.of("1.20.3", "2.0.1", "2.1.1", "2.2.0");
+            List.of("1.20.4", "2.0.1", "2.1.1", "2.2.0");
 
     static final Versions INSTANCE = new Versions();
 
