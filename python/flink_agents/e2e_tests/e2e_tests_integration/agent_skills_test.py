@@ -111,8 +111,8 @@ class SkillTestAgent(Agent):
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         input_event = InputEvent.from_event(event)
-        if isinstance(input_event.input, Operation):
-            input: Operation = input_event.input
+        if isinstance(input_event.input, dict):
+            input: Operation = Operation(**input_event.input)
             ctx.send_event(
                 ChatRequestEvent(
                     model="openai_setup",
