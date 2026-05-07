@@ -71,6 +71,8 @@ public class Mem0LongTermMemoryAgent extends Agent {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    public static final String MyEvent = "MyEvent";
+
     /** Per-name fact emitted by the test source. */
     public static class ItemData {
         public String name;
@@ -89,25 +91,6 @@ public class Mem0LongTermMemoryAgent extends Agent {
         @Override
         public String getKey(ItemData value) {
             return value.name;
-        }
-    }
-
-    /** Carrier event — passes the in-progress {@code Record} between the two actions. */
-    public static class MyEvent extends Event {
-        private Map<String, Object> value;
-
-        public MyEvent() {}
-
-        public MyEvent(Map<String, Object> value) {
-            this.value = value;
-        }
-
-        public Map<String, Object> getValue() {
-            return value;
-        }
-
-        public void setValue(Map<String, Object> value) {
-            this.value = value;
         }
     }
 
@@ -169,9 +152,10 @@ public class Mem0LongTermMemoryAgent extends Agent {
         return builder.build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void addItems(InputEvent event, RunnerContext ctx) throws Exception {
-        ItemData input = (ItemData) event.getInput();
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void addItems(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        ItemData input = (ItemData) inputEvent.getInput();
         BaseLongTermMemory ltm = ctx.getLongTermMemory();
 
         String timestampBeforeAdd = Instant.now().toString();
@@ -205,12 +189,13 @@ public class Mem0LongTermMemoryAgent extends Agent {
         record.put("count", count);
         record.put("timestamp_before_add", timestampBeforeAdd);
         record.put("timestamp_after_add", timestampAfterAdd);
-        ctx.sendEvent(new MyEvent(record));
+        ctx.sendEvent(new Event(MyEvent, Map.of("value", record)));
     }
 
-    @Action(listenEvents = {MyEvent.class})
-    public static void retrieveItems(MyEvent event, RunnerContext ctx) throws Exception {
-        Map<String, Object> record = event.getValue();
+    @SuppressWarnings("unchecked")
+    @Action(listenEventTypes = {MyEvent})
+    public static void retrieveItems(Event event, RunnerContext ctx) throws Exception {
+        Map<String, Object> record = (Map<String, Object>) event.getAttr("value");
         record.put("timestamp_second_action", Instant.now().toString());
 
         MemorySet memorySet = ctx.getLongTermMemory().getMemorySet(MEMORY_SET_NAME);
