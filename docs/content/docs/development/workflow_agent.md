@@ -508,7 +508,12 @@ For simple cases, users can pass data between actions directly using `Event` wit
 {{< tab "Python" >}}
 ```python
 # Send a unified event from one action
-ctx.send_event(Event(type="my_event", attributes={"field1": "test", "field2": 42}))
+@action(InputEvent.EVENT_TYPE)
+@staticmethod
+def create_my_event(event: Event, ctx: RunnerContext) -> None:
+    ctx.send_event(
+        Event(type="my_event", attributes={"field1": "test", "field2": 42})
+    )
 
 # Consume it in another action
 @action("my_event")
@@ -522,7 +527,10 @@ def handle_my_event(event: Event, ctx: RunnerContext) -> None:
 {{< tab "Java" >}}
 ```java
 // Send a unified event from one action
-ctx.sendEvent(new Event("my_event", Map.of("field1", "test", "field2", 42)));
+@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+public static void createMyEvent(Event event, RunnerContext ctx) {
+    ctx.sendEvent(new Event("my_event", Map.of("field1", "test", "field2", 42)));
+}
 
 // Consume it in another action
 @Action(listenEventTypes = {"my_event"})
