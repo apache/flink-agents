@@ -74,6 +74,7 @@ import java.util.function.BiFunction;
  *   public static ResourceDesc openAIResponses() {
  *     return ResourceDescriptor.Builder.newBuilder(OpenAIResponsesModelConnection.class.getName())
  *             .addInitialArgument("api_key", System.getenv("OPENAI_API_KEY"))
+ *             .addInitialArgument("api_base_url", System.getenv("OPENAI_API_URL))
  *             .addInitialArgument("timeout", 120)
  *             .addInitialArgument("max_retries", 3)
  *             .build();

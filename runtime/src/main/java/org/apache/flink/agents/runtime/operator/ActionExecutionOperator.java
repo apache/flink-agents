@@ -70,6 +70,7 @@ import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.python.env.PythonDependencyInfo;
 import org.apache.flink.runtime.state.KeyGroupRange;
@@ -99,6 +100,7 @@ import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
 import java.lang.reflect.Field;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -276,6 +278,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         "shortTermMemory",
                         TypeInformation.of(String.class),
                         TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
+        maybeEnableShortTermMemoryTTL(shortTermMemStateDescriptor);
         shortTermMemState = getRuntimeContext().getMapState(shortTermMemStateDescriptor);
 
         resourceCache = new ResourceCache(agentPlan.getResourceProviders());
@@ -343,6 +346,36 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // and {@link tryProcessActionTaskForKey} mails might be lost,
         // it is necessary to reprocess all keys to ensure correctness.
         tryResumeProcessActionTasks();
+    }
+
+    /**
+     * When {@link AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL_MS} is positive, attaches
+     * Flink {@link StateTtlConfig} to the short-term memory {@link MapStateDescriptor}. Unset,
+     * null, or non-positive values disable TTL (Flink does not allow zero/negative TTL). Only
+     * {@code shortTermMemory} is affected; sensory memory has no TTL.
+     */
+    private void maybeEnableShortTermMemoryTTL(MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> descriptor) {
+        Long ttlMs =
+                agentPlan.getConfig().get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS);
+        if (ttlMs == null || ttlMs <= 0) {
+            return;
+        }
+
+        StateTtlConfig.UpdateType updateType = agentPlan
+                .getConfig()
+                .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE);
+
+        StateTtlConfig.StateVisibility stateVisibility = agentPlan
+                .getConfig()
+                .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY);
+
+        StateTtlConfig ttlConfig =
+                StateTtlConfig.newBuilder(Duration.ofMillis(ttlMs))
+                        .setUpdateType(updateType)
+                        .setStateVisibility(stateVisibility)
+                        .cleanupFullSnapshot()
+                        .build();
+        descriptor.enableTimeToLive(ttlConfig);
     }
 
     private void initEventLogger(StreamingRuntimeContext runtimeContext) throws Exception {
