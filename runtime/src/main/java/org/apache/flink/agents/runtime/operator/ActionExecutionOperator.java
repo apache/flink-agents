@@ -68,9 +68,9 @@ import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.python.env.PythonDependencyInfo;
 import org.apache.flink.runtime.state.KeyGroupRange;
@@ -349,25 +349,27 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     /**
-     * When {@link AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL_MS} is positive, attaches
-     * Flink {@link StateTtlConfig} to the short-term memory {@link MapStateDescriptor}. Unset,
-     * null, or non-positive values disable TTL (Flink does not allow zero/negative TTL). Only
-     * {@code shortTermMemory} is affected; sensory memory has no TTL.
+     * When {@link AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL_MS} is positive, attaches Flink
+     * {@link StateTtlConfig} to the short-term memory {@link MapStateDescriptor}. Unset, null, or
+     * non-positive values disable TTL (Flink does not allow zero/negative TTL).
      */
-    private void maybeEnableShortTermMemoryTTL(MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> descriptor) {
+    private void maybeEnableShortTermMemoryTTL(
+            MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> descriptor) {
         Long ttlMs =
                 agentPlan.getConfig().get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS);
         if (ttlMs == null || ttlMs <= 0) {
             return;
         }
 
-        StateTtlConfig.UpdateType updateType = agentPlan
-                .getConfig()
-                .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE);
+        StateTtlConfig.UpdateType updateType =
+                agentPlan
+                        .getConfig()
+                        .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE);
 
-        StateTtlConfig.StateVisibility stateVisibility = agentPlan
-                .getConfig()
-                .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY);
+        StateTtlConfig.StateVisibility stateVisibility =
+                agentPlan
+                        .getConfig()
+                        .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY);
 
         StateTtlConfig ttlConfig =
                 StateTtlConfig.newBuilder(Duration.ofMillis(ttlMs))

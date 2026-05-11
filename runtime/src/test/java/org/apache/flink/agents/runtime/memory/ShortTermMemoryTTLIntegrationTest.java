@@ -1,60 +1,75 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
-import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.agents.plan.AgentConfiguration;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Integration test for Short-Term Memory TTL functionality.
  */
-public class ShortTermMemoryTTLIntegrationTest {
+class ShortTermMemoryTTLIntegrationTest {
 
-    /**
-     * Test Agent that tracks visit counts in short-term memory.
-     */
+    private static final String MEMORY_KEY = "test_key";
+
+    private static final class TestInput {
+        public String eventKey;
+        public long sleepMs;
+
+        private TestInput() {}
+
+        private TestInput(String eventKey, long sleepMs) {
+            this.eventKey = eventKey;
+            this.sleepMs = sleepMs;
+        }
+    }
+
     public static class TTLTestAgent extends Agent {
 
-        public static long ttlMs;
-
-        public TTLTestAgent() {
-        }
-
-        public TTLTestAgent(long ttlMs) {
-            super();
-            TTLTestAgent.ttlMs = ttlMs;
-        }
-
         @Action(listenEvents = {InputEvent.class})
-        public static void input(org.apache.flink.agents.api.Event event, RunnerContext ctx) throws Exception {
+        public static void input(org.apache.flink.agents.api.Event event, RunnerContext ctx)
+                throws Exception {
             InputEvent inputEvent = (InputEvent) event;
-            String inputData = (String) inputEvent.getInput();
+            TestInput input = (TestInput) inputEvent.getInput();
 
-            MemoryObject stm = ctx.getShortTermMemory();
+            MemoryObject shortTermMemory = ctx.getShortTermMemory();
+            MemoryObject memoryObject = shortTermMemory.get(input.eventKey);
 
-            MemoryObject memoryObj = stm.get(inputData);
             Object existingValue = null;
             int currentCount = 0;
-
-            if (memoryObj != null && !memoryObj.isNestedObject()) {
-                existingValue = memoryObj.getValue();
-            }
-
-            if (existingValue != null) {
+            if (memoryObject != null && !memoryObject.isNestedObject()) {
+                existingValue = memoryObject.getValue();
                 if (existingValue instanceof Integer) {
                     currentCount = (Integer) existingValue;
                 } else if (existingValue instanceof Number) {
@@ -62,115 +77,56 @@ public class ShortTermMemoryTTLIntegrationTest {
                 }
             }
 
-            int newCount = currentCount + 1;
-            stm.set(inputData, newCount);
-
-            String output = String.format(
-                    "%s|%s",
-                    inputData,
-                    (existingValue == null ? "NEW" : "EXISTING")
-            );
-
-            Thread.sleep(ttlMs);
-
-            ctx.sendEvent(new OutputEvent(output));
+            shortTermMemory.set(input.eventKey, currentCount + 1);
+            Thread.sleep(input.sleepMs);
+            ctx.sendEvent(
+                    new OutputEvent(
+                            input.eventKey + "|" + (existingValue == null ? "NEW" : "EXISTING")));
         }
     }
 
     @Test
     void testTTLConfigurationNotApplied() throws Exception {
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(1);
+        List<String> results = runScenario(1000L, 0L);
 
-        AgentsExecutionEnvironment agentEnv = AgentsExecutionEnvironment.getExecutionEnvironment(env);
-        AgentConfiguration agentsConfig = (AgentConfiguration) agentEnv.getConfig();
-
-        long ttlMs = 2000L;
-        agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, ttlMs);
-        agentsConfig.set(
-                AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,
-                StateTtlConfig.UpdateType.OnCreateAndWrite
-        );
-        agentsConfig.set(
-                AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY,
-                StateTtlConfig.StateVisibility.NeverReturnExpired
-        );
-
-        // Create test data - send events with delays
-        List<String> testData = new ArrayList<>();
-        testData.add("event1");
-        testData.add("event2");
-        testData.add("event1");
-
-        DataStream<String> inputStream = env.fromCollection(testData);
-
-        DataStream<Object> outputStream = agentEnv
-                .fromDataStream(inputStream, x -> "test_key") // Fixed key
-                .apply(new TTLTestAgent())
-                .toDataStream();
-
-        List<String> results = new ArrayList<>();
-        outputStream.map(Object::toString).executeAndCollect().forEachRemaining(results::add);
-
-        System.out.println(results);
-
-        assertFalse(results.isEmpty(), "Should have produced output");
-        assertEquals(3, results.size(), "Should have exactly 3 outputs");
-        String result1 = results.get(0);
-        String result2 = results.get(1);
-        String result3 = results.get(2);
-        assertEquals("event1|NEW", result1, "error output");
-        assertEquals("event2|NEW", result2, "error output");
-        assertEquals("event1|EXISTING", result3, "error output");
-
-
+        assertEquals(List.of("event1|NEW", "event2|NEW", "event1|EXISTING"), results);
     }
 
     @Test
     void testTTLConfigurationApplied() throws Exception {
+        List<String> results = runScenario(1000L, 2000L);
+
+        assertEquals(List.of("event1|NEW", "event2|NEW", "event1|NEW"), results);
+    }
+
+    private static List<String> runScenario(long ttlMs, long sleepMs) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
-        AgentsExecutionEnvironment agentEnv = AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        AgentsExecutionEnvironment agentEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
         AgentConfiguration agentsConfig = (AgentConfiguration) agentEnv.getConfig();
-
-        long ttlMs = 1000L;
         agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, ttlMs);
         agentsConfig.set(
                 AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,
-                StateTtlConfig.UpdateType.OnCreateAndWrite
-        );
+                StateTtlConfig.UpdateType.OnCreateAndWrite);
         agentsConfig.set(
                 AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY,
-                StateTtlConfig.StateVisibility.NeverReturnExpired
-        );
+                StateTtlConfig.StateVisibility.NeverReturnExpired);
 
-        // Create test data - send events with delays
-        List<String> testData = new ArrayList<>();
-        testData.add("event1");
-        testData.add("event2");
-        testData.add("event1");
+        List<TestInput> testData = new ArrayList<>();
+        testData.add(new TestInput("event1", sleepMs));
+        testData.add(new TestInput("event2", sleepMs));
+        testData.add(new TestInput("event1", sleepMs));
 
-        DataStream<String> inputStream = env.fromCollection(testData);
-
-        DataStream<Object> outputStream = agentEnv
-                .fromDataStream(inputStream, x -> "test_key") // Fixed key
-                .apply(new TTLTestAgent(ttlMs + 1000))
-                .toDataStream();
+        DataStream<TestInput> inputStream = env.fromCollection(testData);
+        DataStream<Object> outputStream =
+                agentEnv.fromDataStream(inputStream, x -> MEMORY_KEY)
+                        .apply(new TTLTestAgent())
+                        .toDataStream();
 
         List<String> results = new ArrayList<>();
         outputStream.map(Object::toString).executeAndCollect().forEachRemaining(results::add);
-
-        System.out.println(results);
-
-        assertFalse(results.isEmpty(), "Should have produced output");
-        assertEquals(3, results.size(), "Should have exactly 3 outputs");
-        String result1 = results.get(0);
-        String result2 = results.get(1);
-        String result3 = results.get(2);
-        assertEquals("event1|NEW", result1, "error output");
-        assertEquals("event2|NEW", result2, "error output");
-        assertEquals("event1|NEW", result3, "error output");
+        return results;
     }
-
 }

@@ -49,27 +49,20 @@ public class AgentExecutionOptions {
     public static final ConfigOption<Boolean> RAG_ASYNC =
             new ConfigOption<>("rag.async", Boolean.class, true);
 
-    /**
-     * TTL duration in milliseconds for short-term memory {@code MapState}. When unset, null, or
-     * less than or equal to zero, no {@link org.apache.flink.api.common.state.StateTtlConfig} is
-     * applied (Flink TTL requires a positive duration). When positive, per-entry TTL is enabled with
-     * {@link #SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE} and {@link
-     * #SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY}.
-     */
     public static final ConfigOption<Long> SHORT_TERM_MEMORY_STATE_TTL_MS =
             new ConfigOption<>("short-term-memory.state-ttl.ms", Long.class, 0L);
 
     public static final ConfigOption<StateTtlConfig.UpdateType>
             SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE =
-            new ConfigOption<>(
-                    "short-term-memory.state-ttl.update-type",
-                    StateTtlConfig.UpdateType.class,
-                    StateTtlConfig.UpdateType.OnReadAndWrite);
+                    new ConfigOption<>(
+                            "short-term-memory.state-ttl.update-type",
+                            StateTtlConfig.UpdateType.class,
+                            StateTtlConfig.UpdateType.OnReadAndWrite);
 
     public static final ConfigOption<StateTtlConfig.StateVisibility>
             SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY =
-            new ConfigOption<>(
-                    "short-term-memory.state-ttl.visibility",
-                    StateTtlConfig.StateVisibility.class,
-                    StateTtlConfig.StateVisibility.NeverReturnExpired);
+                    new ConfigOption<>(
+                            "short-term-memory.state-ttl.visibility",
+                            StateTtlConfig.StateVisibility.class,
+                            StateTtlConfig.StateVisibility.NeverReturnExpired);
 }
