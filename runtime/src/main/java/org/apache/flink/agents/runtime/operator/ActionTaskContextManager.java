@@ -232,12 +232,8 @@ class ActionTaskContextManager implements AutoCloseable {
         actionTask.setRunnerContext(context);
     }
 
-    @Nullable
-    RunnerContextImpl.MemoryContext getMemoryContext(ActionTask actionTask) {
-        return actionTaskMemoryContexts.get(actionTask);
-    }
-
-    void putMemoryContext(ActionTask actionTask, RunnerContextImpl.MemoryContext memoryContext) {
+    private void putMemoryContext(
+            ActionTask actionTask, RunnerContextImpl.MemoryContext memoryContext) {
         actionTaskMemoryContexts.put(actionTask, memoryContext);
     }
 
