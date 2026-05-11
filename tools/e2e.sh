@@ -84,6 +84,15 @@ function run_resource_cross_language_test_in_python {
     cd "$python_dir" && uv run --no-sync pytest flink_agents -s -k "e2e_tests_resource_cross_language"
 }
 
+function run_resource_name_consistency_check {
+  if [[ ! -d "$python_dir" ]]; then
+    echo "Error: Python directory '$python_dir' does not exist. Skipping test."
+    return 1
+  fi
+
+  cd "$python_dir" && uv run --no-sync python ../e2e-test/test-scripts/check_resource_consistency.py
+}
+
 export TOTAL=0
 export PASSED=0
 
@@ -152,6 +161,7 @@ run_test "Resource Cross-Language end-to-end test in Java" "run_resource_cross_l
 run_test "Resource Cross-Language end-to-end test in Python" "run_resource_cross_language_test_in_python"
 run_test "Agent plan compatibility end-to-end test" "run_agent_plan_compatibility_test"
 run_test "Cross-Language Config Option end-to-end test" "run_cross_language_config_test"
+run_test "ResourceName Java vs Python consistency check" "run_resource_name_consistency_check"
 
 # Clean up temporary directory
 if [[ -d "$tempdir" ]]; then

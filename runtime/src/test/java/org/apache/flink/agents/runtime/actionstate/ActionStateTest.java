@@ -91,6 +91,20 @@ public class ActionStateTest {
     }
 
     @Test
+    public void testReplaceCallResult() {
+        ActionState state = new ActionState(new InputEvent("test"));
+        CallResult original = new CallResult("func1", "digest1", "result1".getBytes());
+        CallResult replacement = CallResult.pending("func1", "digest1");
+
+        state.addCallResult(original);
+        state.replaceCallResult(0, replacement);
+
+        assertEquals(1, state.getCallResultCount());
+        assertEquals(replacement, state.getCallResult(0));
+        assertTrue(state.getCallResult(0).isPending());
+    }
+
+    @Test
     public void testGetCallResultOutOfBounds() {
         ActionState state = new ActionState(new InputEvent("test"));
 

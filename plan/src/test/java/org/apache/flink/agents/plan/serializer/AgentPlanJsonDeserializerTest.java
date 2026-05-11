@@ -47,24 +47,23 @@ public class AgentPlanJsonDeserializerTest {
         assertTrue(agentPlan.getActions().containsKey("first_action"));
         Action firstAction = agentPlan.getActions().get("first_action");
         assertInstanceOf(JavaFunction.class, firstAction.getExec());
-        assertEquals(List.of(InputEvent.class.getName()), firstAction.getListenEventTypes());
+        assertEquals(List.of(InputEvent.EVENT_TYPE), firstAction.getListenEventTypes());
 
         // Check the second action
         assertTrue(agentPlan.getActions().containsKey("second_action"));
         Action secondAction = agentPlan.getActions().get("second_action");
         assertInstanceOf(JavaFunction.class, secondAction.getExec());
         assertEquals(
-                List.of(InputEvent.class.getName(), MyEvent.class.getName()),
+                List.of(InputEvent.EVENT_TYPE, MyEvent.EVENT_TYPE),
                 secondAction.getListenEventTypes());
 
         // Check event trigger actions
         assertEquals(2, agentPlan.getActionsByEvent().size());
-        assertTrue(agentPlan.getActionsByEvent().containsKey(InputEvent.class.getName()));
+        assertTrue(agentPlan.getActionsByEvent().containsKey(InputEvent.EVENT_TYPE));
         assertEquals(
                 List.of(firstAction, secondAction),
-                agentPlan.getActionsByEvent().get(InputEvent.class.getName()));
-        assertEquals(
-                List.of(secondAction), agentPlan.getActionsByEvent().get(MyEvent.class.getName()));
+                agentPlan.getActionsByEvent().get(InputEvent.EVENT_TYPE));
+        assertEquals(List.of(secondAction), agentPlan.getActionsByEvent().get(MyEvent.EVENT_TYPE));
 
         // Check the flink agent config
         Map<String, Object> configData = agentPlan.getConfigData();
@@ -75,7 +74,13 @@ public class AgentPlanJsonDeserializerTest {
         assertEquals("v1", configData.get("key4"));
     }
 
-    private static class MyEvent extends Event {}
+    private static class MyEvent extends Event {
+        public static final String EVENT_TYPE = "MyEvent";
+
+        public MyEvent() {
+            super(EVENT_TYPE);
+        }
+    }
 
     private static class MyAction extends Action {
 
@@ -90,7 +95,7 @@ public class AgentPlanJsonDeserializerTest {
                             MyAction.class.getName(),
                             "doNothing",
                             new Class[] {Event.class, RunnerContext.class}),
-                    List.of(InputEvent.class.getName(), MyEvent.class.getName()));
+                    List.of(InputEvent.EVENT_TYPE, MyEvent.EVENT_TYPE));
         }
     }
 }

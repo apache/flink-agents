@@ -17,33 +17,33 @@
  */
 package org.apache.flink.agents.api.memory;
 
+import javax.annotation.Nullable;
+
 import java.time.LocalDateTime;
 import java.util.Map;
 
+/** Represents a long term memory item. */
 public class MemorySetItem {
     private final String memorySetName;
     private final String id;
-    private final Object value;
-    private final boolean compacted;
-    private final Object createdTime;
-    private final LocalDateTime lastAccessedTime;
-    private final Map<String, Object> metadata;
+    private final String value;
+    private final @Nullable LocalDateTime createdAt;
+    private final @Nullable LocalDateTime updatedAt;
+    private final @Nullable Map<String, Object> additionalMetadata;
 
     public MemorySetItem(
             String memorySetName,
             String id,
-            Object value,
-            boolean compacted,
-            Object createdTime,
-            LocalDateTime lastAccessedTime,
-            Map<String, Object> metadata) {
+            String value,
+            @Nullable LocalDateTime createdAt,
+            @Nullable LocalDateTime updatedAt,
+            @Nullable Map<String, Object> additionalMetadata) {
         this.memorySetName = memorySetName;
         this.id = id;
         this.value = value;
-        this.compacted = compacted;
-        this.createdTime = createdTime;
-        this.lastAccessedTime = lastAccessedTime;
-        this.metadata = metadata;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+        this.additionalMetadata = additionalMetadata;
     }
 
     public String getMemorySetName() {
@@ -54,41 +54,19 @@ public class MemorySetItem {
         return id;
     }
 
-    public Object getValue() {
+    public String getValue() {
         return value;
     }
 
-    public boolean isCompacted() {
-        return compacted;
+    public @Nullable LocalDateTime getCreatedAt() {
+        return createdAt;
     }
 
-    public Object getCreatedTime() {
-        return createdTime;
+    public @Nullable LocalDateTime getUpdatedAt() {
+        return updatedAt;
     }
 
-    public LocalDateTime getLastAccessedTime() {
-        return lastAccessedTime;
-    }
-
-    public Map<String, Object> getMetadata() {
-        return metadata;
-    }
-
-    public static class DateTimeRange {
-        private final LocalDateTime start;
-        private final LocalDateTime end;
-
-        public DateTimeRange(LocalDateTime start, LocalDateTime end) {
-            this.start = start;
-            this.end = end;
-        }
-
-        public LocalDateTime getStart() {
-            return start;
-        }
-
-        public LocalDateTime getEnd() {
-            return end;
-        }
+    public @Nullable Map<String, Object> getAdditionalMetadata() {
+        return additionalMetadata;
     }
 }

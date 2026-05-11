@@ -36,13 +36,13 @@ import java.util.function.BiFunction;
  * management operations to the underlying Python implementation.
  *
  * <p>Unlike {@link PythonVectorStore}, this implementation provides additional collection
- * management features, allowing for operations such as creating, listing, and deleting collections
- * within the vector store.
+ * management features, allowing for operations such as creating and deleting collections within the
+ * vector store.
  */
 public class PythonCollectionManageableVectorStore extends PythonVectorStore
         implements CollectionManageableVectorStore {
     /**
-     * Creates a new PythonEmbeddingModelConnection.
+     * Creates a new PythonCollectionManageableVectorStore.
      *
      * @param adapter The Python resource adapter (required by PythonResourceProvider's
      *     reflection-based instantiation but not used directly in this implementation)
@@ -59,27 +59,19 @@ public class PythonCollectionManageableVectorStore extends PythonVectorStore
     }
 
     @Override
-    public Collection getOrCreateCollection(String name, Map<String, Object> metadata)
+    public void createCollectionIfNotExists(String name, Map<String, Object> kwargs)
             throws Exception {
-        Map<String, Object> kwargs = new HashMap<>();
-        kwargs.put("name", name);
-        if (metadata != null && !metadata.isEmpty()) {
-            kwargs.put("metadata", metadata);
+        Map<String, Object> merged = new HashMap<>();
+        merged.put("name", name);
+        if (kwargs != null) {
+            merged.putAll(kwargs);
         }
 
-        Object result = this.adapter.callMethod(vectorStore, "get_or_create_collection", kwargs);
-        return adapter.fromPythonCollection((PyObject) result);
+        this.adapter.callMethod(vectorStore, "create_collection_if_not_exists", merged);
     }
 
     @Override
-    public Collection getCollection(String name) throws Exception {
-        Object result = this.vectorStore.invokeMethod("get_collection", name);
-        return adapter.fromPythonCollection((PyObject) result);
-    }
-
-    @Override
-    public Collection deleteCollection(String name) throws Exception {
-        Object result = this.vectorStore.invokeMethod("delete_collection", name);
-        return adapter.fromPythonCollection((PyObject) result);
+    public void deleteCollection(String name) throws Exception {
+        this.vectorStore.invokeMethod("delete_collection", name);
     }
 }

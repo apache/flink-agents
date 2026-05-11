@@ -26,6 +26,7 @@ import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
+import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
@@ -106,7 +107,8 @@ class ActionTaskContextManager implements AutoCloseable {
             FlinkAgentsMetricGroupImpl metricGroup,
             String jobIdentifier,
             Runnable mailboxThreadChecker,
-            PythonRunnerContextImpl pythonRunnerContext) {
+            PythonRunnerContextImpl pythonRunnerContext,
+            @Nullable InteranlBaseLongTermMemory longTermMemory) {
         if (isJava) {
             if (runnerContext == null) {
                 if (continuationActionExecutor == null) {
@@ -121,6 +123,9 @@ class ActionTaskContextManager implements AutoCloseable {
                                 resourceCache,
                                 jobIdentifier,
                                 continuationActionExecutor);
+                if (longTermMemory != null) {
+                    runnerContext.setLongTermMemory(longTermMemory);
+                }
             }
             return runnerContext;
         } else {
@@ -172,7 +177,8 @@ class ActionTaskContextManager implements AutoCloseable {
             Runnable mailboxThreadChecker,
             MapState<String, MemoryObjectImpl.MemoryItem> sensoryMemState,
             MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState,
-            PythonRunnerContextImpl pythonRunnerContext) {
+            PythonRunnerContextImpl pythonRunnerContext,
+            @Nullable InteranlBaseLongTermMemory longTermMemory) {
         RunnerContextImpl context;
         if (actionTask.action.getExec() instanceof JavaFunction) {
             context =
@@ -183,7 +189,8 @@ class ActionTaskContextManager implements AutoCloseable {
                             metricGroup,
                             jobIdentifier,
                             mailboxThreadChecker,
-                            pythonRunnerContext);
+                            pythonRunnerContext,
+                            longTermMemory);
         } else if (actionTask.action.getExec() instanceof PythonFunction) {
             context =
                     createOrGetRunnerContext(
@@ -193,7 +200,8 @@ class ActionTaskContextManager implements AutoCloseable {
                             metricGroup,
                             jobIdentifier,
                             mailboxThreadChecker,
-                            pythonRunnerContext);
+                            pythonRunnerContext,
+                            longTermMemory);
         } else {
             throw new IllegalStateException(
                     "Unsupported action type: " + actionTask.action.getExec().getClass());

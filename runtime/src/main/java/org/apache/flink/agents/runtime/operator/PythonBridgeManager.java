@@ -17,14 +17,17 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.runtime.PythonMCPResourceDiscovery;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
+import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.JavaResourceAdapter;
@@ -36,10 +39,14 @@ import org.apache.flink.python.env.PythonDependencyInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pemja.core.PythonInterpreter;
+import pemja.core.object.PyObject;
 
 import javax.annotation.Nullable;
 
 import java.util.HashMap;
+
+import static org.apache.flink.agents.plan.actions.Utils.requiredVersions;
+import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
 
 /**
  * Owns the embedded Python runtime used by {@link ActionExecutionOperator} when an agent plan
@@ -76,6 +83,7 @@ class PythonBridgeManager implements AutoCloseable {
     private PythonRunnerContextImpl pythonRunnerContext;
     private PythonResourceAdapterImpl pythonResourceAdapter;
     private JavaResourceAdapter javaResourceAdapter;
+    private Mem0LongTermMemory longTermMemory;
     private boolean initialized;
 
     PythonBridgeManager() {
@@ -129,7 +137,9 @@ class PythonBridgeManager implements AutoCloseable {
                                                                         instanceof
                                                                         PythonResourceProvider));
 
-        if (containPythonAction || containPythonResource) {
+        boolean mem0Configured = isMem0Configured(agentPlan);
+
+        if (containPythonAction || containPythonResource || mem0Configured) {
             LOG.debug("Begin initialize PythonEnvironmentManager.");
             PythonDependencyInfo dependencyInfo =
                     PythonDependencyInfo.create(
@@ -158,14 +168,75 @@ class PythonBridgeManager implements AutoCloseable {
                                 }
                             },
                             pythonInterpreter);
-            if (containPythonResource) {
+            if (containPythonResource || mem0Configured) {
                 initPythonResourceAdapter(agentPlan, resourceCache);
             }
-            if (containPythonAction) {
+            if (containPythonAction || mem0Configured) {
                 initPythonActionExecutor(agentPlan, jobIdentifier);
+            }
+            if (mem0Configured) {
+                wireLongTermMemory();
             }
             initialized = true;
         }
+    }
+
+    /**
+     * Whether the agent's configuration enables Mem0 as the long-term memory backend.
+     *
+     * <p>Mirrors the Python {@code _init_long_term_memory}: Mem0 is considered configured only when
+     * all three resource references are present (chat model setup, embedding model setup, vector
+     * store). Otherwise the Python side returns no LTM and the embedded Python interpreter cost
+     * should be avoided. When configured alongside Java actions, the runtime requires a Flink
+     * version that ships the async-friendly pemja fix.
+     *
+     * @param agentPlan the agent plan whose configuration is inspected.
+     * @return {@code true} when Mem0 is fully configured.
+     */
+    private boolean isMem0Configured(AgentPlan agentPlan) {
+        var config = agentPlan.getConfig();
+        boolean configured =
+                config.get(LongTermMemoryOptions.Mem0.CHAT_MODEL_SETUP) != null
+                        && config.get(LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP) != null
+                        && config.get(LongTermMemoryOptions.Mem0.VECTOR_STORE) != null;
+
+        boolean containJavaAction =
+                agentPlan.getActions().values().stream()
+                        .anyMatch(action -> action.getExec() instanceof JavaFunction);
+
+        // Mem0 will call chat model and embedding model in its own thread executor, this behavior
+        // is same as the async execution for cross-language resources, and also requires the fix
+        // in pemja.
+        if (configured && containJavaAction && !supportAsync()) {
+            throw new RuntimeException(
+                    String.format(
+                            "Using Mem0 based Long-Term Memory in java requires flink version higher "
+                                    + "than %s. You can upgrade flink or use python api.",
+                            requiredVersions));
+        }
+        return configured;
+    }
+
+    /**
+     * Pull the {@code long_term_memory} attribute off the Python {@code FlinkRunnerContext} (which
+     * {@code create_flink_runner_context} already initialised via {@code _init_long_term_memory})
+     * and wrap it as a Java {@link Mem0LongTermMemory}.
+     */
+    private void wireLongTermMemory() {
+        PyObject pyCtx = pythonActionExecutor.getPythonRunnerContext();
+        Object pyLtm = pythonInterpreter.invoke("python_java_utils.get_long_term_memory", pyCtx);
+        if (pyLtm == null) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Mem0 long-term memory is configured on the Java side but the Python "
+                                    + "runner context returned no long-term memory. Verify that %s, "
+                                    + "%s, and %s all reference resources that exist and that the "
+                                    + "Python-side _init_long_term_memory succeeded.",
+                            LongTermMemoryOptions.Mem0.CHAT_MODEL_SETUP.getKey(),
+                            LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP.getKey(),
+                            LongTermMemoryOptions.Mem0.VECTOR_STORE.getKey()));
+        }
+        longTermMemory = new Mem0LongTermMemory(pythonResourceAdapter, (PyObject) pyLtm);
     }
 
     private void initPythonActionExecutor(AgentPlan agentPlan, String jobIdentifier)
@@ -214,6 +285,14 @@ class PythonBridgeManager implements AutoCloseable {
     @Nullable
     PythonRunnerContextImpl getPythonRunnerContext() {
         return pythonRunnerContext;
+    }
+
+    /**
+     * @return the wired Mem0-backed long-term memory, or {@code null} when Mem0 is not configured.
+     */
+    @Nullable
+    Mem0LongTermMemory getLongTermMemory() {
+        return longTermMemory;
     }
 
     boolean isInitialized() {

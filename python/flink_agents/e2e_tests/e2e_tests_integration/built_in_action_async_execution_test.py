@@ -27,7 +27,7 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import action, chat_model_setup, tool
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
@@ -37,8 +37,11 @@ from flink_agents.api.tools.tool import ToolType
 class SlowMockChatModel(BaseChatModelSetup):
     """Mock ChatModel with slow connection."""
 
+    def open(self) -> None:
+        """Do nothing."""
+
     @property
-    def model_kwargs(self) -> Dict[str, Any]:  # noqa: D102
+    def model_kwargs(self) -> Dict[str, Any]:
         return {}
 
     @override
@@ -65,7 +68,7 @@ class AsyncTestAgent(Agent):
 
     @chat_model_setup
     @staticmethod
-    def slow_chat_model() -> ResourceDescriptor:  # noqa: D102
+    def slow_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
             clazz=f"{SlowMockChatModel.__module__}.{SlowMockChatModel.__name__}",
             connection="placement",
@@ -79,10 +82,11 @@ class AsyncTestAgent(Agent):
         time.sleep(5)  # Simulate slow tool execution
         return a + b
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:  # noqa: D102
-        input = event.input
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        input_event = InputEvent.from_event(event)
+        input = input_event.input
         ctx.send_event(
             ChatRequestEvent(
                 model="slow_chat_model",
@@ -94,10 +98,10 @@ class AsyncTestAgent(Agent):
             )
         )
 
-    @action(ChatResponseEvent)
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:  # noqa: D102
-        input = event.response
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
+        input = ChatResponseEvent.from_event(event).response
         ctx.send_event(OutputEvent(output=input.content))
 
 

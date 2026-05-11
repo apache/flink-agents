@@ -54,7 +54,7 @@ def _write_manifest(path: Path, manifest: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-class TestJarFilename:  # noqa: D101
+class TestJarFilename:
     def test_without_classifier(self) -> None:
         entry = {
             "artifact_id": "flink-agents-dist-common",
@@ -76,7 +76,7 @@ class TestJarFilename:  # noqa: D101
         )
 
 
-class TestLoadManifest:  # noqa: D101
+class TestLoadManifest:
     def test_load(self, tmp_path) -> None:
         manifest = {
             "maven_base_url": "https://repo1.maven.org/maven2",
@@ -89,7 +89,7 @@ class TestLoadManifest:  # noqa: D101
         assert loaded == manifest
 
 
-class TestVerifyChecksum:  # noqa: D101
+class TestVerifyChecksum:
     def test_valid_checksum(self, tmp_path) -> None:
         content = b"fake jar content"
         jar = tmp_path / "test.jar"
@@ -106,7 +106,7 @@ class TestVerifyChecksum:  # noqa: D101
         assert not jar.exists()
 
 
-class TestEnsureJars:  # noqa: D101
+class TestEnsureJars:
     def test_skip_when_no_manifest(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
         _ensure_jars()

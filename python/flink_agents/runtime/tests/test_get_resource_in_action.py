@@ -21,33 +21,40 @@ from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import action, chat_model_setup, tool
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 
 
-class MockChatModelImpl(BaseChatModelSetup):  # noqa: D101
+class MockChatModelImpl(BaseChatModelSetup):
     host: str
     desc: str
 
+    def open(self) -> None:
+        """Do nothing."""
+
     @property
-    def model_kwargs(self) -> Dict[str, Any]:  # noqa: D102
+    def model_kwargs(self) -> Dict[str, Any]:
         return {}
 
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:  # noqa: D102
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
         return ChatMessage(
             role=MessageRole.ASSISTANT,
             content=f"{messages[0].content} {self.host} {self.desc}",
         )
 
 
-class MyAgent(Agent):  # noqa: D101
+class MyAgent(Agent):
     @chat_model_setup
     @staticmethod
-    def mock_chat_model() -> ResourceDescriptor:  # noqa: D102
-        return ResourceDescriptor(clazz=f"{MockChatModelImpl.__module__}.{MockChatModelImpl.__name__}", host="8.8.8.8",
-                                  desc="mock chat model just for testing.", connection="mock")
+    def mock_chat_model() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=f"{MockChatModelImpl.__module__}.{MockChatModelImpl.__name__}",
+            host="8.8.8.8",
+            desc="mock chat model just for testing.",
+            connection="mock",
+        )
 
     @tool
     @staticmethod
@@ -66,10 +73,10 @@ class MyAgent(Agent):  # noqa: D101
         """
         return input + " mock tools just for testing."
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def mock_action(event: InputEvent, ctx: RunnerContext) -> None:  # noqa: D102
-        input = event.input
+    def mock_action(event: Event, ctx: RunnerContext) -> None:
+        input = InputEvent.from_event(event).input
         mock_chat_model = ctx.get_resource(
             type=ResourceType.CHAT_MODEL, name="mock_chat_model"
         )
@@ -85,7 +92,7 @@ class MyAgent(Agent):  # noqa: D101
         )
 
 
-def test_get_resource_in_action() -> None:  # noqa: D103
+def test_get_resource_in_action() -> None:
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []

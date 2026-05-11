@@ -23,7 +23,7 @@ from flink_agents.api.decorators import (
     embedding_model_connection,
     embedding_model_setup,
 )
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceName,
@@ -56,14 +56,14 @@ class EmbeddingModelCrossLanguageAgent(Agent):
             model=os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"),
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing input.
 
         In this action, we will test embedding model functionality.
         """
-        input_text = event.input
+        input_text = InputEvent.from_event(event).input
 
         short_doc = f"{input_text[:5]}..."
 
@@ -71,40 +71,52 @@ class EmbeddingModelCrossLanguageAgent(Agent):
 
         try:
             # Get embedding model
-            embeddingModel = ctx.get_resource("embedding_model", ResourceType.EMBEDDING_MODEL)
+            embeddingModel = ctx.get_resource(
+                "embedding_model", ResourceType.EMBEDDING_MODEL
+            )
 
             # Test single text embedding
             embedding = embeddingModel.embed(input_text)
             print(f"[TEST] Generated embedding with dimension: {len(embedding)}")
 
             # Validate single embedding result
-            if embedding is None or not isinstance(embedding, list) or len(embedding) == 0:
+            if (
+                embedding is None
+                or not isinstance(embedding, list)
+                or len(embedding) == 0
+            ):
                 err_msg = "Embedding cannot be null or empty"
-                raise AssertionError(err_msg) # noqa: TRY301
+                raise AssertionError(err_msg)  # noqa: TRY301
 
             if not all(isinstance(x, float) for x in embedding):
                 err_msg = "All embedding values must be floats"
-                raise AssertionError(err_msg) # noqa: TRY301
+                raise AssertionError(err_msg)  # noqa: TRY301
 
-            print(f"[TEST] Validated single embedding: Text={short_doc}, Dimension={len(embedding)}, Text='{input_text[:30]}...'")
+            print(
+                f"[TEST] Validated single embedding: Text={short_doc}, Dimension={len(embedding)}, Text='{input_text[:30]}...'"
+            )
 
             # Test batch embedding
             embeddings = embeddingModel.embed([input_text])
             print(f"[TEST] Generated batch embeddings: count={len(embeddings)}")
 
             # Validate batch embedding results
-            if embeddings is None or not isinstance(embeddings, list) or len(embeddings) == 0:
+            if (
+                embeddings is None
+                or not isinstance(embeddings, list)
+                or len(embeddings) == 0
+            ):
                 err_msg = "Batch embeddings cannot be null or empty"
-                raise AssertionError(err_msg) # noqa: TRY301
+                raise AssertionError(err_msg)  # noqa: TRY301
 
             if len(embeddings) != 1:
                 err_msg = f"Expected 1 embedding but got {len(embeddings)}"
-                raise AssertionError(err_msg) # noqa: TRY301
+                raise AssertionError(err_msg)  # noqa: TRY301
 
             for i, emb in enumerate(embeddings):
                 if not isinstance(emb, list) or len(emb) == 0:
                     err_msg = f"Embedding at index {i} is invalid"
-                    raise AssertionError(err_msg) # noqa: TRY301
+                    raise AssertionError(err_msg)  # noqa: TRY301
                 print(f"[TEST] Validated batch embedding {i}: Dimension={len(emb)}")
 
             # Create test result as a single string
@@ -112,7 +124,9 @@ class EmbeddingModelCrossLanguageAgent(Agent):
 
             ctx.send_event(OutputEvent(output=test_result))
 
-            print(f"[TEST] Embedding generation test PASSED for: '{input_text[:50]}...'")
+            print(
+                f"[TEST] Embedding generation test PASSED for: '{input_text[:50]}...'"
+            )
 
         except Exception as e:
             # Create error result as a single string

@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.context;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -27,7 +28,6 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
-import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -39,7 +39,6 @@ import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
-import org.apache.flink.agents.runtime.memory.VectorStoreLongTermMemory;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
@@ -52,7 +51,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Supplier;
+import java.util.concurrent.Callable;
 
 /**
  * The implementation class of {@link RunnerContext}, which serves as the execution context for
@@ -60,7 +59,8 @@ import java.util.function.Supplier;
  */
 public class RunnerContextImpl implements RunnerContext {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER =
+            new ObjectMapper().registerModule(new JavaTimeModule());
 
     public static class MemoryContext {
         private final CachedMemoryStore sensoryMemStore;
@@ -118,14 +118,10 @@ public class RunnerContextImpl implements RunnerContext {
         this.mailboxThreadChecker = mailboxThreadChecker;
         this.agentPlan = agentPlan;
         this.resourceCache = resourceCache;
+    }
 
-        LongTermMemoryOptions.LongTermMemoryBackend backend =
-                this.getConfig().get(LongTermMemoryOptions.BACKEND);
-        if (backend == LongTermMemoryOptions.LongTermMemoryBackend.EXTERNAL_VECTOR_STORE) {
-            String vectorStoreName =
-                    this.getConfig().get(LongTermMemoryOptions.EXTERNAL_VECTOR_STORE_NAME);
-            ltm = new VectorStoreLongTermMemory(this, vectorStoreName, jobIdentifier);
-        }
+    public void setLongTermMemory(InteranlBaseLongTermMemory ltm) {
+        this.ltm = ltm;
     }
 
     public void switchActionContext(String actionName, MemoryContext memoryContext, String key) {
@@ -225,6 +221,7 @@ public class RunnerContextImpl implements RunnerContext {
 
     @Override
     public Resource getResource(String name, ResourceType type) throws Exception {
+        mailboxThreadChecker.run();
         if (resourceCache == null) {
             throw new IllegalStateException("ResourceCache is not available in this context");
         }
@@ -249,49 +246,41 @@ public class RunnerContextImpl implements RunnerContext {
         return agentPlan.getActionConfigValue(actionName, key);
     }
 
-    protected <T> Optional<T> tryGetCachedResult(
-            String functionId, String argsDigest, Class<T> resultClass) throws Exception {
-        Object[] cached = matchNextOrClearSubsequentCallResult(functionId, argsDigest);
-        if (cached != null && (Boolean) cached[0]) {
-            byte[] resultPayload = (byte[]) cached[1];
-            byte[] exceptionPayload = (byte[]) cached[2];
-
-            if (exceptionPayload != null) {
-                DurableExecutionException cachedException =
-                        OBJECT_MAPPER.readValue(exceptionPayload, DurableExecutionException.class);
-                throw cachedException.toException();
-            } else if (resultPayload != null) {
-                return Optional.of(OBJECT_MAPPER.readValue(resultPayload, resultClass));
-            } else {
-                return Optional.of(null);
+    @Override
+    public <T> T durableExecute(DurableCallable<T> callable) throws Exception {
+        if (durableExecutionContext != null) {
+            Callable<T> reconcileCallable = callable.reconciler();
+            if (reconcileCallable != null) {
+                return durableExecuteSyncWithReconcile(callable, reconcileCallable);
             }
         }
-        return Optional.empty();
-    }
-
-    protected void recordDurableCompletion(
-            String functionId, String argsDigest, Object result, Exception exception)
-            throws Exception {
-        byte[] resultPayload = null;
-        byte[] exceptionPayload = null;
-        if (exception != null) {
-            exceptionPayload =
-                    OBJECT_MAPPER.writeValueAsBytes(
-                            DurableExecutionException.fromException(exception));
-        } else if (result != null) {
-            resultPayload = OBJECT_MAPPER.writeValueAsBytes(result);
-        }
-        recordCallCompletion(functionId, argsDigest, resultPayload, exceptionPayload);
+        return durableExecuteCompletionOnly(callable, callable::call);
     }
 
     @Override
-    public <T> T durableExecute(DurableCallable<T> callable) throws Exception {
-        String functionId = callable.getId();
+    public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+        LOG.debug(
+                "Async durable execution is not supported in RunnerContextImpl; falling back to durableExecute for {}",
+                callable.getId());
+        return durableExecute(callable);
+    }
+
+    /**
+     * Executes a durable call using the completion-only state machine.
+     *
+     * @param durableCallable durable call that provides the durable execution identity and result
+     *     metadata
+     * @param executionCallable concrete execution boundary for the current path, such as direct
+     *     sync execution or Java-specific async execution
+     */
+    protected <T> T durableExecuteCompletionOnly(
+            DurableCallable<T> durableCallable, Callable<T> executionCallable) throws Exception {
+        String functionId = durableCallable.getId();
         // argsDigest is empty because DurableCallable encapsulates all arguments internally
         String argsDigest = "";
 
         Optional<T> cachedResult =
-                tryGetCachedResult(functionId, argsDigest, callable.getResultClass());
+                tryGetCachedResult(functionId, argsDigest, durableCallable.getResultClass());
         if (cachedResult.isPresent()) {
             return cachedResult.get();
         }
@@ -299,7 +288,7 @@ public class RunnerContextImpl implements RunnerContext {
         T result = null;
         Exception exception = null;
         try {
-            result = callable.call();
+            result = executionCallable.call();
         } catch (Exception e) {
             exception = e;
         }
@@ -312,54 +301,9 @@ public class RunnerContextImpl implements RunnerContext {
         return result;
     }
 
-    @Override
-    public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
-        String functionId = callable.getId();
-        // argsDigest is empty because DurableCallable encapsulates all arguments internally
-        String argsDigest = "";
-
-        Optional<T> cachedResult =
-                tryGetCachedResult(functionId, argsDigest, callable.getResultClass());
-        if (cachedResult.isPresent()) {
-            return cachedResult.get();
-        }
-
-        Supplier<T> wrappedSupplier =
-                () -> {
-                    T innerResult = null;
-                    Exception innerException = null;
-                    try {
-                        innerResult = callable.call();
-                    } catch (Exception e) {
-                        innerException = e;
-                    }
-
-                    if (innerException != null) {
-                        throw new DurableExecutionRuntimeException(innerException);
-                    }
-                    return innerResult;
-                };
-
-        T result = null;
-        Exception originalException = null;
-        try {
-            result = wrappedSupplier.get();
-        } catch (DurableExecutionRuntimeException e) {
-            originalException = (Exception) e.getCause();
-        }
-
-        recordDurableCompletion(functionId, argsDigest, result, originalException);
-
-        if (originalException != null) {
-            throw originalException;
-        }
-        return result;
-    }
-
-    protected static class DurableExecutionRuntimeException extends RuntimeException {
-        DurableExecutionRuntimeException(Throwable cause) {
-            super(cause);
-        }
+    private <T> T durableExecuteSyncWithReconcile(
+            DurableCallable<T> callable, Callable<T> reconcileCallable) throws Exception {
+        return durableExecuteWithReconcile(callable, reconcileCallable, callable::call);
     }
 
     /** Serializable exception info for durable execution persistence. */
@@ -465,6 +409,179 @@ public class RunnerContextImpl implements RunnerContext {
         }
     }
 
+    /** Appends a pending durable call slot at the current call index. */
+    public void appendPendingCall(String functionId, String argsDigest) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            durableExecutionContext.appendPendingCall(functionId, argsDigest);
+        }
+    }
+
+    /** Finalizes the pending durable call slot at the current call index. */
+    public void finalizeCurrentCall(
+            String functionId, String argsDigest, byte[] resultPayload, byte[] exceptionPayload) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            durableExecutionContext.finalizeCurrentCall(
+                    functionId, argsDigest, resultPayload, exceptionPayload);
+        }
+    }
+
+    /**
+     * Clears persisted call results from the current call index onward and persists immediately.
+     */
+    public void clearCallResultsFromCurrentIndexAndPersist() {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            durableExecutionContext.clearCallResultsFromCurrentIndexAndPersist();
+        }
+    }
+
+    /**
+     * Returns the current durable call result as an array of fields for bridge consumers, or null
+     * if no persisted slot exists at the current call index.
+     */
+    public Object[] getCurrentCallResultFields() {
+        CallResult current = getCurrentCallResult();
+        if (current == null) {
+            return null;
+        }
+        return new Object[] {
+            current.getFunctionId(),
+            current.getArgsDigest(),
+            current.isPending() ? "PENDING" : current.isFailure() ? "FAILED" : "SUCCEEDED",
+            current.getResultPayload(),
+            current.getExceptionPayload()
+        };
+    }
+
+    protected CallResult getCurrentCallResult() {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            return durableExecutionContext.getCurrentCallResult();
+        }
+        return null;
+    }
+
+    protected <T> Optional<T> tryGetCachedResult(
+            String functionId, String argsDigest, Class<T> resultClass) throws Exception {
+        Object[] cached = matchNextOrClearSubsequentCallResult(functionId, argsDigest);
+        if (cached != null && (Boolean) cached[0]) {
+            byte[] resultPayload = (byte[]) cached[1];
+            byte[] exceptionPayload = (byte[]) cached[2];
+
+            if (exceptionPayload != null) {
+                DurableExecutionException cachedException =
+                        OBJECT_MAPPER.readValue(exceptionPayload, DurableExecutionException.class);
+                throw cachedException.toException();
+            } else if (resultPayload != null) {
+                return Optional.of(OBJECT_MAPPER.readValue(resultPayload, resultClass));
+            } else {
+                return Optional.of(null);
+            }
+        }
+        return Optional.empty();
+    }
+
+    protected void recordDurableCompletion(
+            String functionId, String argsDigest, Object result, Exception exception)
+            throws Exception {
+        byte[] resultPayload = serializeDurableResult(result);
+        byte[] exceptionPayload = serializeDurableException(exception);
+        recordCallCompletion(functionId, argsDigest, resultPayload, exceptionPayload);
+    }
+
+    /**
+     * Executes a durable call using the reconcile-enabled state machine.
+     *
+     * @param durableCallable durable call that provides the durable execution identity and result
+     *     metadata
+     * @param reconcileCallable reconcile boundary used to recover a terminal outcome from a pending
+     *     durable call
+     * @param executionCallable concrete execution boundary for the current path when recovery
+     *     starts or restarts the original durable call
+     */
+    protected <T> T durableExecuteWithReconcile(
+            DurableCallable<T> durableCallable,
+            Callable<T> reconcileCallable,
+            Callable<T> executionCallable)
+            throws Exception {
+        String functionId = durableCallable.getId();
+        String argsDigest = "";
+        Preconditions.checkState(
+                durableExecutionContext != null, "durableExecutionContext must not be null");
+
+        CallResult current = getCurrentCallResult();
+
+        if (current == null) {
+            appendPendingCall(functionId, argsDigest);
+            return executeAndFinalizeCurrentCall(functionId, argsDigest, executionCallable);
+        }
+
+        if (!current.matches(functionId, argsDigest)) {
+            clearCallResultsFromCurrentIndexAndPersist();
+            appendPendingCall(functionId, argsDigest);
+            return executeAndFinalizeCurrentCall(functionId, argsDigest, executionCallable);
+        }
+
+        if (!current.isPending()) {
+            Optional<T> cachedResult =
+                    tryGetCachedResult(functionId, argsDigest, durableCallable.getResultClass());
+            if (cachedResult.isPresent()) {
+                return cachedResult.get();
+            }
+            throw new IllegalStateException(
+                    String.format(
+                            "Expected a terminal durable call result at index %s for "
+                                    + "functionId=%s, argsDigest=%s",
+                            durableExecutionContext.getCurrentCallIndex(), functionId, argsDigest));
+        }
+
+        return executeAndFinalizeCurrentCall(functionId, argsDigest, reconcileCallable);
+    }
+
+    protected <T> T executeAndFinalizeCurrentCall(
+            String functionId, String argsDigest, Callable<T> callSupplier) throws Exception {
+        T result = null;
+        Exception exception = null;
+        try {
+            result = callSupplier.call();
+        } catch (Exception e) {
+            exception = e;
+        }
+
+        finalizeCurrentCall(
+                functionId,
+                argsDigest,
+                serializeDurableResult(result),
+                serializeDurableException(exception));
+
+        if (exception != null) {
+            throw exception;
+        }
+        return result;
+    }
+
+    protected byte[] serializeDurableResult(Object result) throws JsonProcessingException {
+        if (result == null) {
+            return null;
+        }
+        return OBJECT_MAPPER.writeValueAsBytes(result);
+    }
+
+    protected byte[] serializeDurableException(Exception exception) throws JsonProcessingException {
+        if (exception == null) {
+            return null;
+        }
+        return OBJECT_MAPPER.writeValueAsBytes(DurableExecutionException.fromException(exception));
+    }
+
+    protected static class DurableExecutionRuntimeException extends RuntimeException {
+        DurableExecutionRuntimeException(Throwable cause) {
+            super(cause);
+        }
+    }
+
     /**
      * Context for fine-grained durable execution within an action.
      *
@@ -513,6 +630,17 @@ public class RunnerContextImpl implements RunnerContext {
 
         public ActionState getActionState() {
             return actionState;
+        }
+
+        /**
+         * Returns the call result at the current call index, or null if the current index does not
+         * yet have a persisted slot.
+         */
+        public CallResult getCurrentCallResult() {
+            if (currentCallIndex < recoveryCallResults.size()) {
+                return recoveryCallResults.get(currentCallIndex);
+            }
+            return null;
         }
 
         /**
@@ -570,7 +698,8 @@ public class RunnerContextImpl implements RunnerContext {
                     new CallResult(functionId, argsDigest, resultPayload, exceptionPayload);
 
             actionState.addCallResult(callResult);
-            persister.persist(key, sequenceNumber, action, event, actionState);
+            recoveryCallResults.add(callResult);
+            persistActionState();
 
             LOG.debug(
                     "Recorded and persisted CallResult at index {}: functionId={}, argsDigest={}",
@@ -581,11 +710,100 @@ public class RunnerContextImpl implements RunnerContext {
             currentCallIndex++;
         }
 
+        /**
+         * Appends and persists a pending slot for the current call index.
+         *
+         * <p>This reserves the current slot for a reconcilable durable call but does not advance
+         * {@code currentCallIndex}.
+         */
+        public void appendPendingCall(String functionId, String argsDigest) {
+            if (currentCallIndex != recoveryCallResults.size()) {
+                throw new IllegalStateException(
+                        String.format(
+                                "Cannot append pending call at index %s when a persisted slot "
+                                        + "already exists",
+                                currentCallIndex));
+            }
+
+            CallResult pending = CallResult.pending(functionId, argsDigest);
+            actionState.addCallResult(pending);
+            recoveryCallResults.add(pending);
+            persistActionState();
+
+            LOG.debug(
+                    "Recorded and persisted pending CallResult at index {}: functionId={}, "
+                            + "argsDigest={}",
+                    currentCallIndex,
+                    functionId,
+                    argsDigest);
+        }
+
+        /**
+         * Replaces the current persisted slot with a terminal call result and advances the current
+         * call index.
+         */
+        public void finalizeCurrentCall(
+                String functionId,
+                String argsDigest,
+                byte[] resultPayload,
+                byte[] exceptionPayload) {
+            CallResult current = getCurrentCallResult();
+            if (current == null) {
+                throw new IllegalStateException(
+                        String.format(
+                                "Cannot finalize current call at index %s because no persisted "
+                                        + "slot exists",
+                                currentCallIndex));
+            }
+            if (!current.matches(functionId, argsDigest)) {
+                throw new IllegalStateException(
+                        String.format(
+                                "Cannot finalize current call at index %s because the persisted "
+                                        + "slot does not match functionId=%s, argsDigest=%s",
+                                currentCallIndex, functionId, argsDigest));
+            }
+            if (!current.isPending()) {
+                throw new IllegalStateException(
+                        String.format(
+                                "Cannot finalize current call at index %s because the persisted "
+                                        + "slot is not pending",
+                                currentCallIndex));
+            }
+
+            CallResult terminal =
+                    new CallResult(functionId, argsDigest, resultPayload, exceptionPayload);
+            actionState.replaceCallResult(currentCallIndex, terminal);
+            recoveryCallResults.set(currentCallIndex, terminal);
+            persistActionState();
+
+            LOG.debug(
+                    "Finalized and persisted CallResult at index {}: functionId={}, argsDigest={}",
+                    currentCallIndex,
+                    functionId,
+                    argsDigest);
+
+            currentCallIndex++;
+        }
+
+        /**
+         * Clears persisted call results from the current index onward and persists the truncated
+         * state immediately.
+         */
+        public void clearCallResultsFromCurrentIndexAndPersist() {
+            clearCallResultsFromCurrentIndex();
+            persistActionState();
+        }
+
         private void clearCallResultsFromCurrentIndex() {
             actionState.clearCallResultsFrom(currentCallIndex);
             recoveryCallResults =
-                    recoveryCallResults.subList(
-                            0, Math.min(currentCallIndex, recoveryCallResults.size()));
+                    new ArrayList<>(
+                            recoveryCallResults.subList(
+                                    0, Math.min(currentCallIndex, recoveryCallResults.size())));
+        }
+
+        private void persistActionState() {
+            persister.persist(key, sequenceNumber, action, event, actionState);
         }
     }
 }

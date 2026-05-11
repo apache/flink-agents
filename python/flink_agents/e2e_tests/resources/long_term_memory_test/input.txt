@@ -1,0 +1,4 @@
+{"name":"alice","fact":"My favorite fruit is watermelon."}
+{"name":"bob","fact":"I like swimming."}
+{"name":"bob","fact":"I'm a vegetarian and allergic to nuts."}
+{"name":"alice","fact":"My favorite fruit is bananas."}

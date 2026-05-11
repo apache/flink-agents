@@ -46,9 +46,4 @@ public class OllamaEmbeddingModelSetup extends BaseEmbeddingModelSetup {
 
         return parameters;
     }
-
-    @Override
-    public OllamaEmbeddingModelConnection getConnection() {
-        return (OllamaEmbeddingModelConnection) super.getConnection();
-    }
 }

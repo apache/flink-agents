@@ -37,9 +37,6 @@ import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 
 import javax.annotation.Nullable;
 
-import java.util.HashMap;
-import java.util.Map;
-
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 
 /**
@@ -236,29 +233,6 @@ class OperatorStateManager {
             Object key, int maxParallelism, KeyGroupRange currentSubtaskKeyGroupRange) {
         int keyGroup = KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism);
         return currentSubtaskKeyGroupRange.contains(keyGroup);
-    }
-
-    /**
-     * Captures the current per-key sequence numbers across all keys held by the given backend.
-     *
-     * <p>Invoked during checkpoint snapshotting so the caller can later associate the snapshot's
-     * per-key sequence numbers with a checkpoint id (see {@link
-     * DurableExecutionManager#recordCheckpointSequenceNumbers}).
-     *
-     * @param keyedStateBackend the keyed state backend to scan.
-     * @return an immutable map snapshot from key to its current sequence number.
-     */
-    @SuppressWarnings("unchecked")
-    Map<Object, Long> snapshotSequenceNumbers(KeyedStateBackend<?> keyedStateBackend)
-            throws Exception {
-        HashMap<Object, Long> keyToSeqNum = new HashMap<>();
-        ((KeyedStateBackend<Object>) keyedStateBackend)
-                .applyToAllKeys(
-                        VoidNamespace.INSTANCE,
-                        VoidNamespaceSerializer.INSTANCE,
-                        new ValueStateDescriptor<>(MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class),
-                        (key, state) -> keyToSeqNum.put(key, state.value()));
-        return keyToSeqNum;
     }
 
     /**

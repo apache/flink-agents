@@ -49,9 +49,13 @@ client = pull_model(OLLAMA_MODEL)
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
-@pytest.mark.skipif(client is None or ES_HOST is None, reason="Ollama client or Elasticsearch host is missing.")
+
+@pytest.mark.skipif(
+    client is None or ES_HOST is None,
+    reason="Ollama client or Elasticsearch host is missing.",
+)
 @pytest.mark.parametrize("embedding_type", ["JAVA", "PYTHON"])
-def test_java_vector_store_integration(tmp_path: Path, embedding_type: str) -> None:  # noqa: D103
+def test_java_vector_store_integration(tmp_path: Path, embedding_type: str) -> None:
     os.environ["EMBEDDING_TYPE"] = embedding_type
 
     env = StreamExecutionEnvironment.get_execution_environment()
@@ -62,20 +66,19 @@ def test_java_vector_store_integration(tmp_path: Path, embedding_type: str) -> N
     # we use continuous file source here.
     input_datastream = env.from_source(
         source=FileSource.for_record_stream_format(
-            StreamFormat.text_line_format(), f"file:///{current_dir}/../resources/java_chat_module_input"
+            StreamFormat.text_line_format(),
+            f"file:///{current_dir}/../resources/java_chat_module_input",
         ).build(),
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
     )
 
-    deserialize_datastream = input_datastream.map(
-        lambda x: str(x)
-    )
+    deserialize_datastream = input_datastream.map(lambda x: str(x))
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
     output_datastream = (
         agents_env.from_datastream(
-            input=deserialize_datastream, key_selector= lambda x: "orderKey"
+            input=deserialize_datastream, key_selector=lambda x: "orderKey"
         )
         .apply(VectorStoreCrossLanguageAgent())
         .to_datastream()
@@ -84,13 +87,16 @@ def test_java_vector_store_integration(tmp_path: Path, embedding_type: str) -> N
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    (output_datastream.map(lambda x: str(x).replace('\n', '')
-                          .replace('\r', ''), Types.STRING()).add_sink(
-        StreamingFileSink.for_row_format(
-            base_path=str(result_dir.absolute()),
-            encoder=Encoder.simple_string_encoder(),
-        ).build()
-    ))
+    (
+        output_datastream.map(
+            lambda x: str(x).replace("\n", "").replace("\r", ""), Types.STRING()
+        ).add_sink(
+            StreamingFileSink.for_row_format(
+                base_path=str(result_dir.absolute()),
+                encoder=Encoder.simple_string_encoder(),
+            ).build()
+        )
+    )
 
     agents_env.execute()
 

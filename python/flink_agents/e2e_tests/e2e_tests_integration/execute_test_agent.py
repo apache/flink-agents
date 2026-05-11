@@ -97,37 +97,41 @@ def raise_exception(message: str) -> None:
 class ExecuteTestAgent(Agent):
     """Agent that uses synchronous durable_execute() method for testing."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event using durable_execute()."""
-        input_data: ExecuteTestData = event.input
+        input_data = ExecuteTestData.model_validate(InputEvent.from_event(event).input)
         # Use synchronous durable execute
         result = ctx.durable_execute(compute_value, input_data.value, 10)
-        ctx.send_event(OutputEvent(output=ExecuteTestOutput(id=input_data.id, result=result)))
+        ctx.send_event(
+            OutputEvent(output=ExecuteTestOutput(id=input_data.id, result=result))
+        )
 
 
 class ExecuteMultipleTestAgent(Agent):
     """Agent that makes multiple durable_execute() calls."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event with multiple durable_execute() calls."""
-        input_data: ExecuteTestData = event.input
+        input_data = ExecuteTestData.model_validate(InputEvent.from_event(event).input)
         result1 = ctx.durable_execute(compute_value, input_data.value, 5)
         result2 = ctx.durable_execute(multiply_value, result1, 2)
-        ctx.send_event(OutputEvent(output=ExecuteTestOutput(id=input_data.id, result=result2)))
+        ctx.send_event(
+            OutputEvent(output=ExecuteTestOutput(id=input_data.id, result=result2))
+        )
 
 
 class ExecuteWithAsyncTestAgent(Agent):
     """Agent that uses both durable_execute() and durable_execute_async()."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     async def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event using both durable_execute() and durable_execute_async()."""
-        input_data: ExecuteTestData = event.input
+        input_data = ExecuteTestData.model_validate(InputEvent.from_event(event).input)
         # Use synchronous durable execute
         sync_result = ctx.durable_execute(compute_value, input_data.value, 5)
         # Use async durable execute
@@ -140,11 +144,11 @@ class ExecuteWithAsyncTestAgent(Agent):
 class ExecuteWithAsyncExceptionTestAgent(Agent):
     """Agent that tests exception handling in durable_execute_async()."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     async def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event and capture durable_execute_async() exceptions."""
-        input_data: ExecuteTestData = event.input
+        input_data = ExecuteTestData.model_validate(InputEvent.from_event(event).input)
         try:
             await ctx.durable_execute_async(
                 raise_exception, f"Test error: {input_data.value}"
@@ -155,4 +159,3 @@ class ExecuteWithAsyncExceptionTestAgent(Agent):
                     output=ExecuteTestErrorOutput(id=input_data.id, error=str(exc))
                 )
             )
-

@@ -22,7 +22,6 @@ import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 
 import static org.apache.flink.util.Preconditions.checkState;
@@ -38,9 +37,6 @@ public class PythonActionTask extends ActionTask {
     public PythonActionTask(Object key, Event event, Action action) {
         super(key, event, action);
         checkState(action.getExec() instanceof PythonFunction);
-        checkState(
-                event instanceof PythonEvent,
-                "Python action only accept python event, but got " + event);
     }
 
     public ActionTaskResult invoke(ClassLoader userCodeClassLoader, PythonActionExecutor executor)
@@ -54,7 +50,7 @@ public class PythonActionTask extends ActionTask {
 
         String pythonAwaitableRef =
                 executor.executePythonFunction(
-                        (PythonFunction) action.getExec(), (PythonEvent) event, key.hashCode());
+                        (PythonFunction) action.getExec(), event, key.hashCode());
         // If a user-defined action uses an interface to submit asynchronous tasks, it will return a
         // Python coroutine (awaitable) object instance upon its first execution. Otherwise, it
         // means that no asynchronous tasks were submitted and the action has already completed.

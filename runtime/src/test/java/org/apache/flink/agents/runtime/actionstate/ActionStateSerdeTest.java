@@ -23,7 +23,9 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -150,7 +152,7 @@ public class ActionStateSerdeTest {
         // Add call results
         CallResult result1 = new CallResult("module.func1", "digest1", "result1".getBytes());
         CallResult result2 =
-                CallResult.ofException("module.func2", "digest2", "exception".getBytes());
+                new CallResult("module.func2", "digest2", null, "exception".getBytes());
         originalState.addCallResult(result1);
         originalState.addCallResult(result2);
 
@@ -175,7 +177,25 @@ public class ActionStateSerdeTest {
         assertEquals("digest2", deserializedResult2.getArgsDigest());
         assertNull(deserializedResult2.getResultPayload());
         assertArrayEquals("exception".getBytes(), deserializedResult2.getExceptionPayload());
-        assertFalse(deserializedResult2.isSuccess());
+        assertTrue(deserializedResult2.isFailure());
+    }
+
+    @Test
+    public void testActionStateWithPendingCallResult() throws Exception {
+        InputEvent inputEvent = new InputEvent("test input");
+        ActionState originalState = new ActionState(inputEvent);
+        originalState.addCallResult(CallResult.pending("module.func", "digest"));
+
+        ActionStateKafkaSeder seder = new ActionStateKafkaSeder();
+
+        byte[] serialized = seder.serialize("test-topic", originalState);
+        ActionState deserializedState = seder.deserialize("test-topic", serialized);
+
+        assertEquals(1, deserializedState.getCallResultCount());
+        CallResult result = deserializedState.getCallResult(0);
+        assertTrue(result.isPending());
+        assertNull(result.getResultPayload());
+        assertNull(result.getExceptionPayload());
     }
 
     @Test
@@ -252,5 +272,58 @@ public class ActionStateSerdeTest {
         assertEquals("digest", result.getArgsDigest());
         assertNull(result.getResultPayload());
         assertNull(result.getExceptionPayload());
+        assertTrue(result.isSuccess());
+    }
+
+    @Test
+    public void testDeserializeLegacyCallResultWithoutStatus() throws Exception {
+        // Legacy JSON sample: unlike current serializer output, CallResult entries do not include
+        // `status`.
+        String legacySuccessPayload =
+                Base64.getEncoder().encodeToString("result".getBytes(StandardCharsets.UTF_8));
+        String legacyFailurePayload =
+                Base64.getEncoder().encodeToString("exception".getBytes(StandardCharsets.UTF_8));
+        String json =
+                "{"
+                        + "\"taskEvent\":null,"
+                        + "\"sensoryMemoryUpdates\":[],"
+                        + "\"shortTermMemoryUpdates\":[],"
+                        + "\"outputEvents\":[],"
+                        + "\"callResults\":["
+                        + "{"
+                        + "\"functionId\":\"legacy.success\","
+                        + "\"argsDigest\":\"digest-success\","
+                        + "\"resultPayload\":\""
+                        + legacySuccessPayload
+                        + "\","
+                        + "\"exceptionPayload\":null"
+                        + "},"
+                        + "{"
+                        + "\"functionId\":\"legacy.failure\","
+                        + "\"argsDigest\":\"digest-failure\","
+                        + "\"resultPayload\":null,"
+                        + "\"exceptionPayload\":\""
+                        + legacyFailurePayload
+                        + "\""
+                        + "}"
+                        + "],"
+                        + "\"completed\":false"
+                        + "}";
+
+        ActionStateKafkaSeder seder = new ActionStateKafkaSeder();
+        ActionState deserializedState =
+                seder.deserialize("test-topic", json.getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(2, deserializedState.getCallResultCount());
+
+        CallResult legacySuccess = deserializedState.getCallResult(0);
+        assertTrue(legacySuccess.isSuccess());
+        assertArrayEquals(
+                "result".getBytes(StandardCharsets.UTF_8), legacySuccess.getResultPayload());
+
+        CallResult legacyFailure = deserializedState.getCallResult(1);
+        assertTrue(legacyFailure.isFailure());
+        assertArrayEquals(
+                "exception".getBytes(StandardCharsets.UTF_8), legacyFailure.getExceptionPayload());
     }
 }

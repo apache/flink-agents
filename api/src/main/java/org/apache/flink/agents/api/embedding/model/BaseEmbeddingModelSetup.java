@@ -21,6 +21,10 @@ package org.apache.flink.agents.api.embedding.model;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.util.Preconditions;
+
+import javax.annotation.Nullable;
 
 import java.util.Collections;
 import java.util.List;
@@ -34,14 +38,30 @@ import java.util.function.BiFunction;
  * management and model configuration.
  */
 public abstract class BaseEmbeddingModelSetup extends Resource {
-    protected final String connection;
+    protected final String connectionName;
     protected String model;
+
+    @Nullable protected BaseEmbeddingModelConnection connection;
 
     public BaseEmbeddingModelSetup(
             ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
         super(descriptor, getResource);
-        this.connection = descriptor.getArgument("connection");
+        this.connectionName = descriptor.getArgument("connection");
         this.model = descriptor.getArgument("model");
+    }
+
+    /**
+     * Trigger construction for resource objects.
+     *
+     * <p>Currently, in cross-language invocation scenarios, constructing resource object within an
+     * async thread may encounter issues. We resolved this issue by moving the construction of the
+     * resources object out of the method to be async executed and invoking it in the main thread.
+     */
+    @Override
+    public void open() {
+        this.connection =
+                (BaseEmbeddingModelConnection)
+                        getResource.apply(connectionName, ResourceType.EMBEDDING_MODEL_CONNECTION);
     }
 
     public abstract Map<String, Object> getParameters();
@@ -56,9 +76,12 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
      *
      * @return The embedding model connection instance
      */
+    @VisibleForTesting
     public BaseEmbeddingModelConnection getConnection() {
-        return (BaseEmbeddingModelConnection)
-                getResource.apply(connection, ResourceType.EMBEDDING_MODEL_CONNECTION);
+        Preconditions.checkNotNull(
+                connection,
+                "Connection is not initialized. Ensure open() is called before embed().");
+        return connection;
     }
 
     /**
@@ -81,13 +104,9 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
     }
 
     public float[] embed(String text, Map<String, Object> parameters) {
-        BaseEmbeddingModelConnection connection = getConnection();
-
         Map<String, Object> params = this.getParameters();
         params.putAll(parameters);
-
-        // params are propagated to the connection
-        return connection.embed(text, params);
+        return getConnection().embed(text, params);
     }
 
     /**
@@ -102,12 +121,8 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
     }
 
     public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
-        BaseEmbeddingModelConnection connection = getConnection();
-
         Map<String, Object> params = this.getParameters();
         params.putAll(parameters);
-
-        // params are propagated to the connection
-        return connection.embed(texts, params);
+        return getConnection().embed(texts, params);
     }
 }

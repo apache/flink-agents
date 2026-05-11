@@ -34,7 +34,7 @@ package org.apache.flink.agents.api.resource;
  * <pre>{@code
  * // Java implementation
  * ResourceName.ChatModel.OLLAMA_CONNECTION
- * ResourceName.ChatModel.OPENAI_SETUP
+ * ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP
  *
  * // Python implementation
  * ResourceName.ChatModel.Python.OLLAMA_CONNECTION
@@ -151,6 +151,12 @@ public final class ResourceName {
                     "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelConnection";
             public static final String OPENAI_SETUP =
                     "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup";
+
+            // Tongyi
+            public static final String TONGYI_CONNECTION =
+                    "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelConnection";
+            public static final String TONGYI_SETUP =
+                    "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelSetup";
 
             private Python() {}
         }

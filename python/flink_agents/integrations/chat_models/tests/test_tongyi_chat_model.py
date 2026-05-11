@@ -23,6 +23,7 @@ import pytest
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.tongyi_chat_model import (
     TongyiChatModelConnection,
     TongyiChatModelSetup,
@@ -80,13 +81,18 @@ def test_tongyi_chat_with_tools() -> None:
         else:
             return connection
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     llm = TongyiChatModelSetup(
         name="tongyi",
         model=test_model,
         connection="tongyi",
         tools=["add"],
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
+
+    llm.open()
 
     response = llm.chat(
         [
@@ -143,13 +149,18 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
     def get_resource(name: str, type: ResourceType) -> Resource:
         return connection
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     llm = TongyiChatModelSetup(
         name="tongyi",
         model=test_model,
         connection="tongyi",
         extract_reasoning=True,
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
+
+    llm.open()
 
     response = llm.chat(
         [ChatMessage(role=MessageRole.USER, content="What's the meaning of life?")]

@@ -129,14 +129,15 @@ class MyAgent(Agent):
             model="your-embedding-model-here"
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_text(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_text(event: Event, ctx: RunnerContext) -> None:
         # Get the embedding model from the runtime context
         embedding_model = ctx.get_resource("openai_embedding", ResourceType.EMBEDDING_MODEL)
 
         # Use the embedding model to generate embeddings
-        user_query = str(event.input)
+        input_event = InputEvent.from_event(event)
+        user_query = str(input_event.input)
         embedding = embedding_model.embed(user_query)
 
         # Handle the embedding
@@ -164,16 +165,17 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void processText(InputEvent event, RunnerContext ctx)
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void processText(Event event, RunnerContext ctx)
             throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // Get the embedding model from the runtime context
         BaseEmbeddingModelSetup embeddingModel =
                 (BaseEmbeddingModelSetup)
                         ctx.getResource("embeddingModel", ResourceType.EMBEDDING_MODEL);
 
         // Use the embedding model to generate embeddings
-        String input = (String) event.getInput();
+        String input = (String) inputEvent.getInput();
         float[] embedding = embeddingModel.embed(input);
 
         // Handle the embedding
@@ -394,6 +396,74 @@ Current popular models include:
 Model availability and specifications may change. Always check the official OpenAI documentation for the latest information before implementing in production.
 {{< /hint >}}
 
+### Tongyi (DashScope)
+
+Tongyi provides cloud-based embedding models from Alibaba Cloud, with strong support for Chinese and English text.
+
+{{< hint info >}}
+Tongyi embedding models are currently supported in the Python API only. To use Tongyi from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. Get an API key from [Alibaba Cloud DashScope](https://dashscope.console.aliyun.com/)
+
+#### Usage Example
+
+```python
+class MyAgent(Agent):
+
+    @embedding_model_connection
+    @staticmethod
+    def tongyi_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.EmbeddingModel.TONGYI_CONNECTION,
+            api_key="your-api-key-here",  # Or set DASHSCOPE_API_KEY env var
+            request_timeout=30.0
+        )
+
+    @embedding_model_setup
+    @staticmethod
+    def tongyi_embedding() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.EmbeddingModel.TONGYI_SETUP,
+            connection="tongyi_connection",
+            model="text-embedding-v4",
+            text_type="query"
+        )
+```
+
+#### TongyiEmbeddingModelConnection Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key for authentication |
+| `request_timeout` | float | `30.0` | HTTP request timeout in seconds |
+
+#### TongyiEmbeddingModelSetup Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | str | Required | Reference to connection method name |
+| `model` | str | `"text-embedding-v4"` | Embedding model name |
+| `text_type` | str | None | Input type: `"query"` or `"document"` |
+| `dimension` | int | None | Output vector dimensions (model-dependent) |
+| `additional_kwargs` | dict | `{}` | Additional DashScope API parameters |
+
+#### Available Models
+
+Visit the [DashScope Embedding Models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/text-embedding-api-details) for the complete and up-to-date list of available embedding models.
+
+Some popular options include:
+- **text-embedding-v4** (default, recommended)
+- **text-embedding-v3**
+- **text-embedding-v2**
+- **text-embedding-v1**
+
+{{< hint warning >}}
+Model availability and specifications may change. Always check the official DashScope documentation for the latest information before implementing in production.
+{{< /hint >}}
+
 ## Using Cross-Language Providers
 
 Flink Agents supports cross-language embedding model integration, allowing you to use embedding models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when an embedding model provider is only available in one language (e.g., OpenAI embedding is currently Python-only).
@@ -450,12 +520,13 @@ class MyAgent(Agent):
             model="nomic-embed-text"
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         # Use the Java embedding model from Python
+        input_event = InputEvent.from_event(event)
         embedding_model = ctx.get_resource("java_embedding_model", ResourceType.EMBEDDING_MODEL)
-        embedding = embedding_model.embed(str(event.input))
+        embedding = embedding_model.embed(str(input_event.input))
         # Process the embedding vector as needed
 ```
 
@@ -494,14 +565,15 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         // Use the Python embedding model from Java
         BaseEmbeddingModelSetup embeddingModel = 
             (BaseEmbeddingModelSetup) ctx.getResource(
                 "pythonEmbeddingModel", 
                 ResourceType.EMBEDDING_MODEL);
-        float[] embedding = embeddingModel.embed((String) event.getInput());
+        float[] embedding = embeddingModel.embed((String) inputEvent.getInput());
         // Process the embedding vector as needed
     }
 }

@@ -28,6 +28,7 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
@@ -55,7 +56,6 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Field;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
@@ -92,6 +92,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient ActionTaskContextManager contextManager;
 
+    // Long-term memory backed by Mem0; non-null only when LongTermMemoryOptions.Mem0 is configured.
+    private transient Mem0LongTermMemory ltm;
+
     // We need to check whether the current thread is the mailbox thread using the mailbox
     // processor.
     // TODO: This is a temporary workaround. In the future, we should add an interface in
@@ -105,6 +108,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient OperatorStateManager stateManager;
 
+    // Each job can only have one identifier and this identifier must be consistent across restarts.
+    // We cannot use job id as the identifier here because user may change job id by
+    // creating a savepoint, stop the job and then resume from savepoint.
+    // We use this identifier to control the visibility for long-term memory.
+    // Inspired by Apache Paimon.
     private transient String jobIdentifier;
 
     public ActionExecutionOperator(
@@ -145,6 +153,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         durableExecManager.maybeInitActionStateStore(agentPlan.getConfig());
         durableExecManager.initRecoveryMarkerState(getOperatorStateBackend());
+        durableExecManager.initializeKeyedStates(getRuntimeContext());
 
         // init PythonActionExecutor and PythonResourceAdapter
         pythonBridge = new PythonBridgeManager();
@@ -158,6 +167,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 metricGroup,
                 this::checkMailboxThread,
                 jobIdentifier);
+
+        // Capture the wired Mem0 long-term memory, if any, so it can be plumbed into the Java
+        // runner context created by ActionTaskContextManager.
+        ltm = pythonBridge.getLongTermMemory();
 
         // init context manager for runner context creation and memory contexts
         contextManager =
@@ -295,7 +308,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 this::checkMailboxThread,
                 stateManager.getSensoryMemState(),
                 stateManager.getShortTermMemState(),
-                pythonBridge.getPythonRunnerContext());
+                pythonBridge.getPythonRunnerContext(),
+                ltm);
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
@@ -396,11 +410,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (currentInputEventFinished) {
             // Clean up sensory memory when a single run finished.
             actionTask.getRunnerContext().clearSensoryMemory();
+            durableExecManager.updateLastCompletedSequenceNumber(sequenceNumber);
 
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.
             int removedCount = stateManager.removeProcessingKey(key);
-            durableExecManager.maybePruneState(key, sequenceNumber);
             checkState(
                     removedCount == 1,
                     "Current processing key count for key "
@@ -482,10 +496,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void snapshotState(StateSnapshotContext context) throws Exception {
         durableExecManager.snapshotRecoveryMarker();
-
-        Map<Object, Long> keyToSeqNum =
-                stateManager.snapshotSequenceNumbers(getKeyedStateBackend());
-        durableExecManager.recordCheckpointSequenceNumbers(context.getCheckpointId(), keyToSeqNum);
+        durableExecManager.snapshotLastCompletedSequenceNumbers(
+                getKeyedStateBackend(), context.getCheckpointId());
 
         super.snapshotState(context);
     }

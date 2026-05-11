@@ -37,7 +37,9 @@ class LocalMemoryObject(MemoryObject):
     __store: dict[str, Any]
     __prefix: str
 
-    def __init__(self, type: MemoryType, store: Dict[str, Any], prefix: str = ROOT_KEY) -> None:
+    def __init__(
+        self, type: MemoryType, store: Dict[str, Any], prefix: str = ROOT_KEY
+    ) -> None:
         """Initialize a LocalMemoryObject.
 
         Parameters

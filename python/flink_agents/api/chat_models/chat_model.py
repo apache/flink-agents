@@ -17,14 +17,19 @@
 #################################################################################
 import re
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Dict, List, Sequence, Tuple
+from typing import Any, ClassVar, Dict, List, Sequence, Tuple, cast
 
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    find_first_system_message,
+)
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL
 from flink_agents.api.tools.tool import Tool
 
 
@@ -49,12 +54,16 @@ class BaseChatModelConnection(Resource, ABC):
         """Return resource type of class."""
         return ResourceType.CHAT_MODEL_CONNECTION
 
-    DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str],...]] = (
+    DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str], ...]] = (
         re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE),
         re.compile(r"<analysis>(.*?)</analysis>", re.DOTALL | re.IGNORECASE),
         re.compile(r"<reasoning>(.*?)</reasoning>", re.DOTALL | re.IGNORECASE),
-        re.compile(r"```(?:think|reasoning|thought)\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE),
-        re.compile(r"(?:^|\n)Reasoning:\s*(.*?)(?:\n{2,}|$)", re.DOTALL | re.IGNORECASE),
+        re.compile(
+            r"```(?:think|reasoning|thought)\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE
+        ),
+        re.compile(
+            r"(?:^|\n)Reasoning:\s*(.*?)(?:\n{2,}|$)", re.DOTALL | re.IGNORECASE
+        ),
     )
 
     @staticmethod
@@ -133,9 +142,14 @@ class BaseChatModelSetup(Resource):
     different chat configurations.
     """
 
-    connection: str = Field(description="Name of the referenced connection.")
+    connection: str = Field(description="The referenced connection name.")
+    _resolved_connection: BaseChatModelConnection | None = PrivateAttr(default=None)
     prompt: Prompt | str | None = None
-    tools: List[str] | None = None
+    tools: List[str] | List[Tool] = Field(default_factory=list)
+    skills: List[str] | None = None
+    skill_discovery_prompt: str | None = None
+    allowed_commands: List[str] = Field(default_factory=list)
+    allowed_script_dirs: List[str] = Field(default_factory=list)
 
     @property
     @abstractmethod
@@ -147,6 +161,38 @@ class BaseChatModelSetup(Resource):
     def resource_type(cls) -> ResourceType:
         """Return resource type of class."""
         return ResourceType.CHAT_MODEL
+
+    @override
+    def open(self) -> None:
+        self._resolved_connection = cast(
+            "BaseChatModelConnection",
+            self.resource_context.get_resource(
+                self.connection, ResourceType.CHAT_MODEL_CONNECTION
+            ),
+        )
+        if self.prompt is not None:
+            if isinstance(self.prompt, str):
+                # Get prompt resource if it's a string
+                self.prompt = cast(
+                    "Prompt",
+                    self.resource_context.get_resource(
+                        self.prompt, ResourceType.PROMPT
+                    ),
+                )
+        if self.skills is not None:
+            self.skill_discovery_prompt = (
+                self.resource_context.generate_available_skills_prompt(*self.skills)
+            )
+            self.tools.extend([LOAD_SKILL_TOOL, BASH_TOOL])
+
+        if len(self.tools) > 0:
+            self.tools = [
+                cast(
+                    "Tool",
+                    self.resource_context.get_resource(tool_name, ResourceType.TOOL),
+                )
+                for tool_name in self.tools
+            ]
 
     def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
         """Execute chat conversation.
@@ -168,19 +214,8 @@ class BaseChatModelSetup(Resource):
         ChatMessage
             Model response message
         """
-        # Get model connection
-        connection = self.get_resource(
-            self.connection, ResourceType.CHAT_MODEL_CONNECTION
-        )
-
         # Apply prompt template
         if self.prompt is not None:
-            if isinstance(self.prompt, str):
-                # Get prompt resource if it's a string
-                prompt = self.get_resource(self.prompt, ResourceType.PROMPT)
-            else:
-                prompt = self.prompt
-
             input_variable = {}
 
             # fill the prompt template
@@ -188,25 +223,34 @@ class BaseChatModelSetup(Resource):
                 # Convert Any values to str to match format_messages signature
                 str_extra_args = {k: str(v) for k, v in msg.extra_args.items()}
                 input_variable.update(str_extra_args)
-            prompt_messages = prompt.format_messages(**input_variable)
+            prompt_messages = self._get_prompt().format_messages(**input_variable)
 
             # append meaningful messages
             for msg in messages:
-                if (msg.content is not None and msg.content != "") or msg.role == MessageRole.ASSISTANT:
+                if (
+                    msg.content is not None and msg.content != ""
+                ) or msg.role == MessageRole.ASSISTANT:
                     prompt_messages.append(msg)
             messages = prompt_messages
-        # Bind tools
-        tools = None
-        if self.tools is not None:
-            tools = [
-                self.get_resource(tool_name, ResourceType.TOOL)
-                for tool_name in self.tools
-            ]
+
+        if self.skills is not None:
+            index = find_first_system_message(messages)
+            messages = (
+                messages[: index + 1]
+                + [
+                    ChatMessage(
+                        role=MessageRole.SYSTEM, content=self.skill_discovery_prompt
+                    )
+                ]
+                + messages[index + 1 :]
+            )
 
         # Call chat model connection to execute chat
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
-        return connection.chat(messages, tools=tools, **merged_kwargs)
+        return self._get_connection().chat(
+            messages, tools=self._get_tools(), **merged_kwargs
+        )
 
     def _record_token_metrics(
         self, model_name: str, prompt_tokens: int, completion_tokens: int
@@ -229,3 +273,25 @@ class BaseChatModelSetup(Resource):
         model_group = metric_group.get_sub_group(model_name)
         model_group.get_counter("promptTokens").inc(prompt_tokens)
         model_group.get_counter("completionTokens").inc(completion_tokens)
+
+    def _get_connection(self) -> BaseChatModelConnection:
+        if self._resolved_connection is None:
+            err_msg = (
+                f"Connection '{self.connection}' has not been resolved. "
+                "Ensure open() is called before using the connection."
+            )
+            raise TypeError(err_msg)
+        return self._resolved_connection
+
+    def _get_prompt(self) -> Prompt:
+        if not isinstance(self.prompt, Prompt):
+            err_msg = f"Expect Prompt, but is {self.prompt.__class__.__name__}"
+            raise TypeError(err_msg)
+        return self.prompt
+
+    def _get_tools(self) -> List[Tool]:
+        for tool in self.tools:
+            if not isinstance(tool, Tool):
+                err_msg = f"Expect Tool, but is {tool.__class__.__name__}"
+                raise TypeError(err_msg)
+        return self.tools

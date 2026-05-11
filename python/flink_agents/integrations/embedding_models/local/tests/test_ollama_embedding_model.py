@@ -19,11 +19,13 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from ollama import Client
 
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.embedding_models.local.ollama_embedding_model import (
     OllamaEmbeddingModelConnection,
     OllamaEmbeddingModelSetup,
@@ -54,24 +56,27 @@ except Exception:
 
 
 @pytest.mark.skipif(
-    client is None, reason="Ollama client is not available or test embedding model is missing"
+    client is None,
+    reason="Ollama client is not available or test embedding model is missing",
 )
 def test_ollama_embedding_setup() -> None:
     """Test embedding functionality with OllamaEmbeddingModelSetup."""
     connection = OllamaEmbeddingModelConnection(
-        name="ollama_embed",
-        base_url="http://localhost:11434"
+        name="ollama_embed", base_url="http://localhost:11434"
     )
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         return connection
+
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
 
     setup = OllamaEmbeddingModelSetup(
         name="embeddings",
         connection="ollama_embed",
         model=test_model,
         truncate=True,
-        get_resource=get_resource
+        resource_context=mock_ctx,
     )
 
     # Test embedding through setup

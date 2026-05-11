@@ -75,7 +75,7 @@ class ChatModelActionRetryTest {
         sensoryMemory = createStatefulMemoryObject();
 
         // Wire up ChatModel
-        when(mockChatModel.getConnection()).thenReturn("test-connection");
+        when(mockChatModel.getConnectionName()).thenReturn("test-connection");
 
         // Wire up RunnerContext
         when(mockCtx.getResource(anyString(), eq(ResourceType.CHAT_MODEL)))
@@ -114,7 +114,7 @@ class ChatModelActionRetryTest {
                 mockCtx);
 
         assertThat(sentEvents).hasSize(1);
-        ChatResponseEvent responseEvent = (ChatResponseEvent) sentEvents.get(0);
+        ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(responseEvent.getRetryCount()).isEqualTo(0);
         assertThat(responseEvent.getTotalRetryWaitSec()).isEqualTo(0);
 
@@ -150,7 +150,7 @@ class ChatModelActionRetryTest {
         long elapsed = System.currentTimeMillis() - startTime;
 
         assertThat(sentEvents).hasSize(1);
-        ChatResponseEvent responseEvent = (ChatResponseEvent) sentEvents.get(0);
+        ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(responseEvent.getRetryCount()).isEqualTo(1);
         // Exponential backoff: 1000ms (1s * 2^0) total
         // 1 retry with 1s interval = 1s total
@@ -158,7 +158,7 @@ class ChatModelActionRetryTest {
         assertThat(elapsed).isGreaterThanOrEqualTo(1000L);
 
         // Verify metrics recorded under connection name
-        verify(mockActionMetricGroup).getSubGroup(mockChatModel.getConnection());
+        verify(mockActionMetricGroup).getSubGroup(mockChatModel.getConnectionName());
         verify(mockRetryCountCounter).inc(1);
         verify(mockRetryWaitSecCounter).inc(1);
     }

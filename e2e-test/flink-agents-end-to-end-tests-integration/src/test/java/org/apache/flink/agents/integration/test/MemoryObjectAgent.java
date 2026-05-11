@@ -31,9 +31,12 @@ import java.util.*;
 /** An example agent that tests usages of MemoryObject. */
 public class MemoryObjectAgent extends Agent {
     public static class MyEvent extends Event {
+        public static final String EVENT_TYPE = "MyEvent";
+
         private final String value;
 
         public MyEvent(String value) {
+            super(EVENT_TYPE);
             this.value = value;
         }
 
@@ -73,12 +76,12 @@ public class MemoryObjectAgent extends Agent {
         }
     }
 
-    @Action(listenEvents = {InputEvent.class})
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void testMemoryObject(Event event, RunnerContext ctx) throws Exception {
         MemoryObject stm = ctx.getShortTermMemory();
         MemoryObject sm = ctx.getSensoryMemory();
 
-        Integer key = (Integer) ((InputEvent) event).getInput();
+        Integer key = (Integer) InputEvent.fromEvent(event).getInput();
 
         int visitCount = 1;
         if (stm.isExist("visit_count")) {

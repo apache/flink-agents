@@ -62,9 +62,13 @@ def main() -> None:
     agents_env.add_resource(
         "ollama_server",
         ResourceType.CHAT_MODEL_CONNECTION,
-        ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=120),
+        ResourceDescriptor(
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=120
+        ),
     ).add_resource(
-        "notify_shipping_manager", ResourceType.TOOL, Tool.from_callable(notify_shipping_manager)
+        "notify_shipping_manager",
+        ResourceType.TOOL,
+        Tool.from_callable(notify_shipping_manager),
     )
 
     # Read product reviews from a text file as a streaming source.

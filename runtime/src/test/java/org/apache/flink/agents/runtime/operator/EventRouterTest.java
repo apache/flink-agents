@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class EventRouterTest {
 
     @Test
-    void wrapToInputEventReturnsJavaInputEventForJavaInput() {
+    void wrapToInputEventReturnsJavaInputEventForJavaInput() throws Exception {
         AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
         EventRouter<Long, Object> router = new EventRouter<>(plan, /* inputIsJava */ true);
 
@@ -47,7 +47,7 @@ class EventRouterTest {
     void getActionsTriggeredByReturnsActionsForJavaEventClass() throws Exception {
         Action action = TestActions.noopAction();
         Map<String, Action> actions = Map.of(action.getName(), action);
-        Map<String, List<Action>> byEvent = Map.of(InputEvent.class.getName(), List.of(action));
+        Map<String, List<Action>> byEvent = Map.of(InputEvent.EVENT_TYPE, List.of(action));
         AgentPlan plan = new AgentPlan(actions, byEvent);
 
         EventRouter<Long, Object> router = new EventRouter<>(plan, /* inputIsJava */ true);

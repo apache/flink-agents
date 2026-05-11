@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
@@ -31,7 +32,6 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
-import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
@@ -124,8 +124,10 @@ public class ResourceCacheTest {
 
         @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
-        @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
-        public void handleInputEvent(InputEvent event, RunnerContext context) {}
+        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        public void handleInputEvent(Event event, RunnerContext context) {
+            InputEvent inputEvent = InputEvent.fromEvent(event);
+        }
     }
 
     public static class TestPythonResourceAdapter implements PythonResourceAdapter {
@@ -169,12 +171,6 @@ public class ResourceCacheTest {
         @Override
         public VectorStoreQueryResult fromPythonVectorStoreQueryResult(
                 PyObject pythonVectorStoreQueryResult) {
-            return null;
-        }
-
-        @Override
-        public CollectionManageableVectorStore.Collection fromPythonCollection(
-                PyObject pythonCollection) {
             return null;
         }
 

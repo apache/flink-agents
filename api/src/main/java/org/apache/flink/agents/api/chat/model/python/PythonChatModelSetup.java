@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import pemja.core.object.PyObject;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +56,11 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
         super(descriptor, getResource);
         this.chatModelSetup = chatModelSetup;
         this.adapter = adapter;
+    }
+
+    @Override
+    public void open() {
+        this.adapter.callMethod(chatModelSetup, "open", Collections.emptyMap());
     }
 
     @Override

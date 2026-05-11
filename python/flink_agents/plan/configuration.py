@@ -28,7 +28,7 @@ from flink_agents.api.configuration import (
 )
 
 
-def flatten_dict(d: Dict, parent_key: str = '', sep: str = '.') -> Dict[str, Any]:
+def flatten_dict(d: Dict, parent_key: str = "", sep: str = ".") -> Dict[str, Any]:
     """Flatten a nested dictionary into a single-level dictionary.
 
     This function recursively traverses the dictionary, converting multi-level
@@ -55,6 +55,7 @@ def flatten_dict(d: Dict, parent_key: str = '', sep: str = '.') -> Dict[str, Any
             items[new_key] = v
     return items
 
+
 class AgentConfiguration(BaseModel, Configuration):
     """Base class for config objects in the system.
     Provides a flat dict interface to access nested config values.
@@ -65,11 +66,13 @@ class AgentConfiguration(BaseModel, Configuration):
     def __init__(self, conf_data: Dict[str, Any] | None = None) -> None:
         """Initialize with optional configuration data."""
         if conf_data is None:
-            super().__init__(conf_data = {})
+            super().__init__(conf_data={})
         else:
-            super().__init__(conf_data = conf_data)
+            super().__init__(conf_data=conf_data)
 
-    def get_value_with_type(self, key: str, config_type: Type[Any], default: Any) -> Any:
+    def get_value_with_type(
+        self, key: str, config_type: Type[Any], default: Any
+    ) -> Any:
         """Helper method for all the get_xxx functions to avoid duplicate code.
 
         Args:
@@ -92,24 +95,26 @@ class AgentConfiguration(BaseModel, Configuration):
             raise ValueError(msg) from e
 
     @override
-    def get_int(self, key: str, default: int | None=None) -> int:
+    def get_int(self, key: str, default: int | None = None) -> int:
         return self.get_value_with_type(key, int, default)
 
     @override
-    def get_float(self, key: str, default: float | None=None) -> float:
+    def get_float(self, key: str, default: float | None = None) -> float:
         return self.get_value_with_type(key, float, default)
 
     @override
-    def get_bool(self, key: str, default: bool | None=None) -> bool:
+    def get_bool(self, key: str, default: bool | None = None) -> bool:
         return self.get_value_with_type(key, bool, default)
 
     @override
-    def get_str(self, key: str, default: str | None=None) -> str:
+    def get_str(self, key: str, default: str | None = None) -> str:
         return self.get_value_with_type(key, str, default)
 
     @override
     def get(self, option: ConfigOption) -> Any:
-        return self.get_value_with_type(option.get_key(), option.get_type(), option.get_default_value())
+        return self.get_value_with_type(
+            option.get_key(), option.get_type(), option.get_default_value()
+        )
 
     @override
     def set_str(self, key: str, value: str) -> None:
@@ -141,7 +146,7 @@ class AgentConfiguration(BaseModel, Configuration):
             path = Path(config_path)
             with path.open() as f:
                 raw_config = yaml.safe_load(f)
-                self.conf_data.update(flatten_dict(raw_config.get('agent', {})))
+                self.conf_data.update(flatten_dict(raw_config.get("agent", {})))
 
     def get_conf_data(self) -> dict:
         """Get the configuration data dictionary.

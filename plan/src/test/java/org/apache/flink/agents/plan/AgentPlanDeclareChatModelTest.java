@@ -59,6 +59,11 @@ class AgentPlanDeclareChatModelTest {
         }
 
         @Override
+        public void open() {
+            // do nothing
+        }
+
+        @Override
         public Map<String, Object> getParameters() {
             return Map.of();
         }
@@ -82,7 +87,7 @@ class AgentPlanDeclareChatModelTest {
                     .build();
         }
 
-        @Action(listenEvents = {InputEvent.class})
+        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public void onInput(Event e, RunnerContext ctx) {
             // no-op for this test; validates action registration signature
         }
@@ -179,9 +184,10 @@ class AgentPlanDeclareChatModelTest {
         BaseChatModelSetup expectedChatModel =
                 (BaseChatModelSetup) resolveResource("testChatModel", ResourceType.CHAT_MODEL);
         Assertions.assertEquals(expectedChatModel.getClass(), actualChatModel.getClass());
-        Assertions.assertEquals(expectedChatModel.getConnection(), actualChatModel.getConnection());
+        Assertions.assertEquals(
+                expectedChatModel.getConnectionName(), actualChatModel.getConnectionName());
         Assertions.assertEquals(expectedChatModel.getModel(), actualChatModel.getModel());
         Assertions.assertEquals(expectedChatModel.getPrompt(), actualChatModel.getPrompt());
-        Assertions.assertEquals(expectedChatModel.getTools(), actualChatModel.getTools());
+        Assertions.assertEquals(expectedChatModel.getToolNames(), actualChatModel.getToolNames());
     }
 }

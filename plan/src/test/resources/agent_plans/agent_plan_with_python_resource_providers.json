@@ -8,7 +8,7 @@
         "qualname": "PythonAgentPlanCompatibilityTestAgent.first_action"
       },
       "listen_event_types": [
-        "flink_agents.api.events.event.InputEvent"
+        "_input_event"
       ]
     },
     "second_action": {
@@ -19,8 +19,8 @@
         "qualname": "PythonAgentPlanCompatibilityTestAgent.second_action"
       },
       "listen_event_types": [
-        "flink_agents.api.events.event.InputEvent",
-        "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent.MyEvent"
+        "_input_event",
+        "_my_event"
       ]
     },
     "chat_model_action": {
@@ -31,8 +31,8 @@
         "qualname": "process_chat_request_or_tool_response"
       },
       "listen_event_types": [
-        "flink_agents.api.events.chat_event.ChatRequestEvent",
-        "flink_agents.api.events.tool_event.ToolResponseEvent"
+        "_chat_request_event",
+        "_tool_response_event"
       ]
     },
     "tool_call_action": {
@@ -43,25 +43,25 @@
         "qualname": "process_tool_request"
       },
       "listen_event_types": [
-        "flink_agents.api.events.tool_event.ToolRequestEvent"
+        "_tool_request_event"
       ]
     }
   },
   "actions_by_event": {
-    "flink_agents.api.events.event.InputEvent": [
+    "_input_event": [
       "first_action",
       "second_action"
     ],
-    "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent.MyEvent": [
+    "_my_event": [
       "second_action"
     ],
-    "flink_agents.api.events.chat_event.ChatRequestEvent": [
+    "_chat_request_event": [
       "chat_model_action"
     ],
-    "flink_agents.api.events.tool_event.ToolResponseEvent": [
+    "_tool_response_event": [
       "chat_model_action"
     ],
-    "flink_agents.api.events.tool_event.ToolRequestEvent": [
+    "_tool_request_event": [
       "tool_call_action"
     ]
   },

@@ -29,6 +29,7 @@ header:
     - '**/*.txt'
     - '**/dependency-reduced-pom.xml'
     - '**/LICENSE.*'
+    - '**/resources/skills/*'
   comment: on-failure
   dependency:
     files:

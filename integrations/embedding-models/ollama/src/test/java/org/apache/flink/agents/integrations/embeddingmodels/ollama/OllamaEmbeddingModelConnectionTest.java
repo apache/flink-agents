@@ -19,7 +19,6 @@
 package org.apache.flink.agents.integrations.embeddingmodels.ollama;
 
 import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
-import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -79,11 +78,12 @@ class OllamaEmbeddingModelConnectionTest {
             }
 
             @Override
-            public BaseEmbeddingModelConnection getConnection() {
-                return new OllamaEmbeddingModelConnection(buildDescriptor(), dummyResource);
+            public void open() {
+                connection = new OllamaEmbeddingModelConnection(buildDescriptor(), dummyResource);
             }
         }
         DummySetup setup = new DummySetup(buildDescriptor(), dummyResource);
+        setup.open();
         assertNotNull(setup.getConnection());
     }
 }

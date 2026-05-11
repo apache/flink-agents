@@ -15,16 +15,22 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import os
 import sysconfig
-import tempfile
 from datetime import datetime, timezone
-from importlib import resources
 from pathlib import Path
-from typing import Any, List
+from typing import Any, ClassVar, List
 
+try:
+    from typing import override
+except ImportError:
+    from typing_extensions import override
+
+
+import pytest
 from pydantic import BaseModel
-from pyflink.common import Encoder, Types, WatermarkStrategy
+from pyflink.common import Configuration, Encoder, Types, WatermarkStrategy
 from pyflink.datastream import (
     KeySelector,
     RuntimeExecutionMode,
@@ -49,8 +55,6 @@ from flink_agents.api.decorators import (
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.memory.long_term_memory import (
-    CompactionConfig,
-    LongTermMemoryBackend,
     LongTermMemoryOptions,
     MemorySetItem,
 )
@@ -60,20 +64,20 @@ from flink_agents.api.resource import (
 )
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.e2e_tests.test_utils import pull_model
-from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import (
-    ChromaVectorStore,
-)
 
 current_dir = Path(__file__).parent
 
-os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
-
-chromadb_path = tempfile.mkdtemp()
-
-OLLAMA_CHAT_MODEL = "qwen3:8b"
 OLLAMA_EMBEDDING_MODEL = "nomic-embed-text"
-pull_model(OLLAMA_CHAT_MODEL)
 pull_model(OLLAMA_EMBEDDING_MODEL)
+
+MODEL = "qwen3.6-plus"
+BASE_URL = os.environ.get("ACTION_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1")
+API_KEY = os.environ.get("ACTION_API_KEY")
+
+# Env var used to hand ``chromadb``'s persist path to the agent-level
+# ``@vector_store`` resource (which is a staticmethod and has no access
+# to the test's pytest fixtures directly).
+_CHROMADB_PATH_ENV = "MEM0_LTM_E2E_CHROMADB_PATH"
 
 
 class ItemData(BaseModel):
@@ -81,22 +85,18 @@ class ItemData(BaseModel):
 
     Attributes:
     ----------
-    id : int
-        Unique identifier of the item
-    review : str
-        The user review of the item
-    review_score: float
-        The review_score of the item
+    name : str
+        Unique name of the user
+    fact : str
+        One fact about the user
     """
 
-    id: int
-    review: str
-    review_score: float
-    memory_info: dict | None = None
+    name: str
+    fact: str
 
 
-class Record(BaseModel):  # noqa: D101
-    id: int
+class Record(BaseModel):
+    name: str
     count: int
     timestamp_before_add: str
     timestamp_after_add: str
@@ -104,16 +104,35 @@ class Record(BaseModel):  # noqa: D101
     items: List[MemorySetItem] | None = None
 
 
-class MyEvent(Event):  # noqa D101
-    value: Any
+class MyEvent(Event):
+    EVENT_TYPE: ClassVar[str] = "_my_event"
+
+    def __init__(self, value: Any) -> None:
+        """Create a MyEvent with the given value."""
+        super().__init__(
+            type=MyEvent.EVENT_TYPE,
+            attributes={"value": value},
+        )
+
+    @classmethod
+    @override
+    def from_event(cls, event: Event) -> "MyEvent":
+        """Reconstruct a MyEvent from a generic Event."""
+        assert "value" in event.attributes
+        return MyEvent(value=Record.model_validate(event.attributes["value"]))
+
+    @property
+    def value(self) -> Any:
+        """Return the event value."""
+        return self.attributes["value"]
 
 
 class MyKeySelector(KeySelector):
     """KeySelector for extracting key."""
 
-    def get_key(self, value: ItemData) -> int:
+    def get_key(self, value: ItemData) -> str:
         """Extract key from ItemData."""
-        return value.id
+        return value.name
 
 
 class LongTermMemoryAgent(Agent):
@@ -121,10 +140,13 @@ class LongTermMemoryAgent(Agent):
 
     @chat_model_connection
     @staticmethod
-    def ollama_connection() -> ResourceDescriptor:
+    def openai_connection() -> ResourceDescriptor:
         """ChatModelConnection responsible for ollama model service connection."""
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=480.0
+            clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION,
+            api_key=API_KEY,
+            api_base_url=BASE_URL,
+            request_timeout=300,
         )
 
     @chat_model_setup
@@ -132,53 +154,53 @@ class LongTermMemoryAgent(Agent):
     def ollama_qwen3() -> ResourceDescriptor:
         """ChatModel which focus on math, and reuse ChatModelConnection."""
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
-            connection="ollama_connection",
-            model=OLLAMA_CHAT_MODEL,
+            clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP,
+            connection="openai_connection",
+            model=MODEL,
             extract_reasoning=True,
             think=False,
         )
 
     @embedding_model_connection
     @staticmethod
-    def ollama_embedding_connection() -> ResourceDescriptor:  # noqa D102
+    def ollama_embedding_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
             clazz=ResourceName.EmbeddingModel.OLLAMA_CONNECTION, request_timeout=240.0
         )
 
     @embedding_model_setup
     @staticmethod
-    def ollama_nomic_embed_text() -> ResourceDescriptor:  # noqa D102
+    def ollama_nomic_embed_text() -> ResourceDescriptor:
         return ResourceDescriptor(
             clazz=ResourceName.EmbeddingModel.OLLAMA_SETUP,
             connection="ollama_embedding_connection",
             model=OLLAMA_EMBEDDING_MODEL,
+            think=False,
         )
 
     @vector_store
     @staticmethod
-    def chroma_vector_store() -> ResourceDescriptor:
-        """Vector store setup for knowledge base."""
+    def chroma_ltm_store() -> ResourceDescriptor:
+        """ChromaDB vector store backing Mem0 LTM."""
         return ResourceDescriptor(
             clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
             embedding_model="ollama_nomic_embed_text",
-            persist_directory=chromadb_path,
+            persist_directory=os.environ[_CHROMADB_PATH_ENV],
+            collection="context",
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    async def add_items(event: Event, ctx: RunnerContext):  # noqa D102
-        input_data = event.input
+    async def add_items(event: Event, ctx: RunnerContext) -> None:
+        input_data = ItemData.model_validate(InputEvent.from_event(event).input)
         ltm = ctx.long_term_memory
 
         timestamp_before_add = datetime.now(timezone.utc).isoformat()
-        memory_set = ltm.get_or_create_memory_set(
-            name="test_ltm",
-            item_type=str,
-            capacity=5,
-            compaction_config=CompactionConfig(model="ollama_qwen3"),
+        memory_set = ltm.get_memory_set(name="test_ltm")
+        await ctx.durable_execute_async(
+            memory_set.add,
+            items=f"{input_data.fact}",
         )
-        await ctx.durable_execute_async(memory_set.add, items=input_data.review)
         timestamp_after_add = datetime.now(timezone.utc).isoformat()
 
         stm = ctx.short_term_memory
@@ -188,7 +210,7 @@ class LongTermMemoryAgent(Agent):
         ctx.send_event(
             MyEvent(
                 value=Record(
-                    id=input_data.id,
+                    name=input_data.name,
                     count=count,
                     timestamp_before_add=timestamp_before_add,
                     timestamp_after_add=timestamp_after_add,
@@ -196,32 +218,35 @@ class LongTermMemoryAgent(Agent):
             )
         )
 
-    @action(MyEvent)
+    @action(MyEvent.EVENT_TYPE)
     @staticmethod
-    async def retrieve_items(event: Event, ctx: RunnerContext):  # noqa D102
-        record: Record = event.value
+    async def retrieve_items(event: Event, ctx: RunnerContext) -> None:
+        record: Record = MyEvent.from_event(event).value
         record.timestamp_second_action = datetime.now(timezone.utc).isoformat()
         memory_set = ctx.long_term_memory.get_memory_set(name="test_ltm")
         items = await ctx.durable_execute_async(memory_set.get)
-        if (
-            (record.id == 1 and record.count == 3)
-            or (record.id == 2 and record.count == 5)
-            or (record.id == 3 and record.count == 2)
+        if (record.name == "alice" and record.count == 2) or (
+            record.name == "bob" and record.count == 2
         ):
             record.items = items
         ctx.send_event(OutputEvent(output=record))
 
 
-def test_long_term_memory_async_execution_in_action(tmp_path: Path) -> None:  # noqa: D103
-    env = StreamExecutionEnvironment.get_execution_environment()
+@pytest.mark.skipif(not API_KEY, reason="openai api key is required.")
+def test_long_term_memory_async_execution_in_action(tmp_path: Path) -> None:
+    chromadb_path = str(tmp_path / "chromadb")
+    os.environ[_CHROMADB_PATH_ENV] = chromadb_path
+
+    config = Configuration()
+    config.set_string("python.pythonpath", sysconfig.get_paths()["purelib"])
+    env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
 
-    # currently, bounded source is not supported due to runtime implementation, so
-    # we use continuous file source here.
     input_datastream = env.from_source(
         source=FileSource.for_record_stream_format(
-            StreamFormat.text_line_format(), f"file:///{current_dir}/../resources/input"
+            StreamFormat.text_line_format(),
+            f"file:///{current_dir}/../resources/long_term_memory_test",
         ).build(),
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
@@ -234,13 +259,11 @@ def test_long_term_memory_async_execution_in_action(tmp_path: Path) -> None:  # 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
     agents_config = agents_env.get_config()
     agents_config.set(AgentConfigOptions.JOB_IDENTIFIER, "LTM_TEST_JOB")
+    agents_config.set(LongTermMemoryOptions.Mem0.CHAT_MODEL_SETUP, "ollama_qwen3")
     agents_config.set(
-        LongTermMemoryOptions.BACKEND, LongTermMemoryBackend.EXTERNAL_VECTOR_STORE
+        LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP, "ollama_nomic_embed_text"
     )
-    agents_config.set(
-        LongTermMemoryOptions.EXTERNAL_VECTOR_STORE_NAME, "chroma_vector_store"
-    )
-    agents_config.set(LongTermMemoryOptions.ASYNC_COMPACTION, True)
+    agents_config.set(LongTermMemoryOptions.Mem0.VECTOR_STORE, "chroma_ltm_store")
 
     output_datastream = (
         agents_env.from_datastream(
@@ -253,7 +276,7 @@ def test_long_term_memory_async_execution_in_action(tmp_path: Path) -> None:  # 
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    output_datastream.map(lambda x: x.model_dump_json(), Types.STRING()).add_sink(
+    output_datastream.map(lambda x: json.dumps(x), Types.STRING()).add_sink(
         StreamingFileSink.for_row_format(
             base_path=str(result_dir.absolute()),
             encoder=Encoder.simple_string_encoder(),
@@ -261,11 +284,10 @@ def test_long_term_memory_async_execution_in_action(tmp_path: Path) -> None:  # 
     )
 
     agents_env.execute()
-
     check_result(result_dir=result_dir)
 
 
-def check_result(*, result_dir: Path) -> None:  # noqa: D103
+def check_result(*, result_dir: Path) -> None:
     actual_result = []
     for file in result_dir.iterdir():
         if file.is_dir():
@@ -277,29 +299,17 @@ def check_result(*, result_dir: Path) -> None:  # noqa: D103
 
     records = {}
     for record in actual_result:
-        records[f"{record.id}.{record.count}"] = record
+        records[f"{record.name}.{record.count}"] = record
+
+    items = records["alice.2"].items
+    # LLMs may treat different review comments as updates to the same
+    # fact or as distinct facts.
+    assert len(items) == 1
+    item: MemorySetItem = items[-1]
+    assert item.created_at < item.updated_at
+    assert "bananas" in item.value
 
     # verify async add doesn't block process other key
     assert datetime.fromisoformat(
-        records["2.1"].timestamp_before_add
-    ) < datetime.fromisoformat(records["1.1"].timestamp_after_add)
-    assert datetime.fromisoformat(
-        records["3.1"].timestamp_before_add
-    ) < datetime.fromisoformat(records["1.1"].timestamp_after_add)
-
-    # verify async compaction doesn't block any operation
-    assert not records["2.5"].items[0].compacted
-    store = ChromaVectorStore(
-        persist_directory=chromadb_path, embedding_model="ollama_nomic_embed_text"
-    )
-    doc = store.get(collection_name="LTM_TEST_JOB--89360337-test_ltm")
-    print(f"Retrieved items: {doc}")
-    log_dir = resources.files("pyflink").joinpath("log")
-
-    log = ""
-    for item in log_dir.iterdir():
-        if item.is_file() and item.name.endswith(".log"):
-            log = item.read_text()
-    assert len(doc) == 1, log
-    doc = doc[0]
-    assert doc.metadata.get("compacted")
+        records["alice.1"].timestamp_before_add
+    ) < datetime.fromisoformat(records["bob.1"].timestamp_after_add)

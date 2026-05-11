@@ -17,117 +17,88 @@
  */
 package org.apache.flink.agents.api.memory;
 
-import org.apache.flink.agents.api.memory.compaction.CompactionConfig;
-
 import javax.annotation.Nullable;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * Base interface for long-term memory management. It provides operations to create, retrieve,
- * delete, and search memory sets, which are collections of memory items. A memory set can store
- * items of a specific type (e.g., String or ChatMessage) and has a capacity limit. When the
- * capacity is exceeded, compaction will be applied to manage the memory set size.
+ * Base interface for long-term memory management. Provides operations to create, retrieve, delete,
+ * and search memory sets, which are named collections of memory items.
  */
 public interface BaseLongTermMemory extends AutoCloseable {
 
     /**
-     * Gets an existing memory set or creates a new one if it doesn't exist.
+     * Gets the memory set by name. If it does not exist, the backend creates it.
      *
      * @param name the name of the memory set
-     * @param itemType the type of items stored in the memory set
-     * @param capacity the maximum number of items the memory set can hold
-     * @param compactionConfig the compaction config to use when the capacity is exceeded
-     * @return the existing or newly created memory set
-     * @throws Exception if the memory set cannot be created or retrieved
-     */
-    MemorySet getOrCreateMemorySet(
-            String name, Class<?> itemType, int capacity, CompactionConfig compactionConfig)
-            throws Exception;
-
-    /**
-     * Gets an existing memory set by name.
-     *
-     * @param name the name of the memory set to retrieve
-     * @return the memory set with the given name
-     * @throws Exception if the memory set does not exist or cannot be retrieved
+     * @return the memory set
      */
     MemorySet getMemorySet(String name) throws Exception;
 
     /**
-     * Deletes a memory set by name.
+     * Deletes the memory set.
      *
      * @param name the name of the memory set to delete
-     * @return true if the memory set was successfully deleted, false if it didn't exist
-     * @throws Exception if the deletion operation fails
+     * @return true if the memory set was successfully deleted
      */
     boolean deleteMemorySet(String name) throws Exception;
 
     /**
-     * Gets the number of items in the memory set.
-     *
-     * @param memorySet the memory set to count items in
-     * @return the number of items in the memory set
-     * @throws Exception if the size cannot be determined
-     */
-    long size(MemorySet memorySet) throws Exception;
-
-    /**
-     * Adds items to the memory set. If IDs are not provided, they will be automatically generated.
-     * This method may trigger compaction if the memory set capacity is exceeded.
+     * Adds items to the memory set. The backend may auto-generate IDs.
      *
      * @param memorySet the memory set to add items to
-     * @param memoryItems the items to be added to the memory set
-     * @param ids optional list of IDs for the items. If null or shorter than memoryItems, IDs will
-     *     be auto-generated for missing items
-     * @param metadatas optional list of metadata maps for the items. Each metadata map corresponds
-     *     to an item at the same index
+     * @param memoryItems the items to add
+     * @param metadatas optional list of metadata maps, one per item
      * @return list of IDs of the added items
-     * @throws Exception if items cannot be added to the memory set
      */
     List<String> add(
             MemorySet memorySet,
-            List<?> memoryItems,
-            @Nullable List<String> ids,
+            List<String> memoryItems,
             @Nullable List<Map<String, Object>> metadatas)
             throws Exception;
 
     /**
-     * Retrieves memory items from the memory set. If no IDs are provided, all items in the memory
-     * set are returned.
+     * Retrieves memory items. When {@code ids} is provided, {@code filters} and {@code limit} are
+     * ignored.
      *
-     * @param memorySet the memory set to retrieve items from
-     * @param ids optional list of item IDs to retrieve. If null, all items are returned
-     * @return list of memory set items. If ids is provided, returns items matching those IDs. If
-     *     ids is null, returns all items in the memory set
-     * @throws Exception if items cannot be retrieved from the memory set
+     * @param memorySet the memory set to retrieve from
+     * @param ids optional list of item IDs to retrieve
+     * @param filters optional metadata filters
+     * @param limit maximum number of items to return; defaults to 100 when {@code null}
+     * @return list of matching memory items
      */
-    List<MemorySetItem> get(MemorySet memorySet, @Nullable List<String> ids) throws Exception;
+    List<MemorySetItem> get(
+            MemorySet memorySet,
+            @Nullable List<String> ids,
+            @Nullable Map<String, Object> filters,
+            @Nullable Integer limit)
+            throws Exception;
 
     /**
-     * Deletes memory items from the memory set. If no IDs are provided, all items in the memory set
-     * are deleted.
+     * Deletes memory items. If {@code ids} is null, all items in the set are deleted.
      *
      * @param memorySet the memory set to delete items from
-     * @param ids optional list of item IDs to delete. If null, all items in the memory set are
-     *     deleted
-     * @throws Exception if items cannot be deleted from the memory set
+     * @param ids optional list of item IDs to delete
      */
     void delete(MemorySet memorySet, @Nullable List<String> ids) throws Exception;
 
     /**
-     * Performs semantic search on the memory set to find items related to the query string.
+     * Performs semantic search on the memory set.
      *
      * @param memorySet the memory set to search in
      * @param query the query string for semantic search
-     * @param limit the maximum number of items to return
-     * @param extraArgs additional arguments for the search operation (e.g., filters, distance
-     *     metrics)
-     * @return list of memory set items that are most relevant to the query, ordered by relevance
-     * @throws Exception if the search operation fails
+     * @param limit maximum number of items to return
+     * @param filters optional metadata filters
+     * @param extraArgs backend-specific extra arguments forwarded as keyword arguments to the
+     *     underlying search call (mirrors Python's {@code **kwargs})
+     * @return list of memory items most relevant to the query, ordered by relevance
      */
     List<MemorySetItem> search(
-            MemorySet memorySet, String query, int limit, Map<String, Object> extraArgs)
+            MemorySet memorySet,
+            String query,
+            int limit,
+            @Nullable Map<String, Object> filters,
+            Map<String, Object> extraArgs)
             throws Exception;
 }

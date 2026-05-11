@@ -19,49 +19,23 @@ package org.apache.flink.agents.api.vectorstores;
 
 import java.util.Map;
 
-/** Base abstract class for vector store which support collection management. */
+/** Base interface for vector store which supports collection management. */
 public interface CollectionManageableVectorStore {
 
-    class Collection {
-        private final String name;
-        private final Map<String, Object> metadata;
-
-        public Collection(String name, Map<String, Object> metadata) {
-            this.name = name;
-            this.metadata = metadata;
-        }
-
-        public String getName() {
-            return name;
-        }
-
-        public Map<String, Object> getMetadata() {
-            return metadata;
-        }
-    }
+    /**
+     * Create the collection if it doesn't already exist; no-op otherwise.
+     *
+     * @param name Name of the collection.
+     * @param kwargs Backend-specific options applied only when the collection is created (e.g.
+     *     Chroma's {@code metadata} dict, Pinecone's {@code dimension} / {@code metric}).
+     *     Implementations should document which keys they recognize; unknown keys are ignored.
+     */
+    void createCollectionIfNotExists(String name, Map<String, Object> kwargs) throws Exception;
 
     /**
-     * Get a collection, or create it if it doesn't exist.
+     * Delete a collection.
      *
-     * @param name The name of the collection to get or create.
-     * @param metadata The metadata of the collection.
-     * @return The retrieved or created collection.
+     * @param name Name of the collection.
      */
-    Collection getOrCreateCollection(String name, Map<String, Object> metadata) throws Exception;
-
-    /**
-     * Get a collection by name.
-     *
-     * @param name The name of the collection to get.
-     * @return The retrieved collection.
-     */
-    Collection getCollection(String name) throws Exception;
-
-    /**
-     * Delete a collection by name.
-     *
-     * @param name The name of the collection to delete.
-     * @return The deleted collection.
-     */
-    Collection deleteCollection(String name) throws Exception;
+    void deleteCollection(String name) throws Exception;
 }

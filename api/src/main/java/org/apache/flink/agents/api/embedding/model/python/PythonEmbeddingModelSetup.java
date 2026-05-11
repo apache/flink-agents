@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import pemja.core.object.PyObject;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -62,6 +63,11 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
         super(descriptor, getResource);
         this.embeddingModelSetup = embeddingModelSetup;
         this.adapter = adapter;
+    }
+
+    @Override
+    public void open() {
+        this.adapter.callMethod(embeddingModelSetup, "open", Collections.emptyMap());
     }
 
     @Override

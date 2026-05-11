@@ -111,7 +111,9 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
             )
         return self.__client
 
-    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text query."""
         # Extract OpenAI specific parameters
         model = kwargs.pop("model")
@@ -123,7 +125,9 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
         response = self.client.embeddings.create(
             model=model,
             input=text,
-            encoding_format=encoding_format if encoding_format is not None else NOT_GIVEN,
+            encoding_format=encoding_format
+            if encoding_format is not None
+            else NOT_GIVEN,
             dimensions=dimensions if dimensions is not None else NOT_GIVEN,
             user=user if user is not None else NOT_GIVEN,
         )

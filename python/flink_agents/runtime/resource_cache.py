@@ -18,6 +18,7 @@
 from typing import Any, Dict
 
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource_context import ResourceContext
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.resource_provider import JavaResourceProvider, ResourceProvider
 
@@ -51,6 +52,11 @@ class ResourceCache:
         self._config = config
         self._cache: Dict[ResourceType, Dict[str, Resource]] = {}
         self._j_resource_adapter: Any = None
+        self._resource_context = None
+
+    def set_resource_context(self, resource_context: ResourceContext) -> None:
+        """Set the resource context for accessing other resource in runtime."""
+        self._resource_context = resource_context
 
     def set_java_resource_adapter(self, j_resource_adapter: Any) -> None:
         """Set Java resource adapter for Java resource providers."""
@@ -77,8 +83,9 @@ class ResourceCache:
         if isinstance(resource_provider, JavaResourceProvider):
             resource_provider.set_java_resource_adapter(self._j_resource_adapter)
         resource = resource_provider.provide(
-            get_resource=self.get_resource, config=self._config
+            resource_context=self._resource_context, config=self._config
         )
+        resource.open()
         self._cache.setdefault(type, {})[name] = resource
         return resource
 

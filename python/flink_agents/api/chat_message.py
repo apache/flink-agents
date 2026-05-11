@@ -67,3 +67,11 @@ class ChatMessage(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.role.value}: {self.content}"
+
+
+def find_first_system_message(messages: List[ChatMessage]) -> int:
+    """Helper method to find the index of the first system message."""
+    for i in range(len(messages)):
+        if messages[i].role == MessageRole.SYSTEM:
+            return i
+    return -1

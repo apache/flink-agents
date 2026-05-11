@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.integration.test;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -198,17 +199,20 @@ public class ChatModelIntegrationAgent extends Agent {
         return Math.random();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void process(InputEvent event, RunnerContext ctx) throws Exception {
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void process(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         ctx.sendEvent(
                 new ChatRequestEvent(
                         "chatModel",
                         Collections.singletonList(
-                                new ChatMessage(MessageRole.USER, (String) event.getInput()))));
+                                new ChatMessage(
+                                        MessageRole.USER, (String) inputEvent.getInput()))));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
-    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
-        ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    public static void processChatResponse(Event event, RunnerContext ctx) {
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        ctx.sendEvent(new OutputEvent(chatResponse.getResponse().getContent()));
     }
 }

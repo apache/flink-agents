@@ -22,7 +22,7 @@ from flink_agents.api.prompts.prompt import LocalPrompt, Prompt
 
 
 @pytest.fixture(scope="module")
-def text_prompt() -> Prompt:  # noqa: D103
+def text_prompt() -> Prompt:
     template = (
         "You ara a product review analyzer, please generate a score and the dislike reasons"
         "(if any) for the review. "
@@ -32,7 +32,7 @@ def text_prompt() -> Prompt:  # noqa: D103
     return Prompt.from_text(text=template)
 
 
-def test_prompt_from_text_to_string(text_prompt: LocalPrompt) -> None:  # noqa: D103
+def test_prompt_from_text_to_string(text_prompt: LocalPrompt) -> None:
     assert text_prompt.format_string(
         product_id="12345",
         description="wireless noise-canceling headphones with 20-hour battery life",
@@ -45,7 +45,7 @@ def test_prompt_from_text_to_string(text_prompt: LocalPrompt) -> None:  # noqa: 
     )
 
 
-def test_prompt_from_text_to_messages(text_prompt: LocalPrompt) -> None:  # noqa: D103
+def test_prompt_from_text_to_messages(text_prompt: LocalPrompt) -> None:
     assert text_prompt.format_messages(
         product_id="12345",
         description="wireless noise-canceling headphones with 20-hour battery life",
@@ -62,7 +62,7 @@ def test_prompt_from_text_to_messages(text_prompt: LocalPrompt) -> None:  # noqa
 
 
 @pytest.fixture(scope="module")
-def messages_prompt() -> Prompt:  # noqa: D103
+def messages_prompt() -> Prompt:
     template = [
         ChatMessage(
             role=MessageRole.SYSTEM,
@@ -78,7 +78,7 @@ def messages_prompt() -> Prompt:  # noqa: D103
     return Prompt.from_messages(messages=template)
 
 
-def test_prompt_from_messages_to_string(messages_prompt: LocalPrompt) -> None:  # noqa: D103
+def test_prompt_from_messages_to_string(messages_prompt: LocalPrompt) -> None:
     assert messages_prompt.format_string(
         product_id="12345",
         description="wireless noise-canceling headphones with 20-hour battery life",
@@ -92,7 +92,7 @@ def test_prompt_from_messages_to_string(messages_prompt: LocalPrompt) -> None:  
     )
 
 
-def test_prompt_from_messages_to_messages(messages_prompt: LocalPrompt) -> None:  # noqa: D103
+def test_prompt_from_messages_to_messages(messages_prompt: LocalPrompt) -> None:
     assert messages_prompt.format_messages(
         product_id="12345",
         description="wireless noise-canceling headphones with 20-hour battery life",
@@ -112,7 +112,7 @@ def test_prompt_from_messages_to_messages(messages_prompt: LocalPrompt) -> None:
     ]
 
 
-def test_prompt_lack_one_argument(text_prompt: LocalPrompt) -> None:  # noqa: D103
+def test_prompt_lack_one_argument(text_prompt: LocalPrompt) -> None:
     assert text_prompt.format_string(
         product_id="12345",
         review="The headphones broke after one week of use. Very poor quality",
@@ -123,7 +123,7 @@ def test_prompt_lack_one_argument(text_prompt: LocalPrompt) -> None:  # noqa: D1
     )
 
 
-def test_prompt_contain_json_schema() -> None:  # noqa: D103
+def test_prompt_contain_json_schema() -> None:
     prompt = Prompt.from_text(
         text=f"The json schema is {LocalPrompt.model_json_schema(mode='serialization')}",
     )

@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
@@ -31,7 +32,6 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
@@ -127,7 +127,7 @@ class EventRouter<IN, OUT> implements AutoCloseable {
      * @return the wrapped input event.
      */
     @SuppressWarnings("unchecked")
-    Event wrapToInputEvent(IN input, PythonActionExecutor pythonActionExecutor) {
+    Event wrapToInputEvent(IN input, PythonActionExecutor pythonActionExecutor) throws Exception {
         if (inputIsJava) {
             return new InputEvent(input);
         } else {
@@ -139,38 +139,38 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     }
 
     /**
-     * Extracts the downstream output payload from an {@link OutputEvent}.
+     * Extracts the downstream output payload from an output {@link Event}.
      *
-     * <p>For a Java {@link OutputEvent}, returns the payload directly. For a Python {@link
-     * PythonEvent}, delegates to the supplied {@link PythonActionExecutor} to convert the Python
-     * output back into the Java output type.
+     * <p>For a Java {@link OutputEvent}, returns the payload directly. For Python-side output
+     * events (cross-language unified {@link Event} with output type), the event is JSON-serialized
+     * and handed to {@link PythonActionExecutor#getOutputFromOutputEvent(String)} for extraction.
      *
      * @param event the output event (must satisfy {@link EventUtil#isOutputEvent(Event)}).
-     * @param pythonActionExecutor the Python action executor (used only for Python events).
+     * @param pythonActionExecutor the Python action executor (used only for Python output events).
      * @return the typed output payload.
-     * @throws IllegalStateException if the event is not a recognized output-event type.
      */
     @SuppressWarnings("unchecked")
     OUT getOutputFromOutputEvent(Event event, PythonActionExecutor pythonActionExecutor) {
         checkState(EventUtil.isOutputEvent(event));
         if (event instanceof OutputEvent) {
             return (OUT) ((OutputEvent) event).getOutput();
-        } else if (event instanceof PythonEvent) {
-            Object outputFromOutputEvent =
-                    pythonActionExecutor.getOutputFromOutputEvent(((PythonEvent) event).getEvent());
-            return (OUT) outputFromOutputEvent;
         } else {
-            throw new IllegalStateException(
-                    "Unsupported event type: " + event.getClass().getName());
+            // Python output events arrive as unified Event with type "_output_event".
+            // Pass the JSON representation to Python for extraction.
+            try {
+                String eventJson = new ObjectMapper().writeValueAsString(event);
+                Object outputFromOutputEvent =
+                        pythonActionExecutor.getOutputFromOutputEvent(eventJson);
+                return (OUT) outputFromOutputEvent;
+            } catch (Exception e) {
+                throw new IllegalStateException(
+                        "Failed to extract output from event: " + event.getType(), e);
+            }
         }
     }
 
     List<Action> getActionsTriggeredBy(Event event, AgentPlan agentPlan) {
-        if (event instanceof PythonEvent) {
-            return agentPlan.getActionsTriggeredBy(((PythonEvent) event).getEventType());
-        } else {
-            return agentPlan.getActionsTriggeredBy(event.getClass().getName());
-        }
+        return agentPlan.getActionsTriggeredBy(event.getType());
     }
 
     /**

@@ -78,13 +78,21 @@ public class JavaResourceAdapter {
         return chatMessage;
     }
 
-    @SuppressWarnings("unchecked")
-    public Document fromPythonDocument(PyObject pythonDocument) {
-        // TODO: Delete this method after the pemja findClass method is fixed.
-        return new Document(
-                pythonDocument.getAttr("content").toString(),
-                (Map<String, Object>) pythonDocument.getAttr("metadata", Map.class),
-                pythonDocument.getAttr("id").toString());
+    /**
+     * Build a Java {@link Document} from already-extracted Python fields. The earlier overload
+     * accepted a {@code PyObject} and called {@code getAttr} from Java, which crashes the JVM when
+     * Python invokes the bridge from a thread mem0 (or any other consumer) span up itself: the
+     * reverse Java→Python attribute lookup is unsafe outside Pemja's main interpreter thread state.
+     * Pulling the fields out on the Python side (where the GIL is already held by the calling
+     * thread) sidesteps that altogether.
+     */
+    public Document fromPythonDocument(
+            String content,
+            Map<String, Object> metadata,
+            String id,
+            float[] embedding,
+            Float score) {
+        return new Document(content, metadata, id, embedding, score);
     }
 
     @SuppressWarnings("unchecked")
@@ -99,6 +107,7 @@ public class JavaResourceAdapter {
                 (String) pythonVectorStoreQuery.getAttr("query_text"),
                 pythonVectorStoreQuery.getAttr("limit", Integer.class),
                 (String) pythonVectorStoreQuery.getAttr("collection_name"),
+                (Map<String, Object>) pythonVectorStoreQuery.getAttr("filters", Map.class),
                 (Map<String, Object>) pythonVectorStoreQuery.getAttr("extra_args", Map.class));
     }
 }

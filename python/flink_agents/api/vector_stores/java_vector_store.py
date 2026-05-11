@@ -26,10 +26,13 @@ from flink_agents.api.vector_stores.vector_store import (
 class JavaVectorStore(BaseVectorStore):
     """Java-based implementation of VectorStore that wraps a Java vector store."""
 
-    java_class_name: str=""
+    java_class_name: str = ""
+
 
 @java_resource
-class JavaCollectionManageableVectorStore(JavaVectorStore, CollectionManageableVectorStore):
+class JavaCollectionManageableVectorStore(
+    JavaVectorStore, CollectionManageableVectorStore
+):
     """Java-based implementation of VectorStore with collection management capabilities
     that bridges Python and Java vector store functionality.
     """

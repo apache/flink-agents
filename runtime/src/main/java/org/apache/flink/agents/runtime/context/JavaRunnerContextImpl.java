@@ -24,6 +24,7 @@ import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 
+import java.util.concurrent.Callable;
 import java.util.function.Supplier;
 
 /**
@@ -31,7 +32,6 @@ import java.util.function.Supplier;
  * execution support.
  */
 public class JavaRunnerContextImpl extends RunnerContextImpl {
-
     private final ContinuationActionExecutor continuationExecutor;
     private ContinuationContext continuationContext;
 
@@ -60,14 +60,22 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
 
     @Override
     public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
-        String functionId = callable.getId();
-        String argsDigest = "";
-
-        java.util.Optional<T> cachedResult =
-                tryGetCachedResult(functionId, argsDigest, callable.getResultClass());
-        if (cachedResult.isPresent()) {
-            return cachedResult.get();
+        if (durableExecutionContext != null) {
+            Callable<T> reconcileCallable = callable.reconciler();
+            if (reconcileCallable != null) {
+                return durableExecuteAsyncWithReconcile(callable, reconcileCallable);
+            }
         }
+        return durableExecuteCompletionOnly(callable, () -> executeAsyncCallable(callable));
+    }
+
+    private <T> T durableExecuteAsyncWithReconcile(
+            DurableCallable<T> callable, Callable<T> reconcileCallable) throws Exception {
+        return durableExecuteWithReconcile(
+                callable, reconcileCallable, () -> executeAsyncCallable(callable));
+    }
+
+    private <T> T executeAsyncCallable(DurableCallable<T> callable) throws Exception {
 
         Supplier<T> wrappedSupplier =
                 () -> {
@@ -85,23 +93,14 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
                     return innerResult;
                 };
 
-        T result = null;
-        Exception originalException = null;
         try {
             if (continuationExecutor == null || continuationContext == null) {
-                result = wrappedSupplier.get();
+                return wrappedSupplier.get();
             } else {
-                result = continuationExecutor.executeAsync(continuationContext, wrappedSupplier);
+                return continuationExecutor.executeAsync(continuationContext, wrappedSupplier);
             }
         } catch (DurableExecutionRuntimeException e) {
-            originalException = (Exception) e.getCause();
+            throw (Exception) e.getCause();
         }
-
-        recordDurableCompletion(functionId, argsDigest, result, originalException);
-
-        if (originalException != null) {
-            throw originalException;
-        }
-        return result;
     }
 }

@@ -19,15 +19,14 @@
 package org.apache.flink.agents.runtime.python.context;
 
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
-import org.apache.flink.util.Preconditions;
 
 import javax.annotation.concurrent.NotThreadSafe;
+
+import java.io.IOException;
 
 /** A specialized {@link RunnerContext} that is specifically used when executing Python actions. */
 @NotThreadSafe
@@ -48,16 +47,23 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
         super(agentMetricGroup, mailboxThreadChecker, agentPlan, resourceCache, jobIdentifier);
     }
 
-    @Override
-    public void sendEvent(Event event) {
-        Preconditions.checkState(
-                event instanceof PythonEvent, "PythonRunnerContext only accept Python event.");
-        super.sendEvent(event);
+    /**
+     * Sends an event from Python to Java.
+     *
+     * <p>All Python events are serialized as JSON. The event is deserialized into a Java {@link
+     * Event} and dispatched normally.
+     *
+     * @param eventJson JSON string with at least a {@code "type"} field
+     * @throws IOException if JSON parsing fails
+     */
+    public void sendEventJson(String eventJson) throws IOException {
+        Event event = Event.fromJson(eventJson);
+        sendEvent(event);
     }
 
-    public void sendEvent(String type, byte[] event, String eventJsonStr) {
+    public void checkMailboxThread() {
         // this method will be invoked by PythonActionExecutor's python interpreter.
-        sendEvent(new PythonEvent(event, type, eventJsonStr));
+        this.mailboxThreadChecker.run();
     }
 
     public String getPythonAwaitableRef() {

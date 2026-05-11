@@ -67,7 +67,8 @@ class ActionTaskContextManagerTest {
                                             /* metricGroup */ null,
                                             /* jobIdentifier */ "job",
                                             /* mailboxThreadChecker */ () -> {},
-                                            /* pythonRunnerContext */ null))
+                                            /* pythonRunnerContext */ null,
+                                            /* longTermMemory */ null))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("PythonRunnerContextImpl has not been initialized");
         }

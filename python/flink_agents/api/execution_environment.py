@@ -237,7 +237,10 @@ class AgentsExecutionEnvironment(ABC):
         """Execute agent individually."""
 
     def add_resource(
-        self, name: str, resource_type: ResourceType, instance: SerializableResource | ResourceDescriptor
+        self,
+        name: str,
+        resource_type: ResourceType,
+        instance: SerializableResource | ResourceDescriptor,
     ) -> "AgentsExecutionEnvironment":
         """Register resource to agent execution environment.
 

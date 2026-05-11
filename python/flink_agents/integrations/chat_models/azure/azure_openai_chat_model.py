@@ -58,7 +58,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
     )
     azure_endpoint: str = Field(
         default=None,
-        description="Supported Azure OpenAI endpoints. Example: https://{your-resource-name}.openai.azure.com"
+        description="Supported Azure OpenAI endpoints. Example: https://{your-resource-name}.openai.azure.com",
     )
     timeout: float = Field(
         default=60.0,
@@ -72,14 +72,14 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
     )
 
     def __init__(
-            self,
-            *,
-            api_key: str | None = None,
-            api_version: str | None = None,
-            azure_endpoint: str | None = None,
-            timeout: float = 60.0,
-            max_retries: int = 3,
-            **kwargs: Any,
+        self,
+        *,
+        api_key: str | None = None,
+        api_version: str | None = None,
+        azure_endpoint: str | None = None,
+        timeout: float = 60.0,
+        max_retries: int = 3,
+        **kwargs: Any,
     ) -> None:
         """Init method."""
         super().__init__(
@@ -106,7 +106,12 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             )
         return self._client
 
-    def chat(self, messages: Sequence[ChatMessage], tools: List[Tool] | None = None, **kwargs: Any,) -> ChatMessage:
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool] | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
         """Direct communication with model service for chat conversation.
 
         Parameters
@@ -194,26 +199,26 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
     model_of_azure_deployment: str | None = Field(
         default=None,
         description="The underlying model name of the Azure deployment (e.g., 'gpt-4', "
-                    "'gpt-35-turbo'). Used for token counting and cost calculation. "
-                    "Required for token metrics tracking.",
+        "'gpt-35-turbo'). Used for token counting and cost calculation. "
+        "Required for token metrics tracking.",
     )
     temperature: float | None = Field(
         default=None,
         description="What sampling temperature to use, between 0 and 2. Higher values like 0.8 will make the output "
-                    "more random, while lower values like 0.2 will make it more focused and deterministic. "
-                    "Not supported by reasoning models (e.g. gpt-5, o-series).",
+        "more random, while lower values like 0.2 will make it more focused and deterministic. "
+        "Not supported by reasoning models (e.g. gpt-5, o-series).",
         ge=0.0,
         le=2.0,
     )
     max_tokens: int | None = Field(
         default=None,
         description="The maximum number of tokens that can be generated in the chat completion. The total length of "
-                    "input tokens and generated tokens is limited by the model's context length.",
+        "input tokens and generated tokens is limited by the model's context length.",
         gt=0,
     )
     logprobs: bool | None = Field(
         description="Whether to return log probabilities of the output tokens or not. If true, returns the log "
-                    "probabilities of each output token returned in the content of message.",
+        "probabilities of each output token returned in the content of message.",
         default=False,
     )
     additional_kwargs: Dict[str, Any] = Field(
@@ -221,15 +226,15 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
     )
 
     def __init__(
-            self,
-            *,
-            model: str,
-            model_of_azure_deployment: str | None = None,
-            temperature: float | None = None,
-            max_tokens: int | None = None,
-            logprobs: bool | None = False,
-            additional_kwargs: Dict[str, Any] | None = None,
-            **kwargs: Any,
+        self,
+        *,
+        model: str,
+        model_of_azure_deployment: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        logprobs: bool | None = False,
+        additional_kwargs: Dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Init method."""
         additional_kwargs = additional_kwargs or {}

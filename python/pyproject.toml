@@ -49,12 +49,15 @@ dependencies = [
     "mcp>=1.8.0",
     "setuptools>=75.3,<82",
     "find_libpython",
+    "tree-sitter>=0.24,<0.26",
+    "tree-sitter-bash>=0.23,<0.26",
     #TODO: Seperate integration dependencies from project
     "ollama==0.6.1",
     "dashscope~=1.24.2",
     "openai>=1.66.3",
     "anthropic>=0.64.0",
     "chromadb==1.0.21",
+    "mem0ai>=0.1.43,<2.0.0",
     "onnxruntime<1.24.1;python_version<'3.11'",
 ]
 
@@ -85,7 +88,7 @@ build = [
 
 # Test dependencies
 test = [
-    "pytest==8.4.0",
+    "pytest==9.0.3",
 ]
 
 # Lint dependencies
@@ -180,8 +183,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "dependencies.py" = ["ICN001"]
-"tests/**/*.py" = ["ANN001", "ANN201", "D100", "D102", "D103", "B018", "FBT001"]
-"_build_backend/tests/**/*.py" = ["ANN001", "ANN201", "D100", "D102", "D103", "B018", "FBT001"]
+"**/tests/**/*.py" = ["ANN001", "ANN201", "D100", "D101", "D102", "D103", "D107", "B018", "FBT001", "W505"]
+"**/e2e_tests/**/*.py" = ["ANN001", "ANN201", "D100", "D101", "D102", "D103", "D107", "B018", "FBT001", "W505"]
 
 [tool.ruff.lint.pycodestyle]
 max-doc-length = 88

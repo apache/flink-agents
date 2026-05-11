@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import os
 import sysconfig
 from pathlib import Path
@@ -47,7 +48,7 @@ current_dir = Path(__file__).parent
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
 
-def test_from_datastream_to_datastream(tmp_path: Path) -> None:  # noqa: D103
+def test_from_datastream_to_datastream(tmp_path: Path) -> None:
     config = Configuration()
     config.set_string("state.backend.type", "rocksdb")
     config.set_string("checkpointing.interval", "1s")
@@ -82,7 +83,7 @@ def test_from_datastream_to_datastream(tmp_path: Path) -> None:  # noqa: D103
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    output_datastream.map(lambda x: x.model_dump_json(), Types.STRING()).add_sink(
+    output_datastream.map(lambda x: json.dumps(x), Types.STRING()).add_sink(
         StreamingFileSink.for_row_format(
             base_path=str(result_dir.absolute()),
             encoder=Encoder.simple_string_encoder(),
@@ -99,7 +100,7 @@ def test_from_datastream_to_datastream(tmp_path: Path) -> None:  # noqa: D103
     )
 
 
-def test_from_table_to_table(tmp_path: Path) -> None:  # noqa: D103
+def test_from_table_to_table(tmp_path: Path) -> None:
     env = StreamExecutionEnvironment.get_execution_environment()
 
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
@@ -174,7 +175,7 @@ def test_from_table_to_table(tmp_path: Path) -> None:  # noqa: D103
     )
 
 
-def test_from_datastream_to_table(tmp_path: Path) -> None:  # noqa: D103
+def test_from_datastream_to_table(tmp_path: Path) -> None:
     env = StreamExecutionEnvironment.get_execution_environment()
 
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
