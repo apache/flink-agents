@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.resource.test;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -32,12 +33,14 @@ import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQueryMode;
 import org.apache.flink.agents.api.vectorstores.python.PythonCollectionManageableVectorStore;
 import org.junit.jupiter.api.Assertions;
 import pemja.core.PythonException;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,9 +50,9 @@ import java.util.Map;
  * implementation.
  *
  * <p>This test agent validates: - Python vector store resource registration and creation - Python
- * embedding model integration with vector store - Collection management operations (create, get,
- * delete) - Document CRUD operations (add, get, delete, size) - Context retrieval and similarity
- * search - Cross-language resource dependency (vector store depends on embedding model)
+ * embedding model integration with vector store - Collection management operations (create, delete)
+ * - Document CRUD operations (add, get, delete) - Context retrieval and similarity search -
+ * Cross-language resource dependency (vector store depends on embedding model)
  *
  * <p>Used for e2e testing of the vector store subsystem with cross-language support.
  */
@@ -102,9 +105,10 @@ public class VectorStoreCrossLanguageAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = InputEvent.class)
-    public static void inputEvent(InputEvent event, RunnerContext ctx) throws Exception {
-        final String input = (String) event.getInput();
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void inputEvent(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        final String input = (String) inputEvent.getInput();
 
         MemoryObject isInitialized = ctx.getShortTermMemory().get("is_initialized");
         if (isInitialized == null) {
@@ -113,26 +117,18 @@ public class VectorStoreCrossLanguageAgent extends Agent {
                             ctx.getResource("vectorStore", ResourceType.VECTOR_STORE);
 
             // Initialize vector store
-            vectorStore.getOrCreateCollection(
-                    TEST_COLLECTION, Map.of("key1", "value1", "key2", "value2"));
-
-            CollectionManageableVectorStore.Collection collection =
-                    vectorStore.getCollection(TEST_COLLECTION);
-            Assertions.assertNotEquals(collection, null, "Vector store collection is null");
-            Assertions.assertEquals(
+            vectorStore.createCollectionIfNotExists(
                     TEST_COLLECTION,
-                    collection.getName(),
-                    "Vector store collection name is not test_collection");
-            Assertions.assertEquals(
-                    Map.of("key1", "value1", "key2", "value2"),
-                    collection.getMetadata(),
-                    "Vector store collection metadata is not correct");
+                    Map.of("metadata", Map.of("key1", "value1", "key2", "value2")));
 
             System.out.println("[TEST] Vector store Collection Management PASSED");
 
             vectorStore.deleteCollection(TEST_COLLECTION);
             Assertions.assertThrows(
-                    PythonException.class, () -> vectorStore.getCollection(TEST_COLLECTION));
+                    PythonException.class,
+                    () ->
+                            vectorStore.get(
+                                    null, TEST_COLLECTION, null, null, Collections.emptyMap()));
 
             // Initialize collection
             vectorStore.add(
@@ -150,18 +146,23 @@ public class VectorStoreCrossLanguageAgent extends Agent {
                                     Map.of("category", "utility", "source", "test"),
                                     "doc3")),
                     null,
-                    Map.of());
+                    Collections.emptyMap());
 
-            // Test size
-            Assertions.assertEquals(3, vectorStore.size(null), "Vector store size is not 3");
+            // Test get-all (size() was removed from the API)
+            Assertions.assertEquals(
+                    3,
+                    vectorStore.get(null, null, null, null, Collections.emptyMap()).size(),
+                    "Vector store size is not 3");
 
             // Test delete
-            vectorStore.delete(List.of("doc3"), null, Map.of());
+            vectorStore.deleteByIds(List.of("doc3"));
             Assertions.assertEquals(
-                    2, vectorStore.size(null), "Vector store size is not 2, doc3 was not deleted");
+                    2,
+                    vectorStore.get(null, null, null, null, Collections.emptyMap()).size(),
+                    "Vector store size is not 2, doc3 was not deleted");
 
             // Test get
-            Document doc = vectorStore.get(List.of("doc2"), null, Map.of()).get(0);
+            Document doc = vectorStore.getByIds(List.of("doc2")).get(0);
             Assertions.assertEquals(
                     "ChromaDB is a vector database for AI applications", doc.getContent());
             Assertions.assertEquals(
@@ -169,16 +170,40 @@ public class VectorStoreCrossLanguageAgent extends Agent {
 
             System.out.println("[TEST] Vector store Document Management PASSED");
 
+            // Verify VectorStoreQuery.filters survives the Java->Python bridge.
+            // ChromaDB applies the unified-DSL filter to its `where` clause, so the
+            // result must contain only the doc tagged `category=database` (doc2).
+            VectorStoreQuery filteredQuery =
+                    new VectorStoreQuery(
+                            VectorStoreQueryMode.SEMANTIC,
+                            "vector database",
+                            10,
+                            null,
+                            Map.of("category", "database"),
+                            Collections.emptyMap());
+            List<Document> filteredDocs = vectorStore.query(filteredQuery).getDocuments();
+            Assertions.assertEquals(
+                    1,
+                    filteredDocs.size(),
+                    "Filter {category=database} should match exactly 1 document");
+            Assertions.assertEquals(
+                    "doc2",
+                    filteredDocs.get(0).getId(),
+                    "Filter {category=database} should match doc2");
+
+            System.out.println("[TEST] Vector store filter query PASSED");
+
             ctx.getShortTermMemory().set("is_initialized", true);
         }
 
         ctx.sendEvent(new ContextRetrievalRequestEvent(input, "vectorStore"));
     }
 
-    @Action(listenEvents = ContextRetrievalResponseEvent.class)
-    public static void contextRetrievalResponseEvent(
-            ContextRetrievalResponseEvent event, RunnerContext ctx) {
-        final List<Document> documents = event.getDocuments();
+    @Action(listenEventTypes = {ContextRetrievalResponseEvent.EVENT_TYPE})
+    public static void contextRetrievalResponseEvent(Event event, RunnerContext ctx) {
+        ContextRetrievalResponseEvent responseEvent =
+                ContextRetrievalResponseEvent.fromEvent(event);
+        final List<Document> documents = responseEvent.getDocuments();
 
         Map<String, Object> result = new HashMap<>();
         try {

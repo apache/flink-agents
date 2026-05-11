@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.eventlog;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
@@ -43,6 +44,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
@@ -123,14 +125,10 @@ class FileEventLoggerTest {
         assertNotNull(deserializedRecord.getContext(), "Deserialized context should not be null");
         assertNotNull(deserializedRecord.getEvent(), "Deserialized event should not be null");
 
-        assertEquals(
-                "org.apache.flink.agents.api.InputEvent",
-                deserializedRecord.getContext().getEventType());
-        assertInstanceOf(
-                InputEvent.class,
-                deserializedRecord.getEvent(),
-                "Deserialized event should be InputEvent");
-        assertEquals("test input", ((InputEvent) deserializedRecord.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, deserializedRecord.getContext().getEventType());
+        assertEquals(InputEvent.EVENT_TYPE, deserializedRecord.getEvent().getType());
+        InputEvent deserializedInput = InputEvent.fromEvent(deserializedRecord.getEvent());
+        assertEquals("test input", deserializedInput.getInput());
     }
 
     @Test
@@ -149,15 +147,15 @@ class FileEventLoggerTest {
         List<String> lines = Files.readAllLines(logFile);
         assertEquals(2, lines.size(), "Should have written two lines");
 
-        // Verify first event (InputEvent) - deserialization
+        // Verify first event (InputEvent) - deserialization via fromEvent
         EventLogRecord inputRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertTrue(inputRecord.getEvent() instanceof InputEvent);
-        assertEquals("input data", ((InputEvent) inputRecord.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, inputRecord.getEvent().getType());
+        assertEquals("input data", InputEvent.fromEvent(inputRecord.getEvent()).getInput());
 
-        // Verify second event (OutputEvent) - deserialization
+        // Verify second event (OutputEvent) - deserialization via fromEvent
         EventLogRecord outputRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
-        assertTrue(outputRecord.getEvent() instanceof OutputEvent);
-        assertEquals("output data", ((OutputEvent) outputRecord.getEvent()).getOutput());
+        assertEquals(OutputEvent.EVENT_TYPE, outputRecord.getEvent().getType());
+        assertEquals("output data", OutputEvent.fromEvent(outputRecord.getEvent()).getOutput());
     }
 
     @Test
@@ -178,23 +176,20 @@ class FileEventLoggerTest {
 
         // Verify JSON structure
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
-        assertEquals(
-                "org.apache.flink.agents.runtime.eventlog.FileEventLoggerTest$TestCustomEvent",
-                jsonNode.get("event").get("eventType").asText());
+        assertEquals(TestCustomEvent.EVENT_TYPE, jsonNode.get("event").get("eventType").asText());
 
-        JsonNode eventNode = jsonNode.get("event");
-        assertEquals("custom data", eventNode.get("customData").asText());
-        assertEquals(42, eventNode.get("customNumber").asInt());
+        JsonNode attrsNode = jsonNode.get("event").get("attributes");
+        assertEquals("custom data", attrsNode.get("customData").asText());
+        assertEquals(42, attrsNode.get("customNumber").asInt());
 
-        // Verify deserialization works correctly
+        // Verify deserialization via fromEvent
         EventLogRecord deserializedRecord =
                 objectMapper.readValue(lines.get(0), EventLogRecord.class);
         assertNotNull(deserializedRecord);
-        assertTrue(
-                deserializedRecord.getEvent() instanceof TestCustomEvent,
-                "Deserialized event should be TestCustomEvent");
+        assertEquals(TestCustomEvent.EVENT_TYPE, deserializedRecord.getEvent().getType());
 
-        TestCustomEvent deserializedEvent = (TestCustomEvent) deserializedRecord.getEvent();
+        TestCustomEvent deserializedEvent =
+                TestCustomEvent.fromEvent(deserializedRecord.getEvent());
         assertEquals("custom data", deserializedEvent.getCustomData());
         assertEquals(42, deserializedEvent.getCustomNumber());
     }
@@ -224,19 +219,22 @@ class FileEventLoggerTest {
 
         // Verify JSON structure
         JsonNode firstEventJson = objectMapper.readTree(lines.get(0));
-        assertEquals("first event", firstEventJson.get("event").get("input").asText());
+        assertEquals(
+                "first event", firstEventJson.get("event").get("attributes").get("input").asText());
 
         JsonNode secondEventJson = objectMapper.readTree(lines.get(1));
-        assertEquals("second event", secondEventJson.get("event").get("input").asText());
+        assertEquals(
+                "second event",
+                secondEventJson.get("event").get("attributes").get("input").asText());
 
-        // Verify deserialization
+        // Verify deserialization via fromEvent
         EventLogRecord firstRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
-        assertTrue(firstRecord.getEvent() instanceof InputEvent);
-        assertEquals("first event", ((InputEvent) firstRecord.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, firstRecord.getEvent().getType());
+        assertEquals("first event", InputEvent.fromEvent(firstRecord.getEvent()).getInput());
 
         EventLogRecord secondRecord = objectMapper.readValue(lines.get(1), EventLogRecord.class);
-        assertTrue(secondRecord.getEvent() instanceof InputEvent);
-        assertEquals("second event", ((InputEvent) secondRecord.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, secondRecord.getEvent().getType());
+        assertEquals("second event", InputEvent.fromEvent(secondRecord.getEvent()).getInput());
     }
 
     @Test
@@ -282,19 +280,23 @@ class FileEventLoggerTest {
         JsonNode subtask0EventJson = objectMapper.readTree(subtask0Lines.get(0));
         JsonNode subtask1EventJson = objectMapper.readTree(subtask1Lines.get(0));
 
-        assertEquals("subtask 0 event", subtask0EventJson.get("event").get("input").asText());
-        assertEquals("subtask 1 event", subtask1EventJson.get("event").get("input").asText());
+        assertEquals(
+                "subtask 0 event",
+                subtask0EventJson.get("event").get("attributes").get("input").asText());
+        assertEquals(
+                "subtask 1 event",
+                subtask1EventJson.get("event").get("attributes").get("input").asText());
 
-        // Verify deserialization
+        // Verify deserialization via fromEvent
         EventLogRecord subtask0Record =
                 objectMapper.readValue(subtask0Lines.get(0), EventLogRecord.class);
-        assertTrue(subtask0Record.getEvent() instanceof InputEvent);
-        assertEquals("subtask 0 event", ((InputEvent) subtask0Record.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, subtask0Record.getEvent().getType());
+        assertEquals("subtask 0 event", InputEvent.fromEvent(subtask0Record.getEvent()).getInput());
 
         EventLogRecord subtask1Record =
                 objectMapper.readValue(subtask1Lines.get(0), EventLogRecord.class);
-        assertTrue(subtask1Record.getEvent() instanceof InputEvent);
-        assertEquals("subtask 1 event", ((InputEvent) subtask1Record.getEvent()).getInput());
+        assertEquals(InputEvent.EVENT_TYPE, subtask1Record.getEvent().getType());
+        assertEquals("subtask 1 event", InputEvent.fromEvent(subtask1Record.getEvent()).getInput());
     }
 
     @Test
@@ -362,9 +364,9 @@ class FileEventLoggerTest {
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
         assertEquals("STANDARD", jsonNode.get("logLevel").asText());
 
-        // The customData field should be truncated
-        JsonNode eventNode = jsonNode.get("event");
-        JsonNode customDataNode = eventNode.get("customData");
+        // The customData field (inside attributes) should be truncated
+        JsonNode attrsNode = jsonNode.get("event").get("attributes");
+        JsonNode customDataNode = attrsNode.get("customData");
         assertTrue(
                 customDataNode.has("truncatedString"),
                 "Long string should be truncated at STANDARD level");
@@ -401,13 +403,13 @@ class FileEventLoggerTest {
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
         assertEquals("VERBOSE", jsonNode.get("logLevel").asText());
 
-        // The customData field should NOT be truncated
-        JsonNode eventNode = jsonNode.get("event");
+        // The customData field (inside attributes) should NOT be truncated
+        JsonNode attrsNode = jsonNode.get("event").get("attributes");
         assertTrue(
-                eventNode.get("customData").isTextual(),
+                attrsNode.get("customData").isTextual(),
                 "String should be preserved at VERBOSE level");
         assertEquals(
-                "this is a very long string that exceeds 10", eventNode.get("customData").asText());
+                "this is a very long string that exceeds 10", attrsNode.get("customData").asText());
     }
 
     @Test
@@ -442,7 +444,7 @@ class FileEventLoggerTest {
         Map<String, Object> agentConfig = new HashMap<>();
         agentConfig.put("event-log.level", "STANDARD");
         agentConfig.put("event-log.standard.max-string-length", 10);
-        agentConfig.put("event-log.type.org.apache.flink.agents.api.InputEvent.level", "VERBOSE");
+        agentConfig.put("event-log.type." + InputEvent.EVENT_TYPE + ".level", "VERBOSE");
 
         config =
                 EventLoggerConfig.builder()
@@ -467,15 +469,16 @@ class FileEventLoggerTest {
         List<String> lines = Files.readAllLines(logFile);
         assertEquals(2, lines.size());
 
-        // InputEvent at VERBOSE - no truncation
+        // InputEvent at VERBOSE - no truncation (data lives in attributes)
         JsonNode inputJson = objectMapper.readTree(lines.get(0));
         assertEquals("VERBOSE", inputJson.get("logLevel").asText());
-        assertTrue(inputJson.get("event").get("input").isTextual());
+        assertTrue(inputJson.get("event").get("attributes").get("input").isTextual());
 
-        // TestCustomEvent at STANDARD - truncated
+        // TestCustomEvent at STANDARD - truncated (data lives in attributes)
         JsonNode customJson = objectMapper.readTree(lines.get(1));
         assertEquals("STANDARD", customJson.get("logLevel").asText());
-        assertTrue(customJson.get("event").get("customData").has("truncatedString"));
+        assertTrue(
+                customJson.get("event").get("attributes").get("customData").has("truncatedString"));
     }
 
     @Test
@@ -495,34 +498,40 @@ class FileEventLoggerTest {
         // Verify new top-level fields exist
         assertTrue(jsonNode.has("logLevel"), "JSON should have logLevel field");
         assertTrue(jsonNode.has("eventType"), "JSON should have eventType field");
-        assertEquals("org.apache.flink.agents.api.InputEvent", jsonNode.get("eventType").asText());
+        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("eventType").asText());
         assertNotNull(jsonNode.get("logLevel").asText());
     }
 
     @Test
     void testBackwardCompatibleDeserialization() throws Exception {
-        // Simulate old-format JSON without logLevel field
+        // Simulate old-format JSON without a top-level logLevel field. The Event payload uses
+        // the post-#631 shape: {type, id, attributes}. The deserializer must still parse it.
         String oldFormatJson =
                 "{\"timestamp\":\"2024-01-15T10:30:00Z\","
-                        + "\"event\":{\"eventType\":\"org.apache.flink.agents.api.InputEvent\","
-                        + "\"id\":null,\"attributes\":{},\"input\":\"test\"}}";
+                        + "\"event\":{\"eventType\":\""
+                        + InputEvent.EVENT_TYPE
+                        + "\",\"type\":\""
+                        + InputEvent.EVENT_TYPE
+                        + "\","
+                        + "\"attributes\":{\"input\":\"test\"}}}";
 
         EventLogRecord record = objectMapper.readValue(oldFormatJson, EventLogRecord.class);
         assertNotNull(record.getEvent());
-        assertInstanceOf(InputEvent.class, record.getEvent());
+        assertEquals(InputEvent.EVENT_TYPE, record.getEvent().getType());
         assertEquals(
                 "test",
-                ((InputEvent) record.getEvent()).getInput(),
+                InputEvent.fromEvent(record.getEvent()).getInput(),
                 "Old-format JSON without logLevel should still deserialize the event payload");
     }
 
     @Test
     void testHierarchicalInheritance() throws Exception {
-        // Set package-level OFF, but specific type VERBOSE
+        // Set namespace-level OFF, but specific type VERBOSE. Uses custom dotted event types
+        // because built-in event types (e.g., "_input_event") have no dot-separated parents.
         Map<String, Object> agentConfig = new HashMap<>();
         agentConfig.put("event-log.level", "STANDARD");
-        agentConfig.put("event-log.type.org.apache.flink.agents.api.level", "OFF");
-        agentConfig.put("event-log.type.org.apache.flink.agents.api.InputEvent.level", "VERBOSE");
+        agentConfig.put("event-log.type.com.example.events.level", "OFF");
+        agentConfig.put("event-log.type." + TestNamespacedEventA.EVENT_TYPE + ".level", "VERBOSE");
 
         config =
                 EventLoggerConfig.builder()
@@ -533,22 +542,22 @@ class FileEventLoggerTest {
         logger = new FileEventLogger(config);
         logger.open(openParams);
 
-        // InputEvent has explicit VERBOSE override — should be logged
-        InputEvent inputEvent = new InputEvent("should be logged");
-        logger.append(new EventContext(inputEvent), inputEvent);
+        // EventA has explicit VERBOSE override — should be logged
+        TestNamespacedEventA eventA = new TestNamespacedEventA("should be logged");
+        logger.append(new EventContext(eventA), eventA);
 
-        // OutputEvent inherits OFF from package level — should NOT be logged
-        OutputEvent outputEvent = new OutputEvent("should not be logged");
-        logger.append(new EventContext(outputEvent), outputEvent);
+        // EventB inherits OFF from namespace level — should NOT be logged
+        TestNamespacedEventB eventB = new TestNamespacedEventB("should not be logged");
+        logger.append(new EventContext(eventB), eventB);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
         List<String> lines = Files.readAllLines(logFile);
-        assertEquals(1, lines.size(), "Only InputEvent (VERBOSE override) should be logged");
+        assertEquals(1, lines.size(), "Only EventA (VERBOSE override) should be logged");
 
         JsonNode json = objectMapper.readTree(lines.get(0));
         assertEquals("VERBOSE", json.get("logLevel").asText());
-        assertEquals("org.apache.flink.agents.api.InputEvent", json.get("eventType").asText());
+        assertEquals(TestNamespacedEventA.EVENT_TYPE, json.get("eventType").asText());
     }
 
     private Path getExpectedLogFilePath() {
@@ -557,33 +566,57 @@ class FileEventLoggerTest {
                         "events-%s-%s-%d.log", testJobId.toString(), testTaskName, testSubTaskId));
     }
 
-    /** Custom test event class for testing polymorphic serialization. */
+    /** Custom test event class using the attributes-based pattern. */
     public static class TestCustomEvent extends Event {
-        private String customData;
-        private int customNumber;
-
-        // Default constructor for Jackson
-        public TestCustomEvent() {}
+        public static final String EVENT_TYPE = "TestCustomEvent";
 
         public TestCustomEvent(String customData, int customNumber) {
-            this.customData = customData;
-            this.customNumber = customNumber;
+            super(EVENT_TYPE);
+            setAttr("customData", customData);
+            setAttr("customNumber", customNumber);
         }
 
+        private TestCustomEvent(UUID id, Map<String, Object> attributes) {
+            super(id, EVENT_TYPE, attributes);
+        }
+
+        public static TestCustomEvent fromEvent(Event event) {
+            TestCustomEvent result =
+                    new TestCustomEvent(event.getId(), new HashMap<>(event.getAttributes()));
+            if (event.hasSourceTimestamp()) {
+                result.setSourceTimestamp(event.getSourceTimestamp());
+            }
+            return result;
+        }
+
+        @JsonIgnore
         public String getCustomData() {
-            return customData;
+            return (String) getAttr("customData");
         }
 
-        public void setCustomData(String customData) {
-            this.customData = customData;
-        }
-
+        @JsonIgnore
         public int getCustomNumber() {
-            return customNumber;
+            return ((Number) getAttr("customNumber")).intValue();
         }
+    }
 
-        public void setCustomNumber(int customNumber) {
-            this.customNumber = customNumber;
+    /** Custom event with a dot-separated type to exercise hierarchical level inheritance. */
+    public static class TestNamespacedEventA extends Event {
+        public static final String EVENT_TYPE = "com.example.events.A";
+
+        public TestNamespacedEventA(String payload) {
+            super(EVENT_TYPE);
+            setAttr("payload", payload);
+        }
+    }
+
+    /** Custom event sharing EventA's namespace, used to verify namespace-level inheritance. */
+    public static class TestNamespacedEventB extends Event {
+        public static final String EVENT_TYPE = "com.example.events.B";
+
+        public TestNamespacedEventB(String payload) {
+            super(EVENT_TYPE);
+            setAttr("payload", payload);
         }
     }
 }

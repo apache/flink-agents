@@ -24,10 +24,13 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from flink_agents.api.memory_reference import MemoryRef
 
+
 class MemoryType(Enum):
     """Memory types based on MemoryObject."""
-    SENSORY = "sensory",
+
+    SENSORY = ("sensory",)
     SHORT_TERM = "short_term"
+
 
 class MemoryObject(BaseModel, ABC):
     """Representation of an object in the short-term memory.
@@ -38,7 +41,7 @@ class MemoryObject(BaseModel, ABC):
     """
 
     @abstractmethod
-    def get(self, path_or_ref: Union[str,"MemoryRef"] ) -> Any:
+    def get(self, path_or_ref: Union[str, "MemoryRef"]) -> Any:
         """Get the value of a (direct or indirect) field or a MemoryRef in the object.
 
         Parameters

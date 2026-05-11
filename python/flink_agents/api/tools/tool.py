@@ -77,9 +77,7 @@ class ToolMetadata(BaseModel):
         args_schema = self["args_schema"]
         if isinstance(args_schema, dict):
             title = args_schema.get("title", "default")
-            self["args_schema"] = create_model_from_schema(
-                title, args_schema
-            )
+            self["args_schema"] = create_model_from_schema(title, args_schema)
         return self
 
     def __eq__(self, other: "ToolMetadata") -> bool:

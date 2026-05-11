@@ -20,7 +20,6 @@ package org.apache.flink.agents.api.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.tools.Tool;
-import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
@@ -102,14 +101,6 @@ public interface PythonResourceAdapter {
      * @return the Java VectorStoreQuery representation
      */
     VectorStoreQueryResult fromPythonVectorStoreQueryResult(PyObject pythonVectorStoreQueryResult);
-
-    /**
-     * Converts a Python Collection object back to a Java Collection.
-     *
-     * @param pythonCollection the Python Collection object to convert
-     * @return the Java Collection representation
-     */
-    CollectionManageableVectorStore.Collection fromPythonCollection(PyObject pythonCollection);
 
     /**
      * Converts a Java Tool object to its Python equivalent.

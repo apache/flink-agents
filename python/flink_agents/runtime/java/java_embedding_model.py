@@ -17,6 +17,8 @@
 #################################################################################
 from typing import Any, Dict, Sequence
 
+from typing_extensions import override
+
 from flink_agents.api.embedding_models.java_embedding_model import (
     JavaEmbeddingModelConnection,
     JavaEmbeddingModelSetup,
@@ -43,10 +45,12 @@ class JavaEmbeddingModelConnectionImpl(JavaEmbeddingModelConnection):
             **kwargs: Additional keyword arguments
         """
         super().__init__(**kwargs)
-        self._j_resource=j_resource
-        self._j_resource_adapter=j_resource_adapter
+        self._j_resource = j_resource
+        self._j_resource_adapter = j_resource_adapter
 
-    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text input.
         Converts the input text into a high-dimensional vector representation
         suitable for semantic similarity search and retrieval operations.
@@ -68,6 +72,7 @@ class JavaEmbeddingModelSetupImpl(JavaEmbeddingModelSetup):
     but unlike JavaEmbeddingModelConnection, it does not provide direct embedding
     functionality in Python.
     """
+
     _j_resource: Any
     _j_resource_adapter: Any
 
@@ -82,10 +87,10 @@ class JavaEmbeddingModelSetupImpl(JavaEmbeddingModelSetup):
         # connection,model are required parameters for BaseEmbeddingModelSetup
         connection = kwargs.pop("connection", "")
         model = kwargs.pop("model", "")
-        super().__init__(connection = connection, model = model, **kwargs)
+        super().__init__(connection=connection, model=model, **kwargs)
 
-        self._j_resource=j_resource
-        self._j_resource_adapter=j_resource_adapter
+        self._j_resource = j_resource
+        self._j_resource_adapter = j_resource_adapter
 
     @property
     def model_kwargs(self) -> Dict[str, Any]:
@@ -96,7 +101,14 @@ class JavaEmbeddingModelSetupImpl(JavaEmbeddingModelSetup):
         """
         return {}
 
-    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
+    @override
+    def open(self) -> None:
+        """Open the java resource."""
+        self._j_resource.open()
+
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text query.
         Converts the input text into a high-dimensional vector representation
         suitable for semantic similarity search and retrieval operations.

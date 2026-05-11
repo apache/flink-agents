@@ -16,14 +16,14 @@
 # limitations under the License.
 #################################################################################
 import importlib
-import json
 import typing
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 import cloudpickle
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.events.event import Event, InputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.memory.long_term_memory import MemorySet, MemorySetItem
 from flink_agents.api.resource import Resource, ResourceType, get_resource_class
 from flink_agents.api.tools.tool import Tool, ToolMetadata
 from flink_agents.api.tools.utils import (
@@ -31,7 +31,6 @@ from flink_agents.api.tools.utils import (
     create_model_from_java_tool_schema_str,
 )
 from flink_agents.api.vector_stores.vector_store import (
-    Collection,
     Document,
     VectorStoreQuery,
     VectorStoreQueryMode,
@@ -39,43 +38,47 @@ from flink_agents.api.vector_stores.vector_store import (
 )
 from flink_agents.plan.resource_provider import JAVA_RESOURCE_MAPPING
 from flink_agents.runtime.java.java_resource_wrapper import (
-    JavaGetResourceWrapper,
     JavaPrompt,
+    JavaResourceContextWrapper,
     JavaTool,
 )
 
 
 def convert_to_python_object(bytesObject: bytes) -> Any:
-    """Used for deserializing Python objects."""
+    """Used for deserializing Python objects (e.g. durable execution results)."""
     return cloudpickle.loads(bytesObject)
 
 
-def _build_event_log_string(event: InputEvent | Event, event_type: str) -> str:
-    try:
-        payload = json.loads(event.model_dump_json())
-        payload["eventType"] = event_type
-        payload.setdefault("attributes", {})
-        return json.dumps(payload)
-    except Exception:
-        return str(event)
+def convert_json_to_python_event(event_json: str) -> Event:
+    """Deserialize a JSON string into a base Python Event object.
+
+    Called from Java via PythonActionExecutor to convert a Java Event
+    (serialized as JSON) into a Python Event for action dispatch.
+    Actions that need a typed subclass should call
+    ``SubClass.from_event(event)`` themselves.
+    """
+    return Event.from_json(event_json)
 
 
-def wrap_to_input_event(bytesObject: bytes) -> tuple[bytes, str]:
-    """Wrap data to python input event and serialize.
+def wrap_to_input_event(bytesObject: bytes) -> str:
+    """Wrap data to python input event and serialize as JSON.
 
     Returns:
-        A tuple of (serialized_event_bytes, event_json_str)
+        JSON string of the InputEvent
     """
     event = InputEvent(input=cloudpickle.loads(bytesObject))
-    event_type = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
-    return (cloudpickle.dumps(event), _build_event_log_string(event, event_type))
+    return event.model_dump_json()
 
 
-def get_output_from_output_event(bytesObject: bytes) -> Any:
-    """Get output data from OutputEvent and serialize."""
-    return cloudpickle.dumps(convert_to_python_object(bytesObject).output)
+def get_output_from_output_event(event_json: str) -> Any:
+    """Get output data from OutputEvent JSON and serialize."""
+    event = OutputEvent.from_event(convert_json_to_python_event(event_json))
+    return cloudpickle.dumps(event.output)
 
-def create_resource(resource_module: str, resource_clazz: str, func_kwargs: Dict[str, Any]) -> Resource:
+
+def create_resource(
+    resource_module: str, resource_clazz: str, func_kwargs: Dict[str, Any]
+) -> Resource:
     """Dynamically create a resource instance from module and class name.
 
     Args:
@@ -90,16 +93,19 @@ def create_resource(resource_module: str, resource_clazz: str, func_kwargs: Dict
     cls = getattr(module, resource_clazz)
     return cls(**func_kwargs)
 
-def get_resource_function(j_resource_adapter: Any) -> Callable:
-    """Create a callable wrapper for Java resource adapter.
+
+def get_resource_context(j_resource_adapter: Any) -> JavaResourceContextWrapper:
+    """Create a ResourceContext wrapper for Java resource adapter.
 
     Args:
         j_resource_adapter: Java resource adapter object
 
     Returns:
-        Callable: A Python callable that wraps the Java resource adapter
+        JavaResourceContextWrapper: A ResourceContext that wraps the
+        Java resource adapter
     """
-    return JavaGetResourceWrapper(j_resource_adapter).get_resource
+    return JavaResourceContextWrapper(j_resource_adapter)
+
 
 def from_java_tool(j_tool: Any) -> JavaTool:
     """Convert a Java tool object to a Python JavaTool instance.
@@ -114,9 +120,12 @@ def from_java_tool(j_tool: Any) -> JavaTool:
     metadata = ToolMetadata(
         name=name,
         description=j_tool.getDescription(),
-        args_schema=create_model_from_java_tool_schema_str(name, j_tool.getMetadata().getInputSchema()),
+        args_schema=create_model_from_java_tool_schema_str(
+            name, j_tool.getMetadata().getInputSchema()
+        ),
     )
     return JavaTool(metadata=metadata)
+
 
 def from_java_prompt(j_prompt: Any) -> JavaPrompt:
     """Convert a Java prompt object to a Python JavaPrompt instance.
@@ -128,6 +137,7 @@ def from_java_prompt(j_prompt: Any) -> JavaPrompt:
         JavaPrompt: Python wrapper for the Java prompt
     """
     return JavaPrompt(j_prompt=j_prompt)
+
 
 def from_java_resource(type_name: str, kwargs: Dict[str, Any]) -> Resource:
     """Convert a Java resource object to a Python Resource instance.
@@ -150,6 +160,7 @@ def from_java_resource(type_name: str, kwargs: Dict[str, Any]) -> Resource:
 
     return cls(**kwargs)
 
+
 def normalize_tool_call_id(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize tool call by converting the ID field to string format while preserving
     all other fields.
@@ -171,17 +182,24 @@ def normalize_tool_call_id(tool_call: Dict[str, Any]) -> Dict[str, Any]:
 
     return normalized_call
 
+
 def from_java_chat_message(j_chat_message: Any) -> ChatMessage:
     """Convert a chat message to a python chat message."""
-    return ChatMessage(role=MessageRole(j_chat_message.getRole().getValue()),
-                       content=j_chat_message.getContent(),
-                       tool_calls=[normalize_tool_call_id(tool_call) for tool_call in j_chat_message.getToolCalls()],
-                       extra_args=j_chat_message.getExtraArgs())
+    return ChatMessage(
+        role=MessageRole(j_chat_message.getRole().getValue()),
+        content=j_chat_message.getContent(),
+        tool_calls=[
+            normalize_tool_call_id(tool_call)
+            for tool_call in j_chat_message.getToolCalls()
+        ],
+        extra_args=j_chat_message.getExtraArgs(),
+    )
 
 
 def to_java_chat_message(chat_message: ChatMessage) -> Any:
     """Convert a chat message to a java chat message."""
     from pemja import findClass
+
     j_ChatMessage = findClass("org.apache.flink.agents.api.chat.messages.ChatMessage")
     j_chat_message = j_ChatMessage()
 
@@ -190,10 +208,13 @@ def to_java_chat_message(chat_message: ChatMessage) -> Any:
     j_chat_message.setContent(chat_message.content)
     j_chat_message.setExtraArgs(chat_message.extra_args)
     if chat_message.tool_calls:
-        tool_calls = [normalize_tool_call_id(tool_call) for tool_call in chat_message.tool_calls]
+        tool_calls = [
+            normalize_tool_call_id(tool_call) for tool_call in chat_message.tool_calls
+        ]
         j_chat_message.setToolCalls(tool_calls)
 
     return j_chat_message
+
 
 # TODO: Replace this with `to_java_chat_message()` when the `find_class` bug is fixed.
 def update_java_chat_message(chat_message: ChatMessage, j_chat_message: Any) -> str:
@@ -201,10 +222,13 @@ def update_java_chat_message(chat_message: ChatMessage, j_chat_message: Any) -> 
     j_chat_message.setContent(chat_message.content)
     j_chat_message.setExtraArgs(chat_message.extra_args)
     if chat_message.tool_calls:
-        tool_calls = [normalize_tool_call_id(tool_call) for tool_call in chat_message.tool_calls]
+        tool_calls = [
+            normalize_tool_call_id(tool_call) for tool_call in chat_message.tool_calls
+        ]
         j_chat_message.setToolCalls(tool_calls)
 
     return chat_message.role.value
+
 
 def from_java_document(j_document: Any) -> Document:
     """Convert a Java documents to a Python document."""
@@ -216,6 +240,7 @@ def from_java_document(j_document: Any) -> Document:
     if j_document.getEmbedding():
         document.embedding = list(j_document.getEmbedding())
     return document
+
 
 def update_java_document(document: Document, j_document: Any) -> None:
     """Update a Java document using Python document."""
@@ -233,33 +258,76 @@ def from_java_vector_store_query(j_query: Any) -> VectorStoreQuery:
         query_text=j_query.getQueryText(),
         limit=j_query.getLimit(),
         collection_name=j_query.getCollection(),
-        extra_args=j_query.getExtraArgs()
+        filters=j_query.getFilters(),
+        extra_args=j_query.getExtraArgs(),
     )
+
 
 def from_java_vector_store_query_result(j_query: Any) -> VectorStoreQueryResult:
     """Convert a Java vector store query result to a Python query result."""
     return VectorStoreQueryResult(
-        documents=[from_java_document(j_document) for j_document in j_query.getDocuments()],
+        documents=[
+            from_java_document(j_document) for j_document in j_query.getDocuments()
+        ],
     )
 
-def from_java_collection(j_collection: Any) -> Collection:
-    """Convert a Java collection to a Python collection."""
-    return Collection(
-        name=j_collection.getName(),
-        metadata=j_collection.getMetadata(),
-    )
 
 def from_java_message_role(j_role: Any) -> MessageRole:
     """Convert a Java message role to a Python message role."""
     return MessageRole(j_role.getValue())
 
+
 def get_java_tool_metadata_from_tool(tool: Tool) -> typing.Dict[str, str]:
     """Retrieve Java format tool metadata from a tool input schema string."""
-    return {"name": tool.name, "description": tool.metadata.description, "inputSchema": create_java_tool_schema_str_from_model(tool.metadata.args_schema)}
+    return {
+        "name": tool.name,
+        "description": tool.metadata.description,
+        "inputSchema": create_java_tool_schema_str_from_model(
+            tool.metadata.args_schema
+        ),
+    }
+
 
 def get_mode_value(query: VectorStoreQuery) -> str:
     """Get the mode value of a VectorStoreQuery."""
     return query.mode.value
+
+
+def get_long_term_memory(ctx: Any) -> Any:
+    """Return ``ctx.long_term_memory`` (or ``None``). Used by the Java side to
+    avoid relying on Pemja's ``PyObject.getAttr`` semantics for attributes that
+    may be ``None`` or wrapped Pydantic BaseModel instances.
+    """
+    return ctx.long_term_memory
+
+
+def to_python_memory_set(name: str) -> MemorySet:
+    """Build a Python ``MemorySet`` from its name. Used by the Java
+    ``Mem0LongTermMemory`` wrapper to forward calls into Python ``Mem0LongTermMemory``,
+    which expects a ``MemorySet`` instance but only reads its ``name`` field.
+    """
+    return MemorySet(name=name)
+
+
+def mem0_items_to_java(
+    items: typing.List[MemorySetItem],
+) -> typing.List[Dict[str, Any]]:
+    """Convert a list of ``MemorySetItem`` to plain dicts so the Java side can
+    consume them without PyObject reflection. Datetimes are serialised to ISO 8601
+    strings; ``None`` fields are preserved.
+    """
+    return [
+        {
+            "memory_set_name": it.memory_set_name,
+            "id": it.id,
+            "value": it.value,
+            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "updated_at": it.updated_at.isoformat() if it.updated_at else None,
+            "additional_metadata": it.additional_metadata,
+        }
+        for it in items
+    ]
+
 
 def call_method(obj: Any, method_name: str, kwargs: Dict[str, Any]) -> Any:
     """Calls a method on `obj` by name and passes in positional and keyword arguments.

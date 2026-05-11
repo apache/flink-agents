@@ -18,6 +18,7 @@
 
 try:
     import dotenv
+
     dotenv.load_dotenv()
 except ImportError:
     # dotenv is optional for this test server
@@ -34,6 +35,7 @@ def ask_sum(a: int, b: int) -> str:
     """Prompt of add tool."""
     return f"Can you please calculate the sum of {a} and {b}?"
 
+
 @mcp.tool()
 async def add(a: int, b: int) -> int:
     """Get the detailed information of a specified IP address.
@@ -47,5 +49,5 @@ async def add(a: int, b: int) -> int:
     """
     return a + b
 
-mcp.run("streamable-http")
 
+mcp.run("streamable-http")

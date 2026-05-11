@@ -116,7 +116,9 @@ def _create_mock_runner_context(
         id(AgentExecutionOptions.CHAT_ASYNC): False,
     }
     config.get = MagicMock(
-        side_effect=lambda option: option_values.get(id(option), option.get_default_value())
+        side_effect=lambda option: option_values.get(
+            id(option), option.get_default_value()
+        )
     )
 
     ctx = MagicMock()
@@ -125,7 +127,9 @@ def _create_mock_runner_context(
     ctx.action_metric_group = metric_group
     ctx.send_event = MagicMock(side_effect=lambda e: sent_events.append(e))
     ctx.get_resource = MagicMock(return_value=chat_model)
-    ctx.durable_execute = MagicMock(side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs))
+    ctx.durable_execute = MagicMock(
+        side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)
+    )
 
     return ctx, sent_events, metric_group, sensory_memory
 
@@ -149,7 +153,13 @@ class TestChatModelActionRetry:
         request_id = uuid4()
 
         asyncio.run(
-            chat(request_id, chat_model.connection, [ChatMessage(role=MessageRole.USER, content="hi")], None, ctx)
+            chat(
+                request_id,
+                chat_model.connection,
+                [ChatMessage(role=MessageRole.USER, content="hi")],
+                None,
+                ctx,
+            )
         )
 
         assert len(sent_events) == 1
@@ -183,7 +193,13 @@ class TestChatModelActionRetry:
 
         start = time.monotonic()
         asyncio.run(
-            chat(request_id, "test-model", [ChatMessage(role=MessageRole.USER, content="hi")], None, ctx)
+            chat(
+                request_id,
+                "test-model",
+                [ChatMessage(role=MessageRole.USER, content="hi")],
+                None,
+                ctx,
+            )
         )
         elapsed = time.monotonic() - start
 
@@ -212,7 +228,13 @@ class TestChatModelActionRetry:
 
         with pytest.raises(RuntimeError, match="persistent error"):
             asyncio.run(
-                chat(request_id, "test-model", [ChatMessage(role=MessageRole.USER, content="hi")], None, ctx)
+                chat(
+                    request_id,
+                    "test-model",
+                    [ChatMessage(role=MessageRole.USER, content="hi")],
+                    None,
+                    ctx,
+                )
             )
 
         assert len(sent_events) == 0

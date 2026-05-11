@@ -44,11 +44,11 @@ def foo(bar: int, baz: str) -> str:
 
 
 @pytest.fixture(scope="module")
-def func_tool() -> FunctionTool:  # noqa: D103
+def func_tool() -> FunctionTool:
     return from_callable(foo)
 
 
-def test_serialize_function_tool(func_tool: FunctionTool) -> None:  # noqa: D103
+def test_serialize_function_tool(func_tool: FunctionTool) -> None:
     json_value = func_tool.model_dump_json(serialize_as_any=True, indent=4)
     with Path(f"{current_dir}/resources/function_tool.json").open() as f:
         expected_json = f.read()
@@ -57,7 +57,7 @@ def test_serialize_function_tool(func_tool: FunctionTool) -> None:  # noqa: D103
     assert actual == expected
 
 
-def test_deserialize_function_tool(func_tool: FunctionTool) -> None:  # noqa: D103
+def test_deserialize_function_tool(func_tool: FunctionTool) -> None:
     with Path(f"{current_dir}/resources/function_tool.json").open() as f:
         json_value = f.read()
     actual_func_tool = FunctionTool.model_validate_json(json_value)

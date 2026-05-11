@@ -16,11 +16,13 @@
 # limitations under the License.
 #################################################################################
 import os
+from unittest.mock import MagicMock
 
 import pytest
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.azure.azure_openai_chat_model import (
     AzureOpenAIChatModelConnection,
     AzureOpenAIChatModelSetup,
@@ -34,7 +36,7 @@ api_version = os.environ.get("AZURE_OPENAI_API_VERSION")
 
 
 @pytest.mark.skipif(api_key is None, reason="AZURE_OPENAI_API_KEY is not set")
-def test_azure_openai_chat_model() -> None:  # noqa: D103
+def test_azure_openai_chat_model() -> None:
     connection = AzureOpenAIChatModelConnection(
         name="azure_openai",
         api_key=api_key,
@@ -48,11 +50,14 @@ def test_azure_openai_chat_model() -> None:  # noqa: D103
         else:
             return get_resource(name, ResourceType.TOOL)
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     chat_model = AzureOpenAIChatModelSetup(
         name="azure_openai",
         model=test_deployment,
         connection="azure_openai",
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
     response = chat_model.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
     assert response is not None
@@ -78,7 +83,7 @@ def add(a: int, b: int) -> int:
 
 
 @pytest.mark.skipif(api_key is None, reason="AZURE_OPENAI_API_KEY is not set")
-def test_azure_openai_chat_with_tools() -> None:  # noqa : D103
+def test_azure_openai_chat_with_tools() -> None:
     connection = AzureOpenAIChatModelConnection(
         name="azure_openai",
         api_key=api_key,
@@ -92,15 +97,23 @@ def test_azure_openai_chat_with_tools() -> None:  # noqa : D103
         else:
             return from_callable(func=add)
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     chat_model = AzureOpenAIChatModelSetup(
         name="azure_openai",
         model=test_deployment,
         connection="azure_openai",
         tools=["add"],
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
     response = chat_model.chat(
-        [ChatMessage(role=MessageRole.USER, content="You MUST use the add tool to calculate: What is 377 + 688?")]
+        [
+            ChatMessage(
+                role=MessageRole.USER,
+                content="You MUST use the add tool to calculate: What is 377 + 688?",
+            )
+        ]
     )
     tool_calls = response.tool_calls
     assert len(tool_calls) == 1

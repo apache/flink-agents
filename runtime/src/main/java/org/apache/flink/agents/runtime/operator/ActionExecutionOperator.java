@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerFactory;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -49,12 +50,12 @@ import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
+import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
 import org.apache.flink.agents.runtime.python.utils.JavaResourceAdapter;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -94,6 +95,7 @@ import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pemja.core.PythonInterpreter;
+import pemja.core.object.PyObject;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -106,6 +108,8 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTIO
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.PRETTY_PRINT;
+import static org.apache.flink.agents.plan.actions.Utils.requiredVersions;
+import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -129,6 +133,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private static final String RECOVERY_MARKER_STATE_NAME = "recoveryMarker";
     private static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
+    private static final String LAST_COMPLETED_SEQUENCE_NUMBER_STATE_NAME =
+            "lastCompletedSequenceNumber";
     private static final String PENDING_INPUT_EVENT_STATE_NAME = "pendingInputEvents";
 
     private final AgentPlan agentPlan;
@@ -170,6 +176,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // RunnerContext for Java Actions
     private transient RunnerContextImpl runnerContext;
 
+    // Long-term memory backed by Mem0; non-null only when LongTermMemoryOptions.Mem0 is configured.
+    private transient Mem0LongTermMemory ltm;
+
     // We need to check whether the current thread is the mailbox thread using the mailbox
     // processor.
     // TODO: This is a temporary workaround. In the future, we should add an interface in
@@ -195,6 +204,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient ActionStateStore actionStateStore;
     private transient ValueState<Long> sequenceNumberKState;
+    private transient ValueState<Long> lastCompletedSequenceNumberKState;
     private transient ListState<Object> recoveryMarkerOpState;
     private transient Map<Long, Map<Object, Long>> checkpointIdToSeqNums;
 
@@ -294,6 +304,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .getState(
                                 new ValueStateDescriptor<>(
                                         MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class));
+        lastCompletedSequenceNumberKState =
+                getRuntimeContext()
+                        .getState(
+                                new ValueStateDescriptor<>(
+                                        LAST_COMPLETED_SEQUENCE_NUMBER_STATE_NAME, Long.class));
 
         // init agent processing related state
         actionTasksKState =
@@ -588,11 +603,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (currentInputEventFinished) {
             // Clean up sensory memory when a single run finished.
             actionTask.getRunnerContext().clearSensoryMemory();
+            lastCompletedSequenceNumberKState.update(sequenceNumber);
 
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.
             int removedCount = removeFromListState(currentProcessingKeysOpState, key);
-            maybePruneState(key, sequenceNumber);
             checkState(
                     removedCount == 1,
                     "Current processing key count for key "
@@ -638,7 +653,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                                                         instanceof
                                                                         PythonResourceProvider));
 
-        if (containPythonAction || containPythonResource) {
+        boolean mem0Configured = isMem0Configured();
+
+        if (containPythonAction || containPythonResource || mem0Configured) {
             LOG.debug("Begin initialize PythonEnvironmentManager.");
             PythonDependencyInfo dependencyInfo =
                     PythonDependencyInfo.create(
@@ -665,13 +682,65 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             this.jobIdentifier);
 
             javaResourceAdapter = new JavaResourceAdapter(this::getResource, pythonInterpreter);
-            if (containPythonResource) {
+            if (containPythonResource || mem0Configured) {
                 initPythonResourceAdapter();
             }
-            if (containPythonAction) {
+            if (containPythonAction || mem0Configured) {
                 initPythonActionExecutor();
             }
+            if (mem0Configured) {
+                wireLongTermMemory();
+            }
         }
+    }
+
+    private boolean isMem0Configured() {
+        // Mirror Python's `_init_long_term_memory`: mem0 is considered configured only when
+        // all three resource names are present; otherwise the Python side returns None, and
+        // we should not pay the Python interpreter startup cost.
+        var config = agentPlan.getConfig();
+        boolean configured =
+                config.get(LongTermMemoryOptions.Mem0.CHAT_MODEL_SETUP) != null
+                        && config.get(LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP) != null
+                        && config.get(LongTermMemoryOptions.Mem0.VECTOR_STORE) != null;
+
+        boolean containJavaAction =
+                agentPlan.getActions().values().stream()
+                        .anyMatch(action -> action.getExec() instanceof JavaFunction);
+
+        // Mem0 will call chat model and embedding model in its own thread executor, this behavior
+        // is same as the async execution for cross-language resources, and also requires the fix
+        // in pemja.
+        if (configured && containJavaAction && !supportAsync()) {
+            throw new RuntimeException(
+                    String.format(
+                            "Using Mem0 based Long-Term Memory in java requires flink version higher "
+                                    + "than %s. You can upgrade flink or use python api.",
+                            requiredVersions));
+        }
+        return configured;
+    }
+
+    /**
+     * Pull the {@code long_term_memory} attribute off the Python {@code FlinkRunnerContext} (which
+     * {@code create_flink_runner_context} already initialised via {@code _init_long_term_memory})
+     * and wrap it as a Java {@link Mem0LongTermMemory}.
+     */
+    private void wireLongTermMemory() {
+        PyObject pyCtx = pythonActionExecutor.getPythonRunnerContext();
+        Object pyLtm = pythonInterpreter.invoke("python_java_utils.get_long_term_memory", pyCtx);
+        if (pyLtm == null) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Mem0 long-term memory is configured on the Java side but the Python "
+                                    + "runner context returned no long-term memory. Verify that %s, "
+                                    + "%s, and %s all reference resources that exist and that the "
+                                    + "Python-side _init_long_term_memory succeeded.",
+                            LongTermMemoryOptions.Mem0.CHAT_MODEL_SETUP.getKey(),
+                            LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP.getKey(),
+                            LongTermMemoryOptions.Mem0.VECTOR_STORE.getKey()));
+        }
+        ltm = new Mem0LongTermMemory(pythonResourceAdapter, (PyObject) pyLtm);
     }
 
     private void initPythonActionExecutor() throws Exception {
@@ -802,8 +871,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 .applyToAllKeys(
                         VoidNamespace.INSTANCE,
                         VoidNamespaceSerializer.INSTANCE,
-                        new ValueStateDescriptor<>(MESSAGE_SEQUENCE_NUMBER_STATE_NAME, Long.class),
-                        (key, state) -> keyToSeqNum.put(key, state.value()));
+                        new ValueStateDescriptor<>(
+                                LAST_COMPLETED_SEQUENCE_NUMBER_STATE_NAME, Long.class),
+                        (key, state) -> {
+                            Long completedSequenceNumber = state.value();
+                            if (completedSequenceNumber != null) {
+                                keyToSeqNum.put(key, completedSequenceNumber);
+                            }
+                        });
         checkpointIdToSeqNums.put(context.getCheckpointId(), keyToSeqNum);
 
         super.snapshotState(context);
@@ -822,7 +897,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         super.notifyCheckpointComplete(checkpointId);
     }
 
-    private Event wrapToInputEvent(IN input) {
+    private Event wrapToInputEvent(IN input) throws Exception {
         if (inputIsJava) {
             return new InputEvent(input);
         } else {
@@ -837,22 +912,24 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         checkState(EventUtil.isOutputEvent(event));
         if (event instanceof OutputEvent) {
             return (OUT) ((OutputEvent) event).getOutput();
-        } else if (event instanceof PythonEvent) {
-            Object outputFromOutputEvent =
-                    pythonActionExecutor.getOutputFromOutputEvent(((PythonEvent) event).getEvent());
-            return (OUT) outputFromOutputEvent;
         } else {
-            throw new IllegalStateException(
-                    "Unsupported event type: " + event.getClass().getName());
+            // Python output events arrive as unified Event with type "_output_event".
+            // Pass the JSON representation to Python for extraction.
+            try {
+                String eventJson =
+                        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(event);
+                Object outputFromOutputEvent =
+                        pythonActionExecutor.getOutputFromOutputEvent(eventJson);
+                return (OUT) outputFromOutputEvent;
+            } catch (Exception e) {
+                throw new IllegalStateException(
+                        "Failed to extract output from event: " + event.getType(), e);
+            }
         }
     }
 
     private List<Action> getActionsTriggeredBy(Event event) {
-        if (event instanceof PythonEvent) {
-            return agentPlan.getActionsTriggeredBy(((PythonEvent) event).getEventType());
-        } else {
-            return agentPlan.getActionsTriggeredBy(event.getClass().getName());
-        }
+        return agentPlan.getActionsTriggeredBy(event.getType());
     }
 
     private MailboxProcessor getMailboxProcessor() throws Exception {
@@ -1080,12 +1157,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
-    private void maybePruneState(Object key, long sequenceNum) throws Exception {
-        if (actionStateStore != null) {
-            actionStateStore.pruneState(key, sequenceNum);
-        }
-    }
-
     private void processEligibleWatermarks() throws Exception {
         Watermark mark = keySegmentQueue.popOldestWatermark();
         while (mark != null) {
@@ -1112,6 +1183,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 this.resourceCache,
                                 this.jobIdentifier,
                                 continuationActionExecutor);
+                if (ltm != null) {
+                    runnerContext.setLongTermMemory(ltm);
+                }
             }
             return runnerContext;
         } else {

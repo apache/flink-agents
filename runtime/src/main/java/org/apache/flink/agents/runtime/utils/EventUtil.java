@@ -18,52 +18,17 @@
 package org.apache.flink.agents.runtime.utils;
 
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
 
 /** Utilities related to the {@link Event}. */
 public class EventUtil {
 
-    public static final String PYTHON_INPUT_EVENT_NAME = "flink_agents.api.events.event.InputEvent";
-
-    public static final String PYTHON_OUTPUT_EVENT_NAME =
-            "flink_agents.api.events.event.OutputEvent";
-
     public static boolean isInputEvent(Event event) {
-        if (event instanceof InputEvent) {
-            return true;
-        }
-        return event instanceof PythonEvent
-                && ((PythonEvent) event).getEventType().equals(PYTHON_INPUT_EVENT_NAME);
-    }
-
-    /**
-     * Resolves the event type string for the given event. For {@link PythonEvent}, returns the
-     * Python module path (e.g., {@code flink_agents.api.events.event.OutputEvent}) instead of the
-     * Java wrapper class name. Falls back to {@link EventContext#getEventType()} for all other
-     * events.
-     *
-     * @param event the event
-     * @param context the event context
-     * @return the resolved event type string
-     */
-    public static String resolveEventType(Event event, EventContext context) {
-        if (event instanceof PythonEvent) {
-            String pythonType = ((PythonEvent) event).getEventType();
-            if (pythonType != null) {
-                return pythonType;
-            }
-        }
-        return context.getEventType();
+        return event instanceof InputEvent || InputEvent.EVENT_TYPE.equals(event.getType());
     }
 
     public static boolean isOutputEvent(Event event) {
-        if (event instanceof OutputEvent) {
-            return true;
-        }
-        return event instanceof PythonEvent
-                && ((PythonEvent) event).getEventType().equals(PYTHON_OUTPUT_EVENT_NAME);
+        return event instanceof OutputEvent || OutputEvent.EVENT_TYPE.equals(event.getType());
     }
 }

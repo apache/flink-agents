@@ -46,6 +46,8 @@ class FlinkMemoryObject(MemoryObject):
         Return None if the field does not exist.
         """
         try:
+            if isinstance(path_or_ref, dict) and "path" in path_or_ref:
+                path_or_ref = MemoryRef.model_validate(path_or_ref)
             path_to_get: str
             if isinstance(path_or_ref, MemoryRef):
                 path_to_get = path_or_ref.path
@@ -74,7 +76,9 @@ class FlinkMemoryObject(MemoryObject):
     def new_object(self, path: str, *, overwrite: bool = False) -> "FlinkMemoryObject":
         """Create a new object at the given path."""
         try:
-            return FlinkMemoryObject(self.__type, self._j_memory_object.newObject(path, overwrite))
+            return FlinkMemoryObject(
+                self.__type, self._j_memory_object.newObject(path, overwrite)
+            )
         except Exception as e:
             msg = f"Failed to create new object at path '{path}'"
             raise MemoryObjectError(msg) from e

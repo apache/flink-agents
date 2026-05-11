@@ -15,6 +15,8 @@
 #  limitations under the License.
 #
 
+set -e
+
 # Parse command-line arguments
 build_java=true
 build_python=true

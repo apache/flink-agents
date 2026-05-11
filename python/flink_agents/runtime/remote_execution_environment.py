@@ -46,6 +46,7 @@ from flink_agents.plan.configuration import AgentConfiguration
 _CONFIG_FILE_NAME = "config.yaml"
 _LEGACY_CONFIG_FILE_NAME = "flink-conf.yaml"
 
+
 class RemoteAgentBuilder(AgentBuilder):
     """RemoteAgentBuilder for integrating datastream/table and agent."""
 
@@ -268,7 +269,6 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         """Execute agent."""
         self.__env.execute(job_name=job_name)
 
-
     def __load_config_from_flink_conf_dir(self) -> None:
         """Load agent configuration from FLINK_CONF_DIR if available."""
         flink_conf_dir = os.environ.get("FLINK_CONF_DIR")
@@ -299,9 +299,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         # Try legacy config file name first
         legacy_config_path = Path(flink_conf_dir).joinpath(_LEGACY_CONFIG_FILE_NAME)
         if legacy_config_path.exists():
-            logging.warning(
-                f"Using legacy config file {_LEGACY_CONFIG_FILE_NAME}"
-            )
+            logging.warning(f"Using legacy config file {_LEGACY_CONFIG_FILE_NAME}")
             return legacy_config_path
 
         # Try new config file name as fallback

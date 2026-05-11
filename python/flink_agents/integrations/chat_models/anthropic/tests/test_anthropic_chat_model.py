@@ -16,11 +16,13 @@
 # limitations under the License.
 #################################################################################
 import os
+from unittest.mock import MagicMock
 
 import pytest
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import (
     AnthropicChatModelConnection,
     AnthropicChatModelSetup,
@@ -32,10 +34,8 @@ api_key = os.environ.get("TEST_API_KEY")
 
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
-def test_anthropic_chat_model() -> None:  # noqa: D103
-    connection = AnthropicChatModelConnection(
-        name="anthropic_server", api_key=api_key
-    )
+def test_anthropic_chat_model() -> None:
+    connection = AnthropicChatModelConnection(name="anthropic_server", api_key=api_key)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
@@ -43,8 +43,14 @@ def test_anthropic_chat_model() -> None:  # noqa: D103
         else:
             return get_resource(name, ResourceType.TOOL)
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     chat_model = AnthropicChatModelSetup(
-        name="anthropic", model=test_model, connection="anthropic_server", get_resource=get_resource
+        name="anthropic",
+        model=test_model,
+        connection="anthropic_server",
+        resource_context=mock_ctx,
     )
     response = chat_model.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
     assert response is not None
@@ -70,10 +76,8 @@ def add(a: int, b: int) -> int:
 
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
-def test_anthropic_chat_with_tools() -> None:  # noqa : D103
-    connection = AnthropicChatModelConnection(
-        name="anthropic_server", api_key=api_key
-    )
+def test_anthropic_chat_with_tools() -> None:
+    connection = AnthropicChatModelConnection(name="anthropic_server", api_key=api_key)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
@@ -81,12 +85,15 @@ def test_anthropic_chat_with_tools() -> None:  # noqa : D103
         else:
             return from_callable(func=add)
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     chat_model = AnthropicChatModelSetup(
         name="anthropic",
         model=test_model,
         connection="anthropic_server",
         tools=["add"],
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
     response = chat_model.chat(
         [ChatMessage(role=MessageRole.USER, content="What is 1 + 1?")]

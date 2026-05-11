@@ -170,7 +170,7 @@ java_tests() {
 
         exclude_list="!e2e-test/flink-agents-end-to-end-tests-integration,!e2e-test/flink-agents-end-to-end-tests-resource-cross-language"
 
-        mvn -T16 --batch-mode --no-transfer-progress test -pl "${exclude_list}"
+        mvn -T16 --batch-mode --no-transfer-progress test -fae -pl "${exclude_list}"
         testcode=$?
     fi
     case $testcode in

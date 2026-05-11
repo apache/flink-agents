@@ -141,6 +141,14 @@ under the License.
             <version>${log4j2.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!-- Required so RunnerContextImpl's ObjectMapper can serialise the
+             Java 8 date/time types that show up in DurableCallable results
+             (e.g. MemorySetItem.createdAt / updatedAt). -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
     </dependencies>
 
     <build>

@@ -47,7 +47,8 @@ import java.util.Set;
  * thresholds are {@code 0}, no truncation occurs.
  *
  * <p>Protected fields at the top level of the event node ({@code eventType}, {@code id}, {@code
- * attributes}) are never truncated.
+ * attributes}) are never truncated as structural fields. The {@code attributes} envelope is
+ * additionally traversed so user payload stored inside it is truncated like any other field.
  */
 public class JsonTruncator {
 
@@ -75,7 +76,8 @@ public class JsonTruncator {
      * Truncates the given event node in place according to configured thresholds.
      *
      * <p>Protected fields ({@code eventType}, {@code id}, {@code attributes}) at the top level of
-     * the event node are never truncated.
+     * the event node are never truncated as structural fields. The {@code attributes} envelope is
+     * additionally traversed so user payload stored inside it is truncated like any other field.
      *
      * @param eventNode the top-level event JSON object to truncate
      * @return {@code true} if any field was truncated, {@code false} if the node was unchanged
@@ -84,7 +86,13 @@ public class JsonTruncator {
         if (eventNode == null) {
             return false;
         }
-        return truncateObject(eventNode, 1, true);
+        boolean truncated = truncateObject(eventNode, 1, true);
+        // Traverse the protected attributes envelope so its user payload still gets truncated.
+        JsonNode attributes = eventNode.get("attributes");
+        if (attributes instanceof ObjectNode) {
+            truncated |= truncateObject((ObjectNode) attributes, 1, false);
+        }
+        return truncated;
     }
 
     /**

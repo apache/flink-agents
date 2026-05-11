@@ -65,6 +65,9 @@ public abstract class Resource {
         return metricGroup;
     }
 
+    /** Open the resource. */
+    public void open() throws Exception {}
+
     /** Close the resource. */
     public void close() throws Exception {}
 }

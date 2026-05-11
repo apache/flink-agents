@@ -20,7 +20,16 @@ from typing import TYPE_CHECKING, Any, Dict, List, cast
 from pydantic import BaseModel, field_serializer, model_validator
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.resource import ResourceDescriptor, ResourceType
+from flink_agents.api.resource import (
+    ResourceDescriptor,
+    ResourceType,
+)
+from flink_agents.api.resource_context import ResourceContext
+from flink_agents.api.skills import (
+    BASH_TOOL,
+    LOAD_SKILL_TOOL,
+    Skills,
+)
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
 from flink_agents.plan.actions.context_retrieval_action import CONTEXT_RETRIEVAL_ACTION
@@ -37,6 +46,9 @@ from flink_agents.plan.resource_provider import (
 from flink_agents.plan.tools.function_tool import from_callable
 
 if TYPE_CHECKING:
+    from flink_agents.api.resource import (
+        Resource,
+    )
     from flink_agents.integrations.mcp.mcp import MCPServer
 
 BUILT_IN_ACTIONS = [CHAT_MODEL_ACTION, TOOL_CALL_ACTION, CONTEXT_RETRIEVAL_ACTION]
@@ -198,6 +210,17 @@ class AgentPlan(BaseModel):
         return self.actions[action_name].config.get(key, None)
 
 
+def _resolve_event_type(evt: Any) -> str:
+    """Convert a listen-event entry to a routing-key string.
+
+    Only string type identifiers are accepted.
+    """
+    if isinstance(evt, str):
+        return evt
+    msg = f"Event type must be a string identifier, got {evt!r}"
+    raise ValueError(msg)
+
+
 def _get_actions(agent: Agent) -> List[Action]:
     """Extract all registered agent actions from an agent.
 
@@ -219,8 +242,8 @@ def _get_actions(agent: Agent) -> List[Action]:
                     name=name,
                     exec=PythonFunction.from_callable(value.__func__),
                     listen_event_types=[
-                        f"{event_type.__module__}.{event_type.__name__}"
-                        for event_type in value._listen_events
+                        _resolve_event_type(et)
+                        for et in value._listen_events
                     ],
                 )
             )
@@ -230,28 +253,31 @@ def _get_actions(agent: Agent) -> List[Action]:
                     name=name,
                     exec=PythonFunction.from_callable(value),
                     listen_event_types=[
-                        f"{event_type.__module__}.{event_type.__name__}"
-                        for event_type in value._listen_events
+                        _resolve_event_type(et)
+                        for et in value._listen_events
                     ],
                 )
             )
-    for name, action in agent.actions.items():
+    for name, action_tuple in agent.actions.items():
         actions.append(
             Action(
                 name=name,
-                exec=PythonFunction.from_callable(action[1]),
+                exec=PythonFunction.from_callable(action_tuple[1]),
                 listen_event_types=[
-                    f"{event_type.__module__}.{event_type.__name__}"
-                    for event_type in action[0]
+                    _resolve_event_type(et)
+                    for et in action_tuple[0]
                 ],
-                config=action[2],
+                config=action_tuple[2],
             )
         )
     return actions
 
 
-def _get_resource_providers(agent: Agent, config: AgentConfiguration) -> List[ResourceProvider]:
+def _get_resource_providers(
+    agent: Agent, config: AgentConfiguration
+) -> List[ResourceProvider]:
     resource_providers = []
+    skills_descriptors = {}
     # retrieve resource declared by decorator
     for name, value in agent.__class__.__dict__.items():
         if (
@@ -302,6 +328,10 @@ def _get_resource_providers(agent: Agent, config: AgentConfiguration) -> List[Re
 
             descriptor = value()
             _add_mcp_server(name, resource_providers, descriptor, config)
+        elif hasattr(value, "_is_skills"):
+            if isinstance(value, staticmethod):
+                value = value.__func__
+            skills_descriptors[name] = value()
 
     # retrieve resource declared by add interface
     for name, prompt in agent.resources[ResourceType.PROMPT].items():
@@ -318,6 +348,12 @@ def _get_resource_providers(agent: Agent, config: AgentConfiguration) -> List[Re
 
     for name, descriptor in agent.resources[ResourceType.MCP_SERVER].items():
         _add_mcp_server(name, resource_providers, descriptor, config)
+
+    # Merge decorator-based and programmatic skills
+    all_skills: Dict[str, Skills] = dict(
+        {**skills_descriptors, **agent.resources[ResourceType.SKILLS]}.items()
+    )
+    _add_skills(all_skills, resource_providers)
 
     for resource_type in [
         ResourceType.CHAT_MODEL,
@@ -340,16 +376,31 @@ def _get_resource_providers(agent: Agent, config: AgentConfiguration) -> List[Re
 
 
 def _add_mcp_server(
-    name: str, resource_providers: List[ResourceProvider], descriptor: ResourceDescriptor, config: AgentConfiguration
+    name: str,
+    resource_providers: List[ResourceProvider],
+    descriptor: ResourceDescriptor,
+    config: AgentConfiguration,
 ) -> None:
     provider = PythonResourceProvider.get(name=name, descriptor=descriptor)
 
     resource_providers.append(provider)
 
-    def get_resource(name: str, type: ResourceType) -> Any:
+    class ResourceContextPlaceholder(ResourceContext):
         """Placeholder - MCP server construction doesn't need resource resolution."""
 
-    mcp_server = cast("MCPServer", provider.provide(get_resource=get_resource, config=config))
+        def generate_available_skills_prompt(self, *skill_names: str) -> str:
+            pass
+
+        def get_resource(self, name: str, resource_type: "ResourceType") -> "Resource":
+            pass
+
+        def get_skill_dirs(self, *skill_names: str) -> List[str]:
+            return []
+
+    mcp_server = cast(
+        "MCPServer",
+        provider.provide(resource_context=ResourceContextPlaceholder(), config=config),
+    )
 
     resource_providers.extend(
         [
@@ -370,3 +421,60 @@ def _add_mcp_server(
     )
 
     mcp_server.close()
+
+
+SKILLS_CONFIG = "_skills_config"
+
+
+def _add_skills(
+    skills_objects: Dict[str, Skills],
+    resource_providers: List[ResourceProvider],
+) -> None:
+    """Register skill configuration and skill tools.
+
+    Merges all Skills objects into a single Skills config resource,
+    and registers built-in skill tools (load_skill, bash).
+
+
+    """
+    if len(skills_objects) == 0:
+        return
+
+    # Register skill tools via descriptor (no runtime import needed).
+    # The tool classes live in flink_agents.runtime.skill_tools and will
+    # be instantiated at runtime by PythonResourceProvider.
+
+    resource_providers.extend(
+        [
+            PythonResourceProvider.get(
+                name=LOAD_SKILL_TOOL,
+                descriptor=ResourceDescriptor(
+                    clazz="flink_agents.runtime.skill.skill_tools.LoadSkillTool",
+                ),
+            ),
+            PythonResourceProvider.get(
+                name=BASH_TOOL,
+                descriptor=ResourceDescriptor(
+                    clazz="flink_agents.plan.tools.bash.bash_tool.BashTool",
+                ),
+            ),
+        ]
+    )
+
+    # TODO: Currently, we construct a global agent skill manager for all skill
+    #  resource descriptors. In the future, we can support crate individual
+    #  agent skill manager for each resource descriptor, and support specifying
+    #  skill names and which skill manager they belong to when declaring a chat
+    #  model setup. MCP prompts and tools face the same situation, we can refactor
+    #  them as a whole.
+    paths: List[str] = []
+    for skills_obj in skills_objects.values():
+        paths.extend(skills_obj.paths)
+
+    merged = Skills.from_local_dir(*dict.fromkeys(paths))
+
+    resource_providers.append(
+        PythonSerializableResourceProvider.from_resource(
+            name=SKILLS_CONFIG, resource=merged
+        )
+    )

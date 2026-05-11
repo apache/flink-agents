@@ -25,7 +25,6 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
-import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
@@ -46,11 +45,11 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
 
     static final String JAVA_RESOURCE_ADAPTER = "j_resource_adapter";
 
-    static final String GET_RESOURCE_KEY = "get_resource";
+    static final String RESOURCE_CONTEXT_KEY = "resource_context";
 
     static final String PYTHON_MODULE_PREFIX = "python_java_utils.";
 
-    static final String GET_RESOURCE_FUNCTION = PYTHON_MODULE_PREFIX + "get_resource_function";
+    static final String GET_RESOURCE_CONTEXT = PYTHON_MODULE_PREFIX + "get_resource_context";
 
     static final String CALL_METHOD = PYTHON_MODULE_PREFIX + "call_method";
 
@@ -76,7 +75,7 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     private final BiFunction<String, ResourceType, Resource> getResource;
     private final PythonInterpreter interpreter;
     private final JavaResourceAdapter javaResourceAdapter;
-    private Object pythonGetResourceFunction;
+    private PyObject pythonResourceContext;
 
     public PythonResourceAdapterImpl(
             BiFunction<String, ResourceType, Resource> getResource,
@@ -89,7 +88,7 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
 
     public void open() {
         interpreter.exec(PYTHON_IMPORTS);
-        pythonGetResourceFunction = interpreter.invoke(GET_RESOURCE_FUNCTION, this);
+        pythonResourceContext = (PyObject) interpreter.invoke(GET_RESOURCE_CONTEXT, this);
     }
 
     public Object getResource(String resourceName, String resourceType) {
@@ -112,13 +111,13 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
         Map<String, Object> kwargs = new HashMap<>();
         kwargs.put(JAVA_RESOURCE, resource);
         kwargs.put(JAVA_RESOURCE_ADAPTER, javaResourceAdapter);
-        kwargs.put(GET_RESOURCE_KEY, pythonGetResourceFunction);
+        kwargs.put(RESOURCE_CONTEXT_KEY, pythonResourceContext);
         return interpreter.invoke(FROM_JAVA_RESOURCE, resourceType, kwargs);
     }
 
     @Override
     public PyObject initPythonResource(String module, String clazz, Map<String, Object> kwargs) {
-        kwargs.put(GET_RESOURCE_KEY, pythonGetResourceFunction);
+        kwargs.put(RESOURCE_CONTEXT_KEY, pythonResourceContext);
         return (PyObject) interpreter.invoke(CREATE_RESOURCE, module, clazz, kwargs);
     }
 
@@ -172,14 +171,6 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
         List<PyObject> pythonDocuments =
                 (List<PyObject>) pythonVectorStoreQueryResult.getAttr("documents", List.class);
         return new VectorStoreQueryResult(fromPythonDocuments(pythonDocuments));
-    }
-
-    @Override
-    public CollectionManageableVectorStore.Collection fromPythonCollection(
-            PyObject pythonCollection) {
-        return new CollectionManageableVectorStore.Collection(
-                pythonCollection.getAttr("name").toString(),
-                (Map<String, Object>) pythonCollection.getAttr("metadata", Map.class));
     }
 
     @Override

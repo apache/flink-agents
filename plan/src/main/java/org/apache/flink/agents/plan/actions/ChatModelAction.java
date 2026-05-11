@@ -48,6 +48,7 @@ import javax.annotation.Nullable;
 import java.util.*;
 
 import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
+import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
 
 /** Built-in action for processing chat request and tool call result. */
 public class ChatModelAction {
@@ -71,7 +72,7 @@ public class ChatModelAction {
                         ChatModelAction.class,
                         "processChatRequestOrToolResponse",
                         new Class[] {Event.class, RunnerContext.class}),
-                List.of(ChatRequestEvent.class.getName(), ToolResponseEvent.class.getName()));
+                List.of(ChatRequestEvent.EVENT_TYPE, ToolResponseEvent.EVENT_TYPE));
     }
 
     @SuppressWarnings("unchecked")
@@ -203,10 +204,19 @@ public class ChatModelAction {
         ctx.sendEvent(toolRequestEvent);
     }
 
+    static String cleanLlmResponse(String rawResponse) {
+        String trimmed = rawResponse.trim();
+        if (trimmed.startsWith("```")) {
+            return trimmed.replaceAll("(?s)^```(?:json)?\\s*(.*?)\\s*```$", "$1");
+        }
+        return trimmed;
+    }
+
     @SuppressWarnings("unchecked")
     private static ChatMessage generateStructuredOutput(ChatMessage response, Object outputSchema)
             throws JsonProcessingException {
         String output = response.getContent();
+        output = cleanLlmResponse(output);
         Object structuredOutput;
         if (outputSchema instanceof Class) {
             structuredOutput = mapper.readValue(String.valueOf(output), (Class<?>) outputSchema);
@@ -247,9 +257,10 @@ public class ChatModelAction {
                 (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
 
         boolean chatAsync = ctx.getConfig().get(AgentExecutionOptions.CHAT_ASYNC);
-        // TODO: python chat model doesn't support async execution yet, see
-        // https://github.com/apache/flink-agents/issues/448 for details.
-        chatAsync = chatAsync && !(chatModel instanceof PythonChatModelSetup);
+
+        if ((chatModel instanceof PythonChatModelSetup) && !supportAsync()) {
+            chatAsync = false;
+        }
 
         Agent.ErrorHandlingStrategy strategy =
                 ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
@@ -343,7 +354,8 @@ public class ChatModelAction {
             int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
             int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
 
-            recordRetryMetrics(ctx, chatModel.getConnection(), totalRetryCount, totalRetryWaitSec);
+            recordRetryMetrics(
+                    ctx, chatModel.getConnectionName(), totalRetryCount, totalRetryWaitSec);
 
             ctx.sendEvent(
                     new ChatResponseEvent(
@@ -415,10 +427,10 @@ public class ChatModelAction {
     public static void processChatRequestOrToolResponse(Event event, RunnerContext ctx)
             throws Exception {
         MemoryObject sensoryMem = ctx.getSensoryMemory();
-        if (event instanceof ChatRequestEvent) {
-            processChatRequest((ChatRequestEvent) event, ctx);
-        } else if (event instanceof ToolResponseEvent) {
-            processToolResponse((ToolResponseEvent) event, ctx);
+        if (ChatRequestEvent.EVENT_TYPE.equals(event.getType())) {
+            processChatRequest(ChatRequestEvent.fromEvent(event), ctx);
+        } else if (ToolResponseEvent.EVENT_TYPE.equals(event.getType())) {
+            processToolResponse(ToolResponseEvent.fromEvent(event), ctx);
         } else {
             throw new RuntimeException(String.format("Unexpected type event %s", event));
         }

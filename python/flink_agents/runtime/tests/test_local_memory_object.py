@@ -26,7 +26,7 @@ def create_memory() -> LocalMemoryObject:
     return LocalMemoryObject(MemoryType.SHORT_TERM, {})
 
 
-class User:  # noqa: D101
+class User:
     def __init__(self, name: str, age: int) -> None:
         """Store for later comparison."""
         self.name = name
@@ -40,7 +40,7 @@ class User:  # noqa: D101
         )
 
 
-def test_basic_set_get_various_types() -> None:  # noqa: D103
+def test_basic_set_get_various_types() -> None:
     mem = create_memory()
 
     # int / float / str
@@ -74,7 +74,7 @@ def test_basic_set_get_various_types() -> None:  # noqa: D103
     assert mem.get("user") == user
 
 
-def test_nested_set_and_get() -> None:  # noqa: D103
+def test_nested_set_and_get() -> None:
     mem = create_memory()
     mem.set("a.b.c", True)
     tmp_obj = mem.get("a.b")
@@ -88,7 +88,7 @@ def test_nested_set_and_get() -> None:  # noqa: D103
     assert mem.get("a.b").get("c") is True
 
 
-def test_new_object_and_is_exist() -> None:  # noqa: D103
+def test_new_object_and_is_exist() -> None:
     mem = create_memory()
     mem.new_object("foo.bar")
     assert mem.is_exist("foo")
@@ -98,7 +98,7 @@ def test_new_object_and_is_exist() -> None:  # noqa: D103
     assert fields["bar"] == "NestedObject"
 
 
-def test_overwrite_behavior() -> None:  # noqa: D103
+def test_overwrite_behavior() -> None:
     mem = create_memory()
     mem.set("profile", "active")
 
@@ -113,7 +113,7 @@ def test_overwrite_behavior() -> None:  # noqa: D103
     assert mem.get("profile.status") == "ok"
 
 
-def test_auto_parent_fill_and_children() -> None:  # noqa: D103
+def test_auto_parent_fill_and_children() -> None:
     mem = create_memory()
     mem.new_object("x.y.z")
 
@@ -125,7 +125,7 @@ def test_auto_parent_fill_and_children() -> None:  # noqa: D103
     assert root_fields["x"] == "NestedObject"
 
 
-def test_disallow_overwrite_object_with_primitive() -> None:  # noqa: D103
+def test_disallow_overwrite_object_with_primitive() -> None:
     mem = create_memory()
     mem.new_object("obj")
     try:

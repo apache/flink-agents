@@ -27,6 +27,7 @@ from flink_agents.plan.function import Function, JavaFunction, PythonFunction
 
 _CONFIG_TYPE = "__config_type__"
 
+
 class Action(BaseModel):
     """Representation of an agent action with event listening and function execution.
 
@@ -42,6 +43,7 @@ class Action(BaseModel):
     listen_event_types : List[str]
         List of event types that will trigger this Action's execution.
     """
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str

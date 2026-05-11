@@ -128,11 +128,12 @@ class ReviewAnalysisAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
-        input: ProductReview = event.input
+        input_event = InputEvent.from_event(event)
+        input: ProductReview = input_event.input
         ctx.short_term_memory.set("id", input.id)
 
         content = f"""
@@ -142,12 +143,13 @@ class ReviewAnalysisAgent(Agent):
         msg = ChatMessage(role=MessageRole.USER, extra_args={"input": content})
         ctx.send_event(ChatRequestEvent(model="review_analysis_model", messages=[msg]))
 
-    @action(ChatResponseEvent)
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
+        chat_response = ChatResponseEvent.from_event(event)
         try:
-            json_content = json.loads(event.response.content)
+            json_content = json.loads(chat_response.response.content)
             ctx.send_event(
                 OutputEvent(
                     output=ProductReviewAnalysisRes(
@@ -159,7 +161,7 @@ class ReviewAnalysisAgent(Agent):
             )
         except Exception:
             logging.exception(
-                f"Error processing chat response {event.response.content}"
+                f"Error processing chat response {chat_response.response.content}"
             )
 
             # To fail the agent, you can raise an exception here.
@@ -211,9 +213,10 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEvents = {InputEvent.class})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
-        String input = (String) event.getInput();
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        String input = (String) inputEvent.getInput();
         MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         CustomTypesAndResources.ProductReview inputObj =
                 MAPPER.readValue(input, CustomTypesAndResources.ProductReview.class);
@@ -229,10 +232,11 @@ public class ReviewAnalysisAgent extends Agent {
         ctx.sendEvent(new ChatRequestEvent("reviewAnalysisModel", List.of(msg)));
     }
 
-    @Action(listenEvents = ChatResponseEvent.class)
-    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    public static void processChatResponse(Event event, RunnerContext ctx)
             throws Exception {
-        JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getContent());
         JsonNode scoreNode = jsonNode.findValue("score");
         JsonNode reasonsNode = jsonNode.findValue("reasons");
         if (scoreNode == null || reasonsNode == null) {

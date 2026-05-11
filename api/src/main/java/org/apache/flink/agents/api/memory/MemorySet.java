@@ -20,91 +20,80 @@ package org.apache.flink.agents.api.memory;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import org.apache.flink.agents.api.memory.compaction.CompactionConfig;
 
 import javax.annotation.Nullable;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * Represents a long term memory set, a named collection of memory items. Acts as a thin proxy that
+ * delegates all operations to the bound {@link BaseLongTermMemory}.
+ */
 public class MemorySet {
     private final String name;
-    private final Class<?> itemType;
-    private final int capacity;
-    private final CompactionConfig compactionConfig;
     private @JsonIgnore BaseLongTermMemory ltm;
 
     @JsonCreator
-    public MemorySet(
-            @JsonProperty("name") String name,
-            @JsonProperty("itemType") Class<?> itemType,
-            @JsonProperty("capacity") int capacity,
-            @JsonProperty("compactionConfig") CompactionConfig compactionConfig) {
+    public MemorySet(@JsonProperty("name") String name) {
         this.name = name;
-        this.itemType = itemType;
-        this.capacity = capacity;
-        this.compactionConfig = compactionConfig;
     }
 
     /**
-     * Gets the number of items in this memory set.
+     * Adds items to this memory set. The backend may auto-generate IDs.
      *
-     * @return the number of items in the memory set
-     * @throws Exception if the size cannot be determined
-     */
-    public long size() throws Exception {
-        return this.ltm.size(this);
-    }
-
-    /**
-     * Adds items to this memory set. If IDs are not provided, they will be automatically generated.
-     * This method may trigger compaction if the memory set capacity is exceeded.
-     *
-     * @param memoryItems the items to be added to the memory set
-     * @param ids optional list of IDs for the items. If null or shorter than memoryItems, IDs will
-     *     be auto-generated for missing items
-     * @param metadatas optional list of metadata maps for the items. Each metadata map corresponds
-     *     to an item at the same index
+     * @param memoryItems the items to add
+     * @param metadatas optional list of metadata maps, one per item
      * @return list of IDs of the added items
-     * @throws Exception if items cannot be added to the memory set
      */
-    public List<String> add(
-            List<?> memoryItems,
-            @Nullable List<String> ids,
-            @Nullable List<Map<String, Object>> metadatas)
+    public List<String> add(List<String> memoryItems, @Nullable List<Map<String, Object>> metadatas)
             throws Exception {
-        return this.ltm.add(this, memoryItems, ids, metadatas);
+        return this.ltm.add(this, memoryItems, metadatas);
     }
 
     /**
-     * Retrieves memory items from this memory set. If no IDs are provided, all items in the memory
-     * set are returned.
+     * Retrieves memory items. When {@code ids} is provided, {@code filters} and {@code limit} are
+     * ignored.
      *
-     * @param ids optional list of item IDs to retrieve. If null, all items are returned
-     * @return list of memory set items. If ids is provided, returns items matching those IDs. If
-     *     ids is null, returns all items in the memory set
-     * @throws Exception if items cannot be retrieved from the memory set
+     * @param ids optional list of item IDs to retrieve
+     * @param filters optional metadata filters
+     * @param limit maximum number of items to return
+     * @return list of matching memory items
      */
-    public List<MemorySetItem> get(@Nullable List<String> ids) throws Exception {
-        return this.ltm.get(this, ids);
+    public List<MemorySetItem> get(
+            @Nullable List<String> ids,
+            @Nullable Map<String, Object> filters,
+            @Nullable Integer limit)
+            throws Exception {
+        return this.ltm.get(this, ids, filters, limit);
     }
 
     /**
-     * Performs semantic search on this memory set to find items related to the query string.
+     * Performs semantic search on this memory set.
      *
      * @param query the query string for semantic search
-     * @param limit the maximum number of items to return
-     * @param extraArgs optional additional arguments for the search operation (e.g., filters,
-     *     distance metrics). If null, an empty map is used
-     * @return list of memory set items that are most relevant to the query, ordered by relevance
-     * @throws Exception if the search operation fails
+     * @param limit maximum number of items to return
+     * @param filters optional metadata filters
+     * @param extraArgs backend-specific extra arguments; pass an empty map when none are needed
+     * @return list of memory items most relevant to the query, ordered by relevance
      */
     public List<MemorySetItem> search(
-            String query, int limit, @Nullable Map<String, Object> extraArgs) throws Exception {
-        return this.ltm.search(
-                this, query, limit, extraArgs == null ? Collections.emptyMap() : extraArgs);
+            String query,
+            int limit,
+            @Nullable Map<String, Object> filters,
+            Map<String, Object> extraArgs)
+            throws Exception {
+        return this.ltm.search(this, query, limit, filters, extraArgs);
+    }
+
+    /**
+     * Deletes memory items. If {@code ids} is null, all items in the set are deleted.
+     *
+     * @param ids optional list of item IDs to delete
+     */
+    public void delete(@Nullable List<String> ids) throws Exception {
+        this.ltm.delete(this, ids);
     }
 
     public void setLtm(BaseLongTermMemory ltm) {
@@ -115,45 +104,20 @@ public class MemorySet {
         return name;
     }
 
-    public Class<?> getItemType() {
-        return itemType;
-    }
-
-    public int getCapacity() {
-        return capacity;
-    }
-
-    public CompactionConfig getCompactionConfig() {
-        return compactionConfig;
-    }
-
     @Override
     public boolean equals(Object o) {
         if (o == null || getClass() != o.getClass()) return false;
         MemorySet memorySet = (MemorySet) o;
-        return capacity == memorySet.capacity
-                && Objects.equals(name, memorySet.name)
-                && Objects.equals(itemType, memorySet.itemType)
-                && Objects.equals(compactionConfig, memorySet.compactionConfig);
+        return Objects.equals(name, memorySet.name);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, itemType, capacity, compactionConfig);
+        return Objects.hash(name);
     }
 
     @Override
     public String toString() {
-        return "MemorySet{"
-                + "name='"
-                + name
-                + '\''
-                + ", itemType="
-                + itemType
-                + ", capacity="
-                + capacity
-                + ", compactionConfig="
-                + compactionConfig
-                + '}';
+        return "MemorySet{name='" + name + "'}";
     }
 }

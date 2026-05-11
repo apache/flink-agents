@@ -80,22 +80,24 @@ class MyAgent(Agent):
             temperature=0.7
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        input_event = InputEvent.from_event(event)
         # Create a chat request with user message
         user_message = ChatMessage(
             role=MessageRole.USER,
-            content=f"input: {event.input}"
+            content=f"input: {input_event.input}"
         )
         ctx.send_event(
             ChatRequestEvent(model="ollama_chat_model", messages=[user_message])
         )
 
-    @action(ChatResponseEvent)
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
-        response_content = event.response.content
+    def process_response(event: Event, ctx: RunnerContext) -> None:
+        chat_response = ChatResponseEvent.from_event(event)
+        response_content = chat_response.response.content
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```
@@ -119,17 +121,19 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         ChatMessage userMessage =
-                new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
+                new ChatMessage(MessageRole.USER, String.format("input: {%s}", inputEvent.getInput()));
         ctx.sendEvent(new ChatRequestEvent("ollamaChatModel", List.of(userMessage)));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
-    public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    public static void processResponse(Event event, RunnerContext ctx)
             throws Exception {
-        String response = event.getResponse().getContent();
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        String response = chatResponse.getResponse().getContent();
         // Handle the LLM's response
         // Process the response as needed for your use case
     }
@@ -648,9 +652,11 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 1. Create an account at [OpenAI Platform](https://platform.openai.com/)
 2. Navigate to [API Keys](https://platform.openai.com/api-keys) and create a new secret key
 
-#### OpenAIChatModelConnection Parameters
+#### Completions API
 
-{{< tabs "OpenAIChatModelConnection Parameters" >}}
+##### OpenAICompletionsConnection Parameters
+
+{{< tabs "OpenAICompletionsConnection Parameters" >}}
 
 {{< tab "Python" >}}
 
@@ -680,9 +686,9 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 {{< /tabs >}}
 
-#### OpenAIChatModelSetup Parameters
+##### OpenAICompletionsSetup Parameters
 
-{{< tabs "OpenAIChatModelSetup Parameters" >}}
+{{< tabs "OpenAICompletionsSetup Parameters" >}}
 
 {{< tab "Python" >}}
 
@@ -722,9 +728,9 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 {{< /tabs >}}
 
-#### Usage Example
+##### Usage Example
 
-{{< tabs "OpenAI Usage Example" >}}
+{{< tabs "OpenAI Chat Completions Usage Example" >}}
 
 {{< tab "Python" >}}
 ```python
@@ -734,7 +740,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OPENAI_CONNECTION,
+            clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION,
             api_key="<your-api-key>",
             api_base_url="https://api.openai.com/v1",
             max_retries=3,
@@ -745,7 +751,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OPENAI_SETUP,
+            clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP,
             connection="openai_connection",
             model="gpt-4",
             temperature=0.7,
@@ -761,7 +767,7 @@ class MyAgent(Agent):
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor openaiConnection() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
                 .addInitialArgument("api_base_url", "https://api.openai.com/v1")
                 .addInitialArgument("timeout", 60)
@@ -771,11 +777,94 @@ public class MyAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor openaiChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP)
                 .addInitialArgument("connection", "openaiConnection")
                 .addInitialArgument("model", "gpt-4")
                 .addInitialArgument("temperature", 0.7d)
                 .addInitialArgument("max_tokens", 1000)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Responses API
+
+{{< hint info >}}
+Responses API is only supported in Java currently. To use OpenAI Responses API from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+##### OpenAIResponsesModelConnection Parameters
+
+{{< tabs "OpenAIResponsesModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | OpenAI API key for authentication |
+| `api_base_url` | String | None | Base URL for OpenAI API (useful for proxies) |
+| `max_retries` | int | `2` | Maximum number of API retry attempts |
+| `timeout` | int | None | Timeout in seconds for API requests |
+| `default_headers` | Map<String, String> | None | Default headers for API requests |
+| `model` | String | None | Default model to use if not specified in setup |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+##### OpenAIResponsesModelSetup Parameters
+
+{{< tabs "OpenAIResponsesModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"gpt-4o"` | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `strict` | boolean | `false` | Enable strict mode for tool calling schemas |
+| `reasoning_effort` | String | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
+| `store` | boolean | `false` | Whether to store the response for later retrieval |
+| `instructions` | String | None | System-level instructions for the model |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Responses API parameters |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+##### Usage Example
+
+{{< tabs "OpenAI Responses API Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor openaiResponsesConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_RESPONSES_CONNECTION)
+                .addInitialArgument("api_key", "<your-api-key>")
+                .addInitialArgument("timeout", 120)
+                .addInitialArgument("max_retries", 3)
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor openaiResponsesChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_RESPONSES_SETUP)
+                .addInitialArgument("connection", "openaiResponsesConnection")
+                .addInitialArgument("model", "gpt-4o")
+                .addInitialArgument("temperature", 0.3d)
+                .addInitialArgument("max_tokens", 2048)
+                .addInitialArgument("store", true)
                 .build();
     }
 
@@ -939,22 +1028,24 @@ class MyAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        input_event = InputEvent.from_event(event)
         # Create a chat request with user message
         user_message = ChatMessage(
             role=MessageRole.USER,
-            content=f"input: {event.input}"
+            content=f"input: {input_event.input}"
         )
         ctx.send_event(
             ChatRequestEvent(model="java_chat_model", messages=[user_message])
         )
 
-    @action(ChatResponseEvent)
+    @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
-    def process_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
-        response_content = event.response.content
+    def process_response(event: Event, ctx: RunnerContext) -> None:
+        chat_response = ChatResponseEvent.from_event(event)
+        response_content = chat_response.response.content
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```
@@ -996,17 +1087,19 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         ChatMessage userMessage =
-                new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
+                new ChatMessage(MessageRole.USER, String.format("input: {%s}", inputEvent.getInput()));
         ctx.sendEvent(new ChatRequestEvent("pythonChatModel", List.of(userMessage)));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
-    public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    public static void processResponse(Event event, RunnerContext ctx)
             throws Exception {
-        String response = event.getResponse().getContent();
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        String response = chatResponse.getResponse().getContent();
         // Handle the LLM's response
         // Process the response as needed for your use case
     }

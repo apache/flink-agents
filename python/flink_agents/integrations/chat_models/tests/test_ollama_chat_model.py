@@ -26,6 +26,7 @@ from ollama import Client
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
@@ -61,7 +62,7 @@ except Exception:
 @pytest.mark.skipif(
     client is None, reason="Ollama client is not available or test model is missing"
 )
-def test_ollama_chat() -> None:  # noqa :D103
+def test_ollama_chat() -> None:
     server = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
     response = server.chat(
         [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
@@ -88,14 +89,14 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-def get_tool(name: str, type: ResourceType) -> FunctionTool:  # noqa :D103
+def get_tool(name: str, type: ResourceType) -> FunctionTool:
     return from_callable(func=add)
 
 
 @pytest.mark.skipif(
     client is None, reason="Ollama client is not available or test model is missing"
 )
-def test_ollama_chat_with_tools() -> None:  # noqa :D103
+def test_ollama_chat_with_tools() -> None:
     connection = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
@@ -104,13 +105,19 @@ def test_ollama_chat_with_tools() -> None:  # noqa :D103
         else:
             return connection
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     llm = OllamaChatModelSetup(
         name="ollama",
         connection="ollama",
         model=test_model,
         tools=["add"],
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
+
+    llm.open()
+
     response = llm.chat(
         [
             ChatMessage(
@@ -167,13 +174,18 @@ def test_ollama_chat_with_extract_reasoning() -> None:
     def get_resource(name: str, type: ResourceType) -> Resource:
         return connection
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     llm = OllamaChatModelSetup(
         name="ollama",
         connection="ollama",
         model=test_model,
         extract_reasoning=True,
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
+
+    llm.open()
 
     # Replace the real client with our mock client
     connection._OllamaChatModelConnection__client = mock_client

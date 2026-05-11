@@ -127,7 +127,7 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
             if type(None) in types:
                 types.remove(type(None))
                 if len(types) == 1:
-                    return typing.Optional[types[0]] # noqa: UP007
+                    return typing.Optional[types[0]]  # noqa: UP007
                 return Optional[tuple(types)]  # # noqa: UP007
             else:
                 return Union[tuple(types)]  # noqa: UP007
@@ -178,7 +178,10 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
 
     return create_model(name, **main_fields, __doc__=schema.get("description", ""))
 
-def create_model_from_java_tool_schema_str(name: str, schema_str: str) -> type[BaseModel]:
+
+def create_model_from_java_tool_schema_str(
+    name: str, schema_str: str
+) -> type[BaseModel]:
     """Create Pydantic model from a java tool input schema."""
     json_schema = json.loads(schema_str)
     properties = json_schema["properties"]
@@ -191,6 +194,7 @@ def create_model_from_java_tool_schema_str(name: str, schema_str: str) -> type[B
         type = TYPE_MAPPING.get(properties[param_name]["type"])
         fields[param_name] = (type, FieldInfo(description=description))
     return create_model(name, **fields)
+
 
 def create_java_tool_schema_str_from_model(model: type[BaseModel]) -> str:
     """Create a java tool input schema string from a Pydantic model.

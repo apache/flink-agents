@@ -54,13 +54,13 @@ OLLAMA_MODEL = os.environ.get("REACT_OLLAMA_MODEL", "qwen3:1.7b")
 os.environ["OLLAMA_CHAT_MODEL"] = OLLAMA_MODEL
 
 
-class InputData(BaseModel):  # noqa: D101
+class InputData(BaseModel):
     a: int
     b: int
     c: int
 
 
-class OutputData(BaseModel):  # noqa: D101
+class OutputData(BaseModel):
     result: int
 
 
@@ -78,7 +78,7 @@ client = pull_model(OLLAMA_MODEL)
 @pytest.mark.skipif(
     client is None, reason="Ollama client is not available or test model is missing"
 )
-def test_react_agent_on_local_runner() -> None:  # noqa: D103
+def test_react_agent_on_local_runner() -> None:
     env = AgentsExecutionEnvironment.get_execution_environment()
     env.get_config().set(
         AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
@@ -90,9 +90,11 @@ def test_react_agent_on_local_runner() -> None:  # noqa: D103
         env.add_resource(
             "ollama",
             ResourceType.CHAT_MODEL_CONNECTION,
-            ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0),
+            ResourceDescriptor(
+                clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0
+            ),
         )
-        .add_resource("add", ResourceType.TOOL,  Tool.from_callable(add))
+        .add_resource("add", ResourceType.TOOL, Tool.from_callable(add))
         .add_resource("multiply", ResourceType.TOOL, Tool.from_callable(multiply))
     )
 
@@ -136,7 +138,7 @@ def test_react_agent_on_local_runner() -> None:  # noqa: D103
 @pytest.mark.skipif(
     client is None, reason="Ollama client is not available or test model is missing"
 )
-def test_react_agent_on_remote_runner(tmp_path: Path) -> None:  # noqa: D103
+def test_react_agent_on_remote_runner(tmp_path: Path) -> None:
     stream_env = StreamExecutionEnvironment.get_execution_environment()
 
     stream_env.set_parallelism(1)
@@ -169,7 +171,9 @@ def test_react_agent_on_remote_runner(tmp_path: Path) -> None:  # noqa: D103
         env.add_resource(
             "ollama",
             ResourceType.CHAT_MODEL_CONNECTION,
-            ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0),
+            ResourceDescriptor(
+                clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0
+            ),
         )
         .add_resource("add", ResourceType.TOOL, Tool.from_callable(add))
         .add_resource("multiply", ResourceType.TOOL, Tool.from_callable(multiply))

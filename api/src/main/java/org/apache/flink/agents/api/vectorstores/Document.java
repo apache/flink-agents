@@ -44,16 +44,34 @@ public class Document {
 
     private @Nullable float[] embedding;
 
+    /**
+     * Similarity / distance score for this document against a query. Populated by vector search
+     * results; {@code null} for documents returned from non-query operations (e.g. {@code get}) or
+     * from stores that do not surface scores. Semantics (distance vs. similarity, metric) are
+     * implementation-specific — each vector store documents its own.
+     */
+    private @Nullable Float score;
+
     public Document(String content, Map<String, Object> metadata, String id) {
-        this(content, metadata, id, null);
+        this(content, metadata, id, null, null);
     }
 
     public Document(
             String content, Map<String, Object> metadata, String id, @Nullable float[] embedding) {
+        this(content, metadata, id, embedding, null);
+    }
+
+    public Document(
+            String content,
+            Map<String, Object> metadata,
+            String id,
+            @Nullable float[] embedding,
+            @Nullable Float score) {
         this.content = content;
         this.metadata = metadata;
         this.id = id;
         this.embedding = embedding;
+        this.score = score;
     }
 
     public String getContent() {
@@ -77,6 +95,15 @@ public class Document {
         return embedding;
     }
 
+    @Nullable
+    public Float getScore() {
+        return score;
+    }
+
+    public void setScore(@Nullable Float score) {
+        this.score = score;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (o == null || getClass() != o.getClass()) return false;
@@ -84,12 +111,13 @@ public class Document {
         return Objects.equals(id, document.id)
                 && Objects.equals(content, document.content)
                 && Objects.equals(metadata, document.metadata)
-                && Arrays.equals(embedding, document.embedding);
+                && Arrays.equals(embedding, document.embedding)
+                && Objects.equals(score, document.score);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, content, metadata, Arrays.hashCode(embedding));
+        return Objects.hash(id, content, metadata, Arrays.hashCode(embedding), score);
     }
 
     @Override
@@ -105,6 +133,8 @@ public class Document {
                 + metadata
                 + ", embedding="
                 + Arrays.toString(embedding)
+                + ", score="
+                + score
                 + '}';
     }
 }

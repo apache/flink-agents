@@ -32,6 +32,7 @@ import pemja.core.object.PyObject;
 import javax.annotation.Nullable;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,13 +46,18 @@ import java.util.function.BiFunction;
  *
  * <p>This class serves as a connection layer between Java and Python vector store environments,
  * enabling seamless integration of Python-based vector stores within Java applications.
+ *
+ * <p>The {@code *Embedding} hooks ({@link #queryEmbedding}, {@link #addEmbedding}, {@link
+ * #updateEmbedding}) are no-ops here: this bridge forwards each public method directly to its
+ * Python counterpart, which already handles auto-embedding internally, so the Java auto-embed path
+ * in {@link BaseVectorStore} is not used.
  */
 public class PythonVectorStore extends BaseVectorStore implements PythonResourceWrapper {
     protected final PyObject vectorStore;
     protected final PythonResourceAdapter adapter;
 
     /**
-     * Creates a new PythonEmbeddingModelConnection.
+     * Creates a new PythonVectorStore.
      *
      * @param adapter The Python resource adapter (required by PythonResourceProvider's
      *     reflection-based instantiation but not used directly in this implementation)
@@ -70,6 +76,11 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
     }
 
     @Override
+    public void open() {
+        adapter.callMethod(vectorStore, "open", Collections.emptyMap());
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public List<String> add(
             List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
@@ -80,10 +91,26 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
         kwargs.put("documents", pythonDocuments);
 
         if (collection != null) {
-            kwargs.put("collection", collection);
+            kwargs.put("collection_name", collection);
         }
 
         return (List<String>) adapter.callMethod(vectorStore, "add", kwargs);
+    }
+
+    @Override
+    public void update(
+            List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
+            throws IOException {
+        Object pythonDocuments = adapter.toPythonDocuments(documents);
+
+        Map<String, Object> kwargs = new HashMap<>(extraArgs);
+        kwargs.put("documents", pythonDocuments);
+
+        if (collection != null) {
+            kwargs.put("collection_name", collection);
+        }
+
+        adapter.callMethod(vectorStore, "update", kwargs);
     }
 
     @Override
@@ -96,20 +123,26 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
     }
 
     @Override
-    public long size(@Nullable String collection) throws Exception {
-        return (long) vectorStore.invokeMethod("size", collection);
-    }
-
-    @Override
+    @SuppressWarnings("unchecked")
     public List<Document> get(
-            @Nullable List<String> ids, @Nullable String collection, Map<String, Object> extraArgs)
+            @Nullable List<String> ids,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            @Nullable Integer limit,
+            Map<String, Object> extraArgs)
             throws IOException {
         Map<String, Object> kwargs = new HashMap<>(extraArgs);
         if (ids != null && !ids.isEmpty()) {
             kwargs.put("ids", ids);
         }
         if (collection != null) {
-            kwargs.put("collection", collection);
+            kwargs.put("collection_name", collection);
+        }
+        if (filters != null) {
+            kwargs.put("filters", filters);
+        }
+        if (limit != null) {
+            kwargs.put("limit", limit);
         }
 
         Object pythonDocuments = adapter.callMethod(vectorStore, "get", kwargs);
@@ -119,14 +152,20 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
 
     @Override
     public void delete(
-            @Nullable List<String> ids, @Nullable String collection, Map<String, Object> extraArgs)
+            @Nullable List<String> ids,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            Map<String, Object> extraArgs)
             throws IOException {
         Map<String, Object> kwargs = new HashMap<>(extraArgs);
         if (ids != null && !ids.isEmpty()) {
             kwargs.put("ids", ids);
         }
         if (collection != null) {
-            kwargs.put("collection", collection);
+            kwargs.put("collection_name", collection);
+        }
+        if (filters != null) {
+            kwargs.put("filters", filters);
         }
         adapter.callMethod(vectorStore, "delete", kwargs);
     }
@@ -137,16 +176,26 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
     }
 
     @Override
-    protected List<Document> queryEmbedding(
-            float[] embedding, int limit, @Nullable String collection, Map<String, Object> args) {
+    public List<Document> queryEmbedding(
+            float[] embedding,
+            int limit,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            Map<String, Object> args) {
         return List.of();
     }
 
     @Override
-    protected List<String> addEmbedding(
+    public List<String> addEmbedding(
             List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
         return List.of();
+    }
+
+    @Override
+    public void updateEmbedding(
+            List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs) {
+        // no-op; Python forwards public update() directly
     }
 
     @Override

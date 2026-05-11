@@ -35,7 +35,7 @@ from pyflink.datastream.connectors.file_system import (
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 
@@ -51,14 +51,13 @@ class InputKeySelector(KeySelector):
 
 
 class PythonEventLoggingAgent(Agent):
-    """Agent for testing PythonEvent logging."""
+    """Agent for testing Python event logging."""
 
-    @action(InputEvent)
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
-        """Process input event and send a PythonEvent."""
-        # Send a PythonEvent that should be logged with readable content
-        input_data = event.input
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        """Process input event and send an output event."""
+        input_data = InputEvent.from_event(event).input
         ctx.send_event(
             OutputEvent(output={"processed_review": f"{input_data['review']}"})
         )

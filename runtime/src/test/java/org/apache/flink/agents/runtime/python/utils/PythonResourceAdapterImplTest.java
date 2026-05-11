@@ -75,7 +75,7 @@ public class PythonResourceAdapterImplTest {
         PyObject result = pythonResourceAdapter.initPythonResource(module, clazz, kwargs);
 
         assertThat(result).isEqualTo(expectedResult);
-        assertThat(kwargs).containsKey(PythonResourceAdapterImpl.GET_RESOURCE_KEY);
+        assertThat(kwargs).containsKey(PythonResourceAdapterImpl.RESOURCE_CONTEXT_KEY);
         verify(mockInterpreter)
                 .invoke(PythonResourceAdapterImpl.CREATE_RESOURCE, module, clazz, kwargs);
     }
@@ -87,7 +87,7 @@ public class PythonResourceAdapterImplTest {
 
         verify(mockInterpreter).exec(PythonResourceAdapterImpl.PYTHON_IMPORTS);
         verify(mockInterpreter)
-                .invoke(PythonResourceAdapterImpl.GET_RESOURCE_FUNCTION, pythonResourceAdapter);
+                .invoke(PythonResourceAdapterImpl.GET_RESOURCE_CONTEXT, pythonResourceAdapter);
     }
 
     @Test

@@ -133,6 +133,7 @@ class MCPPrompt(Prompt):
             finally:
                 self.mcp_server = None
 
+
 class MCPServer(Resource, ABC):
     """Resource representing an MCP server and exposing its tools/prompts.
 
@@ -145,7 +146,7 @@ class MCPServer(Resource, ABC):
     endpoint: str
     headers: Dict[str, Any] | None = None
     timeout: int = 30
-    sse_read_timeout: int = 60*5
+    sse_read_timeout: int = 60 * 5
     auth: httpx.Auth | None = None
 
     session: ClientSession = Field(default=None, exclude=True)
@@ -187,19 +188,18 @@ class MCPServer(Resource, ABC):
             msg = f"Invalid HTTP endpoint: {self.endpoint}"
             raise ValueError(msg)
 
-        async with streamablehttp_client(
+        async with (
+            streamablehttp_client(
                 url=self.endpoint,
                 headers=self.headers,
                 timeout=timedelta(seconds=self.timeout),
                 sse_read_timeout=timedelta(seconds=self.sse_read_timeout),
                 auth=self.auth,
-            ) as (read, write, _), ClientSession(
-            read,
-            write
-        ) as session:
+            ) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
             await session.initialize()
             yield session
-
 
     async def _cleanup_connection(self) -> None:
         """Clean up connection resources."""
@@ -214,11 +214,12 @@ class MCPServer(Resource, ABC):
     async def call_tool_async(self, tool_name: str, *args: Any, **kwargs: Any) -> Any:
         """Call a tool on the MCP server asynchronously."""
         async with self._get_session() as session:
-
             arguments = kwargs if kwargs else (args[0] if args else {})
 
             result = await session.call_tool(
-                tool_name, arguments, read_timeout_seconds=timedelta(seconds=self.timeout),
+                tool_name,
+                arguments,
+                read_timeout_seconds=timedelta(seconds=self.timeout),
             )
 
             content = [extract_mcp_content_item(item) for item in result.content]

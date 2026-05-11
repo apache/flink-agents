@@ -36,7 +36,6 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
     unlike JavaChatModelSetup, it does not provide direct chat functionality in Python.
     """
 
-
     _j_resource: Any
     _j_resource_adapter: Any
 
@@ -49,15 +48,15 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
             **kwargs: Additional keyword arguments
         """
         super().__init__(**kwargs)
-        self._j_resource=j_resource
-        self._j_resource_adapter=j_resource_adapter
+        self._j_resource = j_resource
+        self._j_resource_adapter = j_resource_adapter
 
     @override
     def chat(
-            self,
-            messages: Sequence[ChatMessage],
-            tools: List[Tool] | None = None,
-            **kwargs: Any,
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool] | None = None,
+        **kwargs: Any,
     ) -> ChatMessage:
         """Chat method that throws UnsupportedOperationException.
 
@@ -70,7 +69,8 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
             for message in messages
         ]
         java_tools = [
-            self._j_resource_adapter.getResource(tool.name, ResourceType.TOOL.value) for tool in tools
+            self._j_resource_adapter.getResource(tool.name, ResourceType.TOOL.value)
+            for tool in tools
         ]
         j_response_message = self._j_resource.chat(java_messages, java_tools, kwargs)
 
@@ -108,10 +108,10 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
         """
         # connection is a required parameter for BaseChatModelSetup
         connection = kwargs.pop("connection", "")
-        super().__init__(connection = connection, **kwargs)
+        super().__init__(connection=connection, **kwargs)
 
-        self._j_resource=j_resource
-        self._j_resource_adapter=j_resource_adapter
+        self._j_resource = j_resource
+        self._j_resource_adapter = j_resource_adapter
 
     @property
     @override
@@ -122,6 +122,11 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
             Empty dictionary as parameters are managed by Java side
         """
         return {}
+
+    @override
+    def open(self) -> None:
+        """Open the java resource."""
+        self._j_resource.open()
 
     @override
     def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
@@ -144,11 +149,15 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
             Model response message
         """
         # Convert Python messages to Java format
-        java_messages = [self._j_resource_adapter.fromPythonChatMessage(message) for message in messages]
+        java_messages = [
+            self._j_resource_adapter.fromPythonChatMessage(message)
+            for message in messages
+        ]
         j_response_message = self._j_resource.chat(java_messages, kwargs)
 
         # Convert Java response back to Python format
         from flink_agents.runtime.python_java_utils import (
             from_java_chat_message,
         )
+
         return from_java_chat_message(j_response_message)

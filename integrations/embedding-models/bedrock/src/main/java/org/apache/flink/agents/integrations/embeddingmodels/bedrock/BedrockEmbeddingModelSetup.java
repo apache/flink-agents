@@ -72,9 +72,4 @@ public class BedrockEmbeddingModelSetup extends BaseEmbeddingModelSetup {
         }
         return params;
     }
-
-    @Override
-    public BedrockEmbeddingModelConnection getConnection() {
-        return (BedrockEmbeddingModelConnection) super.getConnection();
-    }
 }

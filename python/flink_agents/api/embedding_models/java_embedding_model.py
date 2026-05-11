@@ -32,7 +32,8 @@ class JavaEmbeddingModelConnection(BaseEmbeddingModelConnection):
     functionality in Python.
     """
 
-    java_class_name: str=""
+    java_class_name: str = ""
+
 
 @java_resource
 class JavaEmbeddingModelSetup(BaseEmbeddingModelSetup):
@@ -44,4 +45,4 @@ class JavaEmbeddingModelSetup(BaseEmbeddingModelSetup):
     implementation.
     """
 
-    java_class_name: str=""
+    java_class_name: str = ""

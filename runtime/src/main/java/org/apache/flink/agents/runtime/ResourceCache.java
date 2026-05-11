@@ -94,7 +94,7 @@ public class ResourceCache implements AutoCloseable {
                                 throw new RuntimeException(e);
                             }
                         });
-
+        resource.open();
         cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
         return resource;
     }

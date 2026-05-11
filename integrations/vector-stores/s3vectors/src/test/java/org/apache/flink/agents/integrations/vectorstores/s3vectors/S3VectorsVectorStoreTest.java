@@ -127,9 +127,91 @@ public class S3VectorsVectorStoreTest {
         store.add(docs, null, Collections.emptyMap());
 
         List<Document> retrieved =
-                store.get(List.of("s3v-doc1", "s3v-doc2"), null, Collections.emptyMap());
+                store.get(
+                        List.of("s3v-doc1", "s3v-doc2"), null, null, null, Collections.emptyMap());
         Assertions.assertEquals(2, retrieved.size());
 
-        store.delete(List.of("s3v-doc1", "s3v-doc2"), null, Collections.emptyMap());
+        store.delete(List.of("s3v-doc1", "s3v-doc2"), null, null, Collections.emptyMap());
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "S3V_BUCKET", matches = ".+")
+    @DisplayName("queryEmbedding with filters restricts to matching metadata")
+    void testQueryEmbeddingWithFilters() throws Exception {
+        // The S3 Vectors SDK accepts a metadata equality filter directly; verify the unified
+        // filters DSL routes through it.
+        List<Document> docs =
+                List.of(
+                        new Document(
+                                "Test document one", Map.of("user_id", "alice"), "s3v-flt-alice"),
+                        new Document("Test document two", Map.of("user_id", "bob"), "s3v-flt-bob"));
+        store.add(docs, null, Collections.emptyMap());
+
+        List<Document> hits =
+                store.queryEmbedding(
+                        new float[] {0.1f, 0.2f, 0.3f, 0.4f, 0.5f},
+                        5,
+                        null,
+                        Map.of("user_id", "alice"),
+                        Collections.emptyMap());
+        Assertions.assertFalse(hits.isEmpty());
+        Assertions.assertTrue(
+                hits.stream().allMatch(d -> "alice".equals(d.getMetadata().get("user_id"))));
+
+        store.delete(List.of("s3v-flt-alice", "s3v-flt-bob"), null, null, Collections.emptyMap());
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "S3V_BUCKET", matches = ".+")
+    @DisplayName("update overwrites the existing vector in place")
+    void testUpdateOverwritesExistingVector() throws Exception {
+        // PutVectors is upsert-by-key, so update should replace the existing vector at the
+        // same id with the new content/metadata.
+        store.add(
+                List.of(new Document("Test document one", Map.of("v", "1"), "s3v-upd")),
+                null,
+                Collections.emptyMap());
+
+        store.update(
+                List.of(new Document("Test document two", Map.of("v", "2"), "s3v-upd")),
+                null,
+                Collections.emptyMap());
+
+        List<Document> after =
+                store.get(List.of("s3v-upd"), null, null, null, Collections.emptyMap());
+        Assertions.assertEquals(1, after.size());
+        Assertions.assertEquals("2", after.get(0).getMetadata().get("v"));
+
+        store.delete(List.of("s3v-upd"), null, null, Collections.emptyMap());
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "S3V_BUCKET", matches = ".+")
+    @DisplayName("queryEmbedding populates Document.score; get leaves it null")
+    void testQueryEmbeddingPopulatesScore() throws Exception {
+        store.add(
+                List.of(new Document("Test document one", Map.of("src", "test"), "s3v-score")),
+                null,
+                Collections.emptyMap());
+
+        List<Document> hits =
+                store.queryEmbedding(
+                        new float[] {0.1f, 0.2f, 0.3f, 0.4f, 0.5f},
+                        5,
+                        null,
+                        null,
+                        Collections.emptyMap());
+        Assertions.assertFalse(hits.isEmpty());
+        Assertions.assertTrue(
+                hits.stream().allMatch(d -> d.getScore() != null),
+                "Every KNN hit should carry the S3 Vectors distance as Document.score");
+
+        // GetVectors carries no relevance score.
+        List<Document> byId =
+                store.get(List.of("s3v-score"), null, null, null, Collections.emptyMap());
+        Assertions.assertEquals(1, byId.size());
+        Assertions.assertNull(byId.get(0).getScore());
+
+        store.delete(List.of("s3v-score"), null, null, Collections.emptyMap());
     }
 }

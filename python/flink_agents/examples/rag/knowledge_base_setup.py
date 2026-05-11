@@ -72,10 +72,12 @@ def populate_knowledge_base() -> None:
         "documents": documents,
         "embeddings": embeddings,
         "metadatas": metadatas,
-        "ids": [f"doc{i + 1}" for i in range(len(documents))]
+        "ids": [f"doc{i + 1}" for i in range(len(documents))],
     }
 
     # Add documents to ChromaDB
     collection.add(**test_data)
 
-    print(f"Knowledge base setup complete! Added {len(documents)} documents to ChromaDB.")
+    print(
+        f"Knowledge base setup complete! Added {len(documents)} documents to ChromaDB."
+    )

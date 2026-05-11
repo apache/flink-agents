@@ -22,6 +22,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.lang3.ClassUtils;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Action;
@@ -92,16 +93,17 @@ public class ReActAgent extends Agent {
 
         try {
             Method method =
-                    this.getClass().getMethod("startAction", InputEvent.class, RunnerContext.class);
-            this.addAction(new Class[] {InputEvent.class}, method, actionConfig);
+                    this.getClass().getMethod("startAction", Event.class, RunnerContext.class);
+            this.addAction(new String[] {InputEvent.EVENT_TYPE}, method, actionConfig);
         } catch (NoSuchMethodException e) {
             throw new IllegalStateException(
                     "Can't find the method stopAction, this must be a bug.");
         }
     }
 
-    public static void startAction(InputEvent event, RunnerContext ctx) {
-        Object input = event.getInput();
+    public static void startAction(Event event, RunnerContext ctx) {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        Object input = inputEvent.getInput();
 
         Prompt userPrompt;
         try {
@@ -166,9 +168,10 @@ public class ReActAgent extends Agent {
         ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages, outputSchema));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
-    public static void stopAction(ChatResponseEvent event, RunnerContext ctx) {
-        ChatMessage response = event.getResponse();
+    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    public static void stopAction(Event event, RunnerContext ctx) {
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        ChatMessage response = chatResponse.getResponse();
 
         Object output;
         if (response.getExtraArgs().containsKey(STRUCTURED_OUTPUT)) {

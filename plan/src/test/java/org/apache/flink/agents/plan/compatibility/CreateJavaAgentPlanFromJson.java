@@ -54,9 +54,8 @@ public class CreateJavaAgentPlanFromJson {
         AgentPlan agentPlan = new ObjectMapper().readValue(json, AgentPlan.class);
         assertEquals(5, agentPlan.getActions().size());
 
-        String myEvent =
-                "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent.MyEvent";
-        String inputEvent = "flink_agents.api.events.event.InputEvent";
+        String myEvent = "_my_event";
+        String inputEvent = "_input_event";
 
         // Check the first action
         String testModule =
@@ -90,8 +89,8 @@ public class CreateJavaAgentPlanFromJson {
         assertEquals(
                 "flink_agents.plan.actions.chat_model_action", processChatRequestFunc.getModule());
         assertEquals("process_chat_request_or_tool_response", processChatRequestFunc.getQualName());
-        String chatRequestEvent = "flink_agents.api.events.chat_event.ChatRequestEvent";
-        String toolResponseEvent = "flink_agents.api.events.tool_event.ToolResponseEvent";
+        String chatRequestEvent = "_chat_request_event";
+        String toolResponseEvent = "_tool_response_event";
         assertEquals(
                 List.of(chatRequestEvent, toolResponseEvent),
                 chatModelAction.getListenEventTypes());
@@ -103,7 +102,7 @@ public class CreateJavaAgentPlanFromJson {
         assertEquals(
                 "flink_agents.plan.actions.tool_call_action", processToolRequestFunc.getModule());
         assertEquals("process_tool_request", processToolRequestFunc.getQualName());
-        String toolRequestEvent = "flink_agents.api.events.tool_event.ToolRequestEvent";
+        String toolRequestEvent = "_tool_request_event";
         assertEquals(List.of(toolRequestEvent), toolCallAction.getListenEventTypes());
 
         assertTrue(agentPlan.getActions().containsKey("context_retrieval_action"));
@@ -117,8 +116,7 @@ public class CreateJavaAgentPlanFromJson {
         assertEquals(
                 "process_context_retrieval_request",
                 processContextRetrievalRequestFunc.getQualName());
-        String contextRetrievalRequestEvent =
-                "flink_agents.api.events.context_retrieval_event.ContextRetrievalRequestEvent";
+        String contextRetrievalRequestEvent = "_context_retrieval_request_event";
         assertEquals(
                 List.of(contextRetrievalRequestEvent),
                 contextRetrievalAction.getListenEventTypes());

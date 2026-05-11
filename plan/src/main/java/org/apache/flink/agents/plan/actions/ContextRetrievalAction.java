@@ -33,6 +33,8 @@ import org.apache.flink.agents.plan.JavaFunction;
 
 import java.util.List;
 
+import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
+
 /** Built-in action for processing context retrieval requests. */
 public class ContextRetrievalAction {
 
@@ -43,16 +45,16 @@ public class ContextRetrievalAction {
                         ContextRetrievalAction.class,
                         "processContextRetrievalRequest",
                         new Class[] {Event.class, RunnerContext.class}),
-                List.of(ContextRetrievalRequestEvent.class.getName()));
+                List.of(ContextRetrievalRequestEvent.EVENT_TYPE));
     }
 
     public static void processContextRetrievalRequest(Event event, RunnerContext ctx)
             throws Exception {
-        if (event instanceof ContextRetrievalRequestEvent) {
+        if (ContextRetrievalRequestEvent.EVENT_TYPE.equals(event.getType())) {
             boolean ragAsync = ctx.getConfig().get(AgentExecutionOptions.RAG_ASYNC);
 
             final ContextRetrievalRequestEvent contextRetrievalRequestEvent =
-                    (ContextRetrievalRequestEvent) event;
+                    ContextRetrievalRequestEvent.fromEvent(event);
 
             final BaseVectorStore vectorStore =
                     (BaseVectorStore)
@@ -60,9 +62,9 @@ public class ContextRetrievalAction {
                                     contextRetrievalRequestEvent.getVectorStore(),
                                     ResourceType.VECTOR_STORE);
 
-            // TODO: python vector store doesn't support async execution yet, see
-            // https://github.com/apache/flink-agents/issues/448 for details.
-            ragAsync = ragAsync && !(vectorStore instanceof PythonVectorStore);
+            if ((vectorStore instanceof PythonVectorStore) && !supportAsync()) {
+                ragAsync = false;
+            }
 
             final VectorStoreQuery vectorStoreQuery =
                     new VectorStoreQuery(

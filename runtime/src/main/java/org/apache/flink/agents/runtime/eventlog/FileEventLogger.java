@@ -28,7 +28,6 @@ import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
-import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.metrics.Counter;
 
 import java.io.BufferedWriter;
@@ -180,11 +179,11 @@ public class FileEventLogger implements EventLogger {
             throw new IllegalStateException("FileEventLogger not initialized. Call open() first.");
         }
 
-        String eventTypeStr = EventUtil.resolveEventType(event, context);
-
         // Resolve log level and skip OFF events.
         EventLogLevel level =
-                levelResolver != null ? levelResolver.resolve(eventTypeStr) : EventLogLevel.VERBOSE;
+                levelResolver != null
+                        ? levelResolver.resolve(event.getType())
+                        : EventLogLevel.VERBOSE;
         if (level == EventLogLevel.OFF) {
             return;
         }

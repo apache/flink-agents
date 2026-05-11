@@ -26,25 +26,29 @@ from flink_agents.plan.resource_provider import PythonResourceProvider, Resource
 current_dir = Path(__file__).parent
 
 
-class MockChatModelImpl(Resource):  # noqa: D101
+class MockChatModelImpl(Resource):
     host: str
     desc: str
 
     @classmethod
-    def resource_type(cls) -> ResourceType:  # noqa: D102
+    def resource_type(cls) -> ResourceType:
         return ResourceType.CHAT_MODEL
 
 
 @pytest.fixture(scope="module")
-def resource_provider() -> ResourceProvider:  # noqa: D103
+def resource_provider() -> ResourceProvider:
     return PythonResourceProvider(
         name="mock",
         type=MockChatModelImpl.resource_type(),
-        descriptor=ResourceDescriptor(clazz=f"{MockChatModelImpl.__module__}.{MockChatModelImpl.__name__}", host="8.8.8.8", desc="mock chat model"),
+        descriptor=ResourceDescriptor(
+            clazz=f"{MockChatModelImpl.__module__}.{MockChatModelImpl.__name__}",
+            host="8.8.8.8",
+            desc="mock chat model",
+        ),
     )
 
 
-def test_python_resource_provider_serialize(  # noqa: D103
+def test_python_resource_provider_serialize(
     resource_provider: ResourceProvider,
 ) -> None:
     json_value = resource_provider.model_dump_json(serialize_as_any=True)
@@ -55,7 +59,7 @@ def test_python_resource_provider_serialize(  # noqa: D103
     assert actual == expected
 
 
-def test_python_resource_provider_deserialize(  # noqa: D103
+def test_python_resource_provider_deserialize(
     resource_provider: ResourceProvider,
 ) -> None:
     with Path.open(Path(f"{current_dir}/resources/resource_provider.json")) as f:

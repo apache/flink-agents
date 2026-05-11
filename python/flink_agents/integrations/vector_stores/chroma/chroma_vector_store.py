@@ -13,7 +13,7 @@
 #  distributed under the License is distributed on an "AS IS" BASIS,
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
-# limitations under the License.
+#  limitations under the License.
 ################################################################################
 import uuid
 from typing import Any, Dict, Generator, List
@@ -26,33 +26,15 @@ from pydantic import Field
 from typing_extensions import override
 
 from flink_agents.api.vector_stores.vector_store import (
-    Collection,
     CollectionManageableVectorStore,
     Document,
 )
 
 DEFAULT_COLLECTION = "flink_agents_chroma_collection"
 
-MAX_CHUNK_SIZE = 41665
-
-
-def chunk_list(
-    lst: List[Document], max_chunk_size: int
-) -> Generator[List[Document], None, None]:
-    """Yield successive max_chunk_size-sized chunks from list.
-
-    This method is inspired by `chunk_list` in llama_index
-
-    Args:
-        lst : list of documents with embeddings
-        max_chunk_size : max chunk size
-
-    Yields:
-        Generator[List[Document], None, None]: list of documents with embeddings
-
-    """
-    for i in range(0, len(lst), max_chunk_size):
-        yield lst[i : i + max_chunk_size]
+# ChromaDB's collection.add() has a hard per-call record-count ceiling;
+# anything larger must be split.
+_MAX_CHUNK_SIZE = 41665
 
 
 class ChromaVectorStore(CollectionManageableVectorStore):
@@ -86,8 +68,9 @@ class ChromaVectorStore(CollectionManageableVectorStore):
         Name of the ChromaDB collection to use (default: flink_agents_collection).
     collection_metadata : Dict[str, Any]
         Metadata for the collection (optional).
-    create_collection_if_not_exists : bool
-        Whether to create the collection if it doesn't exist (default: True).
+    auto_create_collection : bool
+        Whether read / write paths auto-create the collection when it's
+        missing (default: True).
     """
 
     # Connection configuration
@@ -129,9 +112,11 @@ class ChromaVectorStore(CollectionManageableVectorStore):
         default_factory=dict,
         description="Metadata for the collection.",
     )
-    create_collection_if_not_exists: bool = Field(
+    auto_create_collection: bool = Field(
         default=True,
-        description="Whether to create the collection if it doesn't exist.",
+        description=(
+            "Whether read / write paths auto-create the collection when it's missing."
+        ),
     )
 
     __client: ChromaClient | None = None
@@ -149,12 +134,10 @@ class ChromaVectorStore(CollectionManageableVectorStore):
         database: str = "default_database",
         collection: str = DEFAULT_COLLECTION,
         collection_metadata: Dict[str, Any] | None = None,
-        create_collection_if_not_exists: bool = True,
+        auto_create_collection: bool = True,
         **kwargs: Any,
     ) -> None:
-        """Init method."""
-        if collection_metadata is None:
-            collection_metadata = {}
+        """Initialize the ChromaDB vector store."""
         super().__init__(
             embedding_model=embedding_model,
             persist_directory=persist_directory,
@@ -165,111 +148,102 @@ class ChromaVectorStore(CollectionManageableVectorStore):
             tenant=tenant,
             database=database,
             collection=collection,
-            collection_metadata=collection_metadata,
-            create_collection_if_not_exists=create_collection_if_not_exists,
+            collection_metadata=collection_metadata or {},
+            auto_create_collection=auto_create_collection,
             **kwargs,
         )
 
+    # -------------------------------------------------------------------------
+    # Client / setup kwargs
+    # -------------------------------------------------------------------------
     @property
     def client(self) -> ChromaClient:
-        """Return ChromaDB client, creating it if necessary."""
-        if self.__client is None:
-            # Choose client type based on configuration
-            if self.api_key is not None:
-                # Cloud mode
-                self.__client = CloudClient(
-                    tenant=self.tenant,
-                    database=self.database,
-                    api_key=self.api_key,
-                )
-            elif self.host is not None:
-                # Client-Server Mode
-                self.__client = chromadb.HttpClient(
-                    host=self.host,
-                    port=self.port,
-                    settings=self.client_settings,
-                    tenant=self.tenant,
-                    database=self.database,
-                )
-            elif self.persist_directory is not None:
-                # Persistent mode
-                self.__client = chromadb.PersistentClient(
-                    path=self.persist_directory,
-                    settings=self.client_settings,
-                    tenant=self.tenant,
-                    database=self.database,
-                )
-            else:
-                # In-memory mode
-                self.__client = chromadb.EphemeralClient(
-                    settings=self.client_settings,
-                    tenant=self.tenant,
-                    database=self.database,
-                )
+        """Return the ChromaDB client, creating it lazily.
 
+        The client mode is picked in priority order: cloud → server →
+        persistent → in-memory.
+        """
+        if self.__client is not None:
+            return self.__client
+
+        if self.api_key is not None:
+            self.__client = CloudClient(
+                tenant=self.tenant,
+                database=self.database,
+                api_key=self.api_key,
+            )
+        elif self.host is not None:
+            self.__client = chromadb.HttpClient(
+                host=self.host,
+                port=self.port,
+                settings=self.client_settings,
+                tenant=self.tenant,
+                database=self.database,
+            )
+        elif self.persist_directory is not None:
+            self.__client = chromadb.PersistentClient(
+                path=self.persist_directory,
+                settings=self.client_settings,
+                tenant=self.tenant,
+                database=self.database,
+            )
+        else:
+            self.__client = chromadb.EphemeralClient(
+                settings=self.client_settings,
+                tenant=self.tenant,
+                database=self.database,
+            )
         return self.__client
 
     @property
+    @override
     def store_kwargs(self) -> Dict[str, Any]:
-        """Return ChromaDB-specific setup settings."""
         return {
             "collection": self.collection,
             "collection_metadata": self.collection_metadata,
-            "create_collection_if_not_exists": self.create_collection_if_not_exists,
+            "auto_create_collection": self.auto_create_collection,
         }
 
+    # -------------------------------------------------------------------------
+    # Collection management
+    # -------------------------------------------------------------------------
     @override
-    def get_or_create_collection(
-        self, name: str, metadata: Dict[str, Any] | None = None
-    ) -> Collection:
-        collection = self.client.get_or_create_collection(name=name, metadata=metadata)
-        return Collection(name=collection.name, metadata=collection.metadata)
+    def create_collection_if_not_exists(self, name: str, **kwargs: Any) -> None:
+        """Chroma accepts ``metadata`` (``Dict[str, Any] | None``)."""
+        metadata = kwargs.get("metadata")
+        self.client.get_or_create_collection(name=name, metadata=metadata)
 
     @override
-    def get_collection(self, name: str) -> Collection:
-        collection = self.client.get_collection(name=name)
-        return Collection(name=collection.name, metadata=collection.metadata)
+    def delete_collection(self, name: str) -> None:
+        self.client.delete_collection(name=name)
 
-    @override
-    def delete_collection(self, name: str) -> Collection:
-        collection = self.get_collection(name=name)
-        self.client.delete_collection(name=collection.name)
-        return collection
-
-    @override
-    def size(self, collection_name: str | None = None) -> int:
-        return self.client.get_collection(
-            name=collection_name or self.collection
-        ).count()
-
+    # -------------------------------------------------------------------------
+    # Public CRUD
+    # -------------------------------------------------------------------------
     @override
     def get(
         self,
         ids: str | List[str] | None = None,
         collection_name: str | None = None,
+        filters: Dict[str, Any] | None = None,
+        limit: int | None = 100,
         **kwargs: Any,
     ) -> List[Document]:
-        where = kwargs.get("where")
-        limit = kwargs.get("limit")
-        offset = kwargs.get("offset")
-        where_document = kwargs.get("where_document")
-        results = self.client.get_collection(
-            name=collection_name or self.collection
-        ).get(
+        results = self.client.get_collection(collection_name or self.collection).get(
             ids=ids,
-            where=where,
+            where=self._resolve_where(filters, kwargs),
             limit=limit,
-            offset=offset,
-            where_document=where_document,
+            offset=kwargs.get("offset"),
+            where_document=kwargs.get("where_document"),
         )
-
-        ids = results["ids"]
-        documents = results["documents"]
-        metadatas = results["metadatas"]
-
         return [
-            Document(id=id, content=document, metadata=dict(metadata))
-            for id, document, metadata in zip(ids, documents, metadatas, strict=False)
+            Document(id=rid, content=content, metadata=dict(metadata))
+            for rid, content, metadata in zip(
+                results["ids"],
+                results["documents"],
+                results["metadatas"],
+                strict=False,
+            )
         ]
 
     @override
@@ -277,23 +251,24 @@ class ChromaVectorStore(CollectionManageableVectorStore):
         self,
         ids: str | List[str] | None = None,
         collection_name: str | None = None,
+        filters: Dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        where = kwargs.get("where")
+        where = self._resolve_where(filters, kwargs)
         where_document = kwargs.get("where_document")
-        if ids is None and where is None and where_document is None:
-            ids = (
-                self.client.get_collection(collection_name or self.collection)
-                .get(include=[])
-                .get("ids")
-            )
-            # collection is empty
-            if len(ids) == 0:
-                return
-        self.client.get_collection(name=collection_name or self.collection).delete(
-            ids=ids, where=where, where_document=where_document
-        )
+        collection = self.client.get_collection(collection_name or self.collection)
 
+        if ids is None and where is None and where_document is None:
+            # Explicit delete-all: ChromaDB forbids passing no selector.
+            ids = collection.get(include=[]).get("ids")
+            if not ids:
+                return
+
+        collection.delete(ids=ids, where=where, where_document=where_document)
+
+    # -------------------------------------------------------------------------
+    # Protected embedding hooks (pre-computed-embedding paths)
+    # -------------------------------------------------------------------------
     @override
     def _add_embedding(
         self,
@@ -302,104 +277,156 @@ class ChromaVectorStore(CollectionManageableVectorStore):
         collection_name: str | None = None,
         **kwargs: Any,
     ) -> List[str]:
-        collection_name = collection_name or self.collection
-        collection_metadata = kwargs.get(
-            "collection_metadata", self.collection_metadata
-        )
-        create_collection_if_not_exists = kwargs.get(
-            "create_collection_if_not_exists", self.create_collection_if_not_exists
-        )
-
-        # Get or create collection based on configuration
-        if create_collection_if_not_exists:
-            # ChromaDB doesn't accept empty metadata, pass None instead
-            metadata = collection_metadata if collection_metadata else None
-            collection = self.client.get_or_create_collection(
-                name=collection_name,
-                metadata=metadata,
-            )
-        else:
-            collection = self.client.get_collection(name=collection_name)
-
-        documents_chunks = chunk_list(documents, MAX_CHUNK_SIZE)
-
-        all_ids = []
-        for chunk in documents_chunks:
+        collection = self._resolve_collection(collection_name, kwargs)
+        all_ids: List[str] = []
+        for chunk in _chunk_documents(documents, _MAX_CHUNK_SIZE):
             ids = [doc.id or str(uuid.uuid4()) for doc in chunk]
-            docs = [doc.content for doc in chunk]
-            embeddings = [doc.embedding for doc in chunk]
-            metadatas = [doc.metadata for doc in chunk]
-
             collection.add(
-                ids=ids, documents=docs, embeddings=embeddings, metadatas=metadatas
+                ids=ids,
+                documents=[doc.content for doc in chunk],
+                embeddings=[doc.embedding for doc in chunk],
+                metadatas=[doc.metadata for doc in chunk],
             )
             all_ids.extend(ids)
         return all_ids
 
+    @override
+    def _update_embedding(
+        self,
+        *,
+        documents: List[Document],
+        collection_name: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        collection = self.client.get_collection(collection_name or self.collection)
+        collection.update(
+            ids=[doc.id for doc in documents],
+            documents=[doc.content for doc in documents],
+            embeddings=[doc.embedding for doc in documents],
+            metadatas=[doc.metadata for doc in documents],
+        )
+
+    @override
     def _query_embedding(
         self,
         embedding: List[float],
         limit: int = 10,
         collection_name: str | None = None,
+        filters: Dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> List[Document]:
-        """Perform vector search using pre-computed embedding.
-
-        Args:
-            embedding: Pre-computed embedding vector for semantic search
-            limit: Maximum number of results to return (default: 10)
-            collection_name: The collection to apply the query. Optional.
-            **kwargs: ChromaDB-specific parameters (where, etc.)
-
-        Returns:
-            List of documents matching the search criteria
-        """
-        # Extract ChromaDB-specific parameters
-        collection_name = collection_name or self.collection
-        collection_metadata = kwargs.get(
-            "collection_metadata", self.collection_metadata
-        )
-        create_collection_if_not_exists = kwargs.get(
-            "create_collection_if_not_exists", self.create_collection_if_not_exists
-        )
-        where = kwargs.get("where")  # Metadata filters
-
-        # Get or create collection based on configuration
-        if create_collection_if_not_exists:
-            # ChromaDB doesn't accept empty metadata, pass None instead
-            metadata = collection_metadata if collection_metadata else None
-            collection = self.client.get_or_create_collection(
-                name=collection_name,
-                metadata=metadata,
-            )
-        else:
-            collection = self.client.get_collection(name=collection_name)
-
-        # Perform query
+        collection = self._resolve_collection(collection_name, kwargs)
         results = collection.query(
             query_embeddings=[embedding],
             n_results=limit,
-            where=where,
-            include=["documents", "metadatas"],
+            where=self._resolve_where(filters, kwargs),
+            include=["documents", "metadatas", "distances"],
         )
+        return _parse_query_results(results)
 
-        # Convert to Document objects
-        documents = []
-        if results["documents"] and results["documents"][0]:
-            for i, doc_content in enumerate(results["documents"][0]):
-                doc_id = results["ids"][0][i] if results["ids"] else None
-                metadata = (
-                    results["metadatas"][0][i]
-                    if results["metadatas"] and results["metadatas"][0]
-                    else {}
-                )
+    # -------------------------------------------------------------------------
+    # Internal helpers
+    # -------------------------------------------------------------------------
+    def _resolve_where(
+        self, filters: Dict[str, Any] | None, kwargs: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
+        """Pick the final ChromaDB ``where`` clause.
 
-                documents.append(
-                    Document(
-                        content=doc_content,
-                        id=doc_id,
-                        metadata=metadata,
-                    )
-                )
+        Preference: the unified-DSL ``filters`` argument (translated), falling
+        back to ``kwargs["where"]`` for callers already speaking ChromaDB's
+        native dialect.
+        """
+        if filters is not None:
+            return _translate_filters_to_chroma_where(filters)
+        return kwargs.get("where")
 
-        return documents
+    def _resolve_collection(
+        self, collection_name: str | None, kwargs: Dict[str, Any]
+    ) -> Any:
+        """Return the ChromaDB collection object for an add / query path.
+
+        Honours the ``auto_create_collection`` flag (either on this store or
+        overridden via kwargs) and attaches ``collection_metadata`` only when
+        creating.
+        """
+        name = collection_name or self.collection
+        create = kwargs.get("auto_create_collection", self.auto_create_collection)
+        if not create:
+            return self.client.get_collection(name=name)
+        # ChromaDB rejects empty metadata dicts — pass None instead.
+        metadata = kwargs.get("collection_metadata", self.collection_metadata) or None
+        return self.client.get_or_create_collection(name=name, metadata=metadata)
+
+
+# =============================================================================
+# Module-level helpers
+# =============================================================================
+def _chunk_documents(
+    docs: List[Document], max_chunk_size: int
+) -> Generator[List[Document], None, None]:
+    """Yield successive ``max_chunk_size``-sized slices of ``docs``."""
+    for i in range(0, len(docs), max_chunk_size):
+        yield docs[i : i + max_chunk_size]
+
+
+def _parse_query_results(results: Dict[str, Any]) -> List[Document]:
+    r"""Flatten ChromaDB's per-query-lists result shape into ``Document``\\s.
+
+    ChromaDB returns each field as ``List[List[...]]`` — one inner list per
+    query embedding. We always query with a single embedding, so we take
+    index ``[0]``. ``score`` carries ChromaDB's distance (smaller = closer).
+    """
+    if not (results.get("documents") and results["documents"][0]):
+        return []
+
+    contents = results["documents"][0]
+    ids = results["ids"][0] if results.get("ids") else [None] * len(contents)
+    metadatas = (
+        results["metadatas"][0]
+        if results.get("metadatas") and results["metadatas"][0]
+        else [{}] * len(contents)
+    )
+    distances = (
+        results["distances"][0]
+        if results.get("distances") and results["distances"][0]
+        else [None] * len(contents)
+    )
+    return [
+        Document(id=rid, content=content, metadata=meta or {}, score=score)
+        for rid, content, meta, score in zip(
+            ids,
+            contents,
+            metadatas,
+            distances,
+            strict=False,
+        )
+    ]
+
+
+def _translate_filters_to_chroma_where(
+    filters: Dict[str, Any] | None,
+) -> Dict[str, Any] | None:
+    """Translate the flink-agents unified filter DSL to ChromaDB's ``where``.
+
+    The unified DSL is equality-only (see :class:`BaseVectorStore`). The
+    only rewrite needed is wrapping multi-key dicts in ``$and`` —
+    ChromaDB rejects ``{"k1": v1, "k2": v2}`` as a single ``where``
+    clause. Anything that looks like an operator form (``$``-prefixed
+    key or a dict value) is out-of-spec and rejected up front; callers
+    needing ChromaDB's native operators should pass a native ``where``
+    dict through ``**kwargs`` instead.
+    """
+    if not filters:
+        return None
+    for key, value in filters.items():
+        if key.startswith("$") or isinstance(value, dict):
+            err_msg = (
+                "The unified filter DSL only supports equality shorthand "
+                '(e.g. {"field": value}). For ChromaDB-native operators '
+                "such as $and/$or/$gt/$in, pass a raw `where` dict via "
+                "**kwargs instead of `filters`."
+            )
+            raise NotImplementedError(err_msg)
+    if len(filters) > 1:
+        return {"$and": [{k: v} for k, v in filters.items()]}
+    return filters

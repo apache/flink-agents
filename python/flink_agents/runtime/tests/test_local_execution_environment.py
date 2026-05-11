@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import time
+from typing import ClassVar
 
 import pytest
 
@@ -26,38 +27,38 @@ from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 
 
-class Agent1(Agent):  # noqa: D101
-    @action(InputEvent)
+class Agent1(Agent):
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def increment(event: Event, ctx: RunnerContext):  # noqa D102
-        input = event.input
+        input = InputEvent.from_event(event).input
         value = input + 1
         ctx.send_event(OutputEvent(output=value))
 
 
-class Agent1WithAsync(Agent):  # noqa: D101
-    @action(InputEvent)
+class Agent1WithAsync(Agent):
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     async def increment(event: Event, ctx: RunnerContext):  # noqa D102
         def my_func(value: int) -> int:
             time.sleep(1)
             return value + 1
 
-        input = event.input
+        input = InputEvent.from_event(event).input
         value = await ctx.durable_execute_async(my_func, input)
         ctx.send_event(OutputEvent(output=value))
 
 
-class Agent2(Agent):  # noqa: D101
-    @action(InputEvent)
+class Agent2(Agent):
+    @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def decrease(event: Event, ctx: RunnerContext):  # noqa D102
-        input = event.input
+        input = InputEvent.from_event(event).input
         value = input - 1
         ctx.send_event(OutputEvent(output=value))
 
 
-def test_local_execution_environment() -> None:  # noqa: D103
+def test_local_execution_environment() -> None:
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []
@@ -73,7 +74,7 @@ def test_local_execution_environment() -> None:  # noqa: D103
     assert output_list == [{"bob": 2}, {"john": 3}]
 
 
-def test_local_execution_environment_with_async() -> None:  # noqa: D103
+def test_local_execution_environment_with_async() -> None:
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []
@@ -89,7 +90,7 @@ def test_local_execution_environment_with_async() -> None:  # noqa: D103
     assert output_list == [{"bob": 2}, {"john": 3}]
 
 
-def test_local_execution_environment_apply_multi_agents() -> None:  # noqa: D103
+def test_local_execution_environment_apply_multi_agents() -> None:
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []
@@ -100,7 +101,7 @@ def test_local_execution_environment_apply_multi_agents() -> None:  # noqa: D103
         env.from_list(input_list).apply(agent1).apply(agent2).to_list()
 
 
-def test_local_execution_environment_execute_multi_times() -> None:  # noqa: D103
+def test_local_execution_environment_execute_multi_times() -> None:
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []
@@ -116,7 +117,7 @@ def test_local_execution_environment_execute_multi_times() -> None:  # noqa: D10
         env.execute()
 
 
-def test_local_execution_environment_call_from_list_twice() -> None:  # noqa: D103
+def test_local_execution_environment_call_from_list_twice() -> None:
     env = AgentsExecutionEnvironment.get_execution_environment()
 
     input_list = []
@@ -124,3 +125,96 @@ def test_local_execution_environment_call_from_list_twice() -> None:  # noqa: D1
     env.from_list(input_list)
     with pytest.raises(RuntimeError):
         env.from_list(input_list)
+
+
+# ── Unified event E2E tests ──────────────────────────────────────────────
+
+
+class UnifiedEventAgent(Agent):
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def on_input(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(
+            Event(
+                type="Intermediate",
+                attributes={"msg": InputEvent.from_event(event).input},
+            )
+        )
+
+    @action("Intermediate")
+    @staticmethod
+    def on_intermediate(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(
+            OutputEvent(output=f"processed:{event.get_attr('msg')}")
+        )
+
+
+def test_unified_event_workflow() -> None:
+    """End-to-end: InputEvent → unified 'Intermediate' → OutputEvent."""
+    env = AgentsExecutionEnvironment.get_execution_environment()
+
+    input_list = []
+    agent = UnifiedEventAgent()
+
+    output_list = env.from_list(input_list).apply(agent).to_list()
+
+    input_list.append({"key": "alice", "value": "hello"})
+    env.execute()
+
+    assert output_list == [{"alice": "processed:hello"}]
+
+
+class Step1Event(Event):
+    """Custom event with a type string."""
+
+    EVENT_TYPE: ClassVar[str] = "_step1_event"
+
+    def __init__(self, data: str) -> None:
+        """Create a Step1Event with the given data."""
+        super().__init__(
+            type=Step1Event.EVENT_TYPE,
+            attributes={"data": data},
+        )
+
+    @property
+    def data(self) -> str:
+        """Return the event data."""
+        return self.attributes["data"]
+
+
+class MixedEventAgent(Agent):
+    """Agent mixing subclassed and string-based event routing."""
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def start(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(Step1Event(data=str(InputEvent.from_event(event).input)))
+
+    @action(Step1Event.EVENT_TYPE)
+    @staticmethod
+    def on_step1(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(
+            Event(type="Step2", attributes={"value": event.get_attr("data")})
+        )
+
+    @action("Step2")
+    @staticmethod
+    def on_step2(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(
+            OutputEvent(output=f"done:{event.get_attr('value')}")
+        )
+
+
+def test_mixed_event_workflow() -> None:
+    """E2E: InputEvent → class Step1Event → unified 'Step2' → OutputEvent."""
+    env = AgentsExecutionEnvironment.get_execution_environment()
+
+    input_list = []
+    agent = MixedEventAgent()
+
+    output_list = env.from_list(input_list).apply(agent).to_list()
+
+    input_list.append({"key": "bob", "value": 42})
+    env.execute()
+
+    assert output_list == [{"bob": "done:42"}]

@@ -42,24 +42,28 @@ def extract_mcp_content_item(content_item: Any) -> Dict[str, Any] | str:
         return {
             "type": "image",
             "data": content_item.data,
-            "mimeType": content_item.mimeType
+            "mimeType": content_item.mimeType,
         }
     elif isinstance(content_item, types.EmbeddedResource):
         if isinstance(content_item.resource, types.TextResourceContents):
             return {
                 "type": "resource",
                 "uri": content_item.resource.uri,
-                "text": content_item.resource.text
+                "text": content_item.resource.text,
             }
         elif isinstance(content_item.resource, types.BlobResourceContents):
             return {
                 "type": "resource",
                 "uri": content_item.resource.uri,
-                "blob": content_item.resource.blob
+                "blob": content_item.resource.blob,
             }
         else:
             err_msg = f"Unsupported content type: {type(content_item)}"
             raise TypeError(err_msg)
     else:
         # Handle unknown content types as generic dict
-        return content_item.model_dump() if hasattr(content_item, 'model_dump') else str(content_item)
+        return (
+            content_item.model_dump()
+            if hasattr(content_item, "model_dump")
+            else str(content_item)
+        )

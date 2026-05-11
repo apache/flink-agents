@@ -360,7 +360,10 @@ def call_python_awaitable(awaitable: Any) -> Tuple[bool, Any]:
         return True, e.value if hasattr(e, "value") else None
     except RuntimeError as e:
         err_msg = str(e)
-        if "no running event loop" in err_msg or "await wasn't used with future" in err_msg:
+        if (
+            "no running event loop" in err_msg
+            or "await wasn't used with future" in err_msg
+        ):
             raise RuntimeError(_ASYNCIO_ERROR_MESSAGE) from e
         raise
     except Exception:

@@ -25,8 +25,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.runtime.python.event.PythonEvent;
-import org.apache.flink.agents.runtime.utils.EventUtil;
 
 import java.io.IOException;
 import java.util.Iterator;
@@ -40,6 +38,7 @@ import java.util.Map;
  *
  * <ul>
  *   <li>Top-level timestamp
+ *   <li>Top-level eventType (routing key, mirrors {@code event.eventType})
  *   <li>Event data serialized as a standard JSON object
  * </ul>
  *
@@ -48,10 +47,10 @@ import java.util.Map;
  * <pre>{@code
  * {
  *   "timestamp": "2024-01-15T10:30:00Z",
- *   "eventType": "org.apache.flink.agents.api.InputEvent",
+ *   "eventType": "_input_event",
  *   "event": {
- *     "eventType": "org.apache.flink.agents.api.InputEvent",
- *     // Event-specific fields
+ *     "eventType": "_input_event",
+ *     // Event fields serialized normally
  *   }
  * }
  * }</pre>
@@ -69,8 +68,7 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
 
         gen.writeStartObject();
         gen.writeStringField("timestamp", record.getContext().getTimestamp());
-        gen.writeStringField(
-                "eventType", EventUtil.resolveEventType(record.getEvent(), record.getContext()));
+        gen.writeStringField("eventType", record.getEvent().getType());
 
         gen.writeFieldName("event");
         JsonNode eventNode = buildEventNode(record.getEvent(), mapper);
@@ -78,63 +76,30 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
             throw new IllegalStateException(
                     "Event log payload must be a JSON object, but was: " + eventNode.getNodeType());
         }
-        ObjectNode orderedNode =
-                reorderEventFields((ObjectNode) eventNode, record.getEvent(), mapper);
-
-        gen.writeTree(orderedNode);
+        eventNode = reorderEventFields((ObjectNode) eventNode, record.getEvent(), mapper);
+        gen.writeTree(eventNode);
         gen.writeEndObject();
     }
 
     private JsonNode buildEventNode(Event event, ObjectMapper mapper) {
-        if (event instanceof PythonEvent) {
-            return buildPythonEventNode((PythonEvent) event, mapper);
-        }
         JsonNode eventNode = mapper.valueToTree(event);
         if (eventNode.isObject()) {
             ObjectNode objectNode = (ObjectNode) eventNode;
-            objectNode.put("eventType", event.getClass().getName());
+            objectNode.put("eventType", event.getType());
             objectNode.remove("sourceTimestamp");
         }
         return eventNode;
     }
 
-    private JsonNode buildPythonEventNode(PythonEvent event, ObjectMapper mapper) {
-        String eventJsonStr = event.getEventJsonStr();
-        if (eventJsonStr != null) {
-            try {
-                JsonNode parsed = mapper.readTree(eventJsonStr);
-                if (parsed.isObject()) {
-                    ObjectNode objectNode = (ObjectNode) parsed;
-                    objectNode.remove("sourceTimestamp");
-                    return objectNode;
-                }
-                return parsed;
-            } catch (IOException ignored) {
-                // Fallback to raw eventJsonStr
-            }
-        }
-        ObjectNode fallback = mapper.createObjectNode();
-        if (event.getEventType() != null) {
-            fallback.put("eventType", event.getEventType());
-        }
-        fallback.put("id", event.getId().toString());
-        fallback.put("rawEventJsonStr", eventJsonStr);
-        return fallback;
-    }
-
     private ObjectNode reorderEventFields(ObjectNode original, Event event, ObjectMapper mapper) {
         ObjectNode ordered = mapper.createObjectNode();
 
+        // eventType — routing key (user-defined string)
         JsonNode eventTypeNode = original.get("eventType");
         if (eventTypeNode != null) {
             ordered.set("eventType", eventTypeNode);
-        } else if (event instanceof PythonEvent) {
-            String eventType = ((PythonEvent) event).getEventType();
-            if (eventType != null) {
-                ordered.put("eventType", eventType);
-            }
         } else {
-            ordered.put("eventType", event.getClass().getName());
+            ordered.put("eventType", event.getType());
         }
 
         JsonNode idNode = original.get("id");

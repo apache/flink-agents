@@ -18,6 +18,7 @@
 import logging
 
 from flink_agents.api.core_options import AgentExecutionOptions
+from flink_agents.api.events.event import Event
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -26,8 +27,9 @@ from flink_agents.plan.function import PythonFunction
 
 _logger = logging.getLogger(__name__)
 
-async def process_tool_request(event: ToolRequestEvent, ctx: RunnerContext) -> None:
+async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
     """Built-in action for processing tool call requests."""
+    event = ToolRequestEvent.from_event(event)
     tool_call_async = ctx.config.get(AgentExecutionOptions.TOOL_CALL_ASYNC)
 
     if tool_call_async:
@@ -61,5 +63,5 @@ async def process_tool_request(event: ToolRequestEvent, ctx: RunnerContext) -> N
 TOOL_CALL_ACTION = Action(
     name="tool_call_action",
     exec=PythonFunction.from_callable(process_tool_request),
-    listen_event_types=[f"{ToolRequestEvent.__module__}.{ToolRequestEvent.__name__}"],
+    listen_event_types=[ToolRequestEvent.EVENT_TYPE],
 )

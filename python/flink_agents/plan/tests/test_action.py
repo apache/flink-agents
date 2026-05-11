@@ -22,44 +22,44 @@ import pytest
 from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
 from flink_agents.api.agents.react_agent import OutputSchema
-from flink_agents.api.events.event import InputEvent
+from flink_agents.api.events.event import Event, InputEvent
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.function import PythonFunction
 
 
-def legal_signature(event: InputEvent, ctx: RunnerContext) -> None:  # noqa: D103
+def legal_signature(event: Event, ctx: RunnerContext) -> None:
     pass
 
 
-def illegal_signature(value: int, ctx: RunnerContext) -> None:  # noqa: D103
+def illegal_signature(value: int, ctx: RunnerContext) -> None:
     pass
 
 
-def test_action_signature_legal() -> None:  # noqa: D103
+def test_action_signature_legal() -> None:
     Action(
         name="legal",
         exec=PythonFunction.from_callable(legal_signature),
-        listen_event_types=[f"{InputEvent.__module__}.{InputEvent.__qualname__}"],
+        listen_event_types=[InputEvent.EVENT_TYPE],
     )
 
 
-def test_action_signature_illegal() -> None:  # noqa: D103
+def test_action_signature_illegal() -> None:
     with pytest.raises(TypeError):
         Action(
             name="illegal",
             exec=PythonFunction.from_callable(illegal_signature),
-            listen_event_types=[f"{InputEvent.__module__}.{InputEvent.__qualname__}"],
+            listen_event_types=[InputEvent.EVENT_TYPE],
         )
 
 
 @pytest.fixture(scope="module")
-def action() -> Action:  # noqa: D103
+def action() -> Action:
     func = PythonFunction.from_callable(legal_signature)
     return Action(
         name="legal",
         exec=func,
-        listen_event_types=[f"{InputEvent.__module__}.{InputEvent.__qualname__}"],
+        listen_event_types=[InputEvent.EVENT_TYPE],
         config={
             "output_schema": OutputSchema(
                 output_schema=RowTypeInfo(
@@ -74,7 +74,7 @@ def action() -> Action:  # noqa: D103
 current_dir = Path(__file__).parent
 
 
-def test_action_serialize(action: Action) -> None:  # noqa: D103
+def test_action_serialize(action: Action) -> None:
     json_value = action.model_dump_json(serialize_as_any=True, indent=4)
     with Path.open(Path(f"{current_dir}/resources/action.json")) as f:
         expected_json = f.read()
@@ -83,12 +83,12 @@ def test_action_serialize(action: Action) -> None:  # noqa: D103
     assert actual == expected
 
 
-def test_action_deserialize(action: Action) -> None:  # noqa: D103
+def test_action_deserialize(action: Action) -> None:
     with Path.open(Path(f"{current_dir}/resources/action.json")) as f:
         expected_json = f.read()
     action = Action.model_validate_json(expected_json)
     assert action.name == "legal"
-    assert action.listen_event_types == ["flink_agents.api.events.event.InputEvent"]
+    assert action.listen_event_types == ["_input_event"]
     func = action.exec
     assert func.module == "flink_agents.plan.tests.test_action"
     assert func.qualname == "legal_signature"
