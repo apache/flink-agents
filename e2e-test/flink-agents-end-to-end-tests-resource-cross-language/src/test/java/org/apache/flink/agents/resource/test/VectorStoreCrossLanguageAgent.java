@@ -59,6 +59,7 @@ import java.util.Map;
 public class VectorStoreCrossLanguageAgent extends Agent {
     public static final String OLLAMA_MODEL = "nomic-embed-text";
     public static final String TEST_COLLECTION = "test_collection";
+    private static final String VECTOR_STORE_BACKEND = "CHROMA";
 
     @EmbeddingModelConnection
     public static ResourceDescriptor embeddingConnection() {
@@ -121,7 +122,8 @@ public class VectorStoreCrossLanguageAgent extends Agent {
                     TEST_COLLECTION,
                     Map.of("metadata", Map.of("key1", "value1", "key2", "value2")));
 
-            System.out.println("[TEST] Vector store Collection Management PASSED");
+            System.out.printf(
+                    "[TEST][%s] Vector store Collection Management PASSED%n", VECTOR_STORE_BACKEND);
 
             vectorStore.deleteCollection(TEST_COLLECTION);
             Assertions.assertThrows(
@@ -168,7 +170,8 @@ public class VectorStoreCrossLanguageAgent extends Agent {
             Assertions.assertEquals(
                     Map.of("category", "database", "source", "test"), doc.getMetadata());
 
-            System.out.println("[TEST] Vector store Document Management PASSED");
+            System.out.printf(
+                    "[TEST][%s] Vector store Document Management PASSED%n", VECTOR_STORE_BACKEND);
 
             // Verify VectorStoreQuery.filters survives the Java->Python bridge.
             // ChromaDB applies the unified-DSL filter to its `where` clause, so the
@@ -191,7 +194,8 @@ public class VectorStoreCrossLanguageAgent extends Agent {
                     filteredDocs.get(0).getId(),
                     "Filter {category=database} should match doc2");
 
-            System.out.println("[TEST] Vector store filter query PASSED");
+            System.out.printf(
+                    "[TEST][%s] Vector store filter query PASSED%n", VECTOR_STORE_BACKEND);
 
             ctx.getShortTermMemory().set("is_initialized", true);
         }
@@ -244,12 +248,16 @@ public class VectorStoreCrossLanguageAgent extends Agent {
                     first.getContent().substring(0, Math.min(50, first.getContent().length())));
 
             ctx.sendEvent(new OutputEvent(result));
-            System.out.printf("[TEST] Vector store retrieval PASSED, count=%d%n", documents.size());
+            System.out.printf(
+                    "[TEST][%s] Vector store retrieval PASSED, count=%d%n",
+                    VECTOR_STORE_BACKEND, documents.size());
         } catch (Exception e) {
             result.put("test_status", "FAILED");
             result.put("error", e.getMessage());
             ctx.sendEvent(new OutputEvent(result));
-            System.err.printf("[TEST] Vector store retrieval FAILED: %s%n", e.getMessage());
+            System.err.printf(
+                    "[TEST][%s] Vector store retrieval FAILED: %s%n",
+                    VECTOR_STORE_BACKEND, e.getMessage());
             throw e;
         }
     }

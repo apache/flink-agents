@@ -273,9 +273,18 @@ jobs:
         run: bash tools/build.sh
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
+      - name: Start Milvus
+        run: |
+          docker compose -f tools/docker/milvus/docker-compose.yml down -v
+          docker compose -f tools/docker/milvus/docker-compose.yml up -d
+          timeout 180 bash -c 'until curl -fsS http://localhost:9091/healthz; do sleep 5; done'
       - name: Run e2e tests
         env:
           LOG_LEVEL: INFO
         run: |
           export ES_HOST="http://localhost:9200"
+          export MILVUS_URI="http://localhost:19530"
           tools/e2e.sh
+      - name: Stop Milvus
+        if: always()
+        run: docker compose -f tools/docker/milvus/docker-compose.yml down -v

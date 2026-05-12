@@ -22,19 +22,31 @@ under the License.
 
     <parent>
         <groupId>org.apache.flink</groupId>
-        <artifactId>flink-agents-integrations</artifactId>
+        <artifactId>flink-agents-integrations-vector-stores</artifactId>
         <version>0.3-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>flink-agents-integrations-vector-stores</artifactId>
-    <name>Flink Agents : Integrations: Vector Stores</name>
-    <packaging>pom</packaging>
+    <artifactId>flink-agents-integrations-vector-stores-milvus</artifactId>
+    <name>Flink Agents : Integrations: Vector Stores: Milvus</name>
+    <packaging>jar</packaging>
 
-    <modules>
-        <module>elasticsearch</module>
-        <module>milvus</module>
-        <module>opensearch</module>
-        <module>s3vectors</module>
-    </modules>
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.milvus</groupId>
+            <artifactId>milvus-sdk-java</artifactId>
+            <version>${milvus.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+    </dependencies>
 
 </project>

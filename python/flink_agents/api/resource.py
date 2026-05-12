@@ -345,5 +345,8 @@ class ResourceName:
             # Amazon S3 Vectors
             S3_VECTORS_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.s3vectors.S3VectorsVectorStore"
 
+            # Milvus
+            MILVUS_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.milvus.MilvusVectorStore"
+
     # MCP resource names
     MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"
