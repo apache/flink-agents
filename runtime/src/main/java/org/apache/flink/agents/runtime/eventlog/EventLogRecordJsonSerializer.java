@@ -38,6 +38,7 @@ import java.util.Map;
  *
  * <ul>
  *   <li>Top-level timestamp
+ *   <li>Top-level eventType (routing key, mirrors {@code event.eventType})
  *   <li>Event data serialized as a standard JSON object
  * </ul>
  *
@@ -46,6 +47,7 @@ import java.util.Map;
  * <pre>{@code
  * {
  *   "timestamp": "2024-01-15T10:30:00Z",
+ *   "eventType": "_input_event",
  *   "event": {
  *     "eventType": "_input_event",
  *     // Event fields serialized normally
@@ -66,6 +68,7 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
 
         gen.writeStartObject();
         gen.writeStringField("timestamp", record.getContext().getTimestamp());
+        gen.writeStringField("eventType", record.getEvent().getType());
 
         gen.writeFieldName("event");
         JsonNode eventNode = buildEventNode(record.getEvent(), mapper);

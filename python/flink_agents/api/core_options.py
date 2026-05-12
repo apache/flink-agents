@@ -91,6 +91,31 @@ class AgentConfigOptions(metaclass=AgentConfigOptionsMeta):
         default=None,
     )
 
+    # Event log level config options
+    EVENT_LOG_LEVEL = ConfigOption(
+        key="event-log.level",
+        config_type=str,
+        default="STANDARD",
+    )
+
+    EVENT_LOG_MAX_STRING_LENGTH = ConfigOption(
+        key="event-log.standard.max-string-length",
+        config_type=int,
+        default=2000,
+    )
+
+    EVENT_LOG_MAX_ARRAY_ELEMENTS = ConfigOption(
+        key="event-log.standard.max-array-elements",
+        config_type=int,
+        default=20,
+    )
+
+    EVENT_LOG_MAX_DEPTH = ConfigOption(
+        key="event-log.standard.max-depth",
+        config_type=int,
+        default=5,
+    )
+
 
 class AgentExecutionOptions:
     """Execution options for Flink Agents."""

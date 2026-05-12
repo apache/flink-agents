@@ -43,10 +43,12 @@ public class EventLogRecord {
         this.event = event;
     }
 
+    /** Returns the event context. */
     public EventContext getContext() {
         return context;
     }
 
+    /** Returns the event. */
     public Event getEvent() {
         return event;
     }
