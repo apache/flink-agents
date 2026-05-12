@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
+import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -367,6 +368,7 @@ public class ActionExecutionOperatorTest {
     void testEventLogBaseDirFromAgentConfig() throws Exception {
         String baseLogDir = "/tmp/flink-agents-test";
         AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.EVENT_LOGGER_TYPE, LoggerType.FILE);
         config.set(AgentConfigOptions.BASE_LOG_DIR, baseLogDir);
         config.set(AgentConfigOptions.PRETTY_PRINT, true);
         AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);

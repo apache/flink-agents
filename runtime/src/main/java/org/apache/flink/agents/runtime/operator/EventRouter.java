@@ -27,9 +27,11 @@ import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerFactory;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
+import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -45,6 +47,8 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LOGGER_TYPE;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -111,6 +115,9 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         eventLogger.open(new EventLoggerOpenParams(runtimeContext));
         if (eventLogger instanceof FileEventLogger) {
             ((FileEventLogger) eventLogger)
+                    .setTruncatedEventsCounter(builtInMetrics.getEventLogTruncatedEventsCounter());
+        } else if (eventLogger instanceof Slf4jEventLogger) {
+            ((Slf4jEventLogger) eventLogger)
                     .setTruncatedEventsCounter(builtInMetrics.getEventLogTruncatedEventsCounter());
         }
     }
@@ -236,10 +243,19 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     }
 
     private EventLogger createEventLogger(AgentPlan agentPlan) {
+        // Honor the EVENT_LOGGER_TYPE config, defaulting to SLF4J so events surface in the Flink
+        // Web UI by default. An explicit baseLogDir forces the file logger for backward
+        // compatibility with the existing file-based logging path.
+        LoggerType loggerType = agentPlan.getConfig().get(EVENT_LOGGER_TYPE);
+        String baseLogDir = agentPlan.getConfig().get(BASE_LOG_DIR);
+        if (baseLogDir != null && !baseLogDir.trim().isEmpty()) {
+            loggerType = LoggerType.FILE;
+        }
         // The full agent config is the single source of truth for logger settings (baseLogDir,
         // prettyPrint, event-log levels, truncation limits). Each logger pulls what it needs.
         EventLoggerConfig config =
                 EventLoggerConfig.builder()
+                        .loggerType(loggerType)
                         .property(
                                 EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY,
                                 agentPlan.getConfig().getConfData())

@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.JobInfo;
 import org.apache.flink.api.common.TaskInfo;
@@ -95,7 +96,7 @@ class FileEventLoggerTest {
         Map<String, Object> agentConfig = new HashMap<>(extraAgentConfig);
         agentConfig.putIfAbsent(AgentConfigOptions.BASE_LOG_DIR.getKey(), tempDir.toString());
         return EventLoggerConfig.builder()
-                .loggerType("file")
+                .loggerType(LoggerType.FILE)
                 .property(EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
                 .build();
     }
