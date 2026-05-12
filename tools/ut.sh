@@ -119,6 +119,16 @@ if $verbose; then
     echo "Will run tests for Flink versions: ${flink_versions[*]}"
 fi
 
+# Skip spotless code-style check when SKIP_SPOTLESS_CHECK is set.
+# Style enforcement is owned by the dedicated `Code Style Check` CI job
+# (and `tools/lint.sh` locally), so other CI jobs append this flag to
+# every mvn invocation to avoid masking real test failures with style
+# violations. Unset (default) preserves local-dev behavior.
+SPOTLESS_FLAG=""
+if [ "${SKIP_SPOTLESS_CHECK}" = "true" ] || [ "${SKIP_SPOTLESS_CHECK}" = "1" ]; then
+    SPOTLESS_FLAG="-Dspotless.skip=true"
+fi
+
 java_tests() {
     if $verbose; then
         echo "Running Java tests..."
@@ -135,7 +145,7 @@ java_tests() {
         done
         dist_modules="${dist_modules#,}"
 
-        mvn --batch-mode --no-transfer-progress install -pl "$dist_modules" -DskipTests
+        mvn --batch-mode --no-transfer-progress install -pl "$dist_modules" -DskipTests ${SPOTLESS_FLAG}
         install_code=$?
         if [ $install_code -ne 0 ]; then
             echo "Failed to install dist packages" >&2
@@ -145,7 +155,7 @@ java_tests() {
         local all_passed=true
         for version in "${flink_versions[@]}"; do
             echo "Running E2E tests for Flink ${version}..."
-            mvn --batch-mode --no-transfer-progress test -pl 'e2e-test/flink-agents-end-to-end-tests-integration' -Pflink-${version}
+            mvn --batch-mode --no-transfer-progress test -pl 'e2e-test/flink-agents-end-to-end-tests-integration' -Pflink-${version} ${SPOTLESS_FLAG}
 
             if [ $? -ne 0 ]; then
                 echo "E2E tests failed for Flink ${version}" >&2
@@ -159,7 +169,7 @@ java_tests() {
         testcode=0
     else
         echo "Installing all modules (including test-jars) to local repository..."
-        mvn --batch-mode --no-transfer-progress test-compile jar:test-jar install -DskipTests
+        mvn --batch-mode --no-transfer-progress test-compile jar:test-jar install -DskipTests ${SPOTLESS_FLAG}
         install_code=$?
         if [ $install_code -ne 0 ]; then
             echo "Failed to install modules to local repository" >&2
@@ -170,7 +180,7 @@ java_tests() {
 
         exclude_list="!e2e-test/flink-agents-end-to-end-tests-integration,!e2e-test/flink-agents-end-to-end-tests-resource-cross-language"
 
-        mvn -T16 --batch-mode --no-transfer-progress test -fae -pl "${exclude_list}"
+        mvn -T16 --batch-mode --no-transfer-progress test -fae -pl "${exclude_list}" ${SPOTLESS_FLAG}
         testcode=$?
     fi
     case $testcode in

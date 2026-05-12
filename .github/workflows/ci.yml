@@ -72,6 +72,8 @@ jobs:
   java_tests:
     name: ut-java [${{ matrix.os }}] [java-${{ matrix.java-version}}] [python-3.12]
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -136,6 +138,8 @@ jobs:
   python_it_tests:
     name: it-python [${{ matrix.os }}] [java-17] [python-${{ matrix.python-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -179,6 +183,8 @@ jobs:
   java_it_tests:
     name: it-java [${{ matrix.os }}] [java-${{ matrix.java-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -214,6 +220,8 @@ jobs:
   cross_language_tests:
     name: cross-language [${{ matrix.os }}] [python-${{ matrix.python-version}}] [java-${{ matrix.java-version}}]
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_SPOTLESS_CHECK: true
     services:
       elasticsearch:
         image: docker.elastic.co/elasticsearch/elasticsearch:8.19.0
