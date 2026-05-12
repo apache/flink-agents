@@ -162,3 +162,72 @@ The log files follow a naming convention consistent with Flink's logging standar
 ```
 
 By default, all File-based Event Logs are stored in the `flink-agents` subdirectory under the system temporary directory (`java.io.tmpdir`). You can override the base log directory with the `agent.baseLogDir` setting in Flink `config.yaml`.
+
+#### JSON Format
+
+Each record contains a top-level `timestamp`, the resolved `logLevel`, and a top-level `eventType` routing key (mirrors `event.eventType`), followed by the full event object. The top-level `eventType` makes it easy for downstream tools (e.g. `grep`, `jq`, log shippers) to filter by event type without parsing nested JSON:
+
+```json
+{
+  "timestamp": "2024-01-15T10:30:00Z",
+  "logLevel": "STANDARD",
+  "eventType": "_input_event",
+  "event": {
+    "eventType": "_input_event",
+    "...": "..."
+  }
+}
+```
+
+#### Event Log Levels
+
+Each event type is logged at a configurable verbosity. Three levels are supported:
+
+| Level      | Behavior                                                                                                       |
+|------------|----------------------------------------------------------------------------------------------------------------|
+| `OFF`      | Events of this type are not logged.                                                                            |
+| `STANDARD` | Events are logged, but the payload may be truncated or summarized to keep logs concise. **This is the default.** |
+| `VERBOSE`  | Events are logged with the full, untruncated payload.                                                          |
+
+The global default is set by [`event-log.level`]({{< ref "docs/operations/configuration#core-options" >}}). At `STANDARD` level, the payload is shrunk along three axes — long strings, large arrays, and deep nesting — controlled by `event-log.standard.max-string-length`, `event-log.standard.max-array-elements`, and `event-log.standard.max-depth` respectively. The exact truncation strategy may evolve over time; the contract is only that `STANDARD` keeps logs concise while `VERBOSE` preserves the full payload.
+
+#### Per-event-type log levels
+
+You can override the level for individual event types using the `event-log.type.<EVENT_TYPE>.level` config key, where `<EVENT_TYPE>` is the event's routing type string (the same string that appears as `eventType` in the JSON log). Built-in events use short snake-cased names such as:
+
+| Event class              | `<EVENT_TYPE>` value             |
+|--------------------------|----------------------------------|
+| `InputEvent`             | `_input_event`                   |
+| `OutputEvent`            | `_output_event`                  |
+| `ChatRequestEvent`       | `_chat_request_event`            |
+| `ChatResponseEvent`      | `_chat_response_event`           |
+| `ToolRequestEvent`       | `_tool_request_event`            |
+| `ToolResponseEvent`      | `_tool_response_event`           |
+| `ContextRetrievalRequestEvent`  | `_context_retrieval_request_event`  |
+| `ContextRetrievalResponseEvent` | `_context_retrieval_response_event` |
+
+Each event type has its own independently overridable key, so a job-level override does not clobber other entries from `config.yaml`.
+
+Resolution is hierarchical — the resolver walks up dot-separated segments of the event type, mirroring Log4j's logger hierarchy. For a user-defined event type `com.example.myapp.OrderEvent`, the lookup order is:
+
+1. `event-log.type.com.example.myapp.OrderEvent.level` (exact match)
+2. `event-log.type.com.example.myapp.level` (package prefix)
+3. `event-log.type.com.example.level`
+4. … (continues walking up)
+5. `event-log.level` (global default)
+6. Built-in default: `STANDARD`
+
+Built-in event type strings like `_chat_request_event` contain no dots, so they are matched exactly against the configured key.
+
+Example `config.yaml`:
+
+```yaml
+# Keep all events at STANDARD by default
+event-log.level: STANDARD
+
+# Log every ChatRequestEvent with the full payload
+event-log.type._chat_request_event.level: VERBOSE
+
+# Skip context retrieval requests entirely
+event-log.type._context_retrieval_request_event.level: OFF
+```
