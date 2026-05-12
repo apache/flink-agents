@@ -611,3 +611,4 @@ All attribute values must be JSON-serializable. In Python, this means `BaseModel
 There are several built-in `Event` and `Action` in Flink-Agents:
 * See [Chat Models]({{< ref "docs/development/chat_models" >}}) for how to chat with a LLM leveraging built-in action and events.
 * See [Tool Use]({{< ref "docs/development/tool_use" >}}) for how to programmatically use a tool leveraging built-in action and events.
+* See [Vector Stores]({{< ref "docs/development/vector_stores" >}}) for how to retrieve context from vector stores leveraging built-in action and events.

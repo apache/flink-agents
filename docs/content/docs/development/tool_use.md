@@ -182,3 +182,9 @@ ReActAgent reviewAnalysisReactAgent = new ReActAgent(
 ## MCP Tool
 
 See [MCP]({{< ref "docs/development/mcp" >}}) for details.
+
+## Built-in Events and Actions
+
+The built-in `tool_call_action` listens to `ToolRequestEvent`. For each tool call, it looks up the tool resource by function name, executes it through durable execution, and records whether it succeeded. After all tool calls in the batch have been processed, it emits a `ToolResponseEvent`.
+
+When the tool request comes from `chat_model_action`, the emitted `ToolResponseEvent` is automatically consumed by `chat_model_action` to continue the chat. Users can also send `ToolRequestEvent` directly when they want to invoke tools programmatically.
