@@ -88,8 +88,13 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     private BuiltInMetrics builtInMetrics;
 
     EventRouter(AgentPlan agentPlan, boolean inputIsJava) {
+        this(agentPlan, inputIsJava, createEventLogger(agentPlan));
+    }
+
+    @VisibleForTesting
+    EventRouter(AgentPlan agentPlan, boolean inputIsJava, EventLogger eventLogger) {
         this.inputIsJava = inputIsJava;
-        this.eventLogger = createEventLogger(agentPlan);
+        this.eventLogger = eventLogger;
         this.eventListeners = new ArrayList<>();
     }
 
@@ -242,7 +247,12 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         return eventLogger;
     }
 
-    private EventLogger createEventLogger(AgentPlan agentPlan) {
+    @VisibleForTesting
+    void addEventListener(EventListener listener) {
+        eventListeners.add(listener);
+    }
+
+    private static EventLogger createEventLogger(AgentPlan agentPlan) {
         // Honor the EVENT_LOGGER_TYPE config, defaulting to SLF4J so events surface in the Flink
         // Web UI by default. An explicit baseLogDir forces the file logger for backward
         // compatibility with the existing file-based logging path.
