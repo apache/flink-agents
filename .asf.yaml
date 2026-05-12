@@ -48,6 +48,7 @@ github:
     - alnzng
     - istavrak
     - yanand0909
+    - wzhero1
 
 notifications:
   commits: commits@flink.apache.org
