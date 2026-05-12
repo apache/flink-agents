@@ -81,13 +81,23 @@ class FileEventLoggerTest {
         when(taskInfo.getIndexOfThisSubtask()).thenReturn(testSubTaskId);
 
         // Create config and logger
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
-                        .build();
+        config = buildConfig(new HashMap<>());
         logger = new FileEventLogger(config);
         openParams = new EventLoggerOpenParams(runtimeContext);
+    }
+
+    /**
+     * Builds an EventLoggerConfig for the file logger, seeding the agent-config map with {@code
+     * baseLogDir} so tests can drop their per-test boilerplate and only specify the keys they
+     * actually care about.
+     */
+    private EventLoggerConfig buildConfig(Map<String, Object> extraAgentConfig) {
+        Map<String, Object> agentConfig = new HashMap<>(extraAgentConfig);
+        agentConfig.putIfAbsent(AgentConfigOptions.BASE_LOG_DIR.getKey(), tempDir.toString());
+        return EventLoggerConfig.builder()
+                .loggerType("file")
+                .property(EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
+                .build();
     }
 
     @AfterEach
@@ -302,12 +312,9 @@ class FileEventLoggerTest {
     @Test
     void testPrettyPrintOutputsFormattedJson() throws Exception {
         // Given - config with prettyPrint enabled
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
-                        .property(AgentConfigOptions.PRETTY_PRINT.getKey(), true)
-                        .build();
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put(AgentConfigOptions.PRETTY_PRINT.getKey(), true);
+        config = buildConfig(agentConfig);
         logger = new FileEventLogger(config);
 
         logger.open(openParams);
@@ -340,12 +347,7 @@ class FileEventLoggerTest {
         agentConfig.put("event-log.standard.max-array-elements", 20);
         agentConfig.put("event-log.standard.max-depth", 5);
 
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
-                        .property(FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
-                        .build();
+        config = buildConfig(agentConfig);
         logger = new FileEventLogger(config);
         logger.open(openParams);
 
@@ -380,12 +382,7 @@ class FileEventLoggerTest {
         agentConfig.put("event-log.level", "VERBOSE");
         agentConfig.put("event-log.standard.max-string-length", 10);
 
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
-                        .property(FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
-                        .build();
+        config = buildConfig(agentConfig);
         logger = new FileEventLogger(config);
         logger.open(openParams);
 
@@ -418,12 +415,7 @@ class FileEventLoggerTest {
         Map<String, Object> agentConfig = new HashMap<>();
         agentConfig.put("event-log.level", "OFF");
 
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
-                        .property(FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
-                        .build();
+        config = buildConfig(agentConfig);
         logger = new FileEventLogger(config);
         logger.open(openParams);
 
@@ -446,12 +438,7 @@ class FileEventLoggerTest {
         agentConfig.put("event-log.standard.max-string-length", 10);
         agentConfig.put("event-log.type." + InputEvent.EVENT_TYPE + ".level", "VERBOSE");
 
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
-                        .property(FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
-                        .build();
+        config = buildConfig(agentConfig);
         logger = new FileEventLogger(config);
         logger.open(openParams);
 
@@ -533,12 +520,7 @@ class FileEventLoggerTest {
         agentConfig.put("event-log.type.com.example.events.level", "OFF");
         agentConfig.put("event-log.type." + TestNamespacedEventA.EVENT_TYPE + ".level", "VERBOSE");
 
-        config =
-                EventLoggerConfig.builder()
-                        .loggerType("file")
-                        .property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, tempDir.toString())
-                        .property(FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
-                        .build();
+        config = buildConfig(agentConfig);
         logger = new FileEventLogger(config);
         logger.open(openParams);
 

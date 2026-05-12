@@ -45,8 +45,6 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
-import static org.apache.flink.agents.api.configuration.AgentConfigOptions.PRETTY_PRINT;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -238,16 +236,15 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     }
 
     private EventLogger createEventLogger(AgentPlan agentPlan) {
-        EventLoggerConfig.Builder loggerConfigBuilder = EventLoggerConfig.builder();
-        String baseLogDir = agentPlan.getConfig().get(BASE_LOG_DIR);
-        if (baseLogDir != null && !baseLogDir.trim().isEmpty()) {
-            loggerConfigBuilder.property(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY, baseLogDir);
-        }
-        loggerConfigBuilder.property(
-                FileEventLogger.PRETTY_PRINT_PROPERTY_KEY, agentPlan.getConfig().get(PRETTY_PRINT));
-        loggerConfigBuilder.property(
-                FileEventLogger.AGENT_CONFIG_PROPERTY_KEY, agentPlan.getConfig().getConfData());
-        return EventLoggerFactory.createLogger(loggerConfigBuilder.build());
+        // The full agent config is the single source of truth for logger settings (baseLogDir,
+        // prettyPrint, event-log levels, truncation limits). Each logger pulls what it needs.
+        EventLoggerConfig config =
+                EventLoggerConfig.builder()
+                        .property(
+                                EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY,
+                                agentPlan.getConfig().getConfData())
+                        .build();
+        return EventLoggerFactory.createLogger(config);
     }
 
     @Override

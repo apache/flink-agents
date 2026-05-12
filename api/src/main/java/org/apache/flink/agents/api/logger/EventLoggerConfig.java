@@ -42,6 +42,17 @@ import java.util.Objects;
  */
 public final class EventLoggerConfig {
 
+    /**
+     * Property key used to pass the full agent config data map (e.g., {@code
+     * AgentConfiguration.getConfData()}) into a logger via {@link Builder#property(String,
+     * Object)}.
+     *
+     * <p>Built-in loggers read this property to initialize per-event-type log level resolution and
+     * STANDARD-level truncation. Custom loggers may use the same property to access agent-level
+     * configuration without taking a hard dependency on the runtime module.
+     */
+    public static final String AGENT_CONFIG_PROPERTY_KEY = "agentConfig";
+
     private final String loggerType;
     private final Map<String, Object> properties;
 
