@@ -333,6 +333,12 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      * via {@link #snapshotLastCompletedSequenceNumbers}. After pruning, the entry for that
      * checkpoint is removed. No-op when durable execution is disabled.
      *
+     * <p><b>Invariant:</b> the {@code checkpointIdToSeqNums.remove} below and the {@code put} in
+     * {@link #snapshotLastCompletedSequenceNumbers} MUST share the same {@code actionStateStore !=
+     * null} guard. Dropping the guard on either side breaks the symmetry and reintroduces the
+     * unbounded-map leak tracked by <a href="https://github.com/apache/flink-agents/issues/645">
+     * issue #645</a>.
+     *
      * @param checkpointId the id of the completed checkpoint.
      */
     void notifyCheckpointComplete(long checkpointId) {
@@ -364,6 +370,12 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      * mapping is consulted later by {@link #notifyCheckpointComplete(long)} to prune durable state
      * strictly up to the sequence number that was committed by that checkpoint. No-op when durable
      * execution is disabled.
+     *
+     * <p><b>Invariant:</b> the {@code checkpointIdToSeqNums.put} below and the {@code remove} in
+     * {@link #notifyCheckpointComplete(long)} MUST share the same {@code actionStateStore != null}
+     * guard. Dropping the guard on either side breaks the symmetry and reintroduces the
+     * unbounded-map leak tracked by <a href="https://github.com/apache/flink-agents/issues/645">
+     * issue #645</a>.
      *
      * @param keyedStateBackend the keyed state backend to scan.
      * @param checkpointId the id of the checkpoint being snapshotted.
