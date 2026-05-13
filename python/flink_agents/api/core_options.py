@@ -82,6 +82,18 @@ class ErrorHandlingStrategy(Enum):
     IGNORE = "ignore"
 
 
+class LoggerType(Enum):
+    """Built-in event logger types.
+
+    Mirrors the Java ``LoggerType`` enum so Python users can configure the
+    logger type via ``AgentConfigOptions.EVENT_LOGGER_TYPE`` without using
+    raw strings.
+    """
+
+    SLF4J = "slf4j"
+    FILE = "file"
+
+
 class AgentConfigOptions(metaclass=AgentConfigOptionsMeta):
     """CoreOptions to manage core configuration parameters for Flink Agents."""
 
@@ -89,6 +101,12 @@ class AgentConfigOptions(metaclass=AgentConfigOptionsMeta):
         key="job-identifier",
         config_type=str,
         default=None,
+    )
+
+    EVENT_LOGGER_TYPE = ConfigOption(
+        key="eventLoggerType",
+        config_type=LoggerType,
+        default=LoggerType.SLF4J,
     )
 
     # Event log level config options

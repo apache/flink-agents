@@ -29,78 +29,75 @@ import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.metrics.Counter;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.appender.FileAppender;
+import org.apache.logging.log4j.core.config.Configuration;
+import org.apache.logging.log4j.core.config.LoggerConfig;
+import org.apache.logging.log4j.core.layout.PatternLayout;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.io.BufferedWriter;
-import java.io.FileWriter;
-import java.io.PrintWriter;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.Map;
 
 /**
- * A file-based event logger that logs events to files with structured names in a flat directory.
+ * An SLF4J-based event logger that outputs events through a dedicated SLF4J logger.
  *
- * <p>This logger creates uniquely named log files for each subtask using a structured naming
- * convention that includes job ID, task name, and subtask ID. This approach aligns with Flink's
- * logging conventions and ensures no file conflicts in multi-TaskManager deployments. Events are
- * appended to log files in JSON Lines format.
+ * <p>This logger writes event log records as JSON to a dedicated SLF4J logger named {@value
+ * #EVENT_LOGGER_NAME}. Events are automatically routed to a separate file in Flink's log directory,
+ * making them visible in Flink's Web UI "Logs" tab.
+ *
+ * <p>On {@link #open}, the logger automatically configures log4j2 to write event logs to a separate
+ * file (derived from Flink's {@code log.file} system property). No manual log4j2 configuration is
+ * required.
+ *
+ * <p>Unlike {@link FileEventLogger}, which creates a separate log file per subtask, this logger
+ * writes all events from a TaskManager to the same log destination. To distinguish events from
+ * different subtasks, each JSON record includes {@code jobId}, {@code taskName}, and {@code
+ * subtaskId} fields.
+ *
+ * <p>This logger honors the per-event-type log level configuration resolved by {@link
+ * EventLogLevelResolver}; events resolved to {@link EventLogLevel#OFF} are skipped, and events at
+ * {@link EventLogLevel#STANDARD} have their payloads truncated by a {@link JsonTruncator}.
  *
  * <h3>Thread Safety</h3>
  *
- * <p>This class is <strong>thread-safe at the Flink subtask level</strong>. Flink's execution model
- * guarantees that each subtask instance processes events in a single-threaded manner within the
- * operator's mailbox thread. This means:
- *
- * <ul>
- *   <li>No synchronization is needed for concurrent access within a subtask
- *   <li>Each subtask instance gets its own logger instance and unique log file
- *   <li>Multiple subtasks can run concurrently without file conflicts
- * </ul>
- *
- * <h3>File Structure</h3>
- *
- * <p>The logger creates log files in a flat directory structure with structured names that align
- * with Flink's logging conventions:
- *
- * <pre>
- * {baseLogDir}/
- *   ├── events-{jobId}-{taskName}-{subtaskId}.log
- *   ├── events-{jobId}-{taskName}-{subtaskId}.log
- *   └── events-{jobId}-{taskName}-{subtaskId}.log
- * </pre>
- *
- * <p>For example:
- *
- * <pre>
- * /tmp/flink-agents/
- *   ├── events-abc123-action-execute-operator-0.log
- *   ├── events-abc123-action-execute-operator-1.log
- *   └── events-def456-action-execute-operator-2.log
- * </pre>
+ * <p>This class is <strong>thread-safe at the Flink subtask level</strong>, following the same
+ * guarantees as {@link FileEventLogger}. Each subtask instance gets its own logger instance with
+ * its own subtask context fields.
  */
-public class FileEventLogger implements EventLogger {
-    // The default base log directory if not specified in the configuration
-    private static final String DEFAULT_BASE_LOG_DIR =
-            Paths.get(System.getProperty("java.io.tmpdir"), "flink-agents").toString();
+public class Slf4jEventLogger implements EventLogger {
+    /** Dedicated logger name for event log output. */
+    public static final String EVENT_LOGGER_NAME = "org.apache.flink.agents.EventLog";
 
+    private static final String EVENT_LOG_APPENDER_NAME = "FlinkAgentsEventLogAppender";
+
+    private static final Logger EVENT_LOG = LoggerFactory.getLogger(EVENT_LOGGER_NAME);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final EventLoggerConfig config;
     private boolean prettyPrint;
-    private PrintWriter writer;
+    private String jobId;
+    private String taskName;
+    private int subtaskId;
     private EventLogLevelResolver levelResolver;
     private JsonTruncator truncator;
     private Counter truncatedEventsCounter;
 
-    public FileEventLogger(EventLoggerConfig config) {
+    public Slf4jEventLogger(EventLoggerConfig config) {
         this.config = config;
     }
 
     @Override
     public void open(EventLoggerOpenParams params) throws Exception {
-        // The full agent config is the single source of truth for all logger settings.
+        jobId = params.getRuntimeContext().getJobInfo().getJobId().toString();
+        taskName = params.getRuntimeContext().getTaskInfo().getTaskName();
+        subtaskId = params.getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
+
+        // The full agent config is the single source of truth for all logger settings
+        // (mirrors FileEventLogger).
         @SuppressWarnings("unchecked")
         Map<String, Object> agentConfig =
                 (Map<String, Object>)
@@ -108,25 +105,11 @@ public class FileEventLogger implements EventLogger {
                                 .getOrDefault(
                                         EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY,
                                         Collections.emptyMap());
-
-        String baseLogDir =
-                (String)
-                        agentConfig.getOrDefault(
-                                AgentConfigOptions.BASE_LOG_DIR.getKey(), DEFAULT_BASE_LOG_DIR);
-        String logFilePath = generateSubTaskLogFilePath(params, baseLogDir);
-        // Create base directory if it doesn't exist
-        Path logPath = Paths.get(logFilePath).getParent();
-        if (!Files.exists(logPath)) {
-            Files.createDirectories(logPath);
-        }
-        // Create writer in append mode
-        writer = new PrintWriter(new BufferedWriter(new FileWriter(logFilePath, true)));
         prettyPrint =
                 (Boolean)
                         agentConfig.getOrDefault(
                                 AgentConfigOptions.PRETTY_PRINT.getKey(),
                                 AgentConfigOptions.PRETTY_PRINT.getDefaultValue());
-
         this.levelResolver = new EventLogLevelResolver(agentConfig);
         int maxStringLength =
                 getIntFromConfig(
@@ -144,6 +127,8 @@ public class FileEventLogger implements EventLogger {
                         AgentConfigOptions.EVENT_LOG_MAX_DEPTH.getKey(),
                         AgentConfigOptions.EVENT_LOG_MAX_DEPTH.getDefaultValue());
         this.truncator = new JsonTruncator(maxStringLength, maxArrayElements, maxDepth);
+
+        ensureLog4j2AppenderConfigured();
     }
 
     private static int getIntFromConfig(Map<String, Object> config, String key, int defaultValue) {
@@ -161,24 +146,8 @@ public class FileEventLogger implements EventLogger {
         }
     }
 
-    private String generateSubTaskLogFilePath(EventLoggerOpenParams params, String baseLogDir) {
-        String jobId = params.getRuntimeContext().getJobInfo().getJobId().toString();
-        String taskName =
-                params.getRuntimeContext()
-                        .getTaskInfo()
-                        .getTaskName()
-                        .replaceAll("[\\\\/:*?\"<>|]", "_");
-        int subTaskId = params.getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
-        String fileName = String.format("events-%s-%s-%d.log", jobId, taskName, subTaskId);
-        return Paths.get(baseLogDir, fileName).toString();
-    }
-
     @Override
     public void append(EventContext context, Event event) throws Exception {
-        if (writer == null) {
-            throw new IllegalStateException("FileEventLogger not initialized. Call open() first.");
-        }
-
         // Resolve log level and skip OFF events.
         EventLogLevel level =
                 levelResolver != null
@@ -188,8 +157,6 @@ public class FileEventLogger implements EventLogger {
             return;
         }
 
-        // All events should be JSON serializable; we already check this when sending events
-        // to context (RunnerContextImpl.sendEvent).
         EventLogRecord record = new EventLogRecord(context, event);
         JsonNode tree = MAPPER.valueToTree(record);
         if (!(tree instanceof ObjectNode)) {
@@ -210,28 +177,27 @@ public class FileEventLogger implements EventLogger {
             }
         }
 
-        // Rebuild the top-level object so logLevel sits between timestamp and eventType,
-        // matching the documented JSON layout.
+        // Rebuild the top-level object so logLevel/subtask context sit alongside the documented
+        // JSON layout: timestamp, logLevel, eventType, subtask context, event.
         ObjectNode ordered = MAPPER.createObjectNode();
         ordered.set("timestamp", rootNode.get("timestamp"));
         ordered.put("logLevel", level.name());
         ordered.set("eventType", rootNode.get("eventType"));
+        ordered.put("jobId", jobId);
+        ordered.put("taskName", taskName);
+        ordered.put("subtaskId", subtaskId);
         ordered.set("event", rootNode.get("event"));
 
         String json =
                 prettyPrint
                         ? MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(ordered)
                         : MAPPER.writeValueAsString(ordered);
-        writer.println(json);
+        EVENT_LOG.info(json);
     }
 
     @Override
     public void flush() throws Exception {
-        if (writer == null) {
-            throw new IllegalStateException("FileEventLogger not initialized. Call open() first.");
-        }
-        // Flush the writer to ensure all data is written to the file
-        writer.flush();
+        // No-op: SLF4J/log4j2 handles flushing
     }
 
     /**
@@ -246,9 +212,65 @@ public class FileEventLogger implements EventLogger {
 
     @Override
     public void close() throws Exception {
-        if (writer != null) {
-            flush();
-            writer.close();
+        // No-op: SLF4J/log4j2 manages logger lifecycle
+    }
+
+    /**
+     * Configures the log4j2 event log appender programmatically.
+     *
+     * <p>This method creates a dedicated file appender that writes to {@code
+     * {log.file}.event-log.log} in the same directory as Flink's main log file. If the appender has
+     * already been configured (e.g., by a previous subtask on the same TaskManager), this method is
+     * a no-op.
+     */
+    private static synchronized void ensureLog4j2AppenderConfigured() {
+        try {
+            LoggerContext loggerContext = (LoggerContext) LogManager.getContext(false);
+            Configuration configuration = loggerContext.getConfiguration();
+            LoggerConfig loggerConfig = configuration.getLoggerConfig(EVENT_LOGGER_NAME);
+
+            // If the appender has already been configured, skip.
+            if (loggerConfig.getName().equals(EVENT_LOGGER_NAME)) {
+                return;
+            }
+
+            // Derive event log file path from Flink's log.file system property
+            String logFile = System.getProperty("log.file");
+            if (logFile == null || logFile.isEmpty()) {
+                // Not running in a Flink environment with log.file set,
+                // fall back to root logger (events will go to main log)
+                return;
+            }
+
+            String eventLogFile = logFile + ".event-log.log";
+
+            // Create a file appender with %msg%n pattern (JSON only, no log metadata)
+            PatternLayout layout = PatternLayout.newBuilder().withPattern("%msg%n").build();
+
+            FileAppender appender =
+                    FileAppender.newBuilder()
+                            .setName(EVENT_LOG_APPENDER_NAME)
+                            .withFileName(eventLogFile)
+                            .withAppend(true)
+                            .setLayout(layout)
+                            .build();
+            appender.start();
+            configuration.addAppender(appender);
+
+            // Create a dedicated logger config with additivity=false
+            LoggerConfig eventLoggerConfig = new LoggerConfig(EVENT_LOGGER_NAME, Level.INFO, false);
+            eventLoggerConfig.addAppender(appender, Level.INFO, null);
+            configuration.addLogger(EVENT_LOGGER_NAME, eventLoggerConfig);
+
+            loggerContext.updateLoggers();
+        } catch (Exception e) {
+            // If programmatic configuration fails (e.g., not using log4j2),
+            // fall back silently — events will go to the root logger.
+            LoggerFactory.getLogger(Slf4jEventLogger.class)
+                    .warn(
+                            "Failed to auto-configure event log appender, "
+                                    + "events will be logged to the root logger.",
+                            e);
         }
     }
 }

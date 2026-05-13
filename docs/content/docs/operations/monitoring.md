@@ -143,11 +143,19 @@ We can check the log result in the WebUI of Flink Job:
 
 ## Event Log
 
-Currently, the system supports **File-based Event Log** as the default implementation. Future releases will introduce support for additional types of event logs and provide configuration options to let users choose their preferred logging mechanism.
+The system supports two types of event loggers: **SLF4J Event Log** (default) and **File Event Log**.
+
+By default, the SLF4J Event Log is used. If `baseLogDir` is configured, the system automatically switches to the File Event Log.
+
+### SLF4J Event Log (Default)
+
+The **SLF4J Event Log** outputs events through a dedicated SLF4J logger (`org.apache.flink.agents.EventLog`). On startup, the logger **automatically configures** log4j2 to write events to a separate file (`{log.file}.event-log.log`) in Flink's log directory, making them visible in Flink's Web UI **Logs** tab. **No manual log4j2 configuration is required.**
+
+Because all subtasks on a TaskManager share the same log destination, each record additionally carries `jobId`, `taskName`, and `subtaskId` top-level fields so consumers can still distinguish events from different subtasks. The rest of the record follows the common [JSON Format](#json-format) described below.
 
 ### File Event Log
 
-The **File Event Log** is a file-based event logging system that stores events in structured files within a flat directory. 
+The **File Event Log** is a file-based event logging system that stores events in structured files within a flat directory. To use it, configure `baseLogDir` in your Flink `config.yaml`.
 
 By default, each event is recorded in **JSON Lines (JSONL)** format, with one JSON object per line. When [`prettyPrint`]({{< ref "docs/operations/configuration#core-options" >}}) is enabled, each event is written as formatted multi-line JSON instead, and the log file is no longer in valid JSONL format.
 
@@ -164,7 +172,9 @@ The log files follow a naming convention consistent with Flink's logging standar
 
 By default, all File-based Event Logs are stored in the `flink-agents` subdirectory under the system temporary directory (`java.io.tmpdir`). You can override the base log directory with the `agent.baseLogDir` setting in Flink `config.yaml`.
 
-#### JSON Format
+### JSON Format
+
+The JSON record format described here applies to both the SLF4J and File event loggers. The SLF4J logger adds `jobId`, `taskName`, and `subtaskId` fields on top (see [SLF4J Event Log](#slf4j-event-log-default)); the File logger encodes those values in the file path instead.
 
 Each record contains a top-level `timestamp`, the resolved `logLevel`, and a top-level `eventType` routing key (mirrors `event.eventType`), followed by the full event object. The top-level `eventType` makes it easy for downstream tools (e.g. `grep`, `jq`, log shippers) to filter by event type without parsing nested JSON:
 
@@ -180,7 +190,7 @@ Each record contains a top-level `timestamp`, the resolved `logLevel`, and a top
 }
 ```
 
-#### Event Log Levels
+### Event Log Levels
 
 Each event type is logged at a configurable verbosity. Three levels are supported:
 
@@ -226,7 +236,7 @@ Example record at `STANDARD` with a long string and a large array truncated:
 }
 ```
 
-#### Per-event-type log levels
+### Per-event-type log levels
 
 You can override the level for individual event types using the `event-log.type.<EVENT_TYPE>.level` config key, where `<EVENT_TYPE>` is the event's routing type string (the same string that appears as `eventType` in the JSON log). Built-in events use short snake-cased names such as:
 
@@ -276,7 +286,7 @@ flink run ... \
 
 Other per-type levels from `config.yaml` are preserved — the `-D` flag only overrides the one key it names.
 
-#### Compatibility Notes
+### Compatibility Notes
 
 - **Default behavior changed.** Before this feature, every event was logged in full. The new default is `STANDARD`, which truncates large payloads. To restore the previous behavior either globally or per type, set the level to `VERBOSE`.
 - **Old log records still parse.** Records written before this feature have no `logLevel` or top-level `eventType`. They deserialize correctly and are treated as `VERBOSE` (their payloads were never truncated).

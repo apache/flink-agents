@@ -18,9 +18,18 @@
 package org.apache.flink.agents.api.configuration;
 
 import org.apache.flink.agents.api.logger.EventLogLevel;
+import org.apache.flink.agents.api.logger.LoggerType;
 
 /** The set of configuration options for agents parameters. */
 public class AgentConfigOptions {
+
+    /**
+     * The config parameter specifies which event logger implementation to use. Defaults to {@link
+     * LoggerType#SLF4J}, which surfaces events in Flink's Web UI; setting {@link LoggerType#FILE}
+     * (or configuring {@link #BASE_LOG_DIR}) routes events to per-subtask log files instead.
+     */
+    public static final ConfigOption<LoggerType> EVENT_LOGGER_TYPE =
+            new ConfigOption<>("eventLoggerType", LoggerType.class, LoggerType.SLF4J);
 
     /** The config parameter specifies the directory for the FileEvent file. */
     public static final ConfigOption<String> BASE_LOG_DIR =

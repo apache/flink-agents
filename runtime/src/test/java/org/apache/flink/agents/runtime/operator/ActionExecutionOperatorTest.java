@@ -25,6 +25,8 @@ import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.logger.EventLoggerConfig;
+import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -366,6 +368,7 @@ public class ActionExecutionOperatorTest {
     void testEventLogBaseDirFromAgentConfig() throws Exception {
         String baseLogDir = "/tmp/flink-agents-test";
         AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.EVENT_LOGGER_TYPE, LoggerType.FILE);
         config.set(AgentConfigOptions.BASE_LOG_DIR, baseLogDir);
         config.set(AgentConfigOptions.PRETTY_PRINT, true);
         AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
@@ -389,9 +392,13 @@ public class ActionExecutionOperatorTest {
             @SuppressWarnings("unchecked")
             Map<String, Object> properties =
                     (Map<String, Object>) propertiesField.get(loggerConfig);
-            assertThat(properties.get(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY))
+            @SuppressWarnings("unchecked")
+            Map<String, Object> agentConfig =
+                    (Map<String, Object>)
+                            properties.get(EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY);
+            assertThat(agentConfig.get(AgentConfigOptions.BASE_LOG_DIR.getKey()))
                     .isEqualTo(baseLogDir);
-            assertThat(properties.get(FileEventLogger.PRETTY_PRINT_PROPERTY_KEY)).isEqualTo(true);
+            assertThat(agentConfig.get(AgentConfigOptions.PRETTY_PRINT.getKey())).isEqualTo(true);
         }
     }
 

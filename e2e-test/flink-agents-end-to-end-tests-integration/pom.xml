@@ -139,6 +139,28 @@ under the License.
                 <flink.version>${flink.1.20.version}</flink.version>
                 <flink.agents.dist.artifactId>flink-agents-dist-flink-1.20</flink.agents.dist.artifactId>
             </properties>
+            <dependencies>
+                <!-- Flink 1.20 does not transitively provide log4j-core in test classpath,
+                     needed for Slf4jEventLogger which uses log4j2 core APIs -->
+                <dependency>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-api</artifactId>
+                    <version>${log4j2.version}</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-core</artifactId>
+                    <version>${log4j2.version}</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-slf4j-impl</artifactId>
+                    <version>${log4j2.version}</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
         </profile>
 
         <!-- Flink 2.0 Profile -->
