@@ -33,6 +33,7 @@ import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
@@ -355,5 +356,73 @@ public class AgentPlanTest {
         assertThat(pythonChatModelProvider).isInstanceOf(PythonResourceProvider.class);
         assertThat(pythonChatModelProvider.getName()).isEqualTo("pythonChatModel");
         assertThat(pythonChatModelProvider.getType()).isEqualTo(ResourceType.CHAT_MODEL);
+    }
+
+    @Test
+    public void testAddResourceRegistersEmbeddingModelProvider() throws Exception {
+        Agent agent = new Agent();
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
+                        .addInitialArgument("pythonClazz", "test.module.EmbeddingClazz")
+                        .build();
+        agent.addResource("myEmbedding", ResourceType.EMBEDDING_MODEL, descriptor);
+
+        AgentPlan plan = new AgentPlan(agent);
+
+        Map<String, ResourceProvider> providers =
+                plan.getResourceProviders().get(ResourceType.EMBEDDING_MODEL);
+        assertThat(providers).isNotNull();
+        assertThat(providers).containsKey("myEmbedding");
+
+        ResourceProvider provider = providers.get("myEmbedding");
+        // TestPythonResource implements PythonResourceWrapper, so a Python provider is expected.
+        assertThat(provider).isInstanceOf(PythonResourceProvider.class);
+        assertThat(provider.getName()).isEqualTo("myEmbedding");
+        assertThat(provider.getType()).isEqualTo(ResourceType.EMBEDDING_MODEL);
+    }
+
+    @Test
+    public void testAddResourceRegistersVectorStoreJavaProvider() throws Exception {
+        Agent agent = new Agent();
+        // A non-Python-wrapper class triggers JavaResourceProvider — String is fine for this
+        // structural check; we never call provide() here.
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder(String.class.getName()).build();
+        agent.addResource("myVectorStore", ResourceType.VECTOR_STORE, descriptor);
+
+        AgentPlan plan = new AgentPlan(agent);
+
+        ResourceProvider provider =
+                plan.getResourceProviders().get(ResourceType.VECTOR_STORE).get("myVectorStore");
+        assertThat(provider).isInstanceOf(JavaResourceProvider.class);
+        assertThat(provider.getType()).isEqualTo(ResourceType.VECTOR_STORE);
+    }
+
+    @Test
+    public void testAddResourceRejectsNonDescriptorForUnsupportedType() {
+        Agent agent = new Agent();
+        // SerializableResource for EMBEDDING_MODEL is illegal — only PROMPT / TOOL / SKILLS accept
+        // non-descriptors. The new code path must reject it with a clear message instead of CCE.
+        agent.addResource(
+                "badEmbedding",
+                ResourceType.EMBEDDING_MODEL,
+                new TestSerializableChatModel("badEmbedding"));
+
+        Assertions.assertThrows(IllegalStateException.class, () -> new AgentPlan(agent));
+    }
+
+    @Test
+    public void testAddResourceMCPServerRejectedWithGuidance() {
+        Agent agent = new Agent();
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder("dummy.MCPServer")
+                        .addInitialArgument("endpoint", "http://127.0.0.1:0/mcp")
+                        .build();
+        agent.addResource("addedMcpServer", ResourceType.MCP_SERVER, descriptor);
+
+        UnsupportedOperationException ex =
+                Assertions.assertThrows(
+                        UnsupportedOperationException.class, () -> new AgentPlan(agent));
+        assertThat(ex.getMessage()).contains("@MCPServer");
     }
 }
