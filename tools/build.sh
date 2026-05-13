@@ -41,10 +41,20 @@ CURR_DIR=`pwd`
 BASE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 PROJECT_ROOT="${BASE_DIR}/../"
 
+# Skip spotless code-style check when SKIP_SPOTLESS_CHECK is set.
+# Style enforcement is owned by the dedicated `Code Style Check` CI job
+# (and `tools/lint.sh` locally), so other CI jobs append this flag to
+# every mvn invocation to avoid masking real test failures with style
+# violations. Unset (default) preserves local-dev behavior.
+SPOTLESS_FLAG=""
+if [ "${SKIP_SPOTLESS_CHECK}" = "true" ] || [ "${SKIP_SPOTLESS_CHECK}" = "1" ]; then
+    SPOTLESS_FLAG="-Dspotless.skip=true"
+fi
+
 # build java
 if $build_java; then
     mvn --version
-    mvn clean install -DskipTests -B
+    mvn clean install -DskipTests -B ${SPOTLESS_FLAG}
 fi
 
 if $build_python; then
