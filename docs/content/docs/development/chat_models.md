@@ -1218,6 +1218,7 @@ public class MyChatModelSetup extends BaseChatModelSetup {
 
 ## Built-in Events and Actions
 
-The built-in `chat_model_action` listens to `ChatRequestEvent` and `ToolResponseEvent`. To request a chat completion, send a `ChatRequestEvent`. If the model returns a final answer, the action emits a `ChatResponseEvent`.
+The built-in `chat_model_action` listens to `ChatRequestEvent` and `ToolResponseEvent`. To request a chat completion, send a `ChatRequestEvent`. If the model returns a final answer, the action send a `ChatResponseEvent`.
 
-If the model asks to call tools, `chat_model_action` emits a `ToolRequestEvent` instead of a final `ChatResponseEvent`. After the tools finish, it receives the matching `ToolResponseEvent`, appends the tool results to the chat history, and calls the model again. This loop continues until the model returns a final response.
+If the model asks to call tools, `chat_model_action` send a `ToolRequestEvent` instead of a final `ChatResponseEvent`. After the tools finish, it receives the matching `ToolResponseEvent`, appends the tool results to the chat history, and calls the model again. This loop continues until the model returns a final response. For details on how tools are executed.
+See [Built-in Events and Actions in Tool Use]({{< ref "docs/development/tool_use#built-in-events-and-actions" >}}).

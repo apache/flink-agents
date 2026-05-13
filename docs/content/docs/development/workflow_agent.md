@@ -609,6 +609,6 @@ All attribute values must be JSON-serializable. In Python, this means `BaseModel
 ## Built-in Events and Actions
 
 There are several built-in `Event` and `Action` in Flink-Agents:
-* See [Chat Models]({{< ref "docs/development/chat_models" >}}) for how to chat with a LLM leveraging built-in action and events.
-* See [Tool Use]({{< ref "docs/development/tool_use" >}}) for how to programmatically use a tool leveraging built-in action and events.
-* See [Vector Stores]({{< ref "docs/development/vector_stores" >}}) for how to retrieve context from vector stores leveraging built-in action and events.
+* See [Chat Models]({{< ref "docs/development/chat_models#built-in-events-and-actions" >}}) for how to chat with a LLM leveraging built-in action and events.
+* See [Tool Use]({{< ref "docs/development/tool_use#built-in-events-and-actions" >}}) for how to programmatically use a tool leveraging built-in action and events.
+* See [Vector Stores]({{< ref "docs/development/vector_stores#built-in-events-and-actions" >}}) for how to retrieve context from vector stores leveraging built-in action and events.
