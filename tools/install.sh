@@ -65,7 +65,7 @@ download_file() {
         detect_downloader
     fi
     if [[ "$DOWNLOADER" == "curl" ]]; then
-        curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --max-time 600 --retry-delay 1 -- --retry-connrefused -o "$output" "$url"
+        curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --max-time 600 --retry-delay 1 --retry-connrefused -o "$output" "$url"
         return
     fi
     wget -q --https-only --secure-protocol=TLSv1_2 --tries=3 --timeout=600 -O "$output" "$url"
@@ -899,7 +899,7 @@ resolve_python() {
 }
 
 show_install_plan() {
-    ui_section "Install plan"
+    ui_section "Installation plan"
     ui_kv "OS" "$OS"
     ui_kv "Flink version" "$FLINK_VERSION"
     ui_kv "Flink Agents version" "$FLINK_AGENTS_VERSION"
