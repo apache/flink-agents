@@ -416,6 +416,11 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         return actionStateStore;
     }
 
+    @VisibleForTesting
+    Map<Long, Map<Object, Long>> getCheckpointIdToSeqNums() {
+        return checkpointIdToSeqNums;
+    }
+
     @Override
     public void close() throws Exception {
         if (actionStateStore != null) {
