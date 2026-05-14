@@ -41,7 +41,6 @@ In Flink Agents, vector stores are essential for:
 
 ### Concepts
 * **Document**: Document is the abstraction that represents a piece of text and associated metadata. A document may also carry a pre-computed `embedding` vector and a `score` populated by query results.
-* **Collection**: Collection is the abstraction that represents a set of documents. It corresponds to different concept for different vector store specification, like index in Elasticsearch/OpenSearch and collection in Chroma/Milvus.
 * **Filter DSL**: A unified, equality-only metadata filter dialect shared by `query`, `get`, and `delete`. The DSL covers only the subset every supported backend can honour (equality matching), so callers don't need to know each store's native operators. See the [Filter DSL](#filter-dsl) section below for details.
 
 ## How to use
