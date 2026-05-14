@@ -1102,3 +1102,7 @@ public class MyVectorStore extends BaseVectorStore
 {{< /tab >}}
 
 {{< /tabs >}}
+
+## Built-in Events and Actions
+
+The built-in `context_retrieval_action` listens to `ContextRetrievalRequestEvent`. To retrieve relevant documents, send a `ContextRetrievalRequestEvent`. The action queries the configured vector store through durable execution and sends a `ContextRetrievalResponseEvent`.
