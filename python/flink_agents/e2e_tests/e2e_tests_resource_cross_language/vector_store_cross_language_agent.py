@@ -143,6 +143,9 @@ class VectorStoreCrossLanguageAgent(Agent):
                 dims=768,
                 metric_type="COSINE",
                 index_type="AUTOINDEX",
+                # Test-only: this e2e checks read-after-write behavior immediately.
+                # Production should use the default BOUNDED consistency unless immediate
+                # read-after-write visibility is required.
                 consistency_level="STRONG",
                 metadata_index_keys=["category", "source"],
             )

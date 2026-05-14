@@ -35,7 +35,7 @@
             <artifactId>flink-agents-integrations-embedding-models-ollama</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- Required by Mem0LongTermMemoryTest: OpenAI-compatible chat model + ES vector store. -->
+        <!-- Required by Mem0LongTermMemoryTest: OpenAI-compatible chat model + vector stores. -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-agents-integrations-chat-models-openai</artifactId>
@@ -44,6 +44,11 @@
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-agents-integrations-vector-stores-elasticsearch</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-vector-stores-milvus</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>

@@ -67,7 +67,9 @@ public class MilvusVectorStoreTest {
                         .addInitialArgument("index_type", "IVF_FLAT")
                         .addInitialArgument("metadata_index_keys", List.of("source"))
                         .addInitialArgument("metadata_index_cast_types", Map.of("score", "DOUBLE"))
-                        // Keep the read-after-write behavior deterministic in integration tests.
+                        // Test-only custom consistency value to verify descriptor plumbing.
+                        // Production should use the default BOUNDED consistency unless immediate
+                        // read-after-write visibility is required.
                         .addInitialArgument("consistency_level", "STRONG")
                         .addInitialArgument("load_timeout_ms", 12345L)
                         .build();
@@ -136,10 +138,6 @@ public class MilvusVectorStoreTest {
                         .addInitialArgument("metric_type", "COSINE")
                         .addInitialArgument("metadata_index_keys", List.of("source"))
                         .addInitialArgument("metadata_index_cast_types", Map.of("score", "DOUBLE"))
-                        // Avoid timing-sensitive assertions after insert/update; production
-                        // defaults
-                        // to BOUNDED unless callers require immediate read-after-write visibility.
-                        .addInitialArgument("consistency_level", "STRONG")
                         .build();
         MilvusVectorStore store =
                 new MilvusVectorStore(
@@ -550,9 +548,9 @@ public class MilvusVectorStoreTest {
     /**
      * Builds a descriptor for integration tests.
      *
-     * <p>STRONG consistency is used here so that reads immediately see preceding writes within the
-     * same test method. Production deployments should use the default BOUNDED level for better
-     * throughput.
+     * <p>Test-only: STRONG consistency is used here so reads immediately see preceding writes
+     * within the same test method. Production should use the default BOUNDED consistency unless
+     * immediate read-after-write visibility is required.
      */
     private static ResourceDescriptor descriptor(String collection) {
         return ResourceDescriptor.Builder.newBuilder(MilvusVectorStore.class.getName())
@@ -562,8 +560,9 @@ public class MilvusVectorStoreTest {
                 .addInitialArgument("dims", 5)
                 .addInitialArgument("index_type", "AUTOINDEX")
                 .addInitialArgument("metric_type", "COSINE")
-                // Avoid timing-sensitive assertions after insert/update; production defaults to
-                // BOUNDED unless callers require immediate read-after-write visibility.
+                // Test-only: avoid timing-sensitive assertions after insert/update. Production
+                // should use the default BOUNDED consistency unless immediate read-after-write
+                // visibility is required.
                 .addInitialArgument("consistency_level", "STRONG")
                 .build();
     }
