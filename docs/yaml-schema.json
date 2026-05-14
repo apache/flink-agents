@@ -1,0 +1,448 @@
+{
+  "$defs": {
+    "ActionSpec": {
+      "additionalProperties": false,
+      "description": "An action references a user function and the event types it listens to.\n\n``function`` is written as ``<module-or-class>:<qualname>`` \u2014 the\ncolon separates the Python module (or Java class FQN) from the\nattribute path inside it.\n\nAction signatures are fixed (``(Event, RunnerContext)``), so there is\nno ``parameter_types`` knob \u2014 Python doesn't need it, and the Java\naction signature is determined by the action contract.",
+      "properties": {
+        "config": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config"
+        },
+        "function": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Function"
+        },
+        "listen_to": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Listen To",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "python",
+                "java"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "required": [
+        "name",
+        "listen_to"
+      ],
+      "title": "ActionSpec",
+      "type": "object"
+    },
+    "AgentSpec": {
+      "additionalProperties": false,
+      "description": "One agent inside a YAML file's ``agents:`` list.\n\nHolds the agent's own resources and actions. Resources/actions declared\nat the file level (siblings of ``agents:``) are merged in by the loader.",
+      "properties": {
+        "actions": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ActionSpec"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "chat_model_connections": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Chat Model Connections",
+          "type": "array"
+        },
+        "chat_model_setups": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Chat Model Setups",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "embedding_model_connections": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Embedding Model Connections",
+          "type": "array"
+        },
+        "embedding_model_setups": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Embedding Model Setups",
+          "type": "array"
+        },
+        "mcp_servers": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Mcp Servers",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "prompts": {
+          "items": {
+            "$ref": "#/$defs/PromptSpec"
+          },
+          "title": "Prompts",
+          "type": "array"
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/$defs/SkillsSpec"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/ToolSpec"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "vector_stores": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Vector Stores",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "AgentSpec",
+      "type": "object"
+    },
+    "DescriptorSpec": {
+      "additionalProperties": true,
+      "description": "Schema for any ResourceDescriptor-backed resource.\n\nRequired: ``name`` and ``clazz``. ``type`` selects the implementation\nlanguage (``\"python\"`` or ``\"java\"``; ``None`` means Python). All\nremaining fields are forwarded verbatim to ``ResourceDescriptor`` as\nkwargs (or as the Java wrapper's kwargs when ``type: java``); the\nforwarding and language-aware wrapping is done by ``loader._build_descriptor``.",
+      "properties": {
+        "clazz": {
+          "title": "Clazz",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "python",
+                "java"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "required": [
+        "name",
+        "clazz"
+      ],
+      "title": "DescriptorSpec",
+      "type": "object"
+    },
+    "MessageRole": {
+      "description": "Role of a message in a chat conversation.",
+      "enum": [
+        "system",
+        "user",
+        "assistant",
+        "tool"
+      ],
+      "title": "MessageRole",
+      "type": "string"
+    },
+    "PromptMessage": {
+      "additionalProperties": false,
+      "description": "One message in a multi-turn prompt template.",
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/MessageRole",
+          "default": "user"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "title": "PromptMessage",
+      "type": "object"
+    },
+    "PromptSpec": {
+      "additionalProperties": false,
+      "description": "Declarative prompt: either a single ``text`` template or a list of\nrole-tagged ``messages``. Exactly one of the two fields must be set.",
+      "properties": {
+        "messages": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/PromptMessage"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Messages"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "PromptSpec",
+      "type": "object"
+    },
+    "SkillsSpec": {
+      "additionalProperties": false,
+      "description": "Declarative Skills resource pointing at one or more skill source\ndirectories on the local filesystem.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "paths"
+      ],
+      "title": "SkillsSpec",
+      "type": "object"
+    },
+    "ToolSpec": {
+      "additionalProperties": false,
+      "description": "Points ``function:`` at a callable tool.\n\n``function`` is written as ``<module-or-class>:<qualname>`` \u2014 the\ncolon separates the Python module (or Java class FQN) from the\nattribute path inside it. For Python, the right side may be a\nnested ``Class.method``.\n\n``parameter_types`` is required when ``type: java`` and is ignored\notherwise (Python tools are reflected from the callable signature).\nThe list contains one string per declared parameter of the Java\nmethod, in declaration order \u2014 the loader uses it to disambiguate\noverloaded methods on the Java class. Each string is one of:\n\n- A Java primitive name: one of ``boolean``, ``byte``, ``short``,\n  ``int``, ``long``, ``float``, ``double``, ``char``.\n- A fully-qualified Java reference type (including boxed\n  primitives), e.g. ``java.lang.Double``, ``java.lang.String``,\n  ``java.util.List``.\n\nGeneric type arguments are not part of the JVM method descriptor\nand must not be included (``java.util.List``, not\n``java.util.List<String>``).",
+      "properties": {
+        "function": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Function"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parameter_types": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parameter Types"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "python",
+                "java"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ToolSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top-level YAML document.\n\nAlways wraps one or more agents under ``agents:``. Resources and\nactions declared at the same level as ``agents:`` are shared:\nresources are registered on the environment; actions can be\nreferenced from any agent by name string.",
+  "properties": {
+    "actions": {
+      "items": {
+        "$ref": "#/$defs/ActionSpec"
+      },
+      "title": "Actions",
+      "type": "array"
+    },
+    "agents": {
+      "items": {
+        "$ref": "#/$defs/AgentSpec"
+      },
+      "title": "Agents",
+      "type": "array"
+    },
+    "chat_model_connections": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Chat Model Connections",
+      "type": "array"
+    },
+    "chat_model_setups": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Chat Model Setups",
+      "type": "array"
+    },
+    "embedding_model_connections": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Embedding Model Connections",
+      "type": "array"
+    },
+    "embedding_model_setups": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Embedding Model Setups",
+      "type": "array"
+    },
+    "mcp_servers": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Mcp Servers",
+      "type": "array"
+    },
+    "prompts": {
+      "items": {
+        "$ref": "#/$defs/PromptSpec"
+      },
+      "title": "Prompts",
+      "type": "array"
+    },
+    "skills": {
+      "items": {
+        "$ref": "#/$defs/SkillsSpec"
+      },
+      "title": "Skills",
+      "type": "array"
+    },
+    "tools": {
+      "items": {
+        "$ref": "#/$defs/ToolSpec"
+      },
+      "title": "Tools",
+      "type": "array"
+    },
+    "vector_stores": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Vector Stores",
+      "type": "array"
+    }
+  },
+  "required": [
+    "agents"
+  ],
+  "title": "YamlAgentsDocument",
+  "type": "object"
+}

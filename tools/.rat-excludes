@@ -18,3 +18,4 @@ PULL_REQUEST_TEMPLATE.md
 .*\.egg-info/*
 licenses/*
 skills/*
+.*\.yaml$
