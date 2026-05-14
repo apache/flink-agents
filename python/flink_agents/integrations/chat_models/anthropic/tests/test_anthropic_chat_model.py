@@ -23,12 +23,12 @@ import pytest
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
+from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import (
     DEFAULT_ANTHROPIC_MODEL,
     AnthropicChatModelConnection,
     AnthropicChatModelSetup,
 )
-from flink_agents.plan.tools.function_tool import from_callable
 
 test_model = os.environ.get("TEST_MODEL")
 api_key = os.environ.get("TEST_API_KEY")
@@ -84,7 +84,7 @@ def test_anthropic_chat_with_tools() -> None:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
             return connection
         else:
-            return from_callable(func=add)
+            return Tool.from_callable(func=add)
 
     mock_ctx = MagicMock(spec=ResourceContext)
     mock_ctx.get_resource = get_resource

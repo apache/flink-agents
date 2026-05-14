@@ -34,7 +34,7 @@ from flink_agents.plan.function import (
 )
 
 if TYPE_CHECKING:
-    from flink_agents.plan.function import Function
+    from flink_agents.api.function import Function
 
 
 def check_class(input_event: InputEvent, output_event: OutputEvent) -> None:
@@ -256,10 +256,6 @@ def test_cache_performance_benefit() -> None:
     """Test that caching provides performance benefits."""
     clear_python_function_cache()
 
-    # This test verifies that the same PythonFunction instance is reused
-    # We can't easily test performance directly, but we can verify that
-    # the cache key mechanism works correctly
-
     # First call creates cache entry
     call_python_function(
         "flink_agents.plan.tests.test_function", "function_for_caching", (1,)
@@ -285,7 +281,6 @@ def test_selective_caching_pure_functions() -> None:
     """Test that pure functions are cached."""
     clear_python_function_cache()
 
-    # Pure functions should be cached
     call_python_function(
         "flink_agents.plan.tests.test_function", "simple_pure_function", (1, 2)
     )
@@ -293,7 +288,6 @@ def test_selective_caching_pure_functions() -> None:
         "flink_agents.plan.tests.test_function", "function_for_caching", (5,)
     )
 
-    # Both should be in cache
     assert get_python_function_cache_size() == 2
     cache_keys = get_python_function_cache_keys()
     assert (
@@ -310,17 +304,13 @@ def test_selective_caching_generator_functions() -> None:
     """Test that generator functions are not cached."""
     clear_python_function_cache()
 
-    # Generator function should not be cached
     result = call_python_function(
         "flink_agents.plan.tests.test_function", "generator_function", (3,)
     )
-    # Result is now a generator directly (no wrapper)
     assert isinstance(result, Generator)
-    # Convert generator to list for testing
     result_list = list(result)
     assert result_list == [0, 1, 2]
 
-    # Should not be cached
     assert get_python_function_cache_size() == 0
 
 
@@ -328,7 +318,6 @@ def test_selective_caching_mutable_defaults() -> None:
     """Test that functions with mutable defaults are not cached."""
     clear_python_function_cache()
 
-    # Function with mutable default should not be cached
     result1 = call_python_function(
         "flink_agents.plan.tests.test_function", "function_with_mutable_default", ()
     )
@@ -336,57 +325,35 @@ def test_selective_caching_mutable_defaults() -> None:
         "flink_agents.plan.tests.test_function", "function_with_mutable_default", ()
     )
 
-    # Should not be cached (each call creates a new function instance)
     assert get_python_function_cache_size() == 0
 
-    # Results should be different if function is correctly not cached
-    # (mutable default behavior depends on not caching)
     assert isinstance(result1, list)
     assert isinstance(result2, list)
 
 
 def test_is_function_cacheable() -> None:
     """Test the _is_function_cacheable function directly."""
-    # Pure functions should be cacheable
     assert _is_function_cacheable(simple_pure_function) is True
     assert _is_function_cacheable(function_for_caching) is True
-
-    # Generator functions should not be cacheable
     assert _is_function_cacheable(generator_function) is False
-
-    # Functions with mutable defaults should not be cacheable
     assert _is_function_cacheable(function_with_mutable_default) is False
-
-    # Closures should not be cacheable
     closure_func = make_closure(5)
     assert _is_function_cacheable(closure_func) is False
-
-    # None should not be cacheable
     assert _is_function_cacheable(None) is False
 
 
 def test_python_function_cacheability_optimization() -> None:
     """Test that PythonFunction caches the cacheability check result."""
-    # Test cacheable function
     cacheable_func = PythonFunction.from_callable(simple_pure_function)
 
-    # First call should compute and cache the result
+    assert cacheable_func.is_cacheable() is True
     assert cacheable_func.is_cacheable() is True
 
-    # Second call should use cached result (we can't directly test this,
-    # but we can verify it returns the same result)
-    assert cacheable_func.is_cacheable() is True
-
-    # Test non-cacheable function
     non_cacheable_func = PythonFunction.from_callable(generator_function)
 
-    # First call should compute and cache the result
+    assert non_cacheable_func.is_cacheable() is False
     assert non_cacheable_func.is_cacheable() is False
 
-    # Second call should use cached result
-    assert non_cacheable_func.is_cacheable() is False
-
-    # Test that the cacheability check is consistent with direct _is_function_cacheable
     assert cacheable_func.is_cacheable() == _is_function_cacheable(simple_pure_function)
     assert non_cacheable_func.is_cacheable() == _is_function_cacheable(
         generator_function

@@ -53,8 +53,6 @@ class LoadSkillTool(Tool):
     (not the public ResourceContext interface).
     """
 
-    metadata: ToolMetadata = Field(exclude=True)
-
     def __init__(self, **kwargs: Any) -> None:
         """Initialize the load skill tool."""
         super().__init__(

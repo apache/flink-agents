@@ -111,6 +111,9 @@ class PythonBridgeManager implements AutoCloseable {
      * @param metricGroup the agent metric group, exposed to Python via the runner context.
      * @param mailboxThreadChecker hook used by the runner context to assert mailbox-thread access.
      * @param jobIdentifier the job identifier used to scope Python state.
+     * @param userCodeClassLoader the operator's user-code class loader, propagated to {@link
+     *     JavaResourceAdapter} so reflective Java tool resolution sees user jars added via {@code
+     *     env.add_jars(...)}.
      */
     void open(
             AgentPlan agentPlan,
@@ -121,7 +124,8 @@ class PythonBridgeManager implements AutoCloseable {
             JobID jobId,
             FlinkAgentsMetricGroupImpl metricGroup,
             Runnable mailboxThreadChecker,
-            String jobIdentifier)
+            String jobIdentifier,
+            ClassLoader userCodeClassLoader)
             throws Exception {
         boolean containPythonAction =
                 agentPlan.getActions().values().stream()
@@ -169,7 +173,8 @@ class PythonBridgeManager implements AutoCloseable {
                                             throw new RuntimeException(e);
                                         }
                                     }),
-                            pythonInterpreter);
+                            pythonInterpreter,
+                            userCodeClassLoader);
             if (containPythonResource || mem0Configured) {
                 initPythonResourceAdapter(agentPlan, resourceCache);
             }

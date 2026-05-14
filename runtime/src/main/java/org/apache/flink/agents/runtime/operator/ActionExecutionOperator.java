@@ -166,7 +166,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 getRuntimeContext().getJobInfo().getJobId(),
                 metricGroup,
                 this::checkMailboxThread,
-                jobIdentifier);
+                jobIdentifier,
+                getRuntimeContext().getUserCodeClassLoader());
 
         // Capture the wired Mem0 long-term memory, if any, so it can be plumbed into the Java
         // runner context created by ActionTaskContextManager.

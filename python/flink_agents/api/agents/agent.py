@@ -18,6 +18,7 @@
 from abc import ABC
 from typing import Any, Callable, Dict, List, Tuple
 
+from flink_agents.api.function import Function, PythonFunction
 from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
@@ -85,7 +86,7 @@ class Agent(ABC):
     """
 
     _actions: Dict[
-        str, Tuple[List[str], Callable, Dict[str, Any]]
+        str, Tuple[List[str], Function, Dict[str, Any] | None]
     ]
     _resources: Dict[ResourceType, Dict[str, Any]]
 
@@ -99,7 +100,7 @@ class Agent(ABC):
     @property
     def actions(
         self,
-    ) -> Dict[str, Tuple[List[str], Callable, Dict[str, Any]]]:
+    ) -> Dict[str, Tuple[List[str], Function, Dict[str, Any] | None]]:
         """Get added actions."""
         return self._actions
 
@@ -112,7 +113,7 @@ class Agent(ABC):
         self,
         name: str,
         events: List[str],
-        func: Callable,
+        func: Callable | Function,
         **config: Any,
     ) -> "Agent":
         """Add action to agent.
@@ -123,8 +124,10 @@ class Agent(ABC):
             The name of the action, should be unique in the same Agent.
         events : list[str]
             Type-identifier strings listened by this action.
-        func : Callable
-            The function to be executed when receive listened events.
+        func : Callable | Function
+            Either a raw Python callable (it will be wrapped as a
+            ``PythonFunction``) or a pre-built flink-agents ``Function``
+            (e.g. from the YAML loader).
         **config : Any
             Key named arguments can be used by this action in runtime.
 
@@ -136,6 +139,8 @@ class Agent(ABC):
         if name in self._actions:
             msg = f"Action {name} already defined"
             raise ValueError(msg)
+        if not isinstance(func, Function):
+            func = PythonFunction.from_callable(func)
         self._actions[name] = (events, func, config if config else None)
         return self
 

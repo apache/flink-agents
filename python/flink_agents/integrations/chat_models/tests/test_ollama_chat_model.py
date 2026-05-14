@@ -31,7 +31,8 @@ from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
 )
-from flink_agents.plan.tools.function_tool import FunctionTool, from_callable
+from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.tools.function_tool import FunctionTool
 
 test_model = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
 current_dir = Path(__file__).parent
@@ -90,7 +91,7 @@ def add(a: int, b: int) -> int:
 
 
 def get_tool(name: str, type: ResourceType) -> FunctionTool:
-    return from_callable(func=add)
+    return FunctionTool(func=PythonFunction.from_callable(add))
 
 
 @pytest.mark.skipif(

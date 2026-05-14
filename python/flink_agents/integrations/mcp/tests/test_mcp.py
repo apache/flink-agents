@@ -26,7 +26,8 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAu
 from pydantic import AnyUrl
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.integrations.mcp.mcp import MCPServer
+from flink_agents.api.tools.tool import ToolMetadata
+from flink_agents.integrations.mcp.mcp import MCPServer, MCPTool
 
 
 def run_server() -> None:
@@ -124,3 +125,27 @@ def test_serialize_mcp_server() -> None:
         deserialized.auth.context.client_metadata
         == mcp_server.auth.context.client_metadata
     )
+
+
+def test_mcp_tool_roundtrip_preserves_metadata() -> None:
+    metadata = ToolMetadata(
+        name="add",
+        description="Add two integers.",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "a": {"type": "integer"},
+                "b": {"type": "integer"},
+            },
+            "required": ["a", "b"],
+        },
+    )
+    tool = MCPTool(metadata=metadata, mcp_server=MCPServer(endpoint="http://x"))
+
+    dumped = tool.model_dump()
+    assert "metadata" in dumped, "serialized form must expose `metadata` key"
+    assert "metadata_" not in dumped
+
+    restored = MCPTool.model_validate(dumped)
+    assert restored.metadata == metadata
+    assert restored.name == "add"

@@ -20,7 +20,9 @@ from typing import Any, Dict
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.plan.function import JavaFunction
 from flink_agents.plan.resource_provider import JavaResourceProvider, ResourceProvider
+from flink_agents.plan.tools.function_tool import FunctionTool
 
 
 class ResourceCache:
@@ -85,6 +87,8 @@ class ResourceCache:
         resource = resource_provider.provide(
             resource_context=self._resource_context, config=self._config
         )
+        if isinstance(resource, FunctionTool) and isinstance(resource.func, JavaFunction):
+            resource.set_java_resource_adapter(self._j_resource_adapter)
         resource.open()
         self._cache.setdefault(type, {})[name] = resource
         return resource
