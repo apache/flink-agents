@@ -444,6 +444,204 @@ public class MyAgent extends Agent {
 
 ## Built-in Providers
 
+### Amazon OpenSearch
+
+[Amazon OpenSearch](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/) is a managed vector search service available in two flavors: OpenSearch Service (provisioned domains) and OpenSearch Serverless (AOSS). The Flink Agents integration supports both via a single `service_type` parameter, with IAM (SigV4) or basic authentication.
+
+{{< hint info >}}
+Amazon OpenSearch is only supported in Java currently. To use Amazon OpenSearch from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint info >}}
+Amazon OpenSearch implements `CollectionManageableVectorStore`, enabling [Long-Term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) support. Collections map to OpenSearch indices. OpenSearch indices do not natively support attaching arbitrary metadata, so any `metadata` passed to `createCollectionIfNotExists` is ignored. Callers needing per-document attributes should put them on the documents themselves.
+{{< /hint >}}
+
+#### Prerequisites
+
+1. Either an [OpenSearch Service](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/) provisioned domain with KNN enabled (version 2.x+), or an [OpenSearch Serverless](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/serverless.html) collection of type `VECTORSEARCH`
+2. For IAM auth: IAM credentials configured via the [AWS Default Credentials Provider](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/credentials-chain.html) with appropriate access policies (or a Serverless data-access policy)
+3. For basic auth (Service domains only): username and password for the OpenSearch domain
+
+#### OpenSearchVectorStore Parameters
+
+{{< tabs "OpenSearchVectorStore Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `embedding_model` | String | Required | Reference to embedding model resource name |
+| `endpoint` | String | Required | OpenSearch endpoint URL (e.g. `https://my-domain.us-east-1.es.amazonaws.com` for a domain, or the `*.aoss.amazonaws.com` endpoint for Serverless) |
+| `index` | String | Required | Default index name for document operations |
+| `service_type` | String | `"serverless"` | OpenSearch flavor: `"serverless"` (AOSS) or `"domain"` (OpenSearch Service) |
+| `auth` | String | `"iam"` | Authentication method: `"iam"` (SigV4) or `"basic"`. Basic auth is supported on Service domains only |
+| `username` | String | None | Username for basic authentication (required if `auth=basic`) |
+| `password` | String | None | Password for basic authentication (required if `auth=basic`) |
+| `vector_field` | String | `"embedding"` | Name of the KNN vector field in the index |
+| `content_field` | String | `"content"` | Name of the text content field in the index |
+| `region` | String | `"us-east-1"` | AWS region |
+| `dims` | int | `1024` | Vector dimensionality used when this integration creates an index |
+| `max_bulk_mb` | int | `5` | Maximum bulk payload size in MB |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Amazon OpenSearch Usage Example" >}}
+
+{{< tab "Java" >}}
+
+For an OpenSearch Serverless (AOSS) collection with IAM auth (the default):
+
+```java
+public class MyAgent extends Agent {
+
+    @EmbeddingModelConnection
+    public static ResourceDescriptor bedrockEmbeddingConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.BEDROCK_CONNECTION)
+                .addInitialArgument("region", "us-east-1")
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor bedrockEmbedding() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.BEDROCK_SETUP)
+                .addInitialArgument("connection", "bedrockEmbeddingConnection")
+                .addInitialArgument("dimensions", 1024)
+                .build();
+    }
+
+    @VectorStore
+    public static ResourceDescriptor opensearchStore() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.OPENSEARCH_VECTOR_STORE)
+                .addInitialArgument("embedding_model", "bedrockEmbedding")
+                .addInitialArgument("endpoint", "https://abc123.us-east-1.aoss.amazonaws.com")
+                .addInitialArgument("index", "my-vectors")
+                // service_type defaults to "serverless"; auth defaults to "iam"
+                .addInitialArgument("dims", 1024)
+                .build();
+    }
+
+    ...
+}
+```
+
+For an OpenSearch Service provisioned domain with IAM auth:
+
+```java
+@VectorStore
+public static ResourceDescriptor opensearchDomainStore() {
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.OPENSEARCH_VECTOR_STORE)
+            .addInitialArgument("embedding_model", "bedrockEmbedding")
+            .addInitialArgument("endpoint", "https://my-domain.us-east-1.es.amazonaws.com")
+            .addInitialArgument("index", "my-vectors")
+            .addInitialArgument("service_type", "domain")
+            .addInitialArgument("auth", "iam")
+            .addInitialArgument("dims", 1024)
+            .build();
+}
+```
+
+For an OpenSearch Service domain with basic auth:
+
+```java
+@VectorStore
+public static ResourceDescriptor opensearchDomainBasicAuth() {
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.OPENSEARCH_VECTOR_STORE)
+            .addInitialArgument("embedding_model", "bedrockEmbedding")
+            .addInitialArgument("endpoint", "https://my-domain.us-east-1.es.amazonaws.com")
+            .addInitialArgument("index", "my-vectors")
+            .addInitialArgument("service_type", "domain")
+            .addInitialArgument("auth", "basic")
+            .addInitialArgument("username", "admin")
+            .addInitialArgument("password", "your-password")
+            .addInitialArgument("dims", 1024)
+            .build();
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+### Amazon S3 Vectors
+
+[Amazon S3 Vectors](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html) is a purpose-built vector storage service from Amazon S3 that provides native support for storing and querying vector embeddings with sub-second query performance. It uses the S3 Vectors SDK for PutVectors, QueryVectors, GetVectors, and DeleteVectors operations.
+
+{{< hint info >}}
+Amazon S3 Vectors is only supported in Java currently. To use Amazon S3 Vectors from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint warning >}}
+Amazon S3 Vectors does **not** implement `CollectionManageableVectorStore`, so it does not support [Long-Term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) features. It also does not support `size()` or get-all operations: explicit document IDs are required for `get()` and `delete()`.
+{{< /hint >}}
+
+#### Prerequisites
+
+1. An [S3 Vectors vector bucket](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors-buckets.html) and vector index created in your AWS account
+2. IAM credentials configured via the [AWS Default Credentials Provider](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/credentials-chain.html) with appropriate S3 Vectors permissions
+
+#### S3VectorsVectorStore Parameters
+
+{{< tabs "S3VectorsVectorStore Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `embedding_model` | String | Required | Reference to embedding model resource name |
+| `vector_bucket` | String | Required | S3 Vectors bucket name |
+| `vector_index` | String | Required | S3 Vectors index name within the bucket |
+| `region` | String | `"us-east-1"` | AWS region |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Amazon S3 Vectors Usage Example" >}}
+
+{{< tab "Java" >}}
+
+```java
+public class MyAgent extends Agent {
+
+    @EmbeddingModelConnection
+    public static ResourceDescriptor bedrockEmbeddingConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.BEDROCK_CONNECTION)
+                .addInitialArgument("region", "us-east-1")
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor bedrockEmbedding() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.BEDROCK_SETUP)
+                .addInitialArgument("connection", "bedrockEmbeddingConnection")
+                .addInitialArgument("dimensions", 1024)
+                .build();
+    }
+
+    @VectorStore
+    public static ResourceDescriptor s3VectorsStore() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.S3_VECTORS_VECTOR_STORE)
+                .addInitialArgument("embedding_model", "bedrockEmbedding")
+                .addInitialArgument("vector_bucket", "my-vector-bucket")
+                .addInitialArgument("vector_index", "my-index")
+                .addInitialArgument("region", "us-east-1")
+                .build();
+    }
+
+    ...
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 ### Chroma
 
 [Chroma](https://www.trychroma.com/home) is an open-source vector database that provides efficient storage and querying of embeddings with support for multiple deployment modes.
