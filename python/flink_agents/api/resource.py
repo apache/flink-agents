@@ -276,6 +276,10 @@ class ResourceName:
             AZURE_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelConnection"
             AZURE_SETUP = "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup"
 
+            # Bedrock
+            BEDROCK_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelConnection"
+            BEDROCK_SETUP = "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup"
+
             # Ollama
             OLLAMA_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection"
             OLLAMA_SETUP = "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup"
@@ -313,6 +317,10 @@ class ResourceName:
             OLLAMA_CONNECTION = "org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelConnection"
             OLLAMA_SETUP = "org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelSetup"
 
+            # Bedrock
+            BEDROCK_CONNECTION = "org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelConnection"
+            BEDROCK_SETUP = "org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelSetup"
+
     class VectorStore:
         """VectorStore resource names."""
 
@@ -330,6 +338,12 @@ class ResourceName:
 
             # Elasticsearch
             ELASTICSEARCH_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.elasticsearch.ElasticsearchVectorStore"
+
+            # Amazon OpenSearch (Serverless or Service domains)
+            OPENSEARCH_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.opensearch.OpenSearchVectorStore"
+
+            # Amazon S3 Vectors
+            S3_VECTORS_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.s3vectors.S3VectorsVectorStore"
 
     # MCP resource names
     MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"
