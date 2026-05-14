@@ -359,6 +359,18 @@ public class AgentPlan implements Serializable {
         }
     }
 
+    private static ResourceDescriptor requireResourceDescriptor(
+            String name, ResourceType type, Object value) {
+        if (!(value instanceof ResourceDescriptor)) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Resource '%s' of type %s must be a ResourceDescriptor when added via"
+                                    + " Agent.addResource, but got %s",
+                            name, type, value == null ? "null" : value.getClass().getName()));
+        }
+        return (ResourceDescriptor) value;
+    }
+
     private void extractResource(ResourceType type, Method method) throws Exception {
         extractResource(type, method, null);
     }
@@ -561,25 +573,7 @@ public class AgentPlan implements Serializable {
 
         for (Map.Entry<ResourceType, Map<String, Object>> entry : agent.getResources().entrySet()) {
             ResourceType type = entry.getKey();
-            if (type == ResourceType.CHAT_MODEL || type == ResourceType.CHAT_MODEL_CONNECTION) {
-                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
-                    ResourceProvider provider;
-                    if (PythonResourceWrapper.class.isAssignableFrom(
-                            Class.forName(
-                                    ((ResourceDescriptor) kv.getValue()).getClazz(),
-                                    true,
-                                    Thread.currentThread().getContextClassLoader()))) {
-                        provider =
-                                new PythonResourceProvider(
-                                        kv.getKey(), type, (ResourceDescriptor) kv.getValue());
-                    } else {
-                        provider =
-                                new JavaResourceProvider(
-                                        kv.getKey(), type, (ResourceDescriptor) kv.getValue());
-                    }
-                    addResourceProvider(provider);
-                }
-            } else if (type == PROMPT) {
+            if (type == PROMPT) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     JavaSerializableResourceProvider provider =
                             JavaSerializableResourceProvider.createResourceProvider(
@@ -592,6 +586,30 @@ public class AgentPlan implements Serializable {
                     extractTool(
                             ((org.apache.flink.agents.api.tools.FunctionTool) kv.getValue())
                                     .getMethod());
+                }
+            } else if (type == MCP_SERVER) {
+                if (!entry.getValue().isEmpty()) {
+                    throw new UnsupportedOperationException(
+                            "Adding an MCP server via Agent.addResource is not supported."
+                                    + " Declare the MCP server with a @MCPServer-annotated static"
+                                    + " method on your Agent class so its tools and prompts can be"
+                                    + " discovered.");
+                }
+            } else {
+                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
+                    ResourceDescriptor descriptor =
+                            requireResourceDescriptor(kv.getKey(), type, kv.getValue());
+                    ResourceProvider provider;
+                    if (PythonResourceWrapper.class.isAssignableFrom(
+                            Class.forName(
+                                    descriptor.getClazz(),
+                                    true,
+                                    Thread.currentThread().getContextClassLoader()))) {
+                        provider = new PythonResourceProvider(kv.getKey(), type, descriptor);
+                    } else {
+                        provider = new JavaResourceProvider(kv.getKey(), type, descriptor);
+                    }
+                    addResourceProvider(provider);
                 }
             }
         }
