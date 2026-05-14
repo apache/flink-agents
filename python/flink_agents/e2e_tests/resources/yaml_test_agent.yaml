@@ -1,0 +1,32 @@
+agents:
+  - name: yaml_test_agent
+    description: YAML-driven e2e agent — chat model with a function tool.
+
+    chat_model_connections:
+      - name: ollama_connection
+        clazz: ollama
+        request_timeout: 240.0
+
+    chat_model_setups:
+      - name: math_chat_model
+        clazz: ollama
+        connection: ollama_connection
+        model: qwen3:1.7b
+        tools: [add]
+        extract_reasoning: true
+      - name: creative_chat_model
+        clazz: ollama
+        connection: ollama_connection
+        model: qwen3:1.7b
+        extract_reasoning: true
+
+    tools:
+      - name: add
+        function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:add
+    actions:
+      - name: process_input
+        function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:process_input
+        listen_to: [input]
+      - name: process_chat_response
+        function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:process_chat_response
+        listen_to: [chat_response]

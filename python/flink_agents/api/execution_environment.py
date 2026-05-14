@@ -17,7 +17,10 @@
 #################################################################################
 import importlib
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from importlib_resources import files
 from pyflink.common import TypeInformation
@@ -38,13 +41,14 @@ class AgentBuilder(ABC):
     """Builder for integrating agent with input and output."""
 
     @abstractmethod
-    def apply(self, agent: Agent) -> "AgentBuilder":
+    def apply(self, agent: "Agent | str") -> "AgentBuilder":
         """Set agent of AgentBuilder.
 
         Parameters
         ----------
-        agent : Agent
-            The agent user defined to run in execution environment.
+        agent : Agent | str
+            Either an Agent instance, or the name of an agent registered
+            on the environment (e.g. by ``load_yaml``).
         """
 
     @abstractmethod
@@ -92,6 +96,7 @@ class AgentsExecutionEnvironment(ABC):
     """Base class for agent execution environment."""
 
     _resources: Dict[ResourceType, Dict[str, Any]]
+    _agents: Dict[str, Agent]
 
     def __init__(self) -> None:
         """Init method."""
@@ -99,6 +104,7 @@ class AgentsExecutionEnvironment(ABC):
         self._resources = {}
         for type in ResourceType:
             self._resources[type] = {}
+        self._agents: Dict[str, Agent] = {}
 
     @property
     def resources(self) -> Dict[ResourceType, Dict[str, Any]]:
@@ -264,3 +270,13 @@ class AgentsExecutionEnvironment(ABC):
 
         self._resources[resource_type][name] = instance
         return self
+
+    def load_yaml(self, paths: "Path | str | List[Path | str]") -> None:
+        """Load one or more YAML files and register their declared agents
+        and shared resources on this environment.
+
+        See :mod:`flink_agents.api.yaml.loader` for the format reference.
+        """
+        from flink_agents.api.yaml.loader import load_yaml as _load_yaml
+
+        _load_yaml(self, paths)

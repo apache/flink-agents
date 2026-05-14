@@ -1,0 +1,46 @@
+agents:
+  - name: math_agent
+    description: Stage 1 — solves the math question via the ``add`` tool.
+    chat_model_setups:
+      - name: chat_model
+        clazz: ollama
+        connection: ollama_connection
+        model: qwen3:1.7b
+        tools: [add]
+        extract_reasoning: true
+    tools:
+      - name: add
+        function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:add
+    actions:
+      - name: chat_request
+        function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:chat_request
+        listen_to: [input]
+      - process_chat_response
+
+  - name: commentator_agent
+    description: |
+      Stage 2 — takes the upstream answer and asks a second chat model
+      to restate it. Reuses the file-level ``ollama_connection`` and
+      the file-level ``process_chat_response`` action.
+    chat_model_setups:
+      - name: chat_model
+        clazz: ollama
+        connection: ollama_connection
+        model: qwen3:1.7b
+        extract_reasoning: true
+    actions:
+      - name: commentary_request
+        function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:commentary_request
+        listen_to: [input]
+      - process_chat_response
+
+# File-level shared resources reused by every agent above.
+chat_model_connections:
+  - name: ollama_connection
+    clazz: ollama
+    request_timeout: 240.0
+
+actions:
+  - name: process_chat_response
+    function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:process_chat_response
+    listen_to: [chat_response]

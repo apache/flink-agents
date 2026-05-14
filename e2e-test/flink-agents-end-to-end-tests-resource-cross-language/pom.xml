@@ -72,4 +72,29 @@
             <version>${flink.version}</version>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+              Publish the compiled test-classes as a separate ``-tests.jar``
+              so the Python ``yaml_cross_language_test`` can add it to the
+              Flink classpath via ``env.add_jars(...)``. The Python test
+              references Java ``@Tool`` static methods declared in this
+              module's ``src/test/java`` (e.g. ``ChatModelCrossLanguageAgent``);
+              without this jar those classes only live in ``target/test-classes/``
+              and are not visible to the Flink runtime.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
