@@ -28,7 +28,8 @@ from flink_agents.integrations.chat_models.openai.openai_chat_model import (
     OpenAIChatModelConnection,
     OpenAIChatModelSetup,
 )
-from flink_agents.plan.tools.function_tool import from_callable
+from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.tools.function_tool import FunctionTool
 
 test_model = os.environ.get("TEST_MODEL")
 api_key = os.environ.get("TEST_API_KEY")
@@ -86,7 +87,7 @@ def test_openai_chat_with_tools() -> None:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
             return connection
         else:
-            return from_callable(func=add)
+            return FunctionTool(func=PythonFunction.from_callable(add))
 
     mock_ctx = MagicMock(spec=ResourceContext)
     mock_ctx.get_resource = get_resource

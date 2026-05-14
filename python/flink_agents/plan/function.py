@@ -22,7 +22,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Tuple, get_type_hints
 
-from pydantic import BaseModel, model_serializer
+from pydantic import BaseModel, PrivateAttr, model_serializer
 
 from flink_agents.plan.utils import check_type_match
 
@@ -102,7 +102,7 @@ def _is_function_cacheable(func: Callable) -> bool:
 
 
 class Function(BaseModel, ABC):
-    """Base interface for user defined functions, includes python and java."""
+    """Base interface for user-defined functions."""
 
     @abstractmethod
     def check_signature(self, *args: Tuple[Any, ...]) -> None:
@@ -216,6 +216,10 @@ class PythonFunction(Function):
         """
         return self.__get_func()(*args, **kwargs)
 
+    def as_callable(self) -> Callable:
+        """Return the underlying Python callable, importing the module if needed."""
+        return self.__get_func()
+
     def __get_func(self) -> Callable:
         if self.__func is None:
             module = importlib.import_module(self.module)
@@ -237,13 +241,19 @@ class PythonFunction(Function):
         return self.__is_cacheable
 
 
-# TODO: Implement JavaFunction.
 class JavaFunction(Function):
-    """Descriptor for a java callable function."""
+    """Descriptor for a Java callable function.
+
+    Invocation goes through the JVM resource adapter, injected by the
+    runtime via :meth:`set_java_resource_adapter`; until then
+    ``__call__`` raises ``RuntimeError``.
+    """
 
     qualname: str
     method_name: str
     parameter_types: List[str]
+
+    _j_resource_adapter: Any = PrivateAttr(default=None)
 
     @model_serializer
     def __custom_serializer(self) -> dict[str, Any]:
@@ -255,8 +265,30 @@ class JavaFunction(Function):
         }
         return data
 
+    def set_java_resource_adapter(self, adapter: Any) -> None:
+        """Inject the JVM adapter used to invoke this Java method."""
+        self._j_resource_adapter = adapter
+
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
-        """Execute the stored function with provided arguments."""
+        """Invoke the Java method via the JVM resource adapter.
+
+        LLM tool calls always arrive as keyword arguments — positional
+        ``*args`` are ignored because the Java side reorders parameters
+        by name via reflection.
+        """
+        if self._j_resource_adapter is None:
+            msg = (
+                "JavaFunction requires the JVM resource adapter; not set "
+                "on this descriptor. The runtime should inject it via "
+                "set_java_resource_adapter before invocation."
+            )
+            raise RuntimeError(msg)
+        return self._j_resource_adapter.invokeJavaTool(
+            self.qualname,
+            self.method_name,
+            self.parameter_types,
+            kwargs,
+        )
 
     def check_signature(self, *args: Tuple[Any, ...]) -> None:
         """Check function signature is legal or not."""

@@ -50,7 +50,8 @@ class PythonBridgeManagerTest {
                     /* jobId */ new JobID(),
                     /* metricGroup */ null,
                     /* mailboxThreadChecker */ () -> {},
-                    /* jobIdentifier */ "job-1");
+                    /* jobIdentifier */ "job-1",
+                    /* userCodeClassLoader */ Thread.currentThread().getContextClassLoader());
 
             // No-op contract: nothing initialized, no Pemja interpreter created.
             assertThat(bridge.isInitialized()).isFalse();
