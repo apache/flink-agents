@@ -50,8 +50,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
-import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LOGGER_TYPE;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LISTENERS;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LOGGER_TYPE;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -92,7 +92,7 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     private BuiltInMetrics builtInMetrics;
 
     EventRouter(AgentPlan agentPlan, boolean inputIsJava) {
-        this(agentPlan, inputIsJava, createEventLogger());
+        this(agentPlan, inputIsJava, createEventLogger(agentPlan));
     }
 
     @VisibleForTesting
@@ -138,8 +138,7 @@ class EventRouter<IN, OUT> implements AutoCloseable {
      * @throws RuntimeException if any listener class fails to instantiate.
      */
     void initEventListeners(StreamingRuntimeContext runtimeContext) {
-        final List<String> eventListenerClassList =
-                agentPlan.getConfig().get(EVENT_LISTENERS);
+        final List<String> eventListenerClassList = agentPlan.getConfig().get(EVENT_LISTENERS);
         if (eventListenerClassList == null || eventListenerClassList.isEmpty()) {
             return;
         }
@@ -284,12 +283,12 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         eventListeners.add(listener);
     }
 
-    private static EventLogger createEventLogger() {
+    private static EventLogger createEventLogger(AgentPlan agentPlan) {
         // Honor the EVENT_LOGGER_TYPE config, defaulting to SLF4J so events surface in the Flink
         // Web UI by default. An explicit baseLogDir forces the file logger for backward
         // compatibility with the existing file-based logging path.
-        LoggerType loggerType = this.agentPlan.getConfig().get(EVENT_LOGGER_TYPE);
-        String baseLogDir = this.agentPlan.getConfig().get(BASE_LOG_DIR);
+        LoggerType loggerType = agentPlan.getConfig().get(EVENT_LOGGER_TYPE);
+        String baseLogDir = agentPlan.getConfig().get(BASE_LOG_DIR);
         if (baseLogDir != null && !baseLogDir.trim().isEmpty()) {
             loggerType = LoggerType.FILE;
         }
@@ -300,7 +299,7 @@ class EventRouter<IN, OUT> implements AutoCloseable {
                         .loggerType(loggerType)
                         .property(
                                 EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY,
-                                this.agentPlan.getConfig().getConfData())
+                                agentPlan.getConfig().getConfData())
                         .build();
         return EventLoggerFactory.createLogger(config);
     }
