@@ -160,7 +160,7 @@ public class MilvusVectorStore extends BaseVectorStore implements CollectionMana
     /** Milvus connection configuration built from the resource descriptor. */
     private final ConnectConfig connectConfig;
     /** Lazily-created Milvus client used to execute collection and vector requests. */
-    private transient @Nullable MilvusClientV2 client;
+    private transient volatile @Nullable MilvusClientV2 client;
 
     private final Gson gson = new Gson();
 
@@ -277,9 +277,11 @@ public class MilvusVectorStore extends BaseVectorStore implements CollectionMana
 
     @Override
     public void close() {
-        if (this.client != null) {
-            this.client.close();
-            this.client = null;
+        synchronized (this) {
+            if (this.client != null) {
+                this.client.close();
+                this.client = null;
+            }
         }
     }
 
@@ -320,10 +322,17 @@ public class MilvusVectorStore extends BaseVectorStore implements CollectionMana
 
     /** Returns the lazily-created Milvus client. */
     private MilvusClientV2 client() {
-        if (this.client == null) {
-            this.client = new MilvusClientV2(this.connectConfig);
+        MilvusClientV2 current = this.client;
+        if (current == null) {
+            synchronized (this) {
+                current = this.client;
+                if (current == null) {
+                    current = new MilvusClientV2(this.connectConfig);
+                    this.client = current;
+                }
+            }
         }
-        return this.client;
+        return current;
     }
 
     /**
