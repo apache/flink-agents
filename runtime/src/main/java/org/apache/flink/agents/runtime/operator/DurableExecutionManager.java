@@ -23,6 +23,7 @@ import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.actionstate.FlussActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.context.ActionStatePersister;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -48,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
+import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.FLUSS;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
 
 /**
@@ -113,10 +115,15 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      * @param config the agent configuration carrying the backend selection.
      */
     void maybeInitActionStateStore(AgentConfiguration config) {
-        if (actionStateStore == null
-                && KAFKA.getType().equalsIgnoreCase(config.get(ACTION_STATE_STORE_BACKEND))) {
-            LOG.info("Using Kafka as backend of action state store.");
-            actionStateStore = new KafkaActionStateStore(config);
+        if (actionStateStore == null) {
+            String backend = config.get(ACTION_STATE_STORE_BACKEND);
+            if (KAFKA.getType().equalsIgnoreCase(backend)) {
+                LOG.info("Using Kafka as backend of action state store.");
+                actionStateStore = new KafkaActionStateStore(config);
+            } else if (FLUSS.getType().equalsIgnoreCase(backend)) {
+                LOG.info("Using Fluss as backend of action state store.");
+                actionStateStore = new FlussActionStateStore(config);
+            }
         }
     }
 
