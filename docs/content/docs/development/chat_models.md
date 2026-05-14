@@ -961,6 +961,103 @@ Some popular options include:
 Model availability and specifications may change. Always check the official DashScope documentation for the latest information before implementing in production.
 {{< /hint >}}
 
+### Amazon Bedrock
+
+Amazon Bedrock provides access to a wide range of foundation models from leading AI providers through a unified API. The Flink Agents Bedrock integration uses the [Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html), which provides a consistent interface across all supported models with native tool calling support. Authentication is handled via SigV4 using the AWS default credentials chain — no API keys required.
+
+{{< hint info >}}
+Amazon Bedrock is only supported in Java currently. To use Amazon Bedrock from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. An AWS account with [Amazon Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) enabled for the models you plan to use
+2. IAM credentials configured via any method supported by the [AWS Default Credentials Provider](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/credentials-chain.html) (environment variables, `~/.aws/credentials`, IAM role, etc.)
+
+#### BedrockChatModelConnection Parameters
+
+{{< tabs "BedrockChatModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `region` | String | `"us-east-1"` | AWS region for the Bedrock service |
+| `model` | String | None | Default model ID (can be overridden per setup) |
+| `max_retries` | int | `5` | Maximum number of API retry attempts (retries on throttling, 429, 503) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### BedrockChatModelSetup Parameters
+
+{{< tabs "BedrockChatModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | Required | Bedrock model ID (e.g. `"us.anthropic.claude-sonnet-4-20250514-v1:0"`) |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 1.0) |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Amazon Bedrock Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor bedrockConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.BEDROCK_CONNECTION)
+                .addInitialArgument("region", "us-east-1")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor bedrockChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.BEDROCK_SETUP)
+                .addInitialArgument("connection", "bedrockConnection")
+                .addInitialArgument("model", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+                .addInitialArgument("temperature", 0.1d)
+                .addInitialArgument("max_tokens", 4096)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Amazon Bedrock supports models from multiple providers through a single API. Visit the [Amazon Bedrock Model IDs documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the complete and up-to-date list of available models.
+
+Some popular options include:
+- **Claude** (Anthropic): `us.anthropic.claude-sonnet-4-6`, `us.anthropic.claude-opus-4-7`, `us.anthropic.claude-opus-4-6-v1`
+- **Llama** (Meta): `us.meta.llama4-scout-17b-16e-instruct-v1:0`
+- **Mistral**: `mistral.mistral-large-2402-v1:0`
+- **Amazon Nova**: `us.amazon.nova-pro-v1:0`, `us.amazon.nova-lite-v1:0`
+
+{{< hint warning >}}
+Model availability varies by AWS region and requires explicit model access enablement in the Bedrock console. Always check the [Amazon Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-regions.html) for regional availability before implementing in production.
+{{< /hint >}}
+
+{{< hint warning >}}
+**Current limitations:** The integration uses text content blocks only. Extended thinking / reasoning content blocks (e.g. Claude extended thinking), citation blocks, and image / document content blocks are not yet supported.
+{{< /hint >}}
+
 ## Using Cross-Language Providers
 
 Flink Agents supports cross-language chat model integration, allowing you to use chat models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a chat model provider is only available in one language (e.g., Tongyi is currently Python-only).

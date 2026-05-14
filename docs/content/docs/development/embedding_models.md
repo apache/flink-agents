@@ -464,6 +464,99 @@ Some popular options include:
 Model availability and specifications may change. Always check the official DashScope documentation for the latest information before implementing in production.
 {{< /hint >}}
 
+### Amazon Bedrock
+
+Amazon Bedrock provides embedding capabilities through the Amazon Titan Text Embeddings V2 model via the [InvokeModel API](https://docs.aws.amazon.com/bedrock/latest/userguide/titan-embedding-models.html). The integration supports configurable output dimensions (256, 512, or 1024) and parallelizes batch embedding via a configurable thread pool, since the Titan V2 model processes one text per API call. Authentication is handled via SigV4 using the AWS default credentials chain.
+
+{{< hint info >}}
+Amazon Bedrock embedding models are only supported in Java currently. To use Amazon Bedrock embeddings from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. An AWS account with [Amazon Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) enabled for Amazon Titan Text Embeddings V2
+2. IAM credentials configured via any method supported by the [AWS Default Credentials Provider](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/credentials-chain.html)
+
+#### BedrockEmbeddingModelConnection Parameters
+
+{{< tabs "BedrockEmbeddingModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `region` | String | `"us-east-1"` | AWS region for the Bedrock service |
+| `model` | String | `"amazon.titan-embed-text-v2:0"` | Default embedding model ID |
+| `embed_concurrency` | int | `4` | Thread pool size for parallel batch embedding |
+| `max_retries` | int | `5` | Maximum number of API retry attempts (retries on throttling, 429, 503) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### BedrockEmbeddingModelSetup Parameters
+
+{{< tabs "BedrockEmbeddingModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | None | Override the default embedding model from the connection |
+| `dimensions` | int | None | Output embedding dimensions: 256, 512, or 1024 |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Amazon Bedrock Embedding Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+
+    @EmbeddingModelConnection
+    public static ResourceDescriptor bedrockEmbeddingConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.BEDROCK_CONNECTION)
+                .addInitialArgument("region", "us-east-1")
+                .addInitialArgument("embed_concurrency", 8)
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor bedrockEmbedding() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.BEDROCK_SETUP)
+                .addInitialArgument("connection", "bedrockEmbeddingConnection")
+                .addInitialArgument("model", "amazon.titan-embed-text-v2:0")
+                .addInitialArgument("dimensions", 1024)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+The Bedrock embedding integration currently supports:
+- **Amazon Titan Text Embeddings V2** (`amazon.titan-embed-text-v2:0`) — supports 256, 512, or 1024 dimensions
+
+{{< hint info >}}
+The integration always requests **normalized** embeddings (unit vectors), which makes cosine similarity equivalent to dot product. If you need raw, un-normalized vectors, use a custom provider.
+{{< /hint >}}
+
+Visit the [Amazon Bedrock Embedding Models documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/titan-embedding-models.html) for the latest information.
+
+{{< hint warning >}}
+Model availability varies by AWS region and requires explicit model access enablement in the Bedrock console. Always check the [Amazon Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-regions.html) for regional availability before implementing in production.
+{{< /hint >}}
+
 ## Using Cross-Language Providers
 
 Flink Agents supports cross-language embedding model integration, allowing you to use embedding models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when an embedding model provider is only available in one language (e.g., OpenAI embedding is currently Python-only).
