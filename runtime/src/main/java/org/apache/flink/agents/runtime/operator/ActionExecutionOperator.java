@@ -182,6 +182,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Initialize the event logger if it is set.
         eventRouter.initEventLogger(getRuntimeContext());
 
+        // Initialize user event listeners from configuration
+        eventRouter.initEventListeners(getRuntimeContext());
+
         // Since an operator restart may change the key range it manages due to changes in
         // parallelism,
         // and {@link tryProcessActionTaskForKey} mails might be lost,

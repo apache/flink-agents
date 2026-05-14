@@ -17,10 +17,10 @@
  */
 package org.apache.flink.agents.api.configuration;
 
-import java.util.List;
-
 import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.LoggerType;
+
+import java.util.List;
 
 /** The set of configuration options for agents parameters. */
 public class AgentConfigOptions {

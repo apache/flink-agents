@@ -41,6 +41,8 @@ import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.FlinkException;
+import org.apache.flink.util.InstantiationUtil;
 
 import javax.annotation.Nullable;
 
@@ -49,6 +51,7 @@ import java.util.List;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LOGGER_TYPE;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LISTENERS;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -83,16 +86,18 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     private final boolean inputIsJava;
     private final EventLogger eventLogger;
     private final List<EventListener> eventListeners;
+    private final AgentPlan agentPlan;
     private StreamRecord<OUT> reusedStreamRecord;
     private SegmentedQueue keySegmentQueue;
     private BuiltInMetrics builtInMetrics;
 
     EventRouter(AgentPlan agentPlan, boolean inputIsJava) {
-        this(agentPlan, inputIsJava, createEventLogger(agentPlan));
+        this(agentPlan, inputIsJava, createEventLogger());
     }
 
     @VisibleForTesting
     EventRouter(AgentPlan agentPlan, boolean inputIsJava, EventLogger eventLogger) {
+        this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
         this.eventLogger = eventLogger;
         this.eventListeners = new ArrayList<>();
@@ -125,6 +130,33 @@ class EventRouter<IN, OUT> implements AutoCloseable {
             ((Slf4jEventLogger) eventLogger)
                     .setTruncatedEventsCounter(builtInMetrics.getEventLogTruncatedEventsCounter());
         }
+    }
+
+    /**
+     * Initializes the {@link EventListener}s configured for this agent.
+     *
+     * @throws RuntimeException if any listener class fails to instantiate.
+     */
+    void initEventListeners(StreamingRuntimeContext runtimeContext) {
+        final List<String> eventListenerClassList =
+                agentPlan.getConfig().get(EVENT_LISTENERS);
+        if (eventListenerClassList == null || eventListenerClassList.isEmpty()) {
+            return;
+        }
+
+        final ClassLoader userCodeClassLoader = runtimeContext.getUserCodeClassLoader();
+        final List<EventListener> eventListeners = new ArrayList<>();
+        for (String listenerClassName : eventListenerClassList) {
+            try {
+                eventListeners.add(
+                        InstantiationUtil.instantiate(
+                                listenerClassName, EventListener.class, userCodeClassLoader));
+            } catch (FlinkException e) {
+                throw new RuntimeException(
+                        "Failed to instantiate EventListener: " + listenerClassName, e);
+            }
+        }
+        this.eventListeners.addAll(eventListeners);
     }
 
     /**
@@ -252,12 +284,12 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         eventListeners.add(listener);
     }
 
-    private static EventLogger createEventLogger(AgentPlan agentPlan) {
+    private static EventLogger createEventLogger() {
         // Honor the EVENT_LOGGER_TYPE config, defaulting to SLF4J so events surface in the Flink
         // Web UI by default. An explicit baseLogDir forces the file logger for backward
         // compatibility with the existing file-based logging path.
-        LoggerType loggerType = agentPlan.getConfig().get(EVENT_LOGGER_TYPE);
-        String baseLogDir = agentPlan.getConfig().get(BASE_LOG_DIR);
+        LoggerType loggerType = this.agentPlan.getConfig().get(EVENT_LOGGER_TYPE);
+        String baseLogDir = this.agentPlan.getConfig().get(BASE_LOG_DIR);
         if (baseLogDir != null && !baseLogDir.trim().isEmpty()) {
             loggerType = LoggerType.FILE;
         }
@@ -268,7 +300,7 @@ class EventRouter<IN, OUT> implements AutoCloseable {
                         .loggerType(loggerType)
                         .property(
                                 EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY,
-                                agentPlan.getConfig().getConfData())
+                                this.agentPlan.getConfig().getConfData())
                         .build();
         return EventLoggerFactory.createLogger(config);
     }
