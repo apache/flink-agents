@@ -59,6 +59,12 @@ public final class ResourceName {
         public static final String AZURE_SETUP =
                 "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup";
 
+        // Bedrock
+        public static final String BEDROCK_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelConnection";
+        public static final String BEDROCK_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup";
+
         // Ollama
         public static final String OLLAMA_CONNECTION =
                 "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection";
@@ -131,6 +137,12 @@ public final class ResourceName {
         public static final String OLLAMA_SETUP =
                 "org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelSetup";
 
+        // Bedrock
+        public static final String BEDROCK_CONNECTION =
+                "org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelConnection";
+        public static final String BEDROCK_SETUP =
+                "org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelSetup";
+
         // Python Wrapper
         public static final String PYTHON_WRAPPER_CONNECTION =
                 "org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelConnection";
@@ -170,6 +182,14 @@ public final class ResourceName {
         // Elasticsearch
         public static final String ELASTICSEARCH_VECTOR_STORE =
                 "org.apache.flink.agents.integrations.vectorstores.elasticsearch.ElasticsearchVectorStore";
+
+        // Amazon OpenSearch (Serverless or Service domains)
+        public static final String OPENSEARCH_VECTOR_STORE =
+                "org.apache.flink.agents.integrations.vectorstores.opensearch.OpenSearchVectorStore";
+
+        // Amazon S3 Vectors
+        public static final String S3_VECTORS_VECTOR_STORE =
+                "org.apache.flink.agents.integrations.vectorstores.s3vectors.S3VectorsVectorStore";
 
         // Python Wrapper
         public static final String PYTHON_WRAPPER_VECTOR_STORE =
