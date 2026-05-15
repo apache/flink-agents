@@ -20,6 +20,8 @@ package org.apache.flink.agents.api.configuration;
 import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.LoggerType;
 
+import java.util.List;
+
 /** The set of configuration options for agents parameters. */
 public class AgentConfigOptions {
 
@@ -135,4 +137,9 @@ public class AgentConfigOptions {
      */
     public static final ConfigOption<Integer> EVENT_LOG_MAX_DEPTH =
             new ConfigOption<>("event-log.standard.max-depth", Integer.class, 5);
+
+    /** The config parameter specifies the list of event listener class names. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public static final ConfigOption<List<String>> EVENT_LISTENERS =
+            (ConfigOption) new ConfigOption<>("event-listeners", List.class, null);
 }
