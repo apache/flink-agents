@@ -43,6 +43,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** Contract tests for {@link DurableExecutionManager}. */
@@ -66,6 +67,30 @@ class DurableExecutionManagerTest {
         dem.maybePruneState("k", 0L);
         dem.notifyCheckpointComplete(1L);
         dem.snapshotRecoveryMarker();
+        dem.close();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void noStoreModeSnapshotAndNotifyKeepCheckpointMapEmpty() throws Exception {
+        DurableExecutionManager dem = new DurableExecutionManager(null);
+        KeyedStateBackend<Object> backend = mock(KeyedStateBackend.class);
+
+        // Cycle 1: snapshot + notify with null store. The snapshot-side guard must short-circuit
+        // before any backend access, and the cleanup-side guard must leave the map untouched.
+        dem.snapshotLastCompletedSequenceNumbers(backend, 1L);
+        assertThat(dem.getCheckpointIdToSeqNums()).isEmpty();
+        verifyNoInteractions(backend);
+        dem.notifyCheckpointComplete(1L);
+        assertThat(dem.getCheckpointIdToSeqNums()).isEmpty();
+
+        // Cycle 2: confirm the invariant holds across multiple checkpoints.
+        dem.snapshotLastCompletedSequenceNumbers(backend, 2L);
+        assertThat(dem.getCheckpointIdToSeqNums()).isEmpty();
+        verifyNoInteractions(backend);
+        dem.notifyCheckpointComplete(2L);
+        assertThat(dem.getCheckpointIdToSeqNums()).isEmpty();
+
         dem.close();
     }
 
