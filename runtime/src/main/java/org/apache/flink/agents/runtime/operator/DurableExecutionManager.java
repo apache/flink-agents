@@ -319,12 +319,6 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         }
     }
 
-    void maybePruneState(Object key, long sequenceNum) throws Exception {
-        if (actionStateStore != null) {
-            actionStateStore.pruneState(key, sequenceNum);
-        }
-    }
-
     /**
      * Prunes durable state for all per-key sequence numbers that were captured at the time of the
      * given checkpoint.

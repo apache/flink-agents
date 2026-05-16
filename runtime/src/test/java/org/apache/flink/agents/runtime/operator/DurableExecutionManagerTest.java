@@ -65,7 +65,6 @@ class DurableExecutionManagerTest {
         // Every maybe* method must be a silent no-op.
         assertThat(dem.maybeGetActionState("k", 0L, action, event)).isNull();
         dem.maybeInitActionState("k", 0L, action, event);
-        dem.maybePruneState("k", 0L);
         dem.notifyCheckpointComplete(1L);
         dem.snapshotRecoveryMarker();
         dem.close();
