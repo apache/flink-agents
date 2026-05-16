@@ -34,7 +34,6 @@ from flink_agents.api.vector_stores.vector_store import (
     Document,
     VectorStoreQuery,
     VectorStoreQueryMode,
-    VectorStoreQueryResult,
 )
 from flink_agents.plan.resource_provider import JAVA_RESOURCE_MAPPING
 from flink_agents.runtime.java.java_resource_wrapper import (
@@ -263,15 +262,6 @@ def from_java_vector_store_query(j_query: Any) -> VectorStoreQuery:
     )
 
 
-def from_java_vector_store_query_result(j_query: Any) -> VectorStoreQueryResult:
-    """Convert a Java vector store query result to a Python query result."""
-    return VectorStoreQueryResult(
-        documents=[
-            from_java_document(j_document) for j_document in j_query.getDocuments()
-        ],
-    )
-
-
 def from_java_message_role(j_role: Any) -> MessageRole:
     """Convert a Java message role to a Python message role."""
     return MessageRole(j_role.getValue())
@@ -286,11 +276,6 @@ def get_java_tool_metadata_from_tool(tool: Tool) -> typing.Dict[str, str]:
             tool.metadata.args_schema
         ),
     }
-
-
-def get_mode_value(query: VectorStoreQuery) -> str:
-    """Get the mode value of a VectorStoreQuery."""
-    return query.mode.value
 
 
 def get_long_term_memory(ctx: Any) -> Any:
