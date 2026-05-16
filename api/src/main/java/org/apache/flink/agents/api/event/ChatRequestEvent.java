@@ -42,7 +42,7 @@ public class ChatRequestEvent extends Event {
             String model, List<ChatMessage> messages, @Nullable Object outputSchema) {
         super(EVENT_TYPE);
         setAttr("model", model);
-        setAttr("messages", messages);
+        setAttr("messages", new ArrayList<>(messages));
         if (outputSchema != null) {
             setAttr("output_schema", outputSchema);
         }
