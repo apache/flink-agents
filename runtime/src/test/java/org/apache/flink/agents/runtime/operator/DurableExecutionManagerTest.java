@@ -28,6 +28,7 @@ import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.runtime.state.KeyedStateBackend;
 import org.apache.flink.runtime.state.KeyedStateFunction;
 import org.apache.flink.runtime.state.OperatorStateBackend;
@@ -239,5 +240,133 @@ class DurableExecutionManagerTest {
         verify(spyStore).rebuildState(List.of("test-marker"));
 
         dem.close();
+    }
+
+    @Test
+    void notifyAbortedRemovesEntryWithoutPruning() throws Exception {
+        // Use a cleanup-enabled in-memory store so pruning would be observable if it
+        // (incorrectly) fired on abort. doCleanup=true makes pruneState remove the keyed entry
+        // from getKeyedActionStates().
+        InMemoryActionStateStore store = new InMemoryActionStateStore(true);
+        DurableExecutionManager dem = new DurableExecutionManager(store);
+
+        Action action = TestActions.noopAction();
+        Event event = new InputEvent(1L);
+        String key = "key-a";
+        long seq = 7L;
+        long checkpointId = 1L;
+
+        // Seed durable state for the key/seq pair.
+        dem.maybeInitActionState(key, seq, action, event);
+        assertThat(store.getKeyedActionStates()).containsKey(key);
+
+        // Snapshot the per-key sequence number for this checkpoint. Stub the backend so that
+        // applyToAllKeys invokes the provided KeyedStateFunction once with our seeded key and a
+        // ValueState that returns the seeded sequence number.
+        @SuppressWarnings("unchecked")
+        KeyedStateBackend<Object> backend = mock(KeyedStateBackend.class);
+        stubApplyToAllKeysSingle(backend, key, seq);
+        dem.snapshotLastCompletedSequenceNumbers(backend, checkpointId);
+        assertThat(dem.getCheckpointIdToSeqNums()).containsKey(checkpointId);
+
+        // Abort the checkpoint.
+        dem.notifyCheckpointAborted(checkpointId);
+
+        // The in-memory tracking entry is released.
+        assertThat(dem.getCheckpointIdToSeqNums()).doesNotContainKey(checkpointId);
+        // The durable state was NOT pruned — the key is still present in the store.
+        assertThat(store.getKeyedActionStates()).containsKey(key);
+
+        dem.close();
+    }
+
+    @Test
+    void completedAndAbortedInterleavedKeepsInFlightEntries() throws Exception {
+        // doCleanup=true so a completed checkpoint's pruneState calls are observable as a
+        // disappearance from getKeyedActionStates().
+        InMemoryActionStateStore store = new InMemoryActionStateStore(true);
+        DurableExecutionManager dem = new DurableExecutionManager(store);
+
+        Action action = TestActions.noopAction();
+        Event eventA = new InputEvent(1L);
+        Event eventB = new InputEvent(2L);
+        Event eventC = new InputEvent(3L);
+        String keyA = "key-a";
+        String keyB = "key-b";
+        String keyC = "key-c";
+
+        // Seed durable state for three distinct keys, one per upcoming checkpoint.
+        dem.maybeInitActionState(keyA, 10L, action, eventA);
+        dem.maybeInitActionState(keyB, 20L, action, eventB);
+        dem.maybeInitActionState(keyC, 30L, action, eventC);
+        assertThat(store.getKeyedActionStates()).containsKeys(keyA, keyB, keyC);
+
+        // Snapshot three checkpoints. Each snapshot is stubbed to record exactly one key with its
+        // seeded sequence number, so the per-checkpoint map is fully deterministic.
+        @SuppressWarnings("unchecked")
+        KeyedStateBackend<Object> backendA = mock(KeyedStateBackend.class);
+        stubApplyToAllKeysSingle(backendA, keyA, 10L);
+        dem.snapshotLastCompletedSequenceNumbers(backendA, 1L);
+
+        @SuppressWarnings("unchecked")
+        KeyedStateBackend<Object> backendB = mock(KeyedStateBackend.class);
+        stubApplyToAllKeysSingle(backendB, keyB, 20L);
+        dem.snapshotLastCompletedSequenceNumbers(backendB, 2L);
+
+        @SuppressWarnings("unchecked")
+        KeyedStateBackend<Object> backendC = mock(KeyedStateBackend.class);
+        stubApplyToAllKeysSingle(backendC, keyC, 30L);
+        dem.snapshotLastCompletedSequenceNumbers(backendC, 3L);
+
+        assertThat(dem.getCheckpointIdToSeqNums()).containsKeys(1L, 2L, 3L);
+
+        // Complete checkpoint 1 (prunes keyA) and abort checkpoint 2 (releases entry without
+        // pruning keyB). Checkpoint 3 stays in-flight.
+        dem.notifyCheckpointComplete(1L);
+        dem.notifyCheckpointAborted(2L);
+
+        // Only the in-flight checkpoint entry remains.
+        assertThat(dem.getCheckpointIdToSeqNums()).containsOnlyKeys(3L);
+
+        // Completed checkpoint's durable state was pruned away.
+        assertThat(store.getKeyedActionStates()).doesNotContainKey(keyA);
+        // Aborted checkpoint's durable state is untouched.
+        assertThat(store.getKeyedActionStates()).containsKey(keyB);
+        // In-flight checkpoint's durable state is untouched.
+        assertThat(store.getKeyedActionStates()).containsKey(keyC);
+
+        dem.close();
+    }
+
+    @Test
+    void noStoreModeNotifyCheckpointAbortedIsNoOp() {
+        DurableExecutionManager dem = new DurableExecutionManager(null);
+
+        // Should not throw and should not populate any per-checkpoint map entries.
+        dem.notifyCheckpointAborted(42L);
+
+        assertThat(dem.getCheckpointIdToSeqNums()).isEmpty();
+    }
+
+    /**
+     * Stubs {@code backend.applyToAllKeys(...)} to invoke the supplied {@link KeyedStateFunction}
+     * exactly once with the given key and a {@link ValueState} mock that returns the given sequence
+     * number. This mirrors the per-key iteration shape used by {@link
+     * DurableExecutionManager#snapshotLastCompletedSequenceNumbers}.
+     */
+    @SuppressWarnings("unchecked")
+    private static void stubApplyToAllKeysSingle(
+            KeyedStateBackend<Object> backend, Object key, long sequenceNumber) throws Exception {
+        ValueState<Long> valueState = mock(ValueState.class);
+        when(valueState.value()).thenReturn(sequenceNumber);
+        doAnswer(
+                        invocation -> {
+                            KeyedStateFunction<Object, ValueState<Long>> function =
+                                    invocation.getArgument(3);
+                            function.process(key, valueState);
+                            return null;
+                        })
+                .when(backend)
+                .applyToAllKeys(any(), any(), any(ValueStateDescriptor.class), any());
     }
 }

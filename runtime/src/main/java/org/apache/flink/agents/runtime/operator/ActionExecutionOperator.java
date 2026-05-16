@@ -511,6 +511,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         super.notifyCheckpointComplete(checkpointId);
     }
 
+    @Override
+    public void notifyCheckpointAborted(long checkpointId) throws Exception {
+        durableExecManager.notifyCheckpointAborted(checkpointId);
+        super.notifyCheckpointAborted(checkpointId);
+    }
+
     private MailboxProcessor getMailboxProcessor() throws Exception {
         Field field = MailboxExecutorImpl.class.getDeclaredField("mailboxProcessor");
         field.setAccessible(true);
