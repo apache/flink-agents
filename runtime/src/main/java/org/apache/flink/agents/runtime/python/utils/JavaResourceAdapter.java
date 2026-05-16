@@ -23,10 +23,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.Document;
-import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
-import org.apache.flink.agents.api.vectorstores.VectorStoreQueryMode;
 import pemja.core.PythonInterpreter;
-import pemja.core.object.PyObject;
 
 import java.util.List;
 import java.util.Map;
@@ -107,21 +104,5 @@ public class JavaResourceAdapter {
             float[] embedding,
             Float score) {
         return new Document(content, metadata, id, embedding, score);
-    }
-
-    @SuppressWarnings("unchecked")
-    public VectorStoreQuery fromPythonVectorStoreQuery(PyObject pythonVectorStoreQuery) {
-        // TODO: Delete this method after the pemja findClass method is fixed.
-        String modeValue =
-                (String)
-                        interpreter.invoke(
-                                "python_java_utils.get_mode_value", pythonVectorStoreQuery);
-        return new VectorStoreQuery(
-                VectorStoreQueryMode.fromValue(modeValue),
-                (String) pythonVectorStoreQuery.getAttr("query_text"),
-                pythonVectorStoreQuery.getAttr("limit", Integer.class),
-                (String) pythonVectorStoreQuery.getAttr("collection_name"),
-                (Map<String, Object>) pythonVectorStoreQuery.getAttr("filters", Map.class),
-                (Map<String, Object>) pythonVectorStoreQuery.getAttr("extra_args", Map.class));
     }
 }
