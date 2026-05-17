@@ -305,6 +305,11 @@ die() {
     exit 1
 }
 
+die_cancelled() {
+    ui_info "Cancelled by user"
+    exit 130
+}
+
 INSTALL_STAGE_TOTAL=5
 INSTALL_STAGE_CURRENT=0
 
@@ -447,18 +452,19 @@ choose_install_method_interactive() {
     fi
 
     if [[ -n "$GUM" ]] && gum_is_tty; then
-        local selection
+        local selection _rc=0
         selection="$("$GUM" choose \
             --header "$prompt" \
             --cursor-prefix "❯ " \
-            "Yes" "No" < /dev/tty || true)"
+            "Yes" "No" < /dev/tty)" || _rc=$?
+        (( _rc == 0 )) || die_cancelled
         [[ "$selection" == "Yes" ]]
         return
     fi
 
     local answer=""
     printf '%s [y/n]: ' "$prompt" > /dev/tty
-    read -r answer < /dev/tty || true
+    read -r answer < /dev/tty || die_cancelled
 
     [[ "$answer" =~ ^[Yy]$ ]]
 }
@@ -480,10 +486,12 @@ prompt_flink_version_interactive() {
 
     local selection=""
     if [[ -n "$GUM" ]] && gum_is_tty; then
+        local _rc=0
         selection="$("$GUM" choose \
             --header "Select Flink version" \
             --cursor-prefix "❯ " \
-            "${labels[@]}" < /dev/tty || true)"
+            "${labels[@]}" < /dev/tty)" || _rc=$?
+        (( _rc == 0 )) || die_cancelled
         selection="${selection%% *}"
     else
         printf 'Select Flink version:\n' > /dev/tty
@@ -497,7 +505,7 @@ prompt_flink_version_interactive() {
         local answer=""
         printf 'Enter choice [1-%d, default %s]: ' \
             "${#FLINK_SUPPORTED_VERSIONS[@]}" "$FLINK_RECOMMENDED_VERSION" > /dev/tty
-        read -r answer < /dev/tty || true
+        read -r answer < /dev/tty || die_cancelled
         if [[ "$answer" =~ ^[0-9]+$ ]] \
            && (( answer >= 1 && answer <= ${#FLINK_SUPPORTED_VERSIONS[@]} )); then
             selection="${FLINK_SUPPORTED_VERSIONS[$((answer-1))]}"
@@ -656,13 +664,15 @@ prompt_path_input() {
     local placeholder="$2"
     local input=""
     if [[ -n "$GUM" ]] && gum_is_tty; then
+        local _rc=0
         input="$("$GUM" input \
             --header "$header" \
             --placeholder "$placeholder" \
-            --width 70 < /dev/tty || true)"
+            --width 70 < /dev/tty)" || _rc=$?
+        (( _rc == 0 )) || die_cancelled
     else
         printf '%s: ' "$header" > /dev/tty
-        read -r input < /dev/tty || true
+        read -r input < /dev/tty || die_cancelled
     fi
     input="${input/#\~/$HOME}"
     printf '%s' "$input"
@@ -683,17 +693,19 @@ prompt_path_choice_interactive() {
     local selection=""
 
     if [[ -n "$GUM" ]] && gum_is_tty; then
+        local _rc=0
         selection="$("$GUM" choose \
             --header "$header" \
             --cursor-prefix "❯ " \
-            "$default_label" "$custom_label" < /dev/tty || true)"
+            "$default_label" "$custom_label" < /dev/tty)" || _rc=$?
+        (( _rc == 0 )) || die_cancelled
     else
         printf '%s\n' "$header" > /dev/tty
         printf '  1) %s\n' "$default_label" > /dev/tty
         printf '  2) %s\n' "$custom_label" > /dev/tty
         local answer=""
         printf 'Enter choice [1-2, default 1]: ' > /dev/tty
-        read -r answer < /dev/tty || true
+        read -r answer < /dev/tty || die_cancelled
         case "$answer" in
             2) selection="$custom_label" ;;
             *) selection="$default_label" ;;
@@ -707,13 +719,15 @@ prompt_path_choice_interactive() {
 
     local input=""
     if [[ -n "$GUM" ]] && gum_is_tty; then
+        local _rc=0
         input="$("$GUM" input \
             --header "$header" \
             --placeholder "$placeholder" \
-            --width 70 < /dev/tty || true)"
+            --width 70 < /dev/tty)" || _rc=$?
+        (( _rc == 0 )) || die_cancelled
     else
         printf 'Enter custom path: ' > /dev/tty
-        read -r input < /dev/tty || true
+        read -r input < /dev/tty || die_cancelled
     fi
     input="${input/#\~/$HOME}"
 
