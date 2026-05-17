@@ -91,6 +91,7 @@ class ReActAgent(Agent):
                 chat_model=ResourceDescriptor(
                     clazz=OllamaChatModelSetup,
                     connection="ollama_server",
+                    model="qwen3:8b",
                     tools=["notify_shipping_manager"],
                 ),
                 prompt=prompt,

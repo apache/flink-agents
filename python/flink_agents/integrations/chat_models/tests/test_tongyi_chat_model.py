@@ -25,6 +25,7 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.tongyi_chat_model import (
+    DEFAULT_MODEL,
     TongyiChatModelConnection,
     TongyiChatModelSetup,
 )
@@ -175,3 +176,16 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
     assert "reasoning" in response.extra_args
     assert "philosophical perspectives" in response.extra_args["reasoning"]
     assert "Hitchhiker's Guide to the Galaxy" in response.extra_args["reasoning"]
+
+
+def test_model_field_roundtrip() -> None:
+    """Verify `model` is preserved through pydantic dump/validate round-trip."""
+    setup = TongyiChatModelSetup(connection="conn", model="test-model")
+    restored = TongyiChatModelSetup.model_validate(setup.model_dump())
+    assert restored.model == "test-model"
+
+
+def test_default_model_when_omitted() -> None:
+    """Verify per-integration default applies when `model` is omitted from __init__."""
+    setup = TongyiChatModelSetup(connection="conn")
+    assert setup.model == DEFAULT_MODEL

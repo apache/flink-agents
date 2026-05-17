@@ -167,12 +167,12 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
     ----------
     connection : str
         Name of the referenced connection. (Inherited from BaseChatModelSetup)
+    model : str
+        Name of OpenAI model deployment on Azure. (Inherited from BaseChatModelSetup)
     prompt : Optional[Union[Prompt, str]
         Prompt template or string for the model. (Inherited from BaseChatModelSetup)
     tools : Optional[List[str]]
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
-    model : str
-        Name of OpenAI model deployment on Azure.
     model_of_azure_deployment : Optional[str]
         The underlying model name of the Azure deployment (e.g., 'gpt-4').
         Used for token counting and cost calculation.
@@ -193,9 +193,6 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
         Additional kwargs for the Azure OpenAI API.
     """
 
-    model: str = Field(
-        description="Name of OpenAI model deployment on Azure.",
-    )
     model_of_azure_deployment: str | None = Field(
         default=None,
         description="The underlying model name of the Azure deployment (e.g., 'gpt-4', "

@@ -131,6 +131,8 @@ class BaseChatModelSetup(Resource):
     """Base abstract class for chat model setup.
 
     Responsible for managing chat configurations, such as:
+    - Connection to chat model service (connection)
+    - Model name (model)
     - Prompt templates (prompt)
     - Available tools (tools)
     - Generation parameters (temperature, max_tokens, etc.)
@@ -143,6 +145,7 @@ class BaseChatModelSetup(Resource):
     """
 
     connection: str = Field(description="The referenced connection name.")
+    model: str = Field(description="Name of the chat model to use.")
     _resolved_connection: BaseChatModelConnection | None = PrivateAttr(default=None)
     prompt: Prompt | str | None = None
     tools: List[str] | List[Tool] = Field(default_factory=list)

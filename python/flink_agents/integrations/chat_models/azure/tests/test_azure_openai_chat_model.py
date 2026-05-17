@@ -119,3 +119,10 @@ def test_azure_openai_chat_with_tools() -> None:
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
     assert add(**tool_call["function"]["arguments"]) == 1065
+
+
+def test_model_field_roundtrip() -> None:
+    """Verify `model` is preserved through pydantic dump/validate round-trip."""
+    setup = AzureOpenAIChatModelSetup(connection="conn", model="test-deployment")
+    restored = AzureOpenAIChatModelSetup.model_validate(setup.model_dump())
+    assert restored.model == "test-deployment"
