@@ -37,7 +37,7 @@ class TestEventListener(unittest.TestCase):
         """Test the string representation of a global EventListener class."""
         module_name = GlobalListener.__module__
         expected = f"{module_name}:GlobalListener.on_event_processed"
-        self.assertEqual(str(GlobalListener), expected)
+        assert str(GlobalListener) == expected
 
     def test_top_level_nested_listener_str(self):
         """Test the string representation of a nested EventListener class defined at module level."""
@@ -50,35 +50,37 @@ class TestEventListener(unittest.TestCase):
 
         module_name = TopOuter.TopInner.__module__
         expected = f"{module_name}:TopOuter.TopInner.on_event_processed"
-        self.assertEqual(str(TopOuter.TopInner), expected)
+        assert str(TopOuter.TopInner) == expected
 
     def test_local_listener_raises_error(self):
         """Test that defining an EventListener in a local scope raises a ValueError."""
-        def some_function():
+        import pytest
+
+        def some_function() -> type:
             class LocalListener(EventListener):
                 def on_event_processed(self, context: EventContext, event: Event) -> None:
                     pass
 
             return LocalListener
 
-        LocalListener = some_function()
-        with self.assertRaisesRegex(ValueError, "Cannot instantiate local class"):
-            str(LocalListener)
+        local_listener_cls = some_function()
+        with pytest.raises(ValueError, match="Cannot instantiate local class"):
+            str(local_listener_cls)
 
     def test_main_module_with_file_handling(self):
         """Test string representation when the module is '__main__' and has a '__file__' attribute."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_module = MagicMock()
         mock_module.__name__ = "__main__"
         mock_module.__file__ = "/path/to/my_script.py"
 
         with patch("inspect.getmodule", return_value=mock_module):
-            self.assertEqual(str(MainListenerMock), "my_script:MainListenerMock.on_event_processed")
+            assert str(MainListenerMock) == "my_script:MainListenerMock.on_event_processed"
 
     def test_main_module_without_file_handling(self):
         """Test string representation when the module is '__main__' but lacks a '__file__' attribute."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_module = MagicMock()
         mock_module.__name__ = "__main__"
@@ -86,7 +88,7 @@ class TestEventListener(unittest.TestCase):
 
         with patch("inspect.getmodule", return_value=mock_module):
             # Should fallback to "__main__" if __file__ is missing
-            self.assertEqual(str(MainListenerMock), "__main__:MainListenerMock.on_event_processed")
+            assert str(MainListenerMock) == "__main__:MainListenerMock.on_event_processed"
 
     def test_inspect_getmodule_none_fallback(self):
         """Test fallback to '__module__' when 'inspect.getmodule' returns None."""
@@ -96,4 +98,4 @@ class TestEventListener(unittest.TestCase):
             # Should fallback to cls.__module__
             module_name = MainListenerMock.__module__
             expected = f"{module_name}:MainListenerMock.on_event_processed"
-            self.assertEqual(str(MainListenerMock), expected)
+            assert str(MainListenerMock) == expected
