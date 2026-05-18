@@ -17,9 +17,11 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
+import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.plan.AgentPlan;
-import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.runtime.PythonMCPResourceDiscovery;
@@ -42,7 +44,10 @@ import pemja.core.object.PyObject;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import static org.apache.flink.agents.plan.actions.Utils.requiredVersions;
 import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
@@ -284,5 +289,77 @@ class PythonBridgeManager implements AutoCloseable {
         if (pythonEnvironmentManager != null) {
             pythonEnvironmentManager.close();
         }
+    }
+
+    /**
+     * A wrapper class that implements {@link EventListener} to delegate events to Python-side
+     * listeners.
+     *
+     * <p>Similar to {@link EventRouter#notifyEventProcessed(Event)}, this wrapper handles event
+     * notification, but specifically for Python listeners. To optimize resource usage and avoid
+     * redundant Java-to-Python conversions, this wrapper converts the {@link Event} and {@link
+     * EventContext} into Python objects only once per event notification. It then iterates through
+     * all registered Python listener entries to invoke their respective methods using the
+     * pre-converted Python objects.
+     */
+    final class PythonEventListenerWrapper implements EventListener {
+
+        private final List<Map.Entry<Object, PythonFunction>> listenerEntries;
+
+        PythonEventListenerWrapper(List<Map.Entry<Object, PythonFunction>> listenerEntries) {
+            this.listenerEntries = listenerEntries;
+        }
+
+        /**
+         * Processes the event by converting it and its context to Python objects once, then
+         * delegating to all registered Python listeners.
+         *
+         * @param context the event context
+         * @param event the event to process
+         */
+        @Override
+        public void onEventProcessed(EventContext context, Event event) {
+            try {
+                // Convert java event to python event
+                final Object pythonEvent = pythonActionExecutor.convertJsonToPythonEvent(event);
+                // Convert java event context to python event context
+                final Object pythonEventContext =
+                        pythonResourceAdapter.toPythonEventContext(context);
+                for (Map.Entry<Object, PythonFunction> entry : this.listenerEntries) {
+                    final PythonFunction listenerFunction = entry.getValue();
+                    final Object listenerObject = entry.getKey();
+                    listenerFunction.call(listenerObject, pythonEventContext, pythonEvent);
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    /**
+     * Initializes the event listener for Python-defined event listeners.
+     *
+     * @param pythonEventListenerStrings a list of strings representing the Python event listeners,
+     *     in the format "module:class".
+     * @return an {@link EventListener} that delegates events to the specified Python listeners, or
+     *     {@code null} if the list is null or empty.
+     */
+    public EventListener initForPythonEventListeners(List<String> pythonEventListenerStrings) {
+        if (pythonEventListenerStrings != null && !pythonEventListenerStrings.isEmpty()) {
+            final List<Map.Entry<Object, PythonFunction>> listenerEntries = new ArrayList<>();
+            for (String listenerDescriptor : pythonEventListenerStrings) {
+                final String[] parts = listenerDescriptor.split(":");
+                final String module = parts[0];
+                final String qualName = parts[1];
+                final Object pythonListenerObject =
+                        pythonResourceAdapter.initPythonEventListener(listenerDescriptor);
+                final PythonFunction pythonFunction = new PythonFunction(module, qualName);
+                pythonFunction.setInterpreter(this.pythonInterpreter);
+                listenerEntries.add(Map.entry(pythonListenerObject, pythonFunction));
+            }
+
+            return new PythonEventListenerWrapper(listenerEntries);
+        }
+        return null;
     }
 }
