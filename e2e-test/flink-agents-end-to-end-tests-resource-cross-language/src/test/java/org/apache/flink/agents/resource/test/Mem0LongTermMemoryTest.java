@@ -27,7 +27,6 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -79,7 +78,6 @@ public class Mem0LongTermMemoryTest {
 
     @ParameterizedTest(name = "vectorStore={0}")
     @ValueSource(strings = {ES_LTM_STORE, MILVUS_LTM_STORE})
-    @Disabled("Using mem0 in java depends on the pemja fix.")
     public void testMem0LongTermMemory(String vectorStore) throws Exception {
         Assumptions.assumeTrue(
                 embeddingReady,
