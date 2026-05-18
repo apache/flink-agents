@@ -536,11 +536,18 @@ plan_flink() {
     esac
 
     if [[ "$INSTALL_FLINK" == "No" ]]; then
-        if [[ -z "${FLINK_HOME:-}" || ! -d "${FLINK_HOME}" || ! -d "${FLINK_HOME}/lib" ]]; then
-            if is_promptable; then
+        if is_promptable; then
+            while [[ -z "${FLINK_HOME:-}" || ! -d "${FLINK_HOME}" || ! -d "${FLINK_HOME}/lib" ]]; do
+                if [[ -n "${FLINK_HOME:-}" ]]; then
+                    if [[ ! -d "${FLINK_HOME}" ]]; then
+                        ui_warn "Path does not exist: ${FLINK_HOME}"
+                    else
+                        ui_warn "Not a valid Flink home (missing 'lib' directory): ${FLINK_HOME}"
+                    fi
+                fi
                 FLINK_HOME="$(prompt_path_input "Enter the path to your existing FLINK_HOME (version >= 1.20)" "/path/to/flink-${FLINK_VERSION}")"
-                export FLINK_HOME
-            fi
+            done
+            export FLINK_HOME
         fi
         [[ -n "${FLINK_HOME:-}" ]] || die "FLINK_HOME is not set."
         [[ -d "$FLINK_HOME" ]] || die "FLINK_HOME does not exist: $FLINK_HOME"
