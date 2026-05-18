@@ -607,15 +607,192 @@ plan_pyflink() {
     esac
 }
 
+# Echo one of: "confirm" | "edit" | "cancel"
+confirm_plan_action_interactive() {
+    if [[ -n "$GUM" ]] && gum_is_tty; then
+        local selection _rc=0
+        selection="$("$GUM" choose \
+            --header "Proceed with installation?" \
+            --cursor-prefix "❯ " \
+            "Proceed" "Edit a setting" "Cancel" < /dev/tty)" || _rc=$?
+        (( _rc == 0 )) || die_cancelled
+        case "$selection" in
+            Proceed)          echo confirm ;;
+            "Edit a setting") echo edit ;;
+            *)                echo cancel ;;
+        esac
+        return
+    fi
+
+    printf 'Proceed with installation?\n' > /dev/tty
+    printf '  1) Proceed\n' > /dev/tty
+    printf '  2) Edit a setting\n' > /dev/tty
+    printf '  3) Cancel\n' > /dev/tty
+    local answer=""
+    printf 'Enter choice [1-3, default 1]: ' > /dev/tty
+    read -r answer < /dev/tty || die_cancelled
+    case "$answer" in
+        2) echo edit ;;
+        3) echo cancel ;;
+        *) echo confirm ;;
+    esac
+}
+
+# Prompt the user to pick a Flink home interactively. Loops until a valid
+# path (exists and has a lib/ subdir) is provided. Mirrors the loop in
+# plan_flink so the two stay in sync.
+edit_prompt_flink_home() {
+    FLINK_HOME=""
+    while [[ -z "${FLINK_HOME:-}" || ! -d "${FLINK_HOME}" || ! -d "${FLINK_HOME}/lib" ]]; do
+        if [[ -n "${FLINK_HOME:-}" ]]; then
+            if [[ ! -d "${FLINK_HOME}" ]]; then
+                ui_warn "Path does not exist: ${FLINK_HOME}"
+            else
+                ui_warn "Not a valid Flink home (missing 'lib' directory): ${FLINK_HOME}"
+            fi
+        fi
+        FLINK_HOME="$(prompt_path_input "Enter the path to your existing FLINK_HOME (version >= 1.20)" "/path/to/flink-${FLINK_VERSION}")"
+    done
+    export FLINK_HOME
+}
+
+# Show a menu of currently-applicable plan fields and re-prompt for the
+# selected one. After the edit, recomputes FLINK_HOME / FLINK_MAJOR_MINOR
+# so the next show_install_plan reflects the change.
+edit_plan_interactive() {
+    local labels=()
+    local actions=()
+
+    labels+=("Install Flink: $INSTALL_FLINK")
+    actions+=("install_flink")
+
+    if [[ "$INSTALL_FLINK" == "Yes" ]]; then
+        labels+=("Flink version: $FLINK_VERSION")
+        actions+=("flink_version")
+        labels+=("Install directory: $INSTALL_DIR")
+        actions+=("install_dir")
+    else
+        labels+=("FLINK_HOME: ${FLINK_HOME:-<unset>}")
+        actions+=("flink_home")
+    fi
+
+    labels+=("Enable PyFlink: $ENABLE_PYFLINK")
+    actions+=("enable_pyflink")
+
+    if [[ "$ENABLE_PYFLINK" == "Yes" ]]; then
+        labels+=("Venv directory: $VENV_DIR")
+        actions+=("venv_dir")
+    fi
+
+    labels+=("Back")
+    actions+=("back")
+
+    local picked_index=-1
+    if [[ -n "$GUM" ]] && gum_is_tty; then
+        local _rc=0
+        local selected=""
+        selected="$("$GUM" choose \
+            --header "Edit a setting" \
+            --cursor-prefix "❯ " \
+            "${labels[@]}" < /dev/tty)" || _rc=$?
+        (( _rc == 0 )) || die_cancelled
+        local i=0
+        for l in "${labels[@]}"; do
+            if [[ "$l" == "$selected" ]]; then
+                picked_index=$i
+                break
+            fi
+            i=$((i+1))
+        done
+    else
+        printf 'Edit a setting:\n' > /dev/tty
+        local i=1
+        for l in "${labels[@]}"; do
+            printf '  %d) %s\n' "$i" "$l" > /dev/tty
+            i=$((i+1))
+        done
+        local answer=""
+        printf 'Enter choice [1-%d]: ' "${#labels[@]}" > /dev/tty
+        read -r answer < /dev/tty || die_cancelled
+        if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= ${#labels[@]} )); then
+            picked_index=$((answer - 1))
+        fi
+    fi
+
+    (( picked_index < 0 )) && return 0
+
+    local action="${actions[$picked_index]}"
+    case "$action" in
+        install_flink)
+            if choose_install_method_interactive "Install Flink?"; then
+                INSTALL_FLINK=Yes
+                FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
+            else
+                INSTALL_FLINK=No
+                edit_prompt_flink_home
+            fi
+            FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+            ;;
+        flink_version)
+            prompt_flink_version_interactive || true
+            FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
+            FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+            ;;
+        install_dir)
+            INSTALL_DIR="$(prompt_path_choice_interactive \
+                "Choose Flink install directory" \
+                "$INSTALL_DIR" \
+                "/path/to/flink-install-dir")"
+            FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
+            ;;
+        flink_home)
+            edit_prompt_flink_home
+            ;;
+        enable_pyflink)
+            if choose_install_method_interactive "Enable PyFlink?"; then
+                if [[ "$ENABLE_PYFLINK" != "Yes" ]]; then
+                    ENABLE_PYFLINK=Yes
+                    PYFLINK_ACTUALLY_ENABLED=1
+                    resolve_python
+                fi
+            else
+                ENABLE_PYFLINK=No
+            fi
+            ;;
+        venv_dir)
+            VENV_DIR="$(prompt_path_choice_interactive \
+                "Choose Python venv directory" \
+                "$VENV_DIR" \
+                "/path/to/venv")"
+            case "$VENV_DIR" in
+                /*) ;;
+                *)  VENV_DIR="$PWD/$VENV_DIR" ;;
+            esac
+            ;;
+        back|*)
+            ;;
+    esac
+}
+
 confirm_install_plan() {
     if [[ "$NO_PROMPT" == "1" ]] || ! is_promptable; then
         return 0
     fi
-    if choose_install_method_interactive "Proceed with installation?"; then
-        return 0
-    fi
-    ui_info "Installation cancelled by user."
-    exit 0
+    while true; do
+        case "$(confirm_plan_action_interactive)" in
+            confirm) return 0 ;;
+            edit)
+                edit_plan_interactive
+                # Re-display the updated plan so the user sees their change
+                # in context before re-prompting.
+                show_install_plan
+                ;;
+            cancel)
+                ui_info "Installation cancelled by user."
+                exit 0
+                ;;
+        esac
+    done
 }
 
 install_flink_if_needed() {
