@@ -769,6 +769,62 @@ create_venv() {
     die "Virtual environment creation failed"
 }
 
+# Run `python -m pip install <args>` with reduced terminal noise.
+# Strategy depends on environment:
+#   VERBOSE=1                : full output, pass-through
+#   gum available + tty      : `gum spin --show-error` (spinner; pip output
+#                              is hidden unless pip exits non-zero)
+#   plain tty (no gum)       : single rolling status line via \r\033[K;
+#                              full output goes to a temp log and is shown
+#                              only on failure
+#   non-tty (CI / piped)     : pip --quiet (errors still surface)
+pip_install_quiet() {
+    local pkgs=("$@")
+
+    if [[ "$VERBOSE" == "1" ]]; then
+        python -m pip install "${pkgs[@]}"
+        return
+    fi
+
+    if [[ -n "$GUM" ]] && gum_is_tty; then
+        "$GUM" spin --show-error \
+            --title "pip install ${pkgs[*]}" \
+            -- python -m pip install "${pkgs[@]}"
+        return
+    fi
+
+    if [[ ! -t 1 ]]; then
+        python -m pip install -q "${pkgs[@]}"
+        return
+    fi
+
+    local log
+    log="$(mktempfile)"
+    local cols max
+    cols="$(tput cols 2>/dev/null || echo 80)"
+    local prefix="  · "
+    max=$((cols - ${#prefix} - 4))
+    (( max < 20 )) && max=20
+
+    local rc=0
+    {
+        python -m pip install "${pkgs[@]}" 2>&1 \
+            | while IFS= read -r line; do
+                printf '%s\n' "$line" >> "$log"
+                printf '\r\033[K%s%s' "$prefix" "${line:0:$max}"
+              done
+    } || rc=$?
+
+    # Clear the rolling status line.
+    printf '\r\033[K'
+
+    if (( rc != 0 )); then
+        ui_error "pip install failed; full output:"
+        sed 's/^/  /' "$log" >&2
+        return $rc
+    fi
+}
+
 setup_python_env() {
     if [[ ! -d "$VENV_DIR" ]]; then
         ui_info "Creating virtual environment: $VENV_DIR"
@@ -783,8 +839,10 @@ setup_python_env() {
     export PIP_NO_COLOR=1
     export PIP_NO_INPUT=1
 
-    ui_info "Installing Python packages"
-    python -m pip install "flink-agents==${FLINK_AGENTS_VERSION}" "apache-flink==${FLINK_VERSION}"
+    ui_info "Installing Python packages (may take a few minutes)..."
+    pip_install_quiet \
+        "flink-agents==${FLINK_AGENTS_VERSION}" \
+        "apache-flink==${FLINK_VERSION}"
 }
 
 copy_flink_agents_jars() {
