@@ -51,6 +51,10 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
         """
         # embedding_model are required parameters for BaseVectorStore
         embedding_model = kwargs.pop("embedding_model", "")
+        # Elasticsearch/OpenSearch call their document container "index";
+        # expose it as BaseVectorStore's generic default collection.
+        if kwargs.get("collection") is None and kwargs.get("index") is not None:
+            kwargs["collection"] = kwargs["index"]
         super().__init__(embedding_model=embedding_model, **kwargs)
 
         self._j_resource = j_resource
