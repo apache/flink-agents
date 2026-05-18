@@ -205,6 +205,7 @@ class MyAgent(Agent):
             host="8.8.8.8",
             desc="mock resource just for testing.",
             connection="mock",
+            model="mock-model",
         )
 
     @embedding_model_connection
@@ -298,6 +299,7 @@ def test_add_action_and_resource_to_agent() -> None:
             host="8.8.8.8",
             desc="mock resource just for testing.",
             connection="mock",
+            model="mock-model",
         ),
     )
 

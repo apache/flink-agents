@@ -54,6 +54,7 @@ class MyAgent(Agent):
             host="8.8.8.8",
             desc="mock chat model just for testing.",
             connection="mock",
+            model="mock-model",
         )
 
     @tool

@@ -176,12 +176,12 @@ class OllamaChatModelSetup(BaseChatModelSetup):
     ----------
     connection : str
         Name of the referenced connection. (Inherited from BaseChatModelSetup)
+    model : str
+        Model name to use. (Inherited from BaseChatModelSetup)
     prompt : Optional[Union[Prompt, str]
         Prompt template or string for the model. (Inherited from BaseChatModelSetup)
     tools : Optional[List[str]]
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
-    model : str
-        Model name to use.
     temperature : float
         The temperature to use for sampling.
     num_ctx : int
@@ -195,8 +195,6 @@ class OllamaChatModelSetup(BaseChatModelSetup):
         If True, extracts content within <think></think> tags from the response and
         stores it in additional_kwargs.
     """
-
-    model: str = Field(description="Model name to use.")
 
     temperature: float = Field(
         default=0.75,

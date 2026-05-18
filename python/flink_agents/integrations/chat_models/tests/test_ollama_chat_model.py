@@ -133,6 +133,13 @@ def test_ollama_chat_with_tools() -> None:
     assert add(**tool_call["function"]["arguments"]) == 3
 
 
+def test_model_field_roundtrip() -> None:
+    """Verify `model` is preserved through pydantic dump/validate round-trip."""
+    setup = OllamaChatModelSetup(connection="conn", model="test-model")
+    restored = OllamaChatModelSetup.model_validate(setup.model_dump())
+    assert restored.model == "test-model"
+
+
 def test_extract_think_tags() -> None:
     """Test the static method that extracts content from <think></think> tags."""
     # Test with a think tag at the beginning (most common case)

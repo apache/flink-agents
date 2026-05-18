@@ -95,7 +95,8 @@
                     "arguments": {
                         "host": "8.8.8.8",
                         "desc": "mock resource just for testing.",
-                        "connection": "mock"
+                        "connection": "mock",
+                        "model": "mock-model"
                     }
                 },
                 "__resource_provider_type__": "PythonResourceProvider"
