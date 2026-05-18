@@ -24,7 +24,8 @@ class EventContext(BaseModel):
     Attributes:
     ----------
     eventType : str
-        The routing key for the event, matching the ``EVENT_TYPE`` constant or type string.
+        The routing key for the event, matching the ``EVENT_TYPE`` constant or
+        type string.
     timestamp : str
         Timestamp of when the event occurred.
     """
