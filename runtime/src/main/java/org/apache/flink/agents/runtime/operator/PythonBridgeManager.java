@@ -125,23 +125,9 @@ class PythonBridgeManager implements AutoCloseable {
             String jobIdentifier,
             ClassLoader userCodeClassLoader)
             throws Exception {
-        boolean containPythonAction =
-                agentPlan.getActions().values().stream()
-                        .anyMatch(action -> action.getExec() instanceof PythonFunction);
-
-        boolean containPythonResource =
-                agentPlan.getResourceProviders().values().stream()
-                        .anyMatch(
-                                resourceProviderMap ->
-                                        resourceProviderMap.values().stream()
-                                                .anyMatch(
-                                                        resourceProvider ->
-                                                                resourceProvider
-                                                                        instanceof
-                                                                        PythonResourceProvider));
-
+        boolean containPythonAction = agentPlan.containsPythonAction();
+        boolean containPythonResource = agentPlan.containsPythonResource();
         boolean mem0Configured = isMem0Configured(agentPlan);
-
         if (containPythonAction || containPythonResource || mem0Configured) {
             LOG.debug("Begin initialize PythonEnvironmentManager.");
             PythonDependencyInfo dependencyInfo =
@@ -198,9 +184,7 @@ class PythonBridgeManager implements AutoCloseable {
                         && config.get(LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP) != null
                         && config.get(LongTermMemoryOptions.Mem0.VECTOR_STORE) != null;
 
-        boolean containJavaAction =
-                agentPlan.getActions().values().stream()
-                        .anyMatch(action -> action.getExec() instanceof JavaFunction);
+        boolean containJavaAction = agentPlan.containsJavaAction();
 
         // Mem0 will call chat model and embedding model in its own thread executor, this behavior
         // is same as the async execution for cross-language resources, and also requires the fix
