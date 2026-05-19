@@ -43,7 +43,6 @@ from flink_agents.e2e_tests.test_utils import pull_model
 current_dir = Path(__file__).parent
 
 OLLAMA_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest")
-os.environ["OLLAMA_EMBEDDING_MODEL"] = OLLAMA_MODEL
 
 ES_HOST = os.environ.get("ES_HOST")
 MILVUS_URI = os.environ.get("MILVUS_URI")
@@ -61,6 +60,7 @@ def _run_vector_store_integration(
     backend: str,
 ) -> None:
     print(f"[TEST][{backend}] Vector store e2e embedding={embedding_type}")
+    monkeypatch.setenv("OLLAMA_EMBEDDING_MODEL", OLLAMA_MODEL)
     monkeypatch.setenv("EMBEDDING_TYPE", embedding_type)
     monkeypatch.setenv("VECTOR_STORE_BACKEND", backend)
     suffix = uuid.uuid4().hex

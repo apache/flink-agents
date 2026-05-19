@@ -48,6 +48,7 @@ def test_openai_embedding_model() -> None:
     embedding_model = OpenAIEmbeddingModelSetup(
         name="openai", model=test_model, connection="openai", resource_context=mock_ctx
     )
+    embedding_model.open()
 
     response = embedding_model.embed("Hello, Flink Agent!")
     assert response is not None
