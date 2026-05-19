@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api;
 
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.configuration.Configuration;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -42,12 +43,32 @@ import java.util.Map;
  */
 public abstract class AgentsExecutionEnvironment {
     protected final Map<ResourceType, Map<String, Object>> resources;
+    protected final Map<String, Agent> agents = new HashMap<>();
 
     protected AgentsExecutionEnvironment() {
         this.resources = new HashMap<>();
         for (ResourceType type : ResourceType.values()) {
             this.resources.put(type, new HashMap<>());
         }
+    }
+
+    /**
+     * Returns the agents registered on this environment, keyed by name.
+     *
+     * <p>Populated by {@link #loadYaml(java.nio.file.Path...)} and friends.
+     */
+    public Map<String, Agent> getAgents() {
+        return agents;
+    }
+
+    /**
+     * Returns the resources registered on this environment, grouped by {@link ResourceType}.
+     *
+     * <p>Exposed primarily so YAML loading code (in a sibling package) and tests can inspect
+     * registered shared resources without subclassing.
+     */
+    public Map<ResourceType, Map<String, Object>> getResources() {
+        return resources;
     }
 
     /**
@@ -228,5 +249,21 @@ public abstract class AgentsExecutionEnvironment {
                     String.format("Unsupported resource %s", instance.getClass().getName()));
         }
         return this;
+    }
+
+    /**
+     * Load one or more YAML files and register their agents and shared resources on this
+     * environment. Duplicate names — both within a single file and across the current environment —
+     * raise {@link IllegalArgumentException}.
+     */
+    public void loadYaml(java.nio.file.Path... paths) {
+        org.apache.flink.agents.api.yaml.YamlLoader.loadYaml(this, java.util.Arrays.asList(paths));
+    }
+
+    /**
+     * Load multiple YAML files and register their agents and shared resources on this environment.
+     */
+    public void loadYaml(java.util.List<java.nio.file.Path> paths) {
+        org.apache.flink.agents.api.yaml.YamlLoader.loadYaml(this, paths);
     }
 }

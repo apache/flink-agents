@@ -1,0 +1,54 @@
+agents:
+  - name: math_agent
+    description: Stage 1 — solves the math question via the ``add`` tool.
+    chat_model_setups:
+      - name: chat_model
+        clazz: ollama
+        type: java
+        connection: ollama_connection
+        model: qwen3:1.7b
+        tools: [add]
+        extract_reasoning: true
+    tools:
+      - name: add
+        type: java
+        function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:add
+        parameter_types: [java.lang.Integer, java.lang.Integer]
+    actions:
+      - name: chat_request
+        type: java
+        function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:chatRequest
+        listen_to: [input]
+      - process_chat_response
+
+  - name: commentator_agent
+    description: |
+      Stage 2 — takes the upstream answer and asks a second chat model to restate it.
+      Reuses the file-level ollama_connection and the file-level process_chat_response action.
+    chat_model_setups:
+      - name: chat_model
+        clazz: ollama
+        type: java
+        connection: ollama_connection
+        model: qwen3:1.7b
+        extract_reasoning: true
+    actions:
+      - name: commentary_request
+        type: java
+        function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:commentaryRequest
+        listen_to: [input]
+      - process_chat_response
+
+# File-level shared resources reused by every agent above.
+chat_model_connections:
+  - name: ollama_connection
+    clazz: ollama
+    type: java
+    endpoint: http://localhost:11434
+    requestTimeout: 240
+
+actions:
+  - name: process_chat_response
+    type: java
+    function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:processChatResponse
+    listen_to: [chat_response]

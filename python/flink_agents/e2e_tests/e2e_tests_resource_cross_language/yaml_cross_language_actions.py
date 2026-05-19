@@ -52,3 +52,19 @@ def process_chat_response(event: Event, ctx: RunnerContext) -> None:
     response = chat_response.response
     if response and response.content:
         ctx.send_event(OutputEvent(output=response.content))
+
+
+def calculate_bmi(weight_kg: float, height_m: float) -> float:
+    """Calculate Body Mass Index.
+
+    Args:
+        weight_kg: Weight in kilograms.
+        height_m: Height in meters.
+
+    Returns:
+        BMI = weight_kg / (height_m ** 2).
+    """
+    if weight_kg <= 0 or height_m <= 0:
+        msg = "weight_kg and height_m must be positive"
+        raise ValueError(msg)
+    return weight_kg / (height_m * height_m)

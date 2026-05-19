@@ -1,0 +1,41 @@
+agents:
+  - name: yaml_test_agent
+    description: YAML-driven e2e agent — chat model with a function tool.
+
+    chat_model_connections:
+      - name: ollama_connection
+        clazz: ollama
+        type: java
+        endpoint: http://localhost:11434
+        requestTimeout: 240
+
+    chat_model_setups:
+      - name: math_chat_model
+        clazz: ollama
+        type: java
+        connection: ollama_connection
+        model: qwen3:1.7b
+        tools: [add]
+        extract_reasoning: true
+      - name: creative_chat_model
+        clazz: ollama
+        type: java
+        connection: ollama_connection
+        model: qwen3:1.7b
+        extract_reasoning: true
+
+    tools:
+      - name: add
+        type: java
+        function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:add
+        parameter_types: [java.lang.Integer, java.lang.Integer]
+
+    actions:
+      - name: process_input
+        type: java
+        function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:processInput
+        listen_to: [input]
+      - name: process_chat_response
+        type: java
+        function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:processChatResponse
+        listen_to: [chat_response]

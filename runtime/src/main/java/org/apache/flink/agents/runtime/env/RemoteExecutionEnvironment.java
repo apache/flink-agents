@@ -84,13 +84,13 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
     @Override
     public <T, K> AgentBuilder fromDataStream(DataStream<T> input, KeySelector<T, K> keySelector) {
-        return new RemoteAgentBuilder<>(input, tEnv, keySelector, env, config, resources);
+        return new RemoteAgentBuilder<>(input, tEnv, keySelector, env, config, resources, agents);
     }
 
     @Override
     public <K> AgentBuilder fromTable(Table input, KeySelector<Object, K> keySelector) {
         return new RemoteAgentBuilder<>(
-                input, getTableEnvironment(), keySelector, env, config, resources);
+                input, getTableEnvironment(), keySelector, env, config, resources, agents);
     }
 
     @Override
@@ -130,6 +130,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         private @Nullable StreamTableEnvironment tableEnv;
         private final AgentConfiguration config;
         private final Map<ResourceType, Map<String, Object>> resources;
+        private final Map<String, Agent> agents;
 
         private AgentPlan agentPlan;
         private DataStream<Object> outputDataStream;
@@ -141,13 +142,15 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                 KeySelector<T, K> keySelector,
                 StreamExecutionEnvironment env,
                 AgentConfiguration config,
-                Map<ResourceType, Map<String, Object>> resources) {
+                Map<ResourceType, Map<String, Object>> resources,
+                Map<String, Agent> agents) {
             this.inputDataStream = inputDataStream;
             this.keySelector = keySelector;
             this.env = env;
             this.tableEnv = tableEnv;
             this.config = config;
             this.resources = resources;
+            this.agents = agents;
         }
 
         // Constructor for Table input
@@ -158,13 +161,15 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                 KeySelector<Object, K> keySelector,
                 StreamExecutionEnvironment env,
                 AgentConfiguration config,
-                Map<ResourceType, Map<String, Object>> resources) {
+                Map<ResourceType, Map<String, Object>> resources,
+                Map<String, Agent> agents) {
             this.inputDataStream = (DataStream<T>) tableEnv.toDataStream(inputTable);
             this.keySelector = (KeySelector<T, K>) keySelector;
             this.env = env;
             this.tableEnv = tableEnv;
             this.config = config;
             this.resources = resources;
+            this.agents = agents;
         }
 
         private StreamTableEnvironment getTableEnvironment() {
@@ -184,6 +189,19 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
             } catch (Exception e) {
                 throw new RuntimeException("Failed to create agent plan from agent", e);
             }
+        }
+
+        @Override
+        public AgentBuilder apply(String agentName) {
+            Agent agent = agents.get(agentName);
+            if (agent == null) {
+                throw new IllegalArgumentException(
+                        "Unknown agent '"
+                                + agentName
+                                + "'; no agent with that name is registered on the environment. "
+                                + "Did you forget to call env.loadYaml(...) or env.getAgents().put(...) first?");
+            }
+            return apply(agent);
         }
 
         @Override

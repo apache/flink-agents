@@ -1,0 +1,13 @@
+agents:
+  - name: a1
+    actions:
+      - name: increment
+        function: org.apache.flink.agents.api.yaml.LoaderTargets:increment
+        type: java
+        listen_to: [input]
+  - name: a2
+    actions:
+      - name: decrement
+        function: org.apache.flink.agents.api.yaml.LoaderTargets:decrement
+        type: java
+        listen_to: [input]

@@ -1,0 +1,7 @@
+agents:
+  - name: incrementer
+    actions:
+      - name: increment
+        function: org.apache.flink.agents.api.yaml.LoaderTargets:increment
+        type: java
+        listen_to: [input]
