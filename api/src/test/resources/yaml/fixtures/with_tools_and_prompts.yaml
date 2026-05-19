@@ -1,0 +1,14 @@
+agents:
+  - name: tool_agent
+    tools:
+      - name: notify
+        function: org.apache.flink.agents.api.yaml.LoaderTargets:notify
+        type: java
+        parameter_types: [java.lang.String, java.lang.String]
+    prompts:
+      - name: text_prompt
+        text: "hello {name}"
+      - name: messages_prompt
+        messages:
+          - {role: system, content: "be brief"}
+          - {role: user, content: "{q}"}

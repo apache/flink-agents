@@ -1,0 +1,12 @@
+agents:
+  - name: file_b_agent
+    actions:
+      - name: decrement
+        function: org.apache.flink.agents.api.yaml.LoaderTargets:decrement
+        type: java
+        listen_to: [input]
+chat_model_connections:
+  - name: conn_from_b
+    clazz: ollama
+    type: java
+    base_url: http://b

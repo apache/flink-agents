@@ -1,0 +1,12 @@
+agents:
+  - name: file_a_agent
+    actions:
+      - name: increment
+        function: org.apache.flink.agents.api.yaml.LoaderTargets:increment
+        type: java
+        listen_to: [input]
+chat_model_connections:
+  - name: conn_from_a
+    clazz: ollama
+    type: java
+    base_url: http://a

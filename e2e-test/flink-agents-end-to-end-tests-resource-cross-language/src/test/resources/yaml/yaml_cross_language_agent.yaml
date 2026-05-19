@@ -1,0 +1,56 @@
+agents:
+  - name: yaml_cross_language_agent
+    description: |
+      Java-host cross-language YAML e2e agent.
+
+      - math path: Java Ollama chat model calling a Python function tool
+        (``calculate_bmi``) — exercises the Java→Python tool bridge: the Java chat
+        model resolves the tool, plan.FunctionTool detects the PythonFunction
+        backing, and dispatches the invocation through PythonResourceAdapter.
+      - creative path: Python Ollama chat model (Java host wraps it via the Python
+        resource wrapper) with no tools — same YAML mixes a Java-native chat model
+        and a Python-wrapped chat model on the same Java host.
+
+    chat_model_connections:
+      # Java-native connection.
+      - name: ollama_connection_java
+        clazz: ollama
+        type: java
+        endpoint: http://localhost:11434
+        requestTimeout: 240
+      # Python-wrapped connection on the Java host. Default ``type:`` is python;
+      # the loader resolves the alias to the Python FQN and embeds it through the
+      # Java-side Python wrapper.
+      - name: ollama_connection_python
+        clazz: ollama
+        request_timeout: 240
+
+    chat_model_setups:
+      - name: math_chat_model
+        clazz: ollama
+        type: java
+        connection: ollama_connection_java
+        model: qwen3:1.7b
+        tools: [calculate_bmi]
+        extract_reasoning: true
+      - name: creative_chat_model
+        clazz: ollama
+        connection: ollama_connection_python
+        model: qwen3:1.7b
+        extract_reasoning: true
+
+    tools:
+      # Python function tool — default ``type:`` is python; the Java host resolves
+      # the underlying callable through the Pemja bridge at first invocation.
+      - name: calculate_bmi
+        function: flink_agents.e2e_tests.e2e_tests_resource_cross_language.yaml_cross_language_actions:calculate_bmi
+
+    actions:
+      - name: process_input
+        type: java
+        function: org.apache.flink.agents.resource.test.YamlCrossLanguageActions:processInput
+        listen_to: [input]
+      - name: process_chat_response
+        type: java
+        function: org.apache.flink.agents.resource.test.YamlCrossLanguageActions:processChatResponse
+        listen_to: [chat_response]
