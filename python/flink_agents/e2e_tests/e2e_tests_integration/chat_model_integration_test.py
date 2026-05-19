@@ -29,17 +29,12 @@ from flink_agents.e2e_tests.test_utils import pull_model
 current_dir = Path(__file__).parent
 
 TONGYI_MODEL = os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus")
-os.environ["TONGYI_CHAT_MODEL"] = TONGYI_MODEL
 OLLAMA_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
-os.environ["OLLAMA_CHAT_MODEL"] = OLLAMA_MODEL
 OPENAI_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo")
-os.environ["OPENAI_CHAT_MODEL"] = OPENAI_MODEL
 AZURE_OPENAI_MODEL = os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5")
-os.environ["AZURE_OPENAI_CHAT_MODEL"] = AZURE_OPENAI_MODEL
 AZURE_OPENAI_API_VERSION = os.environ.get(
     "AZURE_OPENAI_API_VERSION", "2025-04-01-preview"
 )
-os.environ["AZURE_OPENAI_API_VERSION"] = AZURE_OPENAI_API_VERSION
 
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -78,8 +73,15 @@ client = pull_model(OLLAMA_MODEL)
         ),
     ],
 )
-def test_chat_model_integration(model_provider: str) -> None:
-    os.environ["MODEL_PROVIDER"] = model_provider
+def test_chat_model_integration(
+    model_provider: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TONGYI_CHAT_MODEL", TONGYI_MODEL)
+    monkeypatch.setenv("OLLAMA_CHAT_MODEL", OLLAMA_MODEL)
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", OPENAI_MODEL)
+    monkeypatch.setenv("AZURE_OPENAI_CHAT_MODEL", AZURE_OPENAI_MODEL)
+    monkeypatch.setenv("AZURE_OPENAI_API_VERSION", AZURE_OPENAI_API_VERSION)
+    monkeypatch.setenv("MODEL_PROVIDER", model_provider)
     env = AgentsExecutionEnvironment.get_execution_environment()
     input_list = []
     agent = ChatModelTestAgent()
