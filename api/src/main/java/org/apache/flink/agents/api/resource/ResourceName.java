@@ -191,6 +191,10 @@ public final class ResourceName {
         public static final String S3_VECTORS_VECTOR_STORE =
                 "org.apache.flink.agents.integrations.vectorstores.s3vectors.S3VectorsVectorStore";
 
+        // Milvus
+        public static final String MILVUS_VECTOR_STORE =
+                "org.apache.flink.agents.integrations.vectorstores.milvus.MilvusVectorStore";
+
         // Python Wrapper
         public static final String PYTHON_WRAPPER_VECTOR_STORE =
                 "org.apache.flink.agents.api.vectorstores.python.PythonVectorStore";

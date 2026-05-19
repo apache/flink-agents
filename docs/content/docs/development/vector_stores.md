@@ -172,7 +172,7 @@ For vector stores that implement `CollectionManageableVectorStore`, you can crea
 * `delete_collection` / `deleteCollection`: Delete a collection by name.
 
 {{< hint info >}}
-Collection-level operations are only supported for vector stores that implement `CollectionManageableVectorStore`. Among the built-in providers, Chroma (Python), Elasticsearch (Java) and OpenSearch (Java) implement this interface.
+Collection-level operations are only supported for vector stores that implement `CollectionManageableVectorStore`. Among the built-in providers, Chroma (Python), Elasticsearch (Java), OpenSearch (Java), and Milvus (Java) implement this interface.
 {{< /hint >}}
 
 {{< tabs "Collection level operations" >}}
@@ -642,9 +642,86 @@ public static ResourceDescriptor vectorStore() {
 
 {{< /tabs >}}
 
+### Milvus
+
+[Milvus](https://milvus.io/) is an open-source vector database designed for high-dimensional vector search at scale.
+
+{{< hint info >}}
+Milvus is currently supported in the Java API only. To use Milvus from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. A Milvus server.
+
+#### MilvusVectorStore Parameters
+
+| Parameter                   | Type | Default                              | Description                                                                 |
+|-----------------------------|------|--------------------------------------|-----------------------------------------------------------------------------|
+| `embedding_model`           | str  | Required                             | Reference to embedding model resource name                                  |
+| `collection`                | str  | `"flink_agents_milvus_collection"`   | Default target Milvus collection name                                       |
+| `collection_name`           | str  | None                                 | Alias for `collection`                                                       |
+| `index`                     | str  | None                                 | Alias for `collection`, mainly for cross-provider compatibility              |
+| `id_field`                  | str  | `"id"`                               | Name of the primary key field                                                |
+| `content_field`             | str  | `"content"`                          | Name of the field storing document content                                   |
+| `metadata_field`            | str  | `"metadata"`                         | Name of the JSON field storing document metadata                             |
+| `vector_field`              | str  | `"embedding"`                        | Name of the FloatVector field used for vector search                         |
+| `dims`                      | int  | `768`                                | Vector dimensionality                                                        |
+| `id_max_length`             | int  | `65535`                              | Maximum length for the VarChar primary key field                             |
+| `content_max_length`        | int  | `65535`                              | Maximum length for the VarChar content field                                 |
+| `metric_type`               | str  | `"COSINE"`                           | Milvus metric type used by vector search                                     |
+| `index_type`                | str  | `"AUTOINDEX"`                        | Milvus vector index type                                                     |
+| `index_params`              | map  | `{}`                                 | Extra vector index parameters passed to Milvus                               |
+| `metadata_index_keys`       | list | `user_id`, `agent_id`, `run_id`, `actor_id`, `category` | Additional metadata JSON keys indexed with path indexes |
+| `metadata_index_cast_types` | map  | Default keys use `"VARCHAR"`         | Per-metadata-key JSON path index cast type overrides                         |
+| `num_shards`                | int  | `1`                                  | Number of Milvus shards for newly created collections                        |
+| `consistency_level`         | str  | `"BOUNDED"`                          | Milvus consistency level for collection creation, query, and search          |
+| `max_get_limit`             | int  | `10000`                              | Maximum number of documents returned by `get` when no limit is specified     |
+| `load_timeout_ms`           | long | `120000`                             | Timeout for loading collections                                              |
+| `uri`                       | str  | `"http://localhost:19530"`           | Milvus endpoint                                                              |
+| `host`                      | str  | `"localhost"`                        | Milvus host used when `uri` is not set                                       |
+| `port`                      | int  | `19530`                              | Milvus port used when `uri` is not set                                       |
+| `db_name`                   | str  | None                                 | Milvus database name                                                         |
+| `token`                     | str  | None                                 | Token for Milvus authentication                                              |
+| `username`                  | str  | None                                 | Username for basic authentication                                            |
+| `password`                  | str  | None                                 | Password for basic authentication                                            |
+| `enable_precheck`           | bool | `false`                              | Whether to enable Milvus client precheck                                     |
+
+{{< hint info >}}
+When creating a collection, MilvusVectorStore creates a primary-key field, content field, JSON metadata field, vector field, vector index, and JSON metadata indexes. The default metadata JSON path indexes cover common filter keys such as `user_id`, `agent_id`, `run_id`, `actor_id`, and `category`; add `metadata_index_keys` for application-specific filter keys.
+
+The default shard count is `1`. As a rough capacity-planning rule, use about one shard per 100 million vectors, and increase it for heavier write throughput.
+{{< /hint >}}
+
+#### Usage Example
+
+{{< tabs "Milvus Usage Example" >}}
+
+{{< tab "Java" >}}
+
+```java
+@VectorStore
+public static ResourceDescriptor vectorStore() {
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.MILVUS_VECTOR_STORE)
+            .addInitialArgument("embedding_model", "embeddingModel")
+            .addInitialArgument("uri", "http://localhost:19530")
+            .addInitialArgument("collection", "my_documents")
+            .addInitialArgument("dims", 1536)
+            .addInitialArgument("metric_type", "COSINE")
+            .addInitialArgument("index_type", "AUTOINDEX")
+            // Optional metadata JSON path indexes
+            // .addInitialArgument("metadata_index_keys", List.of("user_id", "agent_id", "run_id"))
+            .build();
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 ## Using Cross-Language Providers
 
-Flink Agents supports cross-language vector store integration, allowing you to use vector stores implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a vector store provider is only available in one language (e.g., Elasticsearch is currently Java-only, Chroma is currently Python-only).
+Flink Agents supports cross-language vector store integration, allowing you to use vector stores implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a vector store provider is only available in one language (e.g., Elasticsearch and Milvus are currently Java-only, Chroma is currently Python-only).
 
 {{< hint warning >}}
 **Limitations:**

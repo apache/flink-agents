@@ -1,0 +1,12 @@
+agents:
+  - name: tool_agent
+    tools:
+      - name: notify
+        function: flink_agents.api.yaml.tests.fixtures.loader_targets:notify
+    prompts:
+      - name: text_prompt
+        text: "hello {name}"
+      - name: messages_prompt
+        messages:
+          - {role: system, content: "be brief"}
+          - {role: user, content: "{q}"}

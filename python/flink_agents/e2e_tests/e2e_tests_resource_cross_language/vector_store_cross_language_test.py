@@ -16,7 +16,9 @@
 # limitations under the License.
 #################################################################################
 import os
+import sys
 import sysconfig
+import uuid
 from pathlib import Path
 
 import pytest
@@ -43,26 +45,32 @@ current_dir = Path(__file__).parent
 OLLAMA_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest")
 
 ES_HOST = os.environ.get("ES_HOST")
+MILVUS_URI = os.environ.get("MILVUS_URI")
 
 client = pull_model(OLLAMA_MODEL)
+EMBEDDING_TYPES = ["JAVA", "PYTHON"]
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
 
-@pytest.mark.skipif(
-    client is None or ES_HOST is None,
-    reason="Ollama client or Elasticsearch host is missing.",
-)
-@pytest.mark.parametrize("embedding_type", ["JAVA", "PYTHON"])
-def test_java_vector_store_integration(
-    tmp_path: Path, embedding_type: str, monkeypatch: pytest.MonkeyPatch
+def _run_vector_store_integration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    embedding_type: str,
+    backend: str,
 ) -> None:
+    print(f"[TEST][{backend}] Vector store e2e embedding={embedding_type}")
     monkeypatch.setenv("OLLAMA_EMBEDDING_MODEL", OLLAMA_MODEL)
-    os.environ["EMBEDDING_TYPE"] = embedding_type
+    monkeypatch.setenv("EMBEDDING_TYPE", embedding_type)
+    monkeypatch.setenv("VECTOR_STORE_BACKEND", backend)
+    suffix = uuid.uuid4().hex
+    monkeypatch.setenv("VECTOR_STORE_COLLECTION", f"my_documents_{suffix}")
+    monkeypatch.setenv("VECTOR_STORE_TEST_COLLECTION", f"test_collection_{suffix}")
 
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
+    env.set_python_executable(sys.executable)
 
     # currently, bounded source is not supported due to runtime implementation, so
     # we use continuous file source here.
@@ -112,5 +120,30 @@ def test_java_vector_store_integration(
             with file.open() as f:
                 actual_result.extend(f.readlines())
 
+    assert len(actual_result) >= 2
     assert "PASS" in actual_result[0]
     assert "PASS" in actual_result[1]
+
+
+@pytest.mark.skipif(
+    client is None or ES_HOST is None,
+    reason="Embedding model client or Elasticsearch host is missing.",
+)
+@pytest.mark.parametrize("embedding_type", EMBEDDING_TYPES)
+def test_elasticsearch_vector_store_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, embedding_type: str
+) -> None:
+    _run_vector_store_integration(
+        tmp_path, monkeypatch, embedding_type, "ELASTICSEARCH"
+    )
+
+
+@pytest.mark.skipif(
+    client is None or MILVUS_URI is None,
+    reason="Embedding model client or Milvus URI is missing.",
+)
+@pytest.mark.parametrize("embedding_type", EMBEDDING_TYPES)
+def test_milvus_vector_store_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, embedding_type: str
+) -> None:
+    _run_vector_store_integration(tmp_path, monkeypatch, embedding_type, "MILVUS")

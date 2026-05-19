@@ -144,6 +144,7 @@ class MyAgent(Agent):
         return ResourceDescriptor(
             clazz=f"{MockChatModel.__module__}.{MockChatModel.__name__}",
             connection="mock_connection",
+            model="mock-model",
             prompt="prompt",
             tools=["add"],
         )

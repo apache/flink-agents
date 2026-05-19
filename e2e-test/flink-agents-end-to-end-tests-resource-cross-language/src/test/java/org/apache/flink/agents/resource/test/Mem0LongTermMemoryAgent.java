@@ -52,19 +52,20 @@ import java.util.UUID;
  * full retrieved item set.
  *
  * <p>All resources are declared as native Java implementations (Ollama chat / embedding,
- * Elasticsearch vector store). Python's mem0 adapter consumes them through the cross-language
- * bridge: {@code ctx.get_resource(name, type)} on the Python side returns a Java*Impl wrapper that
- * delegates back into Java via Pemja.
+ * Elasticsearch or Milvus vector store). Python's mem0 adapter consumes them through the
+ * cross-language bridge: {@code ctx.get_resource(name, type)} on the Python side returns a
+ * Java*Impl wrapper that delegates back into Java via Pemja.
  *
- * <p>The test driving this agent must (1) pull the Ollama models and (2) provide ES connection env
- * vars ({@code ES_HOST}, {@code ES_INDEX}, {@code ES_DIMS}, {@code ES_VECTOR_FIELD}, optional
- * {@code ES_USERNAME}/{@code ES_PASSWORD}); see {@link Mem0LongTermMemoryTest}.
+ * <p>The test driving this agent must (1) pull the Ollama models and (2) provide vector-store
+ * connection env vars; see {@link Mem0LongTermMemoryTest}.
  */
 public class Mem0LongTermMemoryAgent extends Agent {
 
     public static final String CHAT_MODEL = "qwen3.6-plus";
     public static final String OLLAMA_EMBEDDING_MODEL = "nomic-embed-text";
     public static final String MEMORY_SET_NAME = "test_ltm";
+    public static final String ES_LTM_STORE = "esLtmStore";
+    public static final String MILVUS_LTM_STORE = "milvusLtmStore";
 
     /** Mirrors the Python e2e: dashscope-hosted OpenAI-compatible endpoint, env-overridable. */
     private static final String DEFAULT_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1";
@@ -139,7 +140,9 @@ public class Mem0LongTermMemoryAgent extends Agent {
                 ResourceDescriptor.Builder.newBuilder(
                                 ResourceName.VectorStore.ELASTICSEARCH_VECTOR_STORE)
                         .addInitialArgument("embedding_model", "ollamaNomicEmbedText")
-                        .addInitialArgument("host", System.getenv("ES_HOST"))
+                        .addInitialArgument(
+                                "host",
+                                System.getenv().getOrDefault("ES_HOST", "http://localhost:9200"))
                         .addInitialArgument(
                                 "collection",
                                 UUID.randomUUID().toString().substring(0, 8) + "-context");
@@ -150,6 +153,23 @@ public class Mem0LongTermMemoryAgent extends Agent {
                     .addInitialArgument("password", password);
         }
         return builder.build();
+    }
+
+    @VectorStore
+    public static ResourceDescriptor milvusLtmStore() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.MILVUS_VECTOR_STORE)
+                .addInitialArgument("embedding_model", "ollamaNomicEmbedText")
+                .addInitialArgument(
+                        "uri", System.getenv().getOrDefault("MILVUS_URI", "http://localhost:19530"))
+                .addInitialArgument(
+                        "collection",
+                        "flink_agents_mem0_" + UUID.randomUUID().toString().replace("-", ""))
+                .addInitialArgument("dims", 768)
+                // Test-only: Mem0 e2e reads immediately after writes. Production should use the
+                // default BOUNDED consistency unless immediate read-after-write visibility is
+                // required.
+                .addInitialArgument("consistency_level", "STRONG")
+                .build();
     }
 
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})

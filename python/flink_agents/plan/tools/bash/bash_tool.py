@@ -70,8 +70,6 @@ class BashTool(Tool):
       time by the framework (not visible to the LLM through ``args_schema``).
     """
 
-    metadata: ToolMetadata = Field(exclude=True)
-
     def __init__(self, **kwargs: Any) -> None:
         """Initialize the tool."""
         super().__init__(

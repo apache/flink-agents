@@ -144,6 +144,8 @@ public class CreateJavaAgentPlanFromJson {
         kwargs.put("name", "chat_model");
         kwargs.put("prompt", "prompt");
         kwargs.put("tools", List.of("add"));
+        kwargs.put("connection", "mock_connection");
+        kwargs.put("model", "mock-model");
         ResourceDescriptor chatModelDescriptor =
                 new ResourceDescriptor(
                         "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent",

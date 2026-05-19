@@ -31,7 +31,8 @@ from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
 )
-from flink_agents.plan.tools.function_tool import FunctionTool, from_callable
+from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.tools.function_tool import FunctionTool
 
 test_model = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
 current_dir = Path(__file__).parent
@@ -90,7 +91,7 @@ def add(a: int, b: int) -> int:
 
 
 def get_tool(name: str, type: ResourceType) -> FunctionTool:
-    return from_callable(func=add)
+    return FunctionTool(func=PythonFunction.from_callable(add))
 
 
 @pytest.mark.skipif(
@@ -131,6 +132,13 @@ def test_ollama_chat_with_tools() -> None:
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
     assert add(**tool_call["function"]["arguments"]) == 3
+
+
+def test_model_field_roundtrip() -> None:
+    """Verify `model` is preserved through pydantic dump/validate round-trip."""
+    setup = OllamaChatModelSetup(connection="conn", model="test-model")
+    restored = OllamaChatModelSetup.model_validate(setup.model_dump())
+    assert restored.model == "test-model"
 
 
 def test_extract_think_tags() -> None:

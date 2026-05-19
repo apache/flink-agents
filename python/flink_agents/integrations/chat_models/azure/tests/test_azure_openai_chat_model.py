@@ -27,7 +27,8 @@ from flink_agents.integrations.chat_models.azure.azure_openai_chat_model import 
     AzureOpenAIChatModelConnection,
     AzureOpenAIChatModelSetup,
 )
-from flink_agents.plan.tools.function_tool import from_callable
+from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.tools.function_tool import FunctionTool
 
 test_deployment = os.environ.get("TEST_AZURE_DEPLOYMENT")
 api_key = os.environ.get("AZURE_OPENAI_API_KEY")
@@ -95,7 +96,7 @@ def test_azure_openai_chat_with_tools() -> None:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
             return connection
         else:
-            return from_callable(func=add)
+            return FunctionTool(func=PythonFunction.from_callable(add))
 
     mock_ctx = MagicMock(spec=ResourceContext)
     mock_ctx.get_resource = get_resource
@@ -119,3 +120,10 @@ def test_azure_openai_chat_with_tools() -> None:
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
     assert add(**tool_call["function"]["arguments"]) == 1065
+
+
+def test_model_field_roundtrip() -> None:
+    """Verify `model` is preserved through pydantic dump/validate round-trip."""
+    setup = AzureOpenAIChatModelSetup(connection="conn", model="test-deployment")
+    restored = AzureOpenAIChatModelSetup.model_validate(setup.model_dump())
+    assert restored.model == "test-deployment"

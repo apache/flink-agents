@@ -106,9 +106,10 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
             j_resource_adapter: The Java resource adapter for method invocation
             **kwargs: Additional keyword arguments
         """
-        # connection is a required parameter for BaseChatModelSetup
+        # connection and model are required parameters for BaseChatModelSetup
         connection = kwargs.pop("connection", "")
-        super().__init__(connection=connection, **kwargs)
+        model = kwargs.pop("model", "")
+        super().__init__(connection=connection, model=model, **kwargs)
 
         self._j_resource = j_resource
         self._j_resource_adapter = j_resource_adapter

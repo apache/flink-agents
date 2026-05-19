@@ -117,6 +117,7 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 |---|---|---|
 | [Chroma]({{< ref "docs/development/vector_stores#chroma" >}}) | ✅ | ❌ |
 | [Elasticsearch]({{< ref "docs/development/vector_stores#elasticsearch" >}}) | ❌ | ✅ |
+| [Milvus]({{< ref "docs/development/vector_stores#milvus" >}}) | ❌ | ✅ |
 
 **MCP Server**
 

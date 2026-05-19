@@ -27,8 +27,8 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -38,6 +38,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.apache.flink.agents.resource.test.CrossLanguageTestPreparationUtils.pullModel;
+import static org.apache.flink.agents.resource.test.Mem0LongTermMemoryAgent.ES_LTM_STORE;
+import static org.apache.flink.agents.resource.test.Mem0LongTermMemoryAgent.MILVUS_LTM_STORE;
 import static org.apache.flink.agents.resource.test.Mem0LongTermMemoryAgent.OLLAMA_EMBEDDING_MODEL;
 
 /**
@@ -54,7 +56,8 @@ import static org.apache.flink.agents.resource.test.Mem0LongTermMemoryAgent.OLLA
  *   <li>{@code ACTION_API_KEY} env var (and optionally {@code ACTION_BASE_URL}) for the
  *       OpenAI-compatible chat model — mirrors the Python e2e test's setup
  *   <li>{@code python} on PATH with {@code mem0ai} and {@code flink_agents} installed
- *   <li>Elasticsearch reachable via the {@code ES_HOST} env var
+ *   <li>Elasticsearch reachable via the {@code ES_HOST} env var, or Milvus reachable via the {@code
+ *       MILVUS_URI} env var
  * </ul>
  */
 public class Mem0LongTermMemoryTest {
@@ -62,25 +65,28 @@ public class Mem0LongTermMemoryTest {
     private final boolean embeddingReady;
     private final boolean pythonReady;
     private final boolean esConfigured;
+    private final boolean milvusConfigured;
     private final boolean apiKeySet;
 
     public Mem0LongTermMemoryTest() throws IOException {
         embeddingReady = pullModel(OLLAMA_EMBEDDING_MODEL);
         pythonReady = isPythonAvailable();
         esConfigured = System.getenv("ES_HOST") != null;
+        milvusConfigured = System.getenv("MILVUS_URI") != null;
         apiKeySet = System.getenv("ACTION_API_KEY") != null;
     }
 
-    @Test
-    @Disabled("Using mem0 in java depends on the pemja fix.")
-    public void testMem0LongTermMemory() throws Exception {
+    @ParameterizedTest(name = "vectorStore={0}")
+    @ValueSource(strings = {ES_LTM_STORE, MILVUS_LTM_STORE})
+    public void testMem0LongTermMemory(String vectorStore) throws Exception {
         Assumptions.assumeTrue(
                 embeddingReady,
                 "Ollama is not reachable or the embedding model could not be pulled");
         Assumptions.assumeTrue(
                 pythonReady,
                 "`python` executable not found on PATH; this test requires Python with mem0ai installed");
-        Assumptions.assumeTrue(esConfigured, "Elasticsearch env var (ES_HOST) is not set");
+        Assumptions.assumeTrue(
+                isVectorStoreConfigured(vectorStore), vectorStoreMissingMessage(vectorStore));
         Assumptions.assumeTrue(
                 apiKeySet,
                 "ACTION_API_KEY env var is not set; required for the OpenAI-compatible chat model");
@@ -105,7 +111,7 @@ public class Mem0LongTermMemoryTest {
         agentsEnv
                 .getConfig()
                 .set(LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP, "ollamaNomicEmbedText");
-        agentsEnv.getConfig().set(LongTermMemoryOptions.Mem0.VECTOR_STORE, "esLtmStore");
+        agentsEnv.getConfig().set(LongTermMemoryOptions.Mem0.VECTOR_STORE, vectorStore);
 
         DataStream<Object> outputStream =
                 agentsEnv
@@ -127,6 +133,26 @@ public class Mem0LongTermMemoryTest {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private boolean isVectorStoreConfigured(String vectorStore) {
+        if (ES_LTM_STORE.equals(vectorStore)) {
+            return esConfigured;
+        }
+        if (MILVUS_LTM_STORE.equals(vectorStore)) {
+            return milvusConfigured;
+        }
+        throw new IllegalArgumentException("Unknown vector store: " + vectorStore);
+    }
+
+    private static String vectorStoreMissingMessage(String vectorStore) {
+        if (ES_LTM_STORE.equals(vectorStore)) {
+            return "Elasticsearch env var (ES_HOST) is not set";
+        }
+        if (MILVUS_LTM_STORE.equals(vectorStore)) {
+            return "Milvus env var (MILVUS_URI) is not set";
+        }
+        return "Unknown vector store: " + vectorStore;
     }
 
     @SuppressWarnings("unchecked")

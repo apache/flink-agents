@@ -18,13 +18,16 @@
 import typing
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Type
+from typing import TYPE_CHECKING, Any, Type
 
-from pydantic import BaseModel, Field, field_serializer, model_validator
+from pydantic import BaseModel, field_serializer, model_validator
 from typing_extensions import override
 
 from flink_agents.api.resource import ResourceType, SerializableResource
 from flink_agents.api.tools.utils import create_model_from_schema
+
+if TYPE_CHECKING:
+    from flink_agents.api.tools.function_tool import FunctionTool
 
 
 class ToolType(Enum):
@@ -99,34 +102,18 @@ class ToolMetadata(BaseModel):
         return parameters
 
 
-class FunctionTool(SerializableResource):
-    """Tool container keeps a callable, mainly used to represent
-    a function which will be converted to BaseTool after compile.
-    """
-
-    func: typing.Callable = Field(exclude=True)
-
-    @classmethod
-    def resource_type(cls) -> ResourceType:
-        """Get the resource type."""
-        return ResourceType.TOOL
-
-
 class Tool(SerializableResource, ABC):
-    """Base abstract class of all kinds of tools.
+    """Base abstract class of all kinds of tools."""
 
-    Attributes:
-    ----------
-    metadata : ToolMetadata
-        The metadata of the tools, includes name, description and arguments schema.
-    """
-
-    metadata: ToolMetadata
+    metadata: ToolMetadata | None = None
 
     @staticmethod
-    def from_callable(func: typing.Callable) -> FunctionTool:
-        """Create a function tool from a callable."""
-        return FunctionTool(func=func)
+    def from_callable(func: typing.Callable) -> "FunctionTool":
+        """Wrap a Python callable as a declarative ``FunctionTool``."""
+        from flink_agents.api.function import PythonFunction
+        from flink_agents.api.tools.function_tool import FunctionTool
+
+        return FunctionTool(func=PythonFunction.from_callable(func))
 
     @property
     def name(self) -> str:

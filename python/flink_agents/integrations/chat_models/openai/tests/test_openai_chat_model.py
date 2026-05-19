@@ -24,10 +24,12 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
+    DEFAULT_OPENAI_MODEL,
     OpenAIChatModelConnection,
     OpenAIChatModelSetup,
 )
-from flink_agents.plan.tools.function_tool import from_callable
+from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.tools.function_tool import FunctionTool
 
 test_model = os.environ.get("TEST_MODEL")
 api_key = os.environ.get("TEST_API_KEY")
@@ -85,7 +87,7 @@ def test_openai_chat_with_tools() -> None:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
             return connection
         else:
-            return from_callable(func=add)
+            return FunctionTool(func=PythonFunction.from_callable(add))
 
     mock_ctx = MagicMock(spec=ResourceContext)
     mock_ctx.get_resource = get_resource
@@ -104,3 +106,16 @@ def test_openai_chat_with_tools() -> None:
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
     assert add(**tool_call["function"]["arguments"]) == 1065
+
+
+def test_model_field_roundtrip() -> None:
+    """Verify `model` is preserved through pydantic dump/validate round-trip."""
+    setup = OpenAIChatModelSetup(connection="conn", model="test-model")
+    restored = OpenAIChatModelSetup.model_validate(setup.model_dump())
+    assert restored.model == "test-model"
+
+
+def test_default_model_when_omitted() -> None:
+    """Verify per-integration default applies when `model` is omitted from __init__."""
+    setup = OpenAIChatModelSetup(connection="conn")
+    assert setup.model == DEFAULT_OPENAI_MODEL

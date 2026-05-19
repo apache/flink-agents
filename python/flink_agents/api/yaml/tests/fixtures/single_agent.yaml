@@ -1,0 +1,6 @@
+agents:
+  - name: incrementer
+    actions:
+      - name: increment
+        function: flink_agents.api.yaml.tests.fixtures.loader_targets:increment
+        listen_to: [input]
