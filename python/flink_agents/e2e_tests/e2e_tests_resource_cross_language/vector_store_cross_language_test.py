@@ -41,7 +41,6 @@ from flink_agents.e2e_tests.test_utils import pull_model
 current_dir = Path(__file__).parent
 
 OLLAMA_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest")
-os.environ["OLLAMA_EMBEDDING_MODEL"] = OLLAMA_MODEL
 
 ES_HOST = os.environ.get("ES_HOST")
 
@@ -55,7 +54,10 @@ os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
     reason="Ollama client or Elasticsearch host is missing.",
 )
 @pytest.mark.parametrize("embedding_type", ["JAVA", "PYTHON"])
-def test_java_vector_store_integration(tmp_path: Path, embedding_type: str) -> None:
+def test_java_vector_store_integration(
+    tmp_path: Path, embedding_type: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OLLAMA_EMBEDDING_MODEL", OLLAMA_MODEL)
     os.environ["EMBEDDING_TYPE"] = embedding_type
 
     env = StreamExecutionEnvironment.get_execution_environment()
