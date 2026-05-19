@@ -18,7 +18,7 @@
 import json
 import typing
 from inspect import signature
-from typing import Any, Callable, Optional, Type, Union
+from typing import Any, Callable, Dict, Optional, Type, Union
 
 from docstring_parser import parse
 from pydantic import BaseModel, create_model
@@ -210,6 +210,7 @@ def create_java_tool_schema_str_from_model(model: type[BaseModel]) -> str:
     REVERSE_TYPE_MAPPING = {v: k for k, v in TYPE_MAPPING.items()}
 
     properties = {}
+    required = []
     for field_name, field_info in model.model_fields.items():
         field_type = field_info.annotation
 
@@ -228,7 +229,11 @@ def create_java_tool_schema_str_from_model(model: type[BaseModel]) -> str:
             description = f"Parameter: {field_name}"
 
         properties[field_name] = {"type": json_type, "description": description}
+        if field_info.is_required():
+            required.append(field_name)
 
-    json_schema = {"properties": properties}
+    json_schema: Dict[str, Any] = {"properties": properties}
+    if required:
+        json_schema["required"] = required
 
     return json.dumps(json_schema, ensure_ascii=False, indent=2)
