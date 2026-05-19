@@ -18,25 +18,38 @@
 
 package org.apache.flink.agents.api.tools;
 
+import org.apache.flink.agents.api.function.Function;
+import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
 import java.lang.reflect.Method;
+import java.util.Objects;
 
-/** Tool keeps a method, will be converted to tool after compile. */
+/**
+ * Pure-data tool descriptor: carries an {@link Function} reference. Used at agent-construction
+ * time; compiled to the plan-layer executable {@code plan.tools.FunctionTool} when the agent
+ * becomes an {@code AgentPlan}.
+ */
 public class FunctionTool extends SerializableResource {
-    private final Method method;
 
-    public FunctionTool(Method method) {
-        this.method = method;
+    private final Function func;
+
+    public FunctionTool(Function func) {
+        this.func = Objects.requireNonNull(func, "func");
+    }
+
+    /** Convenience factory: derive a {@link JavaFunction} from a reflected method. */
+    public static FunctionTool fromMethod(Method method) {
+        return new FunctionTool(JavaFunction.fromMethod(method));
+    }
+
+    public Function getFunc() {
+        return func;
     }
 
     @Override
     public ResourceType getResourceType() {
         return ResourceType.TOOL;
-    }
-
-    public Method getMethod() {
-        return method;
     }
 }

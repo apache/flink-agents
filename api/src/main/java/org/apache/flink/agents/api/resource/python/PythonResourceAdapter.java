@@ -128,4 +128,36 @@ public interface PythonResourceAdapter {
      * @return the result of the method invocation
      */
     Object invoke(String name, Object... args);
+
+    /**
+     * Look up tool metadata for a Python function across the JVM&rarr;Python bridge.
+     *
+     * <p>The Java side asks the Python side to introspect a callable identified by {@code module} +
+     * {@code qualName}, and returns a flat {@code Map<String, String>} with keys {@code "name"},
+     * {@code "description"}, and {@code "inputSchema"} (a JSON schema string compatible with {@code
+     * ToolMetadata.inputSchema}).
+     *
+     * <p>The return shape is intentionally flat — pemja can SIGSEGV when returning arbitrary Python
+     * objects to Java on non-main-interpreter threads.
+     *
+     * @param module the Python module containing the callable
+     * @param qualName the qualified name of the callable inside the module (e.g. {@code "fn"} or
+     *     {@code "MyClass.method"})
+     * @return flat map with keys "name", "description", "inputSchema"
+     */
+    Map<String, String> getPythonToolMetadata(String module, String qualName);
+
+    /**
+     * Invoke a Python callable as a tool, passing keyword arguments. Used when a Java chat model's
+     * tool list contains a {@code plan.FunctionTool} whose function descriptor is a {@code
+     * PythonFunction}: instead of routing the invocation through Java reflection, dispatch it
+     * across the bridge so the underlying Python function runs in the Pemja interpreter.
+     *
+     * @param module the Python module containing the callable
+     * @param qualName the qualified name of the callable inside the module
+     * @param kwargs keyword arguments to pass to the callable; LLM tool calls always arrive as
+     *     keyword arguments
+     * @return the raw return value from the Python callable
+     */
+    Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs);
 }
