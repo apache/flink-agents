@@ -69,7 +69,6 @@ _TEST_JAR = (
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
 OLLAMA_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
-os.environ["OLLAMA_CHAT_MODEL"] = OLLAMA_MODEL
 
 _client = pull_model(OLLAMA_MODEL)
 
@@ -86,13 +85,16 @@ _client = pull_model(OLLAMA_MODEL)
         "flink-agents-end-to-end-tests-resource-cross-language' first."
     ),
 )
-def test_yaml_cross_language_agent(tmp_path: Path) -> None:
+def test_yaml_cross_language_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``load_yaml`` → ``apply(by name)`` with a YAML-declared Java tool.
 
     Exercises a Python Ollama chat model that calls a Java
     ``calculateBMI`` tool declared in YAML and resolved against the
     cross-language test JAR.
     """
+    monkeypatch.setenv("OLLAMA_CHAT_MODEL", OLLAMA_MODEL)
     config = Configuration()
     config.set_string("python.pythonpath", sysconfig.get_paths()["purelib"])
     env = StreamExecutionEnvironment.get_execution_environment(config)
