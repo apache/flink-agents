@@ -25,7 +25,6 @@ import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
 import org.apache.flink.agents.plan.resource.python.PythonMCPTool;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
-import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 
 import java.util.Map;
 
@@ -71,17 +70,7 @@ public class PythonMCPResourceDiscovery {
             PythonResourceProvider provider = (PythonResourceProvider) rp;
             provider.setPythonResourceAdapter(adapter);
 
-            PythonMCPServer server =
-                    (PythonMCPServer)
-                            provider.provide(
-                                    new ResourceContextImpl(
-                                            (name, type) -> {
-                                                try {
-                                                    return cache.getResource(name, type);
-                                                } catch (Exception e) {
-                                                    throw new RuntimeException(e);
-                                                }
-                                            }));
+            PythonMCPServer server = (PythonMCPServer) provider.provide(cache.getResourceContext());
 
             for (PythonMCPTool tool : server.listTools()) {
                 cache.put(tool.getName(), TOOL, tool);

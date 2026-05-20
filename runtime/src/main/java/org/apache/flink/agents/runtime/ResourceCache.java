@@ -46,6 +46,7 @@ public class ResourceCache implements AutoCloseable {
     private final Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
     private final Map<ResourceType, Map<String, Resource>> cache = new ConcurrentHashMap<>();
     private volatile PythonResourceAdapter pythonResourceAdapter;
+    private final ResourceContextImpl resourceContext;
 
     public ResourceCache(Map<ResourceType, Map<String, ResourceProvider>> resourceProviders) {
         // Defensive copy: the cache must not be affected by later mutations to the source map.
@@ -54,10 +55,24 @@ public class ResourceCache implements AutoCloseable {
                 resourceProviders.entrySet()) {
             this.resourceProviders.put(entry.getKey(), new HashMap<>(entry.getValue()));
         }
+
+        this.resourceContext =
+                new ResourceContextImpl(
+                        (name, type) -> {
+                            try {
+                                return this.getResource(name, type);
+                            } catch (Exception e) {
+                                throw new RuntimeException(e);
+                            }
+                        });
     }
 
     void setPythonResourceAdapter(PythonResourceAdapter adapter) {
         this.pythonResourceAdapter = adapter;
+    }
+
+    public ResourceContextImpl getResourceContext() {
+        return resourceContext;
     }
 
     /**
@@ -87,16 +102,7 @@ public class ResourceCache implements AutoCloseable {
             ((PythonResourceProvider) provider).setPythonResourceAdapter(pythonResourceAdapter);
         }
 
-        Resource resource =
-                provider.provide(
-                        new ResourceContextImpl(
-                                (anotherName, anotherType) -> {
-                                    try {
-                                        return this.getResource(anotherName, anotherType);
-                                    } catch (Exception e) {
-                                        throw new RuntimeException(e);
-                                    }
-                                }));
+        Resource resource = provider.provide(resourceContext);
 
         if (pythonResourceAdapter != null && resource instanceof FunctionTool) {
             ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
