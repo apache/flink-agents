@@ -552,6 +552,40 @@ prompt_flink_version_interactive() {
     return 0
 }
 
+# Populate FLINK_VERSION from an existing FLINK_HOME. Tries to parse
+# `lib/flink-dist-<ver>.jar` first because it's instant; falls back to
+# `bin/flink --version`, which is authoritative but spins up a JVM and can
+# take 3-10s on cold start. Returns 0 on success.
+detect_flink_version_from_home() {
+    [[ -n "${FLINK_HOME:-}" && -d "$FLINK_HOME" ]] || return 1
+
+    local major_minor_patch=""
+
+    # Fast path: filename inspection. Avoids JVM startup entirely.
+    local jar
+    for jar in "$FLINK_HOME/lib"/flink-dist-[0-9]*.jar; do
+        [[ -f "$jar" ]] || continue
+        major_minor_patch="$(basename "$jar" | sed -E -n 's/^flink-dist-([0-9]+\.[0-9]+\.[0-9]+)\.jar$/\1/p')"
+        [[ -n "$major_minor_patch" ]] && break
+    done
+
+    # Slow path: ask the Flink CLI. JVM startup means a few seconds of
+    # silence, so signal what's happening.
+    if [[ -z "$major_minor_patch" && -x "$FLINK_HOME/bin/flink" ]]; then
+        ui_info "Detecting Flink version (running '${FLINK_HOME}/bin/flink --version', this may take a few seconds)..."
+        local out
+        out="$("$FLINK_HOME/bin/flink" --version 2>/dev/null || true)"
+        major_minor_patch="$(printf '%s\n' "$out" | sed -E -n 's/.*Version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -n1)"
+    fi
+
+    if [[ -z "$major_minor_patch" ]]; then
+        return 1
+    fi
+
+    FLINK_VERSION="$major_minor_patch"
+    return 0
+}
+
 plan_flink() {
     case "$INSTALL_FLINK" in
         Yes|No)
@@ -588,6 +622,13 @@ plan_flink() {
         [[ -n "${FLINK_HOME:-}" ]] || die "FLINK_HOME is not set."
         [[ -d "$FLINK_HOME" ]] || die "FLINK_HOME does not exist: $FLINK_HOME"
         [[ -d "$FLINK_HOME/lib" ]] || die "Invalid FLINK_HOME (missing lib directory): $FLINK_HOME"
+        ui_success "FLINK_HOME accepted: $FLINK_HOME"
+        if detect_flink_version_from_home; then
+            ui_success "Detected Flink version: $FLINK_VERSION"
+        else
+            ui_warn "Could not auto-detect Flink version from $FLINK_HOME; assuming ${FLINK_VERSION}."
+            ui_warn "If JAR copy fails, set FLINK_VERSION explicitly (e.g. FLINK_VERSION=2.1.1 bash install.sh)."
+        fi
         FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
         return
     fi
