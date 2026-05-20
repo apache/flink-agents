@@ -329,16 +329,19 @@ ui_stage() {
     ui_section "[${INSTALL_STAGE_CURRENT}/${INSTALL_STAGE_TOTAL}] ${title}"
 }
 
+UI_KV_KEY_WIDTH=24
+
 ui_kv() {
     local key="$1"
     local value="$2"
+    local labeled="${key}:"
     if [[ -n "$GUM" ]]; then
         local key_part value_part
-        key_part="$("$GUM" style --foreground "#5a6480" --width 20 "$key")"
+        key_part="$("$GUM" style --foreground "#5a6480" --width "$UI_KV_KEY_WIDTH" "$labeled")"
         value_part="$("$GUM" style --bold "$value")"
         "$GUM" join --horizontal "$key_part" "$value_part"
     else
-        echo -e "${MUTED}${key}:${NC} ${value}"
+        printf "${MUTED}%-${UI_KV_KEY_WIDTH}s${NC} %s\n" "$labeled" "$value"
     fi
 }
 
@@ -1284,24 +1287,46 @@ resolve_python() {
 }
 
 show_install_plan() {
-    ui_section "Installation plan"
+    ui_section "Environment (read-only)"
     ui_kv "OS" "$OS"
-    ui_kv "Flink version" "$FLINK_VERSION"
+    local java_summary="not found"
+    if command -v java >/dev/null 2>&1; then
+        local jv
+        jv="$(java -version 2>&1 | head -n1 | sed -E 's/^[^ ]+ version "?([^"]+)"?.*/\1/')"
+        java_summary="${jv:-detected}"
+    fi
+    ui_kv "Java" "$java_summary"
+    if [[ -n "${JAVA_HOME:-}" ]]; then
+        ui_kv "JAVA_HOME" "$JAVA_HOME"
+    else
+        ui_kv "JAVA_HOME" "<not set, Flink will auto-detect>"
+    fi
+    local python_summary="<none>"
+    if [[ -n "$PYTHON_BIN" ]] && command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+        local pv
+        pv="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null || true)"
+        python_summary="${PYTHON_BIN}${pv:+ ($pv)}"
+    elif command -v python3 >/dev/null 2>&1; then
+        local pv
+        pv="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null || true)"
+        python_summary="python3${pv:+ ($pv)}"
+    fi
+    ui_kv "Python" "$python_summary"
+
+    ui_section "Installation plan"
     ui_kv "Flink Agents version" "$FLINK_AGENTS_VERSION"
     ui_kv "Install Flink" "$INSTALL_FLINK"
-    ui_kv "Install directory" "$INSTALL_DIR"
+    if [[ "$INSTALL_FLINK" == "Yes" ]]; then
+        ui_kv "Flink version" "$FLINK_VERSION"
+        ui_kv "Install directory" "$INSTALL_DIR"
+    else
+        if [[ -n "${FLINK_HOME:-}" ]]; then
+            ui_kv "FLINK_HOME" "$FLINK_HOME (v$FLINK_VERSION)"
+        fi
+    fi
     ui_kv "Enable PyFlink" "$ENABLE_PYFLINK"
     if [[ "$ENABLE_PYFLINK" == "Yes" ]] || [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
         ui_kv "Venv directory" "$VENV_DIR"
-        if [[ -n "$PYTHON_BIN" ]]; then
-            ui_kv "Python interpreter" "$PYTHON_BIN"
-        fi
-    fi
-    if [[ -n "${FLINK_HOME:-}" ]]; then
-        ui_kv "FLINK_HOME" "$FLINK_HOME"
-    fi
-    if [[ -n "${JAVA_HOME:-}" ]]; then
-        ui_kv "JAVA_HOME" "$JAVA_HOME"
     fi
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_kv "Dry run" "yes"
