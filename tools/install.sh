@@ -36,6 +36,10 @@ cleanup_tmpfiles() {
     done
 }
 trap cleanup_tmpfiles EXIT
+# Some interactive read combinations (notably `read -e` under stdin redirection)
+# can swallow SIGINT, leaving the user pressing Ctrl+C with no effect. Install
+# an explicit INT trap so Ctrl+C always lands.
+trap 'die_cancelled' INT
 
 mktempfile() {
     local f
@@ -306,7 +310,10 @@ die() {
 }
 
 die_cancelled() {
-    ui_info "Cancelled by user"
+    # Write to stderr so the message survives `$(...)` command substitution
+    # — otherwise the cancellation note would be silently captured by the
+    # caller's variable and the user would see nothing on Ctrl+C.
+    ui_info "Cancelled by user" >&2
     exit 130
 }
 
@@ -812,117 +819,201 @@ edit_prompt_flink_home() {
 # Show a menu of currently-applicable plan fields and re-prompt for the
 # selected one. After the edit, recomputes FLINK_HOME / FLINK_MAJOR_MINOR
 # so the next show_install_plan reflects the change.
+# Quote a value for safe re-sourcing by the parent shell via single-quoted
+# assignment. Any embedded single quotes are escaped by closing/reopening
+# the quoted string.
+edit_plan_quote() {
+    local v="$1"
+    printf "'%s'" "${v//\'/\'\\\'\'}"
+}
+
+# Write the subset of plan variables we may have modified to a sourceable
+# state file. Called from inside the edit subshell on a successful action.
+edit_plan_dump_state() {
+    local out="$1"
+    {
+        printf 'INSTALL_FLINK=%s\n'             "$(edit_plan_quote "$INSTALL_FLINK")"
+        printf 'FLINK_VERSION=%s\n'             "$(edit_plan_quote "$FLINK_VERSION")"
+        printf 'INSTALL_DIR=%s\n'               "$(edit_plan_quote "$INSTALL_DIR")"
+        printf 'FLINK_HOME=%s\n'                "$(edit_plan_quote "${FLINK_HOME:-}")"
+        printf 'FLINK_MAJOR_MINOR=%s\n'         "$(edit_plan_quote "${FLINK_MAJOR_MINOR:-}")"
+        printf 'ENABLE_PYFLINK=%s\n'            "$(edit_plan_quote "$ENABLE_PYFLINK")"
+        printf 'PYFLINK_ACTUALLY_ENABLED=%s\n'  "$(edit_plan_quote "$PYFLINK_ACTUALLY_ENABLED")"
+        printf 'VENV_DIR=%s\n'                  "$(edit_plan_quote "$VENV_DIR")"
+        printf 'PYTHON_BIN=%s\n'                "$(edit_plan_quote "${PYTHON_BIN:-}")"
+        printf 'FLINK_AGENTS_VERSION=%s\n'      "$(edit_plan_quote "$FLINK_AGENTS_VERSION")"
+    } > "$out"
+}
+
+# Show a menu of currently-applicable plan fields and re-prompt for the
+# selected one. The entire body runs inside a `()` subshell so that an
+# ESC anywhere — top-level menu or any nested sub-prompt — only terminates
+# this menu (subshell exits 130, caller treats it as "back"). Successful
+# edits dump their state to a file that the caller sources back.
+# Ctrl+C is delivered to the whole process group; the parent's INT trap
+# fires die_cancelled and exits the installer before we ever inspect $rc.
 edit_plan_interactive() {
-    local labels=()
-    local actions=()
+    local state_file
+    state_file="$(mktempfile)"
 
-    labels+=("Install Flink: $INSTALL_FLINK")
-    actions+=("install_flink")
+    # `set -e` is active, so we MUST catch any non-zero exit from the
+    # subshell with `|| rc=$?` — otherwise the script would terminate the
+    # moment a sub-prompt's ESC bubbles `exit 130` up through the subshell,
+    # and the parent would never get to interpret it as "back".
+    local rc=0
+    (
+        local labels=()
+        local actions=()
 
-    if [[ "$INSTALL_FLINK" == "Yes" ]]; then
-        labels+=("Flink version: $FLINK_VERSION")
-        actions+=("flink_version")
-        labels+=("Install directory: $INSTALL_DIR")
-        actions+=("install_dir")
-    else
-        labels+=("FLINK_HOME: ${FLINK_HOME:-<unset>}")
-        actions+=("flink_home")
-    fi
+        labels+=("Flink Agents version: $FLINK_AGENTS_VERSION")
+        actions+=("flink_agents_version")
 
-    labels+=("Enable PyFlink: $ENABLE_PYFLINK")
-    actions+=("enable_pyflink")
+        labels+=("Install Flink: $INSTALL_FLINK")
+        actions+=("install_flink")
 
-    if [[ "$ENABLE_PYFLINK" == "Yes" ]]; then
-        labels+=("Venv directory: $VENV_DIR")
-        actions+=("venv_dir")
-    fi
-
-    labels+=("Back")
-    actions+=("back")
-
-    local picked_index=-1
-    if [[ -n "$GUM" ]] && gum_is_tty; then
-        local _rc=0
-        local selected=""
-        selected="$("$GUM" choose \
-            --header "Edit a setting" \
-            --cursor-prefix "❯ " \
-            "${labels[@]}" < /dev/tty)" || _rc=$?
-        (( _rc == 0 )) || die_cancelled
-        local i=0
-        for l in "${labels[@]}"; do
-            if [[ "$l" == "$selected" ]]; then
-                picked_index=$i
-                break
-            fi
-            i=$((i+1))
-        done
-    else
-        printf 'Edit a setting:\n' > /dev/tty
-        local i=1
-        for l in "${labels[@]}"; do
-            printf '  %d) %s\n' "$i" "$l" > /dev/tty
-            i=$((i+1))
-        done
-        local answer=""
-        printf 'Enter choice [1-%d]: ' "${#labels[@]}" > /dev/tty
-        read -r answer < /dev/tty || die_cancelled
-        if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= ${#labels[@]} )); then
-            picked_index=$((answer - 1))
+        if [[ "$INSTALL_FLINK" == "Yes" ]]; then
+            labels+=("Flink version: $FLINK_VERSION")
+            actions+=("flink_version")
+            labels+=("Install directory: $INSTALL_DIR")
+            actions+=("install_dir")
+        else
+            labels+=("FLINK_HOME: ${FLINK_HOME:-<unset>}")
+            actions+=("flink_home")
         fi
+
+        labels+=("Enable PyFlink: $ENABLE_PYFLINK")
+        actions+=("enable_pyflink")
+
+        if [[ "$ENABLE_PYFLINK" == "Yes" ]]; then
+            labels+=("Venv directory: $VENV_DIR")
+            actions+=("venv_dir")
+        fi
+
+        local picked_index=-1
+        if [[ -n "$GUM" ]] && gum_is_tty; then
+            local _rc=0
+            local selected=""
+            selected="$("$GUM" choose \
+                --header "Edit a setting  (↑/↓ navigate · Enter select · Esc to go back)" \
+                --cursor-prefix "❯ " \
+                "${labels[@]}" < /dev/tty)" || _rc=$?
+            # ESC inside this menu — exit the subshell so the caller treats
+            # it as "back to confirm". The exit code we use here (130) is
+            # what `gum` returns on Esc; we just propagate it.
+            if (( _rc != 0 )); then
+                exit "$_rc"
+            fi
+            local i=0
+            for l in "${labels[@]}"; do
+                if [[ "$l" == "$selected" ]]; then
+                    picked_index=$i
+                    break
+                fi
+                i=$((i+1))
+            done
+        else
+            printf 'Edit a setting (blank or "b" to go back):\n' > /dev/tty
+            local i=1
+            for l in "${labels[@]}"; do
+                printf '  %d) %s\n' "$i" "$l" > /dev/tty
+                i=$((i+1))
+            done
+            local answer=""
+            printf 'Enter choice [1-%d]: ' "${#labels[@]}" > /dev/tty
+            read -r answer < /dev/tty || die_cancelled
+            case "$answer" in
+                ""|b|B|back|0) exit 130 ;;
+            esac
+            if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= ${#labels[@]} )); then
+                picked_index=$((answer - 1))
+            fi
+        fi
+
+        if (( picked_index < 0 )); then
+            # No valid selection — same as back.
+            exit 130
+        fi
+
+        local action="${actions[$picked_index]}"
+        case "$action" in
+            flink_agents_version)
+                prompt_flink_agents_version_interactive || true
+                ;;
+            install_flink)
+                if choose_install_method_interactive "Install Flink?"; then
+                    if [[ "$INSTALL_FLINK" != "Yes" ]]; then
+                        INSTALL_FLINK=Yes
+                        # Coming from No → Yes: caller had no version/dir, so
+                        # walk them through both immediately instead of
+                        # forcing two more menu trips.
+                        prompt_flink_version_interactive || true
+                        INSTALL_DIR="$(prompt_path_choice_interactive \
+                            "Choose Flink install directory" \
+                            "$INSTALL_DIR" \
+                            "/path/to/flink-install-dir")"
+                        INSTALL_DIR="$(normalize_path "$INSTALL_DIR")"
+                    fi
+                    FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
+                else
+                    INSTALL_FLINK=No
+                    edit_prompt_flink_home
+                    detect_flink_version_from_home || ui_warn "Could not auto-detect Flink version; keeping ${FLINK_VERSION}"
+                fi
+                FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+                ;;
+            flink_version)
+                prompt_flink_version_interactive || true
+                FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
+                FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+                ;;
+            install_dir)
+                INSTALL_DIR="$(prompt_path_choice_interactive \
+                    "Choose Flink install directory" \
+                    "$INSTALL_DIR" \
+                    "/path/to/flink-install-dir")"
+                INSTALL_DIR="$(normalize_path "$INSTALL_DIR")"
+                FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
+                ;;
+            flink_home)
+                edit_prompt_flink_home
+                ;;
+            enable_pyflink)
+                if choose_install_method_interactive "Enable PyFlink?"; then
+                    if [[ "$ENABLE_PYFLINK" != "Yes" ]]; then
+                        ENABLE_PYFLINK=Yes
+                        PYFLINK_ACTUALLY_ENABLED=1
+                        resolve_python
+                        VENV_DIR="$(prompt_path_choice_interactive \
+                            "Choose Python venv directory" \
+                            "$VENV_DIR" \
+                            "/path/to/venv")"
+                        VENV_DIR="$(normalize_path "$VENV_DIR")"
+                    fi
+                else
+                    ENABLE_PYFLINK=No
+                fi
+                ;;
+            venv_dir)
+                VENV_DIR="$(prompt_path_choice_interactive \
+                    "Choose Python venv directory" \
+                    "$VENV_DIR" \
+                    "/path/to/venv")"
+                VENV_DIR="$(normalize_path "$VENV_DIR")"
+                ;;
+        esac
+
+        edit_plan_dump_state "$state_file"
+    ) || rc=$?
+
+    if (( rc != 0 )); then
+        # Any non-zero exit from the subshell means we never reached the
+        # state dump — treat it as "back to confirm". (Ctrl+C would have
+        # killed the parent before this point via the INT trap.)
+        return 0
     fi
 
-    (( picked_index < 0 )) && return 0
-
-    local action="${actions[$picked_index]}"
-    case "$action" in
-        install_flink)
-            if choose_install_method_interactive "Install Flink?"; then
-                INSTALL_FLINK=Yes
-                FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
-            else
-                INSTALL_FLINK=No
-                edit_prompt_flink_home
-            fi
-            FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
-            ;;
-        flink_version)
-            prompt_flink_version_interactive || true
-            FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
-            FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
-            ;;
-        install_dir)
-            INSTALL_DIR="$(prompt_path_choice_interactive \
-                "Choose Flink install directory" \
-                "$INSTALL_DIR" \
-                "/path/to/flink-install-dir")"
-            INSTALL_DIR="$(normalize_path "$INSTALL_DIR")"
-            FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
-            ;;
-        flink_home)
-            edit_prompt_flink_home
-            ;;
-        enable_pyflink)
-            if choose_install_method_interactive "Enable PyFlink?"; then
-                if [[ "$ENABLE_PYFLINK" != "Yes" ]]; then
-                    ENABLE_PYFLINK=Yes
-                    PYFLINK_ACTUALLY_ENABLED=1
-                    resolve_python
-                fi
-            else
-                ENABLE_PYFLINK=No
-            fi
-            ;;
-        venv_dir)
-            VENV_DIR="$(prompt_path_choice_interactive \
-                "Choose Python venv directory" \
-                "$VENV_DIR" \
-                "/path/to/venv")"
-            VENV_DIR="$(normalize_path "$VENV_DIR")"
-            ;;
-        back|*)
-            ;;
-    esac
+    # shellcheck disable=SC1090
+    source "$state_file"
 }
 
 confirm_install_plan() {
@@ -930,7 +1021,15 @@ confirm_install_plan() {
         return 0
     fi
     while true; do
-        case "$(confirm_plan_action_interactive)" in
+        local action
+        # Capture stdout AND honor the child's exit code. The child runs in a
+        # command-substitution subshell, which does NOT inherit the parent's
+        # `trap die_cancelled INT`. When Ctrl+C lands inside `gum choose`,
+        # the subshell exits 130 but its stdout is empty — without this `||`,
+        # the case-statement falls through to the default arm and we'd loop
+        # forever re-prompting instead of exiting.
+        action="$(confirm_plan_action_interactive)" || exit 130
+        case "$action" in
             confirm) return 0 ;;
             edit)
                 edit_plan_interactive
