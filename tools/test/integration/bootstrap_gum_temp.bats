@@ -119,3 +119,47 @@ fi
     [ -n "$GUM" ]
     [ -x "$GUM" ]
 }
+
+@test "bootstrap_gum_temp: cached binary on disk is reused without downloading" {
+    DOWNLOADER=curl
+    # Pre-seed the persistent cache with an executable gum.
+    mkdir -p "${GUM_CACHE_ROOT}/${GUM_VERSION}"
+    printf '#!/bin/bash\n' > "${GUM_CACHE_ROOT}/${GUM_VERSION}/gum"
+    chmod +x "${GUM_CACHE_ROOT}/${GUM_VERSION}/gum"
+    # Any downloader call would be a regression — fail loudly if it happens.
+    shim_bin curl 22
+    shim_bin wget 22
+
+    bootstrap_gum_temp
+    [ "$GUM_STATUS" = "cached" ]
+    [ "$GUM" = "${GUM_CACHE_ROOT}/${GUM_VERSION}/gum" ]
+    [ -x "$GUM" ]
+    [ "$(shim_call_count curl)" = "0" ]
+    [ "$(shim_call_count wget)" = "0" ]
+}
+
+@test "bootstrap_gum_temp: successful install promotes binary into the cache" {
+    DOWNLOADER=curl
+    shim_bin_script curl '
+out=""; prev=""
+for a in "$@"; do
+    [[ "$prev" == "-o" ]] && out="$a"
+    prev="$a"
+done
+[[ -n "$out" ]] && printf "fake" > "$out"
+'
+    shim_bin sha256sum
+    shim_bin shasum
+    shim_bin_script tar '
+if [[ "$1" == "-xzf" ]]; then
+    dest="$4"
+    mkdir -p "$dest"
+    printf "#!/bin/bash\n" > "$dest/gum"
+    chmod +x "$dest/gum"
+fi
+'
+    bootstrap_gum_temp
+    [ "$GUM_STATUS" = "installed" ]
+    [ -x "${GUM_CACHE_ROOT}/${GUM_VERSION}/gum" ]
+    [ "$GUM" = "${GUM_CACHE_ROOT}/${GUM_VERSION}/gum" ]
+}

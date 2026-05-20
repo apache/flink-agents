@@ -79,6 +79,9 @@ GUM_VERSION="${FLINK_AGENTS_GUM_VERSION:-0.17.0}"
 GUM=""
 GUM_STATUS="skipped"
 GUM_REASON=""
+# Persistent cache for the auto-downloaded gum binary so reruns don't
+# re-download it. Honors XDG_CACHE_HOME, falls back to ~/.cache.
+GUM_CACHE_ROOT="${FLINK_AGENTS_GUM_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/flink-agents/gum}"
 
 is_non_interactive_shell() {
     if [[ "${NO_PROMPT:-0}" == "1" ]]; then
@@ -160,12 +163,21 @@ bootstrap_gum_temp() {
         return 0
     fi
 
+    local cache_dir="${GUM_CACHE_ROOT}/${GUM_VERSION}"
+    local cached_gum="${cache_dir}/gum"
+    if [[ -x "$cached_gum" ]]; then
+        GUM="$cached_gum"
+        GUM_STATUS="cached"
+        GUM_REASON="reused from ${cache_dir}"
+        return 0
+    fi
+
     if ! command -v tar >/dev/null 2>&1; then
         GUM_REASON="tar not found"
         return 1
     fi
 
-    local os arch asset base gum_tmpdir gum_path
+    local os arch asset base gum_tmpdir extracted_path
     os="$(gum_detect_os)"
     arch="$(gum_detect_arch)"
     if [[ "$os" == "unsupported" || "$arch" == "unknown" ]]; then
@@ -201,21 +213,30 @@ bootstrap_gum_temp() {
         return 1
     fi
 
-    gum_path="$(find "$gum_tmpdir" -type f -name gum 2>/dev/null | head -n1 || true)"
-    if [[ -z "$gum_path" ]]; then
+    extracted_path="$(find "$gum_tmpdir" -type f -name gum 2>/dev/null | head -n1 || true)"
+    if [[ -z "$extracted_path" ]]; then
         GUM_REASON="gum binary missing after extract"
         return 1
     fi
 
-    chmod +x "$gum_path" >/dev/null 2>&1 || true
-    if [[ ! -x "$gum_path" ]]; then
+    chmod +x "$extracted_path" >/dev/null 2>&1 || true
+    if [[ ! -x "$extracted_path" ]]; then
         GUM_REASON="gum binary is not executable"
         return 1
     fi
 
-    GUM="$gum_path"
+    # Promote into the persistent cache so subsequent runs skip the download.
+    if mkdir -p "$cache_dir" 2>/dev/null && mv "$extracted_path" "$cached_gum" 2>/dev/null; then
+        GUM="$cached_gum"
+        GUM_REASON="cached at ${cache_dir}"
+    else
+        # Cache write failed (read-only HOME etc.) — fall back to using the
+        # extracted binary directly. It'll get cleaned up at EXIT, costing a
+        # re-download next run, but the current run still works.
+        GUM="$extracted_path"
+        GUM_REASON="temp, verified (cache unavailable)"
+    fi
     GUM_STATUS="installed"
-    GUM_REASON="temp, verified"
     return 0
 }
 
@@ -223,6 +244,9 @@ print_gum_status() {
     case "$GUM_STATUS" in
         found)
             ui_success "gum available (${GUM_REASON})"
+            ;;
+        cached)
+            ui_success "gum loaded from cache (v${GUM_VERSION})"
             ;;
         installed)
             ui_success "gum bootstrapped (${GUM_REASON}, v${GUM_VERSION})"

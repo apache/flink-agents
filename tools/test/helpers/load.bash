@@ -38,6 +38,9 @@ reset_install_sh_state() {
     INSTALL_DIR="$HOME/.local/flink"
     VENV_DIR=".flink-agents-env"
     GUM_VERSION="0.17.0"
+    # Default the bootstrap cache to a per-test directory so we never touch
+    # the developer's real $HOME/.cache when running locally.
+    GUM_CACHE_ROOT="${BATS_TEST_TMPDIR:-/tmp}/gum-cache"
     FLINK_VERSION_EXPLICIT=0
     FLINK_AGENTS_VERSION_EXPLICIT=0
     INSTALL_DIR_EXPLICIT=0
