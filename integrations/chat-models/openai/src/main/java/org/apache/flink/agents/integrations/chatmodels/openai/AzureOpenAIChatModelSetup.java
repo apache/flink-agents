@@ -26,20 +26,17 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Setup for Azure OpenAI Chat Completions. Exposes {@code temperature}, {@code max_tokens}, {@code
- * logprobs}, {@code additional_kwargs}, plus {@code model_of_azure_deployment} for token-metrics
- * tracking. {@code top_logprobs}, {@code strict}, and {@code reasoning_effort} are intentionally
- * NOT exposed (users can pass them via {@code additional_kwargs}).
+ * Setup for Azure OpenAI Chat Completions.
  *
  * <p>{@code model} (inherited from {@link BaseChatModelSetup}) is the Azure deployment name, not
- * the underlying OpenAI model name. {@code model_of_azure_deployment} is the underlying model name
- * and is used solely for token metrics.
+ * the underlying OpenAI model name. The underlying model name can be supplied via {@code
+ * model_of_azure_deployment} and is used solely for token-metrics tracking.
  *
  * <p>Example usage:
  *
  * <pre>{@code
  * @ChatModelSetup
- * public static ResourceDescriptor azureOpenAI() {
+ * public static ResourceDescriptor azureOpenAIModel() {
  *   return ResourceDescriptor.Builder.newBuilder(AzureOpenAIChatModelSetup.class.getName())
  *           .addInitialArgument("connection", "myAzureOpenAIConnection")
  *           .addInitialArgument("model", "my-gpt4o-deployment")

@@ -77,7 +77,7 @@ import java.util.Map;
  *
  * <pre>{@code
  * @ChatModelConnection
- * public static ResourceDescriptor azureOpenAI() {
+ * public static ResourceDescriptor azureOpenAIConnection() {
  *   return ResourceDescriptor.Builder.newBuilder(
  *               AzureOpenAIChatModelConnection.class.getName())
  *           .addInitialArgument("api_key", System.getenv("AZURE_OPENAI_API_KEY"))
