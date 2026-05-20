@@ -32,7 +32,7 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.function import Function, JavaFunction, PythonFunction
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
-from flink_agents.api.skills import Skills
+from flink_agents.api.skills import Skills, SkillSourceSpec
 from flink_agents.api.tools.function_tool import FunctionTool
 from flink_agents.api.yaml.aliases import (
     JAVA_WRAPPER_CLAZZ,
@@ -199,7 +199,24 @@ def _build_prompt(spec: PromptSpec) -> Prompt:
 
 
 def _build_skills(spec: SkillsSpec) -> Skills:
-    return Skills(paths=list(spec.paths))
+    sources: List[SkillSourceSpec] = [
+        SkillSourceSpec(scheme="local", params={"path": p}) for p in spec.paths
+    ]
+    sources.extend(
+        SkillSourceSpec(scheme="url", params={"url": u}) for u in spec.urls
+    )
+    sources.extend(
+        SkillSourceSpec(scheme="classpath", params={"resource": r})
+        for r in spec.classpath
+    )
+    sources.extend(
+        SkillSourceSpec(
+            scheme="package",
+            params={"package": entry.package, "resource": entry.resource},
+        )
+        for entry in spec.package
+    )
+    return Skills(sources=sources)
 
 
 def _build_agent(agent_spec: AgentSpec) -> Agent:

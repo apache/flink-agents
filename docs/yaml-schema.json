@@ -216,6 +216,26 @@
       "title": "MessageRole",
       "type": "string"
     },
+    "PackageSkillSpec": {
+      "additionalProperties": false,
+      "description": "A single ``package`` skill source entry: a Python package name plus a\nresource path relative to that package's root.",
+      "properties": {
+        "package": {
+          "title": "Package",
+          "type": "string"
+        },
+        "resource": {
+          "title": "Resource",
+          "type": "string"
+        }
+      },
+      "required": [
+        "package",
+        "resource"
+      ],
+      "title": "PackageSkillSpec",
+      "type": "object"
+    },
     "PromptMessage": {
       "additionalProperties": false,
       "description": "One message in a multi-turn prompt template.",
@@ -279,11 +299,25 @@
     },
     "SkillsSpec": {
       "additionalProperties": false,
-      "description": "Declarative Skills resource pointing at one or more skill source\ndirectories on the local filesystem.",
+      "description": "Declarative Skills resource: one or more skill sources grouped by scheme.\n\nEach list below maps to a skill source scheme:\n\n- ``paths`` \u2014 ``local`` scheme: directories or ``.zip`` files\n- ``urls`` \u2014 ``url`` scheme: ``http(s)`` URLs pointing to a ``.zip``\n- ``classpath`` \u2014 ``classpath`` scheme (Java-only at runtime): resource\n  paths on the Java classpath\n- ``package`` \u2014 ``package`` scheme (Python-only at runtime): resources\n  inside installed Python packages, given as ``{package, resource}`` pairs\n\nAt least one of the four must be non-empty. ``classpath`` is exposed on\nPython for YAML schema parity with Java \u2014 it deserializes successfully\nbut ``SkillManager`` on Python will fail at load time because Python does\nnot register a ``classpath`` handler.",
       "properties": {
+        "classpath": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Classpath",
+          "type": "array"
+        },
         "name": {
           "title": "Name",
           "type": "string"
+        },
+        "package": {
+          "items": {
+            "$ref": "#/$defs/PackageSkillSpec"
+          },
+          "title": "Package",
+          "type": "array"
         },
         "paths": {
           "items": {
@@ -291,11 +325,17 @@
           },
           "title": "Paths",
           "type": "array"
+        },
+        "urls": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Urls",
+          "type": "array"
         }
       },
       "required": [
-        "name",
-        "paths"
+        "name"
       ],
       "title": "SkillsSpec",
       "type": "object"

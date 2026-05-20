@@ -250,7 +250,7 @@ def test_yaml_document_with_shared_resources_and_actions() -> None:
     assert doc.actions[0].name == "shared"
 
 
-def test_skills_spec_requires_paths() -> None:
+def test_skills_spec_requires_at_least_one_source() -> None:
     with pytest.raises(ValidationError):
         SkillsSpec.model_validate({"name": "s"})
 
@@ -258,6 +258,25 @@ def test_skills_spec_requires_paths() -> None:
 def test_skills_spec_with_paths() -> None:
     spec = SkillsSpec.model_validate({"name": "s", "paths": ["./a", "./b"]})
     assert spec.paths == ["./a", "./b"]
+    assert spec.urls == []
+    assert spec.package == []
+
+
+def test_skills_spec_with_urls_classpath_package() -> None:
+    spec = SkillsSpec.model_validate(
+        {
+            "name": "s",
+            "urls": ["https://x/s.zip"],
+            "classpath": ["com/example/s"],
+            "package": [{"package": "my_pkg", "resource": "skills/"}],
+        }
+    )
+    assert spec.paths == []
+    assert spec.urls == ["https://x/s.zip"]
+    assert spec.classpath == ["com/example/s"]
+    assert len(spec.package) == 1
+    assert spec.package[0].package == "my_pkg"
+    assert spec.package[0].resource == "skills/"
 
 
 def test_skills_spec_forbids_extras() -> None:

@@ -123,15 +123,52 @@ class ToolSpec(BaseModel):
     parameter_types: List[str] | None = None
 
 
+class PackageSkillSpec(BaseModel):
+    """A single ``package`` skill source entry: a Python package name plus a
+    resource path relative to that package's root.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    resource: str
+
+
 class SkillsSpec(BaseModel):
-    """Declarative Skills resource pointing at one or more skill source
-    directories on the local filesystem.
+    """Declarative Skills resource: one or more skill sources grouped by scheme.
+
+    Each list below maps to a skill source scheme:
+
+    - ``paths`` — ``local`` scheme: directories or ``.zip`` files
+    - ``urls`` — ``url`` scheme: ``http(s)`` URLs pointing to a ``.zip``
+    - ``classpath`` — ``classpath`` scheme (Java-only at runtime): resource
+      paths on the Java classpath
+    - ``package`` — ``package`` scheme (Python-only at runtime): resources
+      inside installed Python packages, given as ``{package, resource}`` pairs
+
+    At least one of the four must be non-empty. ``classpath`` is exposed on
+    Python for YAML schema parity with Java — it deserializes successfully
+    but ``SkillManager`` on Python will fail at load time because Python does
+    not register a ``classpath`` handler.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    paths: List[str]
+    paths: List[str] = Field(default_factory=list)
+    urls: List[str] = Field(default_factory=list)
+    classpath: List[str] = Field(default_factory=list)
+    package: List[PackageSkillSpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _require_one_source(self) -> "SkillsSpec":
+        if not (self.paths or self.urls or self.classpath or self.package):
+            msg = (
+                f"skills '{self.name}': at least one of "
+                "paths/urls/classpath/package must be non-empty."
+            )
+            raise ValueError(msg)
+        return self
 
 
 class ActionSpec(BaseModel):

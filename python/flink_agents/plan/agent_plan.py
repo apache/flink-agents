@@ -499,11 +499,11 @@ def _add_skills(
     #  skill names and which skill manager they belong to when declaring a chat
     #  model setup. MCP prompts and tools face the same situation, we can refactor
     #  them as a whole.
-    paths: List[str] = []
+    sources = []
     for skills_obj in skills_objects.values():
-        paths.extend(skills_obj.paths)
+        sources.extend(skills_obj.sources)
 
-    merged = Skills.from_local_dir(*dict.fromkeys(paths))
+    merged = Skills(sources=list(dict.fromkeys(sources)))
 
     resource_providers.append(
         PythonSerializableResourceProvider.from_resource(

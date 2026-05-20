@@ -27,9 +27,15 @@ from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.function import JavaFunction, PythonFunction
 from flink_agents.api.prompts.prompt import LocalPrompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
-from flink_agents.api.skills import Skills
+from flink_agents.api.skills import Skills, SkillSourceSpec
 from flink_agents.api.tools.function_tool import FunctionTool
-from flink_agents.api.yaml.loader import build_agents, load_yaml, resolve_function
+from flink_agents.api.yaml.loader import (
+    _build_skills,
+    build_agents,
+    load_yaml,
+    resolve_function,
+)
+from flink_agents.api.yaml.specs import SkillsSpec
 from flink_agents.api.yaml.tests.fixtures import loader_targets
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -336,11 +342,37 @@ def test_build_agents_loads_skills_per_agent_and_shared() -> None:
 
     own = agent.resources[ResourceType.SKILLS]["agent_skills"]
     assert isinstance(own, Skills)
-    assert own.paths == ["./agent_skill_dir"]
+    assert own.sources == [
+        SkillSourceSpec(scheme="local", params={"path": "./agent_skill_dir"})
+    ]
 
     shared = shared_resources[ResourceType.SKILLS]["shared_skills"]
     assert isinstance(shared, Skills)
-    assert shared.paths == ["./shared_skill_dir", "./more"]
+    assert shared.sources == [
+        SkillSourceSpec(scheme="local", params={"path": "./shared_skill_dir"}),
+        SkillSourceSpec(scheme="local", params={"path": "./more"}),
+    ]
+
+
+def test_build_skills_merges_all_schemes() -> None:
+    spec = SkillsSpec.model_validate(
+        {
+            "name": "s",
+            "paths": ["./a"],
+            "urls": ["https://x/s.zip"],
+            "classpath": ["com/example/s"],
+            "package": [{"package": "my_pkg", "resource": "skills/"}],
+        }
+    )
+    skills = _build_skills(spec)
+    assert skills.sources == [
+        SkillSourceSpec(scheme="local", params={"path": "./a"}),
+        SkillSourceSpec(scheme="url", params={"url": "https://x/s.zip"}),
+        SkillSourceSpec(scheme="classpath", params={"resource": "com/example/s"}),
+        SkillSourceSpec(
+            scheme="package", params={"package": "my_pkg", "resource": "skills/"}
+        ),
+    ]
 
 
 def test_load_yaml_registers_shared_skills_on_env() -> None:
@@ -348,7 +380,10 @@ def test_load_yaml_registers_shared_skills_on_env() -> None:
     load_yaml(env, _FIXTURES / "with_skills.yaml")
     shared = env.resources[ResourceType.SKILLS]["shared_skills"]
     assert isinstance(shared, Skills)
-    assert shared.paths == ["./shared_skill_dir", "./more"]
+    assert shared.sources == [
+        SkillSourceSpec(scheme="local", params={"path": "./shared_skill_dir"}),
+        SkillSourceSpec(scheme="local", params={"path": "./more"}),
+    ]
 
 
 def test_build_agents_supports_type_java(tmp_path: Path) -> None:
