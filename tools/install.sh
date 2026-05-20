@@ -364,6 +364,7 @@ mark_explicit() {
 }
 
 mark_explicit FLINK_VERSION
+mark_explicit FLINK_AGENTS_VERSION
 mark_explicit INSTALL_DIR
 mark_explicit VENV_DIR
 
@@ -380,6 +381,13 @@ FLINK_AGENTS_CHECKSUM_BASE_URL="${FLINK_AGENTS_CHECKSUM_BASE_URL:-https://downlo
 
 FLINK_SUPPORTED_VERSIONS=("2.2.0" "2.1.1" "2.0.1" "1.20.3")
 FLINK_RECOMMENDED_VERSION="2.2.0"
+
+# Mirrors https://flink.apache.org/downloads/#apache-flink-agents
+# (latest first). Note: 0.1.x only ships JARs for Flink 1.20, while 0.2.x
+# ships JARs for Flink 1.20 / 2.0 / 2.1 / 2.2 — see the download page for
+# the exact compatibility matrix.
+FLINK_AGENTS_SUPPORTED_VERSIONS=("0.2.1" "0.2.0" "0.1.1" "0.1.0")
+FLINK_AGENTS_RECOMMENDED_VERSION="0.2.1"
 
 INSTALL_FLINK="${INSTALL_FLINK:-Ask}"
 ENABLE_PYFLINK="${ENABLE_PYFLINK:-Ask}"
@@ -409,6 +417,9 @@ Options:
   --dry-run               Print install plan without making changes
   --verify                Run post-install verification checks
   --python <path>         Path to a Python3 interpreter (overrides PATH lookup)
+  --flink-version <ver>   Apache Flink version (e.g. 2.2.0); overrides the interactive picker
+  --flink-agents-version <ver>
+                          Flink Agents version (default: ${FLINK_AGENTS_RECOMMENDED_VERSION}); overrides the picker
   --help, -h              Show this help
 
 Environment variables:
@@ -563,6 +574,56 @@ prompt_flink_version_interactive() {
     return 0
 }
 
+prompt_flink_agents_version_interactive() {
+    if ! is_promptable; then
+        return 1
+    fi
+
+    local labels=()
+    local v
+    for v in "${FLINK_AGENTS_SUPPORTED_VERSIONS[@]}"; do
+        if [[ "$v" == "$FLINK_AGENTS_RECOMMENDED_VERSION" ]]; then
+            labels+=("$v (recommended)")
+        else
+            labels+=("$v")
+        fi
+    done
+
+    local selection=""
+    if [[ -n "$GUM" ]] && gum_is_tty; then
+        local _rc=0
+        selection="$("$GUM" choose \
+            --header "Select Flink Agents version" \
+            --cursor-prefix "❯ " \
+            "${labels[@]}" < /dev/tty)" || _rc=$?
+        (( _rc == 0 )) || die_cancelled
+        selection="${selection%% *}"
+    else
+        printf 'Select Flink Agents version:\n' > /dev/tty
+        local i=1
+        for v in "${FLINK_AGENTS_SUPPORTED_VERSIONS[@]}"; do
+            local suffix=""
+            [[ "$v" == "$FLINK_AGENTS_RECOMMENDED_VERSION" ]] && suffix=" (recommended)"
+            printf '  %d) %s%s\n' "$i" "$v" "$suffix" > /dev/tty
+            i=$((i+1))
+        done
+        local answer=""
+        printf 'Enter choice [1-%d, default %s]: ' \
+            "${#FLINK_AGENTS_SUPPORTED_VERSIONS[@]}" "$FLINK_AGENTS_RECOMMENDED_VERSION" > /dev/tty
+        read -r answer < /dev/tty || die_cancelled
+        if [[ "$answer" =~ ^[0-9]+$ ]] \
+           && (( answer >= 1 && answer <= ${#FLINK_AGENTS_SUPPORTED_VERSIONS[@]} )); then
+            selection="${FLINK_AGENTS_SUPPORTED_VERSIONS[$((answer-1))]}"
+        fi
+    fi
+
+    if [[ -z "$selection" ]]; then
+        selection="$FLINK_AGENTS_RECOMMENDED_VERSION"
+    fi
+    FLINK_AGENTS_VERSION="$selection"
+    return 0
+}
+
 # Populate FLINK_VERSION from an existing FLINK_HOME. Tries to parse
 # `lib/flink-dist-<ver>.jar` first because it's instant; falls back to
 # `bin/flink --version`, which is authoritative but spins up a JVM and can
@@ -658,6 +719,12 @@ plan_flink() {
     INSTALL_DIR="$(normalize_path "$INSTALL_DIR")"
     FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
     FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+}
+
+plan_flink_agents() {
+    if [[ "$FLINK_AGENTS_VERSION_EXPLICIT" -eq 0 ]]; then
+        prompt_flink_agents_version_interactive || true
+    fi
 }
 
 plan_pyflink() {
@@ -1427,6 +1494,32 @@ parse_args() {
                 PYTHON_BIN="${1#*=}"
                 shift
                 ;;
+            --flink-agents-version)
+                if [[ $# -lt 2 ]]; then
+                    die "--flink-agents-version requires a version argument"
+                fi
+                FLINK_AGENTS_VERSION="$2"
+                FLINK_AGENTS_VERSION_EXPLICIT=1
+                shift 2
+                ;;
+            --flink-agents-version=*)
+                FLINK_AGENTS_VERSION="${1#*=}"
+                FLINK_AGENTS_VERSION_EXPLICIT=1
+                shift
+                ;;
+            --flink-version)
+                if [[ $# -lt 2 ]]; then
+                    die "--flink-version requires a version argument"
+                fi
+                FLINK_VERSION="$2"
+                FLINK_VERSION_EXPLICIT=1
+                shift 2
+                ;;
+            --flink-version=*)
+                FLINK_VERSION="${1#*=}"
+                FLINK_VERSION_EXPLICIT=1
+                shift
+                ;;
             --help|-h)
                 HELP=1
                 shift
@@ -1464,6 +1557,7 @@ main() {
 
     ui_stage "Planning Flink installation"
     plan_flink
+    plan_flink_agents
 
     ui_stage "Planning Python environment"
     plan_pyflink
