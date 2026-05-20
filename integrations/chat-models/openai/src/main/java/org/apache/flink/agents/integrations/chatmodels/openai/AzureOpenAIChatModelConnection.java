@@ -217,9 +217,6 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         this.client.close();
     }
 
-    // ----- Inlined tool-definition helpers (mirror OpenAICompletionsConnection per the
-    // "inline copies" decision in the design spec) -----
-
     private List<ChatCompletionTool> convertTools(List<Tool> tools) {
         List<ChatCompletionTool> openaiTools = new ArrayList<>(tools.size());
         for (Tool tool : tools) {
