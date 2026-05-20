@@ -39,3 +39,16 @@ esac
     [ "$status" -eq 0 ]
     case "$output" in *".//flink-"*) false ;; *) ;; esac
 }
+
+@test "INSTALL_DIR with trailing slash does not produce double-slash (review #7b)" {
+    run env INSTALL_DIR="/tmp/flink-test/" bash "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --install-flink --non-interactive
+    [ "$status" -eq 0 ]
+    case "$output" in *"//"*) false ;; *) ;; esac
+    case "$output" in *"/tmp/flink-test"*) ;; *) false ;; esac
+}
+
+@test "INSTALL_DIR with consecutive slashes is collapsed (review #7b)" {
+    run env INSTALL_DIR="/tmp//flink-test" bash "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --install-flink --non-interactive
+    [ "$status" -eq 0 ]
+    case "$output" in *"//flink-"*) false ;; *) ;; esac
+}

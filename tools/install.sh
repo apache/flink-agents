@@ -428,6 +428,39 @@ require_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
 }
 
+# Normalize a filesystem path so downstream string interpolation can rely on
+# a consistent shape. Empty input is passed through (callers handle "user
+# entered nothing"). Otherwise:
+#   - "~" prefix expands to $HOME
+#   - relative paths are anchored at $PWD
+#   - "/./" segments and trailing "/." are folded away
+#   - trailing slashes are stripped, except for the root "/"
+#   - runs of '/' collapse to a single '/'
+normalize_path() {
+    local p="$1"
+    if [[ -z "$p" ]]; then
+        printf ''
+        return 0
+    fi
+    p="${p/#\~/$HOME}"
+    if [[ "$p" != /* ]]; then
+        p="$PWD/$p"
+    fi
+    while [[ "$p" == *//* ]]; do
+        p="${p//\/\//\/}"
+    done
+    while [[ "$p" == */./* ]]; do
+        p="${p//\/.\//\/}"
+    done
+    while [[ "$p" == */. ]]; do
+        p="${p%/.}"
+    done
+    while [[ "${#p}" -gt 1 && "$p" == */ ]]; do
+        p="${p%/}"
+    done
+    printf '%s' "$p"
+}
+
 is_valid_tgz() {
     local archive="$1"
     [[ -f "$archive" ]] || return 1
@@ -536,6 +569,9 @@ plan_flink() {
     esac
 
     if [[ "$INSTALL_FLINK" == "No" ]]; then
+        if [[ -n "${FLINK_HOME:-}" ]]; then
+            FLINK_HOME="$(normalize_path "$FLINK_HOME")"
+        fi
         if is_promptable; then
             while [[ -z "${FLINK_HOME:-}" || ! -d "${FLINK_HOME}" || ! -d "${FLINK_HOME}/lib" ]]; do
                 if [[ -n "${FLINK_HOME:-}" ]]; then
@@ -567,6 +603,7 @@ plan_flink() {
             "/path/to/flink-install-dir")"
     fi
 
+    INSTALL_DIR="$(normalize_path "$INSTALL_DIR")"
     FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
     FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
 }
@@ -601,10 +638,7 @@ plan_pyflink() {
             "/path/to/venv")"
     fi
 
-    case "$VENV_DIR" in
-        /*) ;;
-        *)  VENV_DIR="$PWD/$VENV_DIR" ;;
-    esac
+    VENV_DIR="$(normalize_path "$VENV_DIR")"
 }
 
 # Echo one of: "confirm" | "edit" | "cancel"
@@ -743,6 +777,7 @@ edit_plan_interactive() {
                 "Choose Flink install directory" \
                 "$INSTALL_DIR" \
                 "/path/to/flink-install-dir")"
+            INSTALL_DIR="$(normalize_path "$INSTALL_DIR")"
             FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
             ;;
         flink_home)
@@ -764,10 +799,7 @@ edit_plan_interactive() {
                 "Choose Python venv directory" \
                 "$VENV_DIR" \
                 "/path/to/venv")"
-            case "$VENV_DIR" in
-                /*) ;;
-                *)  VENV_DIR="$PWD/$VENV_DIR" ;;
-            esac
+            VENV_DIR="$(normalize_path "$VENV_DIR")"
             ;;
         back|*)
             ;;
@@ -858,8 +890,7 @@ prompt_path_input() {
         printf '%s: ' "$header" > /dev/tty
         read -r input < /dev/tty || die_cancelled
     fi
-    input="${input/#\~/$HOME}"
-    printf '%s' "$input"
+    printf '%s' "$(normalize_path "$input")"
 }
 
 prompt_path_choice_interactive() {
@@ -897,7 +928,7 @@ prompt_path_choice_interactive() {
     fi
 
     if [[ "$selection" != "$custom_label" ]]; then
-        printf '%s' "$default_path"
+        printf '%s' "$(normalize_path "$default_path")"
         return 0
     fi
 
@@ -913,15 +944,14 @@ prompt_path_choice_interactive() {
         printf 'Enter custom path: ' > /dev/tty
         read -r input < /dev/tty || die_cancelled
     fi
-    input="${input/#\~/$HOME}"
 
     if [[ -z "$input" ]]; then
         ui_warn "Empty path; falling back to default: $default_path"
-        printf '%s' "$default_path"
+        printf '%s' "$(normalize_path "$default_path")"
         return 0
     fi
 
-    printf '%s' "$input"
+    printf '%s' "$(normalize_path "$input")"
 }
 
 copy_pyflink_jar() {
