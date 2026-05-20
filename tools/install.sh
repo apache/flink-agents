@@ -1577,12 +1577,19 @@ main() {
 
     echo ""
     ui_celebrate "Apache Flink Agents installation finished!"
-    ui_success "FLINK_HOME=$FLINK_HOME"
+    echo ""
+    ui_section "Next steps"
+    ui_success "1) Point FLINK_HOME at this install (Flink CLI and clients read it):"
+    ui_info  "       export FLINK_HOME=${FLINK_HOME}"
     if [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
-        ui_info "To use Python environment in a new shell :"
-        ui_info "  source ${VENV_DIR}/bin/activate"
+        ui_success "2) Activate the Python venv (PyFlink + flink-agents are installed there):"
+        ui_info  "       source ${VENV_DIR}/bin/activate"
+        ui_success "3) To make both permanent, append the two lines above to your shell rc"
+        ui_info  "   (~/.zshrc or ~/.bashrc)."
+    else
+        ui_success "2) To make it permanent, append the line above to your shell rc"
+        ui_info  "   (~/.zshrc or ~/.bashrc)."
     fi
-    ui_info "  export FLINK_HOME=${FLINK_HOME}"
 
     show_footer_links
 }
