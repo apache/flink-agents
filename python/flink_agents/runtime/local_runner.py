@@ -35,7 +35,6 @@ from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.agent_runner import AgentRunner
 from flink_agents.runtime.local_memory_object import LocalMemoryObject
 from flink_agents.runtime.resource_cache import ResourceCache
-from flink_agents.runtime.resource_context import ResourceContextImpl
 
 if TYPE_CHECKING:
     from flink_agents.plan.agent_plan import AgentPlan
@@ -87,9 +86,6 @@ class LocalRunnerContext(RunnerContext):
         self.__agent_plan = agent_plan
         self.__resource_cache = ResourceCache(
             agent_plan.resource_providers, agent_plan.config
-        )
-        self.__resource_cache.set_resource_context(
-            ResourceContextImpl(self.__resource_cache)
         )
         self.__key = key
         self.events = deque()

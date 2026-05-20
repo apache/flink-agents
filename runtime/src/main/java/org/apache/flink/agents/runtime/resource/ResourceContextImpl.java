@@ -42,8 +42,8 @@ public class ResourceContextImpl implements ResourceContext {
 
     private final BiFunction<String, ResourceType, Resource> getResource;
 
-    @Nullable private volatile SkillManager skillManager;
-    @Nullable private volatile Skills cachedSkillsConfig;
+    @Nullable private SkillManager skillManager;
+    private boolean skillManagerInitialized;
 
     public ResourceContextImpl(BiFunction<String, ResourceType, Resource> getResource) {
         this.getResource = getResource;
@@ -83,6 +83,15 @@ public class ResourceContextImpl implements ResourceContext {
 
     @Nullable
     private synchronized SkillManager ensureSkillManager() throws Exception {
+        if (!skillManagerInitialized) {
+            skillManagerInitialized = true;
+            skillManager = createSkillManager();
+        }
+        return skillManager;
+    }
+
+    @Nullable
+    private SkillManager createSkillManager() throws Exception {
         Skills config;
         try {
             Resource r = getResource(Skills.SKILLS_CONFIG, ResourceType.SKILLS);
@@ -94,10 +103,6 @@ public class ResourceContextImpl implements ResourceContext {
             // No skills config registered — that's fine, return null.
             return null;
         }
-        if (config != cachedSkillsConfig) {
-            cachedSkillsConfig = config;
-            skillManager = new SkillManager(config);
-        }
-        return skillManager;
+        return new SkillManager(config);
     }
 }
