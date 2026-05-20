@@ -74,6 +74,7 @@ class SchemaParityTest {
         m.put("PromptMessage", PromptMessage.class);
         m.put("PromptSpec", PromptSpec.class);
         m.put("SkillsSpec", SkillsSpec.class);
+        m.put("PackageSkillSpec", PackageSkillSpec.class);
         m.put("ToolSpec", ToolSpec.class);
         SPEC_CLASSES = Map.copyOf(m);
     }

@@ -44,6 +44,7 @@ public final class AgentSkill {
     @Nullable private volatile Map<String, String> resources;
     @Nullable private Supplier<Map<String, String>> resourceLoader;
     private volatile boolean activated;
+    @Nullable private volatile SkillOrigin origin;
 
     public AgentSkill(
             String name,
@@ -115,6 +116,20 @@ public final class AgentSkill {
     /** Set a lazy resource loader. Must be called before the first {@link #getResource(String)}. */
     public void setResourceLoader(Supplier<Map<String, String>> loader) {
         this.resourceLoader = loader;
+    }
+
+    /**
+     * Set the origin (scheme + location) this skill was loaded from. Called by {@code
+     * SkillManager.registerRepo} at registration time. Used for duplicate-name WARN and other
+     * diagnostics.
+     */
+    public void setOrigin(SkillOrigin origin) {
+        this.origin = origin;
+    }
+
+    @Nullable
+    public SkillOrigin getOrigin() {
+        return origin;
     }
 
     /**

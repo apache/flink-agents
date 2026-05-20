@@ -48,7 +48,15 @@ public class ResourceCache implements AutoCloseable {
     private volatile PythonResourceAdapter pythonResourceAdapter;
     private final ResourceContextImpl resourceContext;
 
-    public ResourceCache(Map<ResourceType, Map<String, ResourceProvider>> resourceProviders) {
+    /**
+     * Construct a cache that resolves {@code classpath:} skill sources via {@code classLoader}.
+     * Production code passes the Flink user-code class loader (from {@code
+     * ActionExecutionOperator.getRuntimeContext().getUserCodeClassLoader()}); tests may call {@link
+     * #ResourceCache(Map)}.
+     */
+    public ResourceCache(
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            ClassLoader classLoader) {
         // Defensive copy: the cache must not be affected by later mutations to the source map.
         this.resourceProviders = new HashMap<>();
         for (Map.Entry<ResourceType, Map<String, ResourceProvider>> entry :
@@ -64,7 +72,13 @@ public class ResourceCache implements AutoCloseable {
                             } catch (Exception e) {
                                 throw new RuntimeException(e);
                             }
-                        });
+                        },
+                        classLoader);
+    }
+
+    /** Convenience overload that uses the current thread's context class loader. */
+    public ResourceCache(Map<ResourceType, Map<String, ResourceProvider>> resourceProviders) {
+        this(resourceProviders, Thread.currentThread().getContextClassLoader());
     }
 
     void setPythonResourceAdapter(PythonResourceAdapter adapter) {
@@ -141,6 +155,15 @@ public class ResourceCache implements AutoCloseable {
             }
         }
         cache.clear();
+        try {
+            resourceContext.close();
+        } catch (Exception e) {
+            if (firstException == null) {
+                firstException = e;
+            } else {
+                firstException.addSuppressed(e);
+            }
+        }
         if (firstException != null) {
             throw firstException;
         }

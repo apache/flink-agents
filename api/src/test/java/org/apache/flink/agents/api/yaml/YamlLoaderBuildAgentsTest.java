@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.FunctionTool;
 import org.apache.flink.agents.api.yaml.YamlLoader.LoadedFile;
@@ -123,11 +124,15 @@ class YamlLoaderBuildAgentsTest {
         LoadedFile out = YamlLoader.buildAgents(FIXTURES.resolve("with_skills.yaml"));
         Agent agent = out.getAgents().get("skills_agent");
         Skills own = (Skills) agent.getResources().get(ResourceType.SKILLS).get("agent_skills");
-        assertThat(own.getPaths()).containsExactly("./agent_skill_dir");
+        assertThat(own.getSources())
+                .containsExactly(new SkillSourceSpec("local", Map.of("path", "./agent_skill_dir")));
 
         Skills shared =
                 (Skills) out.getSharedResources().get(ResourceType.SKILLS).get("shared_skills");
-        assertThat(shared.getPaths()).containsExactly("./shared_skill_dir", "./more");
+        assertThat(shared.getSources())
+                .containsExactly(
+                        new SkillSourceSpec("local", Map.of("path", "./shared_skill_dir")),
+                        new SkillSourceSpec("local", Map.of("path", "./more")));
     }
 
     @Test

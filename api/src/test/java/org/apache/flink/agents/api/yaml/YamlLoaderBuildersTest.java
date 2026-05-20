@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.FunctionTool;
 import org.apache.flink.agents.api.yaml.spec.DescriptorSpec;
@@ -142,6 +143,24 @@ class YamlLoaderBuildersTest {
     void buildSkills() throws Exception {
         SkillsSpec spec = M.readValue("name: s\npaths: [./a]\n", SkillsSpec.class);
         Skills s = YamlLoader.buildSkills(spec);
-        assertThat(s.getPaths()).containsExactly("./a");
+        assertThat(s.getSources())
+                .containsExactly(new SkillSourceSpec("local", Map.of("path", "./a")));
+    }
+
+    @Test
+    void buildSkillsMergesAllSchemes() throws Exception {
+        SkillsSpec spec =
+                M.readValue(
+                        "name: s\n"
+                                + "paths: [./a]\n"
+                                + "urls: [https://x/s.zip]\n"
+                                + "classpath: [com/example/s]\n",
+                        SkillsSpec.class);
+        Skills s = YamlLoader.buildSkills(spec);
+        assertThat(s.getSources())
+                .containsExactly(
+                        new SkillSourceSpec("local", Map.of("path", "./a")),
+                        new SkillSourceSpec("url", Map.of("url", "https://x/s.zip")),
+                        new SkillSourceSpec("classpath", Map.of("resource", "com/example/s")));
     }
 }

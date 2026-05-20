@@ -28,14 +28,29 @@ import org.apache.flink.agents.api.resource.SerializableResource;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Configuration resource describing where to load agent skills from.
  *
- * <p>Mirrors the Python {@code flink_agents.api.skills.Skills}. Use {@link
- * #fromLocalDir(String...)} to construct.
+ * <p>The single field {@code sources} holds an ordered list of {@link SkillSourceSpec} entries.
+ * Each entry has a {@code scheme} (e.g. {@code "local"}, {@code "url"}, {@code "classpath"}, {@code
+ * "package"}) and a scheme-specific {@code params} map. Use one of the factory methods to construct
+ * a {@link Skills} resource:
  *
- * <p>Multiple {@code @Skills} declarations on the same agent are merged at plan-build time.
+ * <ul>
+ *   <li>{@link #fromLocalDir(String...)} for local directories or {@code .zip} files
+ *   <li>{@link #fromUrl(String...)} for http(s) URLs pointing to a {@code .zip}
+ *   <li>{@link #fromClasspath(String...)} for resources on the classpath
+ * </ul>
+ *
+ * <p>The {@code "package"} scheme exists on the Python side only (Java has no analogous concept). A
+ * plan written by Python with {@code scheme=package} deserializes successfully on Java, but {@code
+ * SkillManager} will fail fast at load time with the registered-scheme list.
+ *
+ * <p>Multiple {@code @Skills} declarations on the same agent are merged at plan-build time;
+ * duplicate {@link SkillSourceSpec} entries (same {@code scheme} and {@code params}) are collapsed.
  */
 @JsonIgnoreProperties(
         ignoreUnknown = true,
@@ -51,31 +66,60 @@ public class Skills extends SerializableResource {
     /** Reserved name of the built-in bash tool used to execute skill scripts. */
     public static final String BASH_TOOL = "bash";
 
-    private List<String> paths;
+    private final List<SkillSourceSpec> sources;
 
     /** Required by Jackson. */
     public Skills() {
-        this.paths = Collections.emptyList();
+        this.sources = Collections.emptyList();
     }
 
     @JsonCreator
-    public Skills(@JsonProperty("paths") List<String> paths) {
-        this.paths = paths == null ? Collections.emptyList() : List.copyOf(paths);
+    public Skills(@JsonProperty("sources") List<SkillSourceSpec> sources) {
+        this.sources = sources == null ? Collections.emptyList() : List.copyOf(sources);
     }
 
     /**
-     * Create a {@link Skills} resource from one or more local filesystem directories.
+     * Create a {@link Skills} resource from one or more local paths.
      *
-     * <p>Each path points to a directory whose immediate subdirectories each contain a {@code
-     * SKILL.md} file.
+     * <p>Each path may be a directory whose immediate subdirectories each contain a {@code
+     * SKILL.md} file, or a {@code .zip} file whose top-level entries are the skill subdirectories.
      */
     public static Skills fromLocalDir(String... paths) {
-        return new Skills(Arrays.asList(paths));
+        return new Skills(
+                Arrays.stream(paths)
+                        .map(p -> new SkillSourceSpec("local", Map.of("path", p)))
+                        .collect(Collectors.toList()));
     }
 
-    @JsonProperty("paths")
-    public List<String> getPaths() {
-        return paths;
+    /**
+     * Create a {@link Skills} resource from one or more http(s) URLs.
+     *
+     * <p>Each URL must point to a {@code .zip} whose top level is the baseDir.
+     */
+    public static Skills fromUrl(String... urls) {
+        return new Skills(
+                Arrays.stream(urls)
+                        .map(u -> new SkillSourceSpec("url", Map.of("url", u)))
+                        .collect(Collectors.toList()));
+    }
+
+    /**
+     * Create a {@link Skills} resource from one or more classpath resource paths.
+     *
+     * <p>Each resource may be a directory (e.g. under {@code src/main/resources/skills}) or a
+     * {@code .zip} file. When packaged into a JAR, the resource is loaded via the thread context
+     * class loader and materialized to a temp directory at runtime.
+     */
+    public static Skills fromClasspath(String... resources) {
+        return new Skills(
+                Arrays.stream(resources)
+                        .map(r -> new SkillSourceSpec("classpath", Map.of("resource", r)))
+                        .collect(Collectors.toList()));
+    }
+
+    @JsonProperty("sources")
+    public List<SkillSourceSpec> getSources() {
+        return sources;
     }
 
     @JsonIgnore

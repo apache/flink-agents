@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.configuration.Configuration;
 import org.apache.flink.agents.api.function.Function;
 import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple3;
@@ -110,7 +111,10 @@ class YamlLoaderLoadYamlTest {
         AgentsExecutionEnvironment env = new TestEnv();
         env.loadYaml(FIXTURES.resolve("with_skills.yaml"));
         Skills shared = (Skills) env.getResources().get(ResourceType.SKILLS).get("shared_skills");
-        assertThat(shared.getPaths()).containsExactly("./shared_skill_dir", "./more");
+        assertThat(shared.getSources())
+                .containsExactly(
+                        new SkillSourceSpec("local", Map.of("path", "./shared_skill_dir")),
+                        new SkillSourceSpec("local", Map.of("path", "./more")));
     }
 
     /** Minimal env stub — we can't instantiate LocalExecutionEnvironment from the api module. */
