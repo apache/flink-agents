@@ -368,6 +368,12 @@ FLINK_VERSION="${FLINK_VERSION:-2.2.0}"
 FLINK_AGENTS_VERSION="${FLINK_AGENTS_VERSION:-0.2.1}"
 FLINK_SCALA_VERSION="${FLINK_SCALA_VERSION:-2.12}"
 FLINK_BASE_URL="${FLINK_BASE_URL:-https://dlcdn.apache.org/flink}"
+# Flink Agents JARs live next to Flink on the ASF mirror network. Override
+# this to point at archive.apache.org if you need a non-current release.
+FLINK_AGENTS_BASE_URL="${FLINK_AGENTS_BASE_URL:-https://dlcdn.apache.org/flink}"
+# Direct (non-mirrored) ASF download host. We hit it for the SHA512 sidecar
+# because the mirror network does not redistribute checksum files.
+FLINK_AGENTS_CHECKSUM_BASE_URL="${FLINK_AGENTS_CHECKSUM_BASE_URL:-https://downloads.apache.org/flink}"
 
 FLINK_SUPPORTED_VERSIONS=("2.2.0" "2.1.1" "2.0.1" "1.20.3")
 FLINK_RECOMMENDED_VERSION="2.2.0"
@@ -406,7 +412,9 @@ Environment variables:
   FLINK_VERSION             Flink version
   FLINK_AGENTS_VERSION      Flink Agents version to install
   FLINK_SCALA_VERSION       Scala version suffix (default: 2.12)
-  FLINK_BASE_URL            Mirror base URL (default: https://dlcdn.apache.org/flink)
+  FLINK_BASE_URL            Mirror base URL for Flink (default: https://dlcdn.apache.org/flink)
+  FLINK_AGENTS_BASE_URL     Mirror base URL for Flink Agents JARs (default: https://dlcdn.apache.org/flink)
+  FLINK_AGENTS_CHECKSUM_BASE_URL  Direct ASF URL for SHA512 sidecars (default: https://downloads.apache.org/flink)
   INSTALL_FLINK             Ask|Yes|No (default: Ask)
   ENABLE_PYFLINK            Ask|Yes|No (default: Ask)
   INSTALL_DIR               Flink install directory (default: \$HOME/.local/flink)
@@ -1093,40 +1101,90 @@ setup_python_env() {
         "apache-flink==${FLINK_VERSION}"
 }
 
-copy_flink_agents_jars() {
-    local pkg_root
-    pkg_root="$(python - <<'PY'
-import pathlib
-import flink_agents
-print(pathlib.Path(flink_agents.__file__).resolve().parent)
-PY
-)"
+# Compute the relative path of the flink-agents JAR under the ASF mirror,
+# e.g. flink-agents-0.2.1/flink-agents-dist-flink-2.2-0.2.1.jar
+flink_agents_jar_relpath() {
+    printf '%s' "flink-agents-${FLINK_AGENTS_VERSION}/flink-agents-dist-flink-${FLINK_MAJOR_MINOR}-${FLINK_AGENTS_VERSION}.jar"
+}
 
-    local version_lib_dir="${pkg_root}/lib/flink-${FLINK_MAJOR_MINOR}"
-    local common_lib_dir="${pkg_root}/lib/common"
+# Compare a downloaded artifact against its .sha512 sidecar. The sidecar
+# format from ASF is "<hex>  <filename>" (single line). Best-effort: a
+# missing sidecar or missing sha512 tool warns but does not fail (mirrors
+# may not always carry the checksum on time).
+verify_flink_agents_jar_sha512() {
+    local jar="$1"
+    local sha_url="$2"
+    local sha_file
+    sha_file="$(mktempfile)"
 
-    [[ -d "$version_lib_dir" ]] || die "Flink Agents lib directory not found: $version_lib_dir"
-    [[ -d "$common_lib_dir" ]] || die "Flink Agents common lib directory not found: $common_lib_dir"
+    if ! download_file "$sha_url" "$sha_file" >/dev/null 2>&1; then
+        ui_warn "SHA512 sidecar unavailable (${sha_url}); skipping verification"
+        return 0
+    fi
 
-    local jar
+    local expected actual
+    expected="$(awk 'NR==1 {print $1}' "$sha_file" 2>/dev/null || true)"
+    if [[ -z "$expected" ]]; then
+        ui_warn "SHA512 sidecar is empty; skipping verification"
+        return 0
+    fi
+    # SHA-512 hex is exactly 128 lowercase/upper hex chars. If the sidecar
+    # didn't look like a real ASF .sha512 file, warn instead of failing.
+    if [[ ! "$expected" =~ ^[A-Fa-f0-9]{128}$ ]]; then
+        ui_warn "SHA512 sidecar at ${sha_url} is not a valid hash; skipping verification"
+        return 0
+    fi
 
-    ui_info "Copying Flink Agents common jar into Flink lib"
-    local common_copied=0
-    for jar in "$common_lib_dir"/flink-agents-dist-common-*.jar; do
-        [[ -f "$jar" ]] || continue
-        cp "$jar" "$FLINK_HOME/lib/"
-        common_copied=1
-    done
-    [[ "$common_copied" -eq 1 ]] || die "No flink-agents-dist-common jar found in: $common_lib_dir"
+    if command -v sha512sum >/dev/null 2>&1; then
+        actual="$(sha512sum "$jar" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        actual="$(shasum -a 512 "$jar" | awk '{print $1}')"
+    else
+        ui_warn "Neither sha512sum nor shasum available; skipping SHA512 verification"
+        return 0
+    fi
 
-    ui_info "Copying Flink Agents thin jar into Flink lib"
-    local copied=0
-    for jar in "$version_lib_dir"/flink-agents-dist-*.jar; do
-        [[ -f "$jar" ]] || continue
-        cp "$jar" "$FLINK_HOME/lib/"
-        copied=1
-    done
-    [[ "$copied" -eq 1 ]] || die "No flink-agents-dist jar found in: $version_lib_dir"
+    if [[ "${expected,,}" != "${actual,,}" ]]; then
+        die "SHA512 mismatch for $(basename "$jar") (expected ${expected:0:16}…, got ${actual:0:16}…)"
+    fi
+    ui_success "SHA512 verified"
+}
+
+# Download flink-agents-dist-flink-<flink_major.minor>-<agents_ver>.jar
+# directly from the ASF mirror into FLINK_HOME/lib. This replaces the older
+# wheel-extraction path, so Java-only users no longer need Python at all.
+install_flink_agents_jar() {
+    [[ -n "${FLINK_HOME:-}" ]] || die "FLINK_HOME is not set"
+    [[ -d "$FLINK_HOME/lib" ]] || die "Invalid FLINK_HOME (missing lib): $FLINK_HOME"
+
+    local relpath jar_name target url sha_url
+    relpath="$(flink_agents_jar_relpath)"
+    jar_name="$(basename "$relpath")"
+    target="$FLINK_HOME/lib/$jar_name"
+    url="${FLINK_AGENTS_BASE_URL}/${relpath}"
+    sha_url="${FLINK_AGENTS_CHECKSUM_BASE_URL}/${relpath}.sha512"
+
+    detect_downloader
+
+    if [[ -f "$target" ]]; then
+        ui_info "Reusing existing JAR: ${target}"
+        verify_flink_agents_jar_sha512 "$target" "$sha_url" || true
+        return 0
+    fi
+
+    ui_info "Downloading ${url}"
+    if ! download_file "$url" "$target"; then
+        rm -f "$target" 2>/dev/null || true
+        die "Failed to download flink-agents JAR from ${url}"
+    fi
+
+    if [[ ! -s "$target" ]]; then
+        rm -f "$target" 2>/dev/null || true
+        die "Downloaded an empty file: ${target}"
+    fi
+
+    verify_flink_agents_jar_sha512 "$target" "$sha_url"
+    ui_success "Installed: ${jar_name} → ${FLINK_HOME}/lib"
 }
 
 check_java() {
@@ -1272,33 +1330,19 @@ verify_installation() {
         ui_warn "Flink binary not found at $FLINK_HOME/bin/flink"
     fi
 
+    local expected_jar="$FLINK_HOME/lib/flink-agents-dist-flink-${FLINK_MAJOR_MINOR}-${FLINK_AGENTS_VERSION}.jar"
+    if [[ -f "$expected_jar" ]]; then
+        ui_success "flink-agents JAR found: $(basename "$expected_jar")"
+    else
+        ui_error "Expected flink-agents JAR missing: $expected_jar"
+        return 1
+    fi
+
     if [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
         if python -c "import flink_agents; print('flink-agents', flink_agents.__version__)" 2>/dev/null; then
             ui_success "flink-agents Python package verified"
         else
             ui_error "flink-agents Python package import failed"
-            return 1
-        fi
-
-        local common_jar_found=0
-        for jar in "$FLINK_HOME/lib"/flink-agents-dist-common-*.jar; do
-            [[ -f "$jar" ]] && common_jar_found=1 && break
-        done
-        if [[ "$common_jar_found" -eq 1 ]]; then
-            ui_success "flink-agents-dist-common JAR found in FLINK_HOME/lib"
-        else
-            ui_error "flink-agents-dist-common JAR not found in $FLINK_HOME/lib"
-            return 1
-        fi
-
-        local thin_jar_found=0
-        for jar in "$FLINK_HOME/lib"/flink-agents-dist-flink-*-thin.jar; do
-            [[ -f "$jar" ]] && thin_jar_found=1 && break
-        done
-        if [[ "$thin_jar_found" -eq 1 ]]; then
-            ui_success "flink-agents-dist thin JAR found in FLINK_HOME/lib"
-        else
-            ui_error "flink-agents-dist thin JAR not found in $FLINK_HOME/lib"
             return 1
         fi
 
@@ -1411,13 +1455,13 @@ main() {
     ui_stage "Installing Apache Flink"
     install_flink_if_needed
 
-    ui_stage "Setting up Python environment"
+    ui_stage "Installing Flink Agents"
+    install_flink_agents_jar
     if [[ "$ENABLE_PYFLINK" == "Yes" ]]; then
         copy_pyflink_jar
         setup_python_env
-        copy_flink_agents_jars
     else
-        ui_info "Skipping PyFlink and Python package setup (ENABLE_PYFLINK=${ENABLE_PYFLINK})."
+        ui_info "Skipping Python venv (ENABLE_PYFLINK=No)."
     fi
 
     ui_stage "Finalizing"
