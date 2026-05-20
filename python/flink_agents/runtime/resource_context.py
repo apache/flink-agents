@@ -75,6 +75,19 @@ class ResourceContextImpl(ResourceContext):
             self._skill_manager = self._create_skill_manager()
         return self._skill_manager
 
+    def close(self) -> None:
+        """Close the lazily-cached SkillManager, releasing materialized temp
+        directories owned by its repositories. Called via
+        ``ResourceCache.close()`` on operator close (including Flink failover
+        when the JVM stays up). Idempotent.
+        """
+        if self._skill_manager is not None:
+            try:
+                self._skill_manager.close()
+            finally:
+                self._skill_manager = None
+                self._skill_manager_initialized = False
+
     def _create_skill_manager(self) -> SkillManager | None:
         try:
             skills_config = cast(

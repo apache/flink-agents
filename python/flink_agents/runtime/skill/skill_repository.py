@@ -17,6 +17,7 @@
 #################################################################################
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List
 
 from flink_agents.runtime.skill.agent_skill import AgentSkill
@@ -42,43 +43,31 @@ class SkillRepositoryInfo:
 
 
 class SkillRepository(ABC):
-    """Abstract interface for skill repositories.
+    """Source of skills, loaded from filesystem / classpath / URL / package.
 
-    A SkillRepository is responsible for loading and optionally storing skills
-    from a specific source (filesystem, classpath, URL, etc.).
-
-    Each skill is stored in its own subdirectory containing a SKILL.md file
-    and optional resource files:
-
-    baseDir/
-    ├── skill-name-1/
-    │   ├── SKILL.md          # Required: Entry file with YAML frontmatter
-    │   ├── references/       # Optional: Reference documentation
-    │   ├── examples/         # Optional: Example files
-    │   └── scripts/          # Optional: Script files
-    └── skill-name-2/
-        └── SKILL.md
+    Each skill lives under ``base_dir/<name>/`` with a required ``SKILL.md``
+    and optional resource files (``references/``, ``scripts/``, ...).
     """
 
     @abstractmethod
-    def get_skill(self, name: str) -> str:
-        """Get a skill by name.
-
-        Args:
-            name: The skill name.
-
-        Returns:
-            The skill, or None if not found.
-        """
+    def get_skill(self, name: str) -> AgentSkill | None:
+        """Return the named skill, or ``None`` if absent."""
 
     @abstractmethod
     def get_skills(self) -> List[AgentSkill]:
-        """Get all skills in this repository.
-
-        Returns:
-            List of all skills.
-        """
+        """Return all skills in this repository."""
 
     @abstractmethod
     def get_resources(self, name: str) -> Dict[str, str]:
-        """Get resources for the specified skill."""
+        """Return resources for the named skill, keyed by relative path."""
+
+    def get_skill_dir(self, name: str) -> Path | None:
+        """Absolute on-disk directory for the named skill.
+
+        Filesystem-backed implementations return ``base_dir / name``
+        without checking existence. Non-filesystem-backed return ``None``.
+        """
+        return None
+
+    def close(self) -> None:  # noqa: B027
+        """Release any owned temp directory. Default no-op; idempotent."""

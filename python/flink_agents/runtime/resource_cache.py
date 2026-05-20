@@ -94,8 +94,15 @@ class ResourceCache:
         return resource
 
     def close(self) -> None:
-        """Clean up all cached resources."""
+        """Clean up all cached resources and close the injected ResourceContext.
+
+        Cascades to ``ResourceContextImpl.close()`` which in turn closes the
+        cached ``SkillManager`` (releasing materialized skill temp dirs). This
+        is what releases skill resources on operator close, including Flink
+        failover when the JVM stays up.
+        """
         for typed in self._cache.values():
             for resource in typed.values():
                 resource.close()
         self._cache.clear()
+        self._resource_context.close()
