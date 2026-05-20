@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.plan.actions.Action;
@@ -57,6 +58,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -572,11 +574,15 @@ public class AgentPlan implements Serializable {
                         ResourceType.TOOL,
                         new ResourceDescriptor(BashTool.class.getName(), new HashMap<>())));
 
-        LinkedHashSet<String> paths = new LinkedHashSet<>();
-        for (Skills s : skillsObjects.values()) {
-            paths.addAll(s.getPaths());
+        // Sort by key before merging: getDeclaredMethods() makes no order guarantee, so without
+        // this the winner on a duplicate skill name would vary across JDK / class layout.
+        List<String> orderedKeys = new ArrayList<>(skillsObjects.keySet());
+        Collections.sort(orderedKeys);
+        LinkedHashSet<SkillSourceSpec> sources = new LinkedHashSet<>();
+        for (String key : orderedKeys) {
+            sources.addAll(skillsObjects.get(key).getSources());
         }
-        Skills merged = Skills.fromLocalDir(paths.toArray(new String[0]));
+        Skills merged = new Skills(new ArrayList<>(sources));
         addResourceProvider(
                 JavaSerializableResourceProvider.createResourceProvider(
                         Skills.SKILLS_CONFIG, ResourceType.SKILLS, merged));

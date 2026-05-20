@@ -18,167 +18,49 @@
 
 package org.apache.flink.agents.runtime.skill.repository;
 
-import org.apache.flink.agents.runtime.skill.AgentSkill;
-import org.apache.flink.agents.runtime.skill.SkillParser;
 import org.apache.flink.agents.runtime.skill.SkillRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.annotation.Nullable;
 
 import java.io.IOException;
-import java.nio.charset.MalformedInputException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Stream;
 
 /**
- * Filesystem-backed {@link SkillRepository}. Each immediate subdirectory of the configured base
- * directory that contains a {@code SKILL.md} file is treated as a skill.
- *
- * <p>Mirrors the Python {@code
- * flink_agents.runtime.skill.repository.filesystem_repository.FileSystemSkillRepository}.
+ * Filesystem-backed {@link SkillRepository}. Accepts either a directory whose immediate
+ * subdirectories each contain a {@code SKILL.md}, or a {@code .zip} file that expands into such a
+ * layout.
  */
-public class FileSystemSkillRepository implements SkillRepository {
+public final class FileSystemSkillRepository extends AbstractMaterializedSkillRepository {
 
-    private static final Logger LOG = LoggerFactory.getLogger(FileSystemSkillRepository.class);
-
-    public static final String SKILL_MD_FILE = "SKILL.md";
-
-    private final Path baseDir;
-
-    public FileSystemSkillRepository(Path baseDir) {
-        if (baseDir == null) {
-            throw new IllegalArgumentException("Base directory cannot be null");
-        }
-        Path resolved = baseDir.toAbsolutePath().normalize();
-        if (!Files.exists(resolved)) {
-            throw new IllegalArgumentException("Base directory does not exist: " + resolved);
-        }
-        if (!Files.isDirectory(resolved)) {
-            throw new IllegalArgumentException("Base directory is not a directory: " + resolved);
-        }
-        this.baseDir = resolved;
+    public FileSystemSkillRepository(Path path) {
+        super(materialize(path));
     }
 
-    public FileSystemSkillRepository(String baseDir) {
-        this(Path.of(baseDir));
+    public FileSystemSkillRepository(String path) {
+        this(Path.of(path));
     }
 
     public Path getBaseDir() {
-        return baseDir;
+        return materialization.getDir();
     }
 
-    @Override
-    @Nullable
-    public AgentSkill getSkill(String name) {
-        Path skillDir = baseDir.resolve(name);
-        Path skillMd = skillDir.resolve(SKILL_MD_FILE);
-        if (!Files.exists(skillMd)) {
-            return null;
+    private static SkillMaterializer.Materialized materialize(Path path) {
+        if (path == null) {
+            throw new IllegalArgumentException("Path cannot be null");
         }
-        return loadSkill(skillDir);
-    }
-
-    @Override
-    public List<AgentSkill> getSkills() {
-        List<AgentSkill> skills = new ArrayList<>();
-        for (String skillName : listSkillNames()) {
-            AgentSkill skill = getSkill(skillName);
-            if (skill != null) {
-                skills.add(skill);
+        Path resolved = path.toAbsolutePath().normalize();
+        if (!Files.exists(resolved)) {
+            throw new IllegalArgumentException("Path does not exist: " + resolved);
+        }
+        if (Files.isDirectory(resolved)) {
+            return SkillMaterializer.Materialized.borrowed(resolved);
+        }
+        if (Files.isRegularFile(resolved) && resolved.toString().toLowerCase().endsWith(".zip")) {
+            try {
+                return SkillMaterializer.extractZipSafely(resolved);
+            } catch (IOException e) {
+                throw new IllegalArgumentException("Failed to extract zip: " + resolved, e);
             }
         }
-        return skills;
-    }
-
-    @Override
-    public Map<String, String> getResources(String name) {
-        Path skillDir = baseDir.resolve(name);
-        if (!Files.isDirectory(skillDir)) {
-            return Collections.emptyMap();
-        }
-        return loadResources(skillDir);
-    }
-
-    private List<String> listSkillNames() {
-        List<String> names = new ArrayList<>();
-        try (Stream<Path> entries = Files.list(baseDir)) {
-            entries.forEach(
-                    entry -> {
-                        if (Files.isDirectory(entry)
-                                && Files.exists(entry.resolve(SKILL_MD_FILE))) {
-                            names.add(entry.getFileName().toString());
-                        }
-                    });
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to list skills under " + baseDir, e);
-        }
-        names.sort(String::compareTo);
-        return names;
-    }
-
-    private AgentSkill loadSkill(Path skillDir) {
-        Path skillMd = skillDir.resolve(SKILL_MD_FILE);
-        if (!Files.exists(skillMd)) {
-            return null;
-        }
-        try {
-            String content = Files.readString(skillMd, StandardCharsets.UTF_8);
-            AgentSkill skill = SkillParser.parseSkill(content);
-            if (!skill.getName().equals(skillDir.getFileName().toString())) {
-                LOG.warn(
-                        "The skill name {} is different from the base directory {}.",
-                        skill.getName(),
-                        skillDir.getFileName());
-            }
-            return skill;
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Failed to load skill from " + skillDir, e);
-        }
-    }
-
-    private Map<String, String> loadResources(Path skillDir) {
-        Map<String, String> resources = new HashMap<>();
-        try (Stream<Path> walk = Files.walk(skillDir)) {
-            walk.filter(Files::isRegularFile)
-                    .forEach(
-                            file -> {
-                                if (file.getFileName().toString().equals(SKILL_MD_FILE)) {
-                                    return;
-                                }
-                                String rel = skillDir.relativize(file).toString();
-                                try {
-                                    resources.put(
-                                            rel, Files.readString(file, StandardCharsets.UTF_8));
-                                } catch (MalformedInputException mie) {
-                                    try {
-                                        byte[] bytes = Files.readAllBytes(file);
-                                        resources.put(
-                                                rel,
-                                                "base64: "
-                                                        + Base64.getEncoder()
-                                                                .encodeToString(bytes));
-                                    } catch (IOException e) {
-                                        LOG.warn(
-                                                "Failed to read resource file {} as binary.",
-                                                file,
-                                                e);
-                                    }
-                                } catch (IOException e) {
-                                    LOG.warn("Failed to read resource file {}.", file, e);
-                                }
-                            });
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to walk skill dir " + skillDir, e);
-        }
-        return resources;
+        throw new IllegalArgumentException("Path must be a directory or a .zip file: " + resolved);
     }
 }

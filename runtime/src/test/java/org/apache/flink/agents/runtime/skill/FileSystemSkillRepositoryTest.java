@@ -26,9 +26,14 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -87,19 +92,83 @@ class FileSystemSkillRepositoryTest {
         assertTrue(ex.getMessage().contains("does not exist"));
     }
 
+    private static void zipDir(Path src, Path dstZip) throws IOException {
+        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(dstZip));
+                Stream<Path> walk = Files.walk(src)) {
+            walk.filter(Files::isRegularFile)
+                    .forEach(
+                            file -> {
+                                try {
+                                    String name = src.relativize(file).toString();
+                                    zos.putNextEntry(new ZipEntry(name));
+                                    Files.copy(file, zos);
+                                    zos.closeEntry();
+                                } catch (IOException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            });
+        }
+    }
+
     @Test
-    void binaryResourceFallsBackToBase64(@TempDir Path tempDir) throws IOException {
+    void loadFromZip(@TempDir Path tempDir) throws IOException {
+        Path zip = tempDir.resolve("skills.zip");
+        zipDir(resourcesRoot(), zip);
+
+        FileSystemSkillRepository repo = new FileSystemSkillRepository(zip);
+
+        List<AgentSkill> skills = repo.getSkills();
+        assertEquals(2, skills.size());
+        assertEquals("github", skills.get(0).getName());
+        assertEquals("nano-banana-pro", skills.get(1).getName());
+        // Resources resolve through the materialized base directory.
+        Map<String, String> resources = repo.getResources("nano-banana-pro");
+        assertTrue(resources.containsKey("_meta.json"));
+    }
+
+    @Test
+    void invalidPathKindRaises(@TempDir Path tempDir) throws IOException {
+        Path nonZipFile = tempDir.resolve("data.txt");
+        Files.writeString(nonZipFile, "not a zip");
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new FileSystemSkillRepository(nonZipFile));
+        assertTrue(ex.getMessage().contains("must be a directory or a .zip"));
+    }
+
+    @Test
+    void binaryResourceRoundTripsThroughBase64(@TempDir Path tempDir) throws IOException {
         Path skillDir = Files.createDirectory(tempDir.resolve("binary-skill"));
         Files.writeString(
                 skillDir.resolve("SKILL.md"),
                 "---\nname: binary-skill\ndescription: holds a binary resource\n---\n# Body\n",
                 StandardCharsets.UTF_8);
-        // Bytes that are not valid UTF-8 (start of a 4-byte sequence with no continuation bytes).
-        byte[] bad = new byte[] {(byte) 0xF8, (byte) 0x88, (byte) 0x80, (byte) 0x80};
-        Files.write(skillDir.resolve("blob.bin"), bad);
+        // PNG signature + a sprinkling of non-UTF-8 bytes — verifies actual base64 encoding,
+        // not just the "base64: " marker. Asserting only the prefix once let a Python-side
+        // f-string bug (raw bytes-repr instead of base64) hide for an entire review cycle.
+        byte[] original =
+                new byte[] {
+                    (byte) 0x89,
+                    0x50,
+                    0x4E,
+                    0x47,
+                    0x0D,
+                    0x0A,
+                    0x1A,
+                    0x0A,
+                    (byte) 0xF8,
+                    (byte) 0x88,
+                    (byte) 0x80,
+                    (byte) 0x80
+                };
+        Files.write(skillDir.resolve("blob.bin"), original);
 
         FileSystemSkillRepository repo = new FileSystemSkillRepository(tempDir);
-        Map<String, String> resources = repo.getResources("binary-skill");
-        assertTrue(resources.get("blob.bin").startsWith("base64: "));
+        String encoded = repo.getResources("binary-skill").get("blob.bin");
+
+        assertTrue(encoded.startsWith("base64: "));
+        byte[] decoded = Base64.getDecoder().decode(encoded.substring("base64: ".length()));
+        assertArrayEquals(original, decoded);
     }
 }

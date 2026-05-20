@@ -29,12 +29,14 @@ import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.FunctionTool;
 import org.apache.flink.agents.api.yaml.spec.ActionSpec;
 import org.apache.flink.agents.api.yaml.spec.AgentActionRef;
 import org.apache.flink.agents.api.yaml.spec.AgentSpec;
 import org.apache.flink.agents.api.yaml.spec.DescriptorSpec;
+import org.apache.flink.agents.api.yaml.spec.PackageSkillSpec;
 import org.apache.flink.agents.api.yaml.spec.PromptSpec;
 import org.apache.flink.agents.api.yaml.spec.SkillsSpec;
 import org.apache.flink.agents.api.yaml.spec.ToolSpec;
@@ -167,7 +169,27 @@ public final class YamlLoader {
 
     /** Build a {@link Skills} resource from a parsed {@link SkillsSpec}. */
     public static Skills buildSkills(SkillsSpec spec) {
-        return new Skills(new ArrayList<>(spec.getPaths()));
+        List<SkillSourceSpec> sources = new ArrayList<>();
+        for (String p : spec.getPaths()) {
+            sources.add(new SkillSourceSpec("local", Map.of("path", p)));
+        }
+        for (String u : spec.getUrls()) {
+            sources.add(new SkillSourceSpec("url", Map.of("url", u)));
+        }
+        for (String r : spec.getClasspath()) {
+            sources.add(new SkillSourceSpec("classpath", Map.of("resource", r)));
+        }
+        for (PackageSkillSpec pkg : spec.getPackageEntries()) {
+            sources.add(
+                    new SkillSourceSpec(
+                            "package",
+                            Map.of(
+                                    "package",
+                                    pkg.getPackageName(),
+                                    "resource",
+                                    pkg.getResource())));
+        }
+        return new Skills(sources);
     }
 
     /**

@@ -33,11 +33,30 @@ class SkillsSpecTest {
         SkillsSpec spec = M.readValue("name: s\npaths: [./a, ./b]\n", SkillsSpec.class);
         assertThat(spec.getName()).isEqualTo("s");
         assertThat(spec.getPaths()).containsExactly("./a", "./b");
+        assertThat(spec.getUrls()).isEmpty();
+        assertThat(spec.getClasspath()).isEmpty();
+    }
+
+    @Test
+    void parsesUrlsAndClasspath() throws Exception {
+        SkillsSpec spec =
+                M.readValue(
+                        "name: s\nurls: [https://x/skills.zip]\nclasspath: [com/example/s]\n",
+                        SkillsSpec.class);
+        assertThat(spec.getPaths()).isEmpty();
+        assertThat(spec.getUrls()).containsExactly("https://x/skills.zip");
+        assertThat(spec.getClasspath()).containsExactly("com/example/s");
     }
 
     @Test
     void rejectsUnknownProperty() {
-        assertThatThrownBy(() -> M.readValue("name: s\npaths: []\nextra: 1\n", SkillsSpec.class))
+        assertThatThrownBy(() -> M.readValue("name: s\npaths: [./a]\nextra: 1\n", SkillsSpec.class))
                 .hasMessageContaining("extra");
+    }
+
+    @Test
+    void rejectsAllEmpty() {
+        assertThatThrownBy(() -> M.readValue("name: s\n", SkillsSpec.class))
+                .hasMessageContaining("at least one of paths/urls/classpath");
     }
 }

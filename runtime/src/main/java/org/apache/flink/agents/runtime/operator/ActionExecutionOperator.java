@@ -144,7 +144,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         stateManager.initializeKeyedStates(getRuntimeContext());
         stateManager.initializeOperatorStates(getOperatorStateBackend());
 
-        resourceCache = new ResourceCache(agentPlan.getResourceProviders());
+        // ResourceCache constructs its own long-lived ResourceContextImpl internally; on
+        // close() the cache cascades close to it and to the cached SkillManager, covering
+        // Flink failover when the JVM does not exit. The user-code class loader is threaded
+        // down so classpath: skill sources resolve against the Flink user JAR regardless of
+        // which thread (mailbox / Python interpreter / async pool) later triggers the lazy
+        // SkillManager construction.
+        resourceCache =
+                new ResourceCache(
+                        agentPlan.getResourceProviders(),
+                        getRuntimeContext().getUserCodeClassLoader());
 
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
