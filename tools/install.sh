@@ -996,19 +996,16 @@ install_flink_if_needed() {
 
 prompt_path_input() {
     local header="$1"
-    local placeholder="$2"
+    # Placeholder kept for backward compatibility with the previous signature;
+    # readline does not surface placeholders the way `gum input` did, so we
+    # weave the hint into the prompt label instead.
+    local placeholder="${2:-}"
     local input=""
-    if [[ -n "$GUM" ]] && gum_is_tty; then
-        local _rc=0
-        input="$("$GUM" input \
-            --header "$header" \
-            --placeholder "$placeholder" \
-            --width 70 < /dev/tty)" || _rc=$?
-        (( _rc == 0 )) || die_cancelled
-    else
-        printf '%s: ' "$header" > /dev/tty
-        read -r input < /dev/tty || die_cancelled
+    printf '%s\n' "$header" > /dev/tty
+    if [[ -n "$placeholder" ]]; then
+        printf '  (example: %s)\n' "$placeholder" > /dev/tty
     fi
+    IFS= read -e -r -p "  path> " input < /dev/tty || die_cancelled
     printf '%s' "$(normalize_path "$input")"
 }
 
@@ -1052,17 +1049,8 @@ prompt_path_choice_interactive() {
     fi
 
     local input=""
-    if [[ -n "$GUM" ]] && gum_is_tty; then
-        local _rc=0
-        input="$("$GUM" input \
-            --header "$header" \
-            --placeholder "$placeholder" \
-            --width 70 < /dev/tty)" || _rc=$?
-        (( _rc == 0 )) || die_cancelled
-    else
-        printf 'Enter custom path: ' > /dev/tty
-        read -r input < /dev/tty || die_cancelled
-    fi
+    printf '%s\n' "$header" > /dev/tty
+    IFS= read -e -r -p "  path> " input < /dev/tty || die_cancelled
 
     if [[ -z "$input" ]]; then
         ui_warn "Empty path; falling back to default: $default_path"
