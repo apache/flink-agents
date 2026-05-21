@@ -657,35 +657,51 @@ prompt_flink_agents_version_interactive() {
 
 # Populate FLINK_VERSION from an existing FLINK_HOME. Tries to parse
 # `lib/flink-dist-<ver>.jar` first because it's instant; falls back to
+# Extract the major.minor portion of a Flink version string.
+#   2.2.0           -> 2.2
+#   2.2.0-SNAPSHOT  -> 2.2
+#   2.2-SNAPSHOT    -> 2.2     (local source builds, no patch number)
+#   2.1-rc1         -> 2.1
+# Returns empty string on no match. Note: replaces the older
+# `${FLINK_VERSION%.*}` trick, which silently produced "2" for "2.2-SNAPSHOT".
+flink_major_minor() {
+    printf '%s' "$1" | sed -E -n 's/^([0-9]+\.[0-9]+).*/\1/p'
+}
+
 # `bin/flink --version`, which is authoritative but spins up a JVM and can
 # take 3-10s on cold start. Returns 0 on success.
 detect_flink_version_from_home() {
     [[ -n "${FLINK_HOME:-}" && -d "$FLINK_HOME" ]] || return 1
 
-    local major_minor_patch=""
+    # A Flink version on the wire is roughly:
+    #   <num>.<num>(.<num>)?(-<suffix>)?
+    # Suffix examples: SNAPSHOT, rc1, beta-2, 20251115. Anchor it loose
+    # enough to handle local source builds (flink-dist-2.2-SNAPSHOT.jar).
+    local ver_re='[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9._]+)?'
+    local version=""
 
     # Fast path: filename inspection. Avoids JVM startup entirely.
     local jar
     for jar in "$FLINK_HOME/lib"/flink-dist-[0-9]*.jar; do
         [[ -f "$jar" ]] || continue
-        major_minor_patch="$(basename "$jar" | sed -E -n 's/^flink-dist-([0-9]+\.[0-9]+\.[0-9]+)\.jar$/\1/p')"
-        [[ -n "$major_minor_patch" ]] && break
+        version="$(basename "$jar" | sed -E -n "s/^flink-dist-(${ver_re})\.jar$/\1/p")"
+        [[ -n "$version" ]] && break
     done
 
     # Slow path: ask the Flink CLI. JVM startup means a few seconds of
     # silence, so signal what's happening.
-    if [[ -z "$major_minor_patch" && -x "$FLINK_HOME/bin/flink" ]]; then
+    if [[ -z "$version" && -x "$FLINK_HOME/bin/flink" ]]; then
         ui_info "Detecting Flink version (running '${FLINK_HOME}/bin/flink --version', this may take a few seconds)..."
         local out
         out="$("$FLINK_HOME/bin/flink" --version 2>/dev/null || true)"
-        major_minor_patch="$(printf '%s\n' "$out" | sed -E -n 's/.*Version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -n1)"
+        version="$(printf '%s\n' "$out" | sed -E -n "s/.*Version:[[:space:]]*(${ver_re}).*/\1/p" | head -n1)"
     fi
 
-    if [[ -z "$major_minor_patch" ]]; then
+    if [[ -z "$version" ]]; then
         return 1
     fi
 
-    FLINK_VERSION="$major_minor_patch"
+    FLINK_VERSION="$version"
     return 0
 }
 
@@ -732,7 +748,7 @@ plan_flink() {
             ui_warn "Could not auto-detect Flink version from $FLINK_HOME; assuming ${FLINK_VERSION}."
             ui_warn "If JAR copy fails, set FLINK_VERSION explicitly (e.g. FLINK_VERSION=2.1.1 bash install.sh)."
         fi
-        FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+        FLINK_MAJOR_MINOR="$(flink_major_minor "$FLINK_VERSION")"
         return
     fi
 
@@ -749,7 +765,7 @@ plan_flink() {
 
     INSTALL_DIR="$(normalize_path "$INSTALL_DIR")"
     FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
-    FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+    FLINK_MAJOR_MINOR="$(flink_major_minor "$FLINK_VERSION")"
 }
 
 plan_flink_agents() {
@@ -983,12 +999,12 @@ edit_plan_interactive() {
                     edit_prompt_flink_home
                     detect_flink_version_from_home || ui_warn "Could not auto-detect Flink version; keeping ${FLINK_VERSION}"
                 fi
-                FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+                FLINK_MAJOR_MINOR="$(flink_major_minor "$FLINK_VERSION")"
                 ;;
             flink_version)
                 prompt_flink_version_interactive || true
                 FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
-                FLINK_MAJOR_MINOR="${FLINK_VERSION%.*}"
+                FLINK_MAJOR_MINOR="$(flink_major_minor "$FLINK_VERSION")"
                 ;;
             install_dir)
                 INSTALL_DIR="$(prompt_path_choice_interactive \

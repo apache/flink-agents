@@ -78,3 +78,37 @@ EOF
     [ "$status" -eq 0 ]
     case "$output" in *"Detecting Flink version"*) false ;; *) ;; esac
 }
+
+@test "detect_flink_version_from_home: accepts X.Y-SNAPSHOT from local source builds" {
+    : > "$FLINK_HOME/lib/flink-dist-2.2-SNAPSHOT.jar"
+    FLINK_VERSION=""
+    detect_flink_version_from_home
+    [ "$FLINK_VERSION" = "2.2-SNAPSHOT" ]
+}
+
+@test "detect_flink_version_from_home: accepts X.Y.Z-SNAPSHOT" {
+    : > "$FLINK_HOME/lib/flink-dist-2.1.0-SNAPSHOT.jar"
+    FLINK_VERSION=""
+    detect_flink_version_from_home
+    [ "$FLINK_VERSION" = "2.1.0-SNAPSHOT" ]
+}
+
+@test "detect_flink_version_from_home: accepts -rc suffix from CLI output" {
+    cat > "$FLINK_HOME/bin/flink" <<'EOF'
+#!/usr/bin/env bash
+echo "Version: 2.0.0-rc1, Commit ID: abc"
+EOF
+    chmod +x "$FLINK_HOME/bin/flink"
+    FLINK_VERSION=""
+    detect_flink_version_from_home
+    [ "$FLINK_VERSION" = "2.0.0-rc1" ]
+}
+
+@test "flink_major_minor: derives X.Y from various version strings" {
+    [ "$(flink_major_minor "2.2.0")"          = "2.2" ]
+    [ "$(flink_major_minor "2.2.0-SNAPSHOT")" = "2.2" ]
+    [ "$(flink_major_minor "2.2-SNAPSHOT")"   = "2.2" ]
+    [ "$(flink_major_minor "1.20.3")"         = "1.20" ]
+    [ "$(flink_major_minor "2.1-rc1")"        = "2.1" ]
+    [ "$(flink_major_minor "garbage")"        = "" ]
+}
