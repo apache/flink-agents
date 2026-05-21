@@ -665,6 +665,15 @@ flink_major_minor() {
     printf '%s' "$1" | sed -E -n 's/^([0-9]+\.[0-9]+).*/\1/p'
 }
 
+# True (rc=0) when the version string carries a pre-release suffix
+# (-SNAPSHOT, -rc1, -dev, -beta-2, ...). PyPI only carries finished
+# release wheels for apache-flink, so we need to know when to fall
+# back from `==exact` to `~=X.Y.0` (compatible release).
+is_snapshot_version() {
+    local v="${1:-}"
+    [[ -n "$v" && "$v" == *-* ]]
+}
+
 # `bin/flink --version`, which is authoritative but spins up a JVM and can
 # take 3-10s on cold start. Returns 0 on success.
 detect_flink_version_from_home() {
@@ -1366,10 +1375,22 @@ setup_python_env() {
     export PIP_NO_COLOR=1
     export PIP_NO_INPUT=1
 
+    # PyPI only ships finished release wheels for apache-flink, so a
+    # source-built FLINK_VERSION like "2.1-SNAPSHOT" / "2.0.0-rc1" has
+    # no matching distribution. Fall back to the compatible-release
+    # operator (~= X.Y.0 ↔ >=X.Y.0,<X.(Y+1)) for these cases — the
+    # user's Java JARs are still the source build, but PyFlink will
+    # come from the nearest released minor on PyPI.
+    local apache_flink_spec="apache-flink==${FLINK_VERSION}"
+    if is_snapshot_version "$FLINK_VERSION"; then
+        apache_flink_spec="apache-flink~=${FLINK_MAJOR_MINOR}.0"
+        ui_warn "FLINK_VERSION=${FLINK_VERSION} is a pre-release build; installing ${apache_flink_spec} from PyPI instead."
+    fi
+
     ui_info "Installing Python packages (may take a few minutes)..."
     pip_install_quiet \
         "flink-agents==${FLINK_AGENTS_VERSION}" \
-        "apache-flink==${FLINK_VERSION}"
+        "$apache_flink_spec"
 }
 
 # Compute the relative path of the flink-agents JAR under the ASF mirror,
