@@ -22,6 +22,7 @@ from typing import Any, Dict
 import cloudpickle
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.event_context import EventContext
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.memory.long_term_memory import MemorySet, MemorySetItem
 from flink_agents.api.resource import Resource, ResourceType, get_resource_class
@@ -76,7 +77,7 @@ def get_output_from_output_event(event_json: str) -> Any:
 
 
 def create_resource(
-    resource_module: str, resource_clazz: str, func_kwargs: Dict[str, Any]
+        resource_module: str, resource_clazz: str, func_kwargs: Dict[str, Any]
 ) -> Resource:
     """Dynamically create a resource instance from module and class name.
 
@@ -320,6 +321,73 @@ def get_java_tool_metadata_from_tool(tool: Tool) -> typing.Dict[str, str]:
         ),
     }
 
+
+def from_java_event_context(eventType: str, timestamp: str) -> EventContext:
+    """Create an ``EventContext`` from Java ``EventContext``'s property."""
+    return EventContext(eventType=eventType, timestamp=timestamp)
+
+
+def _resolve_module(module_name: str, class_qualname: str) -> Any:
+    """Resolve the module for the given module name and class qualname.
+
+    This helper handles special cases like '__main__' and falls back to
+    searching in sys.modules if standard import fails.
+    """
+    import importlib
+    import sys
+
+    if module_name == "__main__":
+        module = sys.modules["__main__"]
+        first_part = class_qualname.split(".")[0]
+        if not hasattr(module, first_part):
+            for m in list(sys.modules.values()):
+                if (m and hasattr(m, "__name__") and m.__name__ != "__main__"
+                        and hasattr(m, first_part)):
+                    return m
+            return importlib.import_module(module_name)
+        return module
+
+    try:
+        return importlib.import_module(module_name)
+    except ImportError:
+        if module_name in sys.modules:
+            return sys.modules[module_name]
+
+        main_module = sys.modules.get("__main__")
+        first_part = class_qualname.split(".")[0]
+        if main_module and hasattr(main_module, first_part):
+            return main_module
+        raise
+
+
+def instantiate_python_event_listener(target_string: str) -> Any:
+    """Instantiate a Python event listener from a target string.
+
+    The target string should be in the format ``module:class_path.method_name``.
+    The method name (typically ``on_event_processed``) is stripped to find the class,
+    which is then instantiated using its no-argument constructor.
+
+    This method handles various module resolution scenarios, including:
+    - Standard modules available in ``sys.path``
+    - The ``__main__`` module and its imported sub-modules
+    - Nested classes within a module
+    """
+    if ":" not in target_string:
+        err_msg = f"Invalid format: '{target_string}'. Expected 'module:path'."
+        raise ValueError(err_msg)
+
+    module_name, path_str = target_string.split(":", 1)
+
+    # Strip the method name (last part after the last dot) to get the class qualname
+    class_qualname = path_str.rsplit(".", 1)[0] if "." in path_str else path_str
+
+    module = _resolve_module(module_name, class_qualname)
+
+    target_class = module
+    for part in class_qualname.split("."):
+        target_class = getattr(target_class, part)
+
+    return target_class()
 
 def get_long_term_memory(ctx: Any) -> Any:
     """Return ``ctx.long_term_memory`` (or ``None``). Used by the Java side to

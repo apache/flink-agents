@@ -19,6 +19,7 @@
 package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
@@ -196,6 +197,16 @@ public class ResourceCacheTest {
 
         @Override
         public Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs) {
+            return null;
+        }
+
+        @Override
+        public Object toPythonEventContext(EventContext context) {
+            return null;
+        }
+
+        @Override
+        public Object initPythonEventListener(String target) {
             return null;
         }
     }

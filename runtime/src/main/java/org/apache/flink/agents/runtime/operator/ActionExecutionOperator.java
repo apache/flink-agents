@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -58,6 +59,7 @@ import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Optional;
 
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LISTENERS;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.util.Preconditions.checkState;
 
@@ -192,8 +194,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Initialize the event logger if it is set.
         eventRouter.initEventLogger(getRuntimeContext());
 
-        // Initialize user event listeners from configuration
-        eventRouter.initEventListeners(getRuntimeContext());
+        if (pythonBridge.isInitialized()) {
+            final EventListener pythonEventListenerWrapper =
+                    this.pythonBridge.initForPythonEventListeners(
+                            agentPlan.getConfig().get(EVENT_LISTENERS));
+            if (pythonEventListenerWrapper != null) {
+                this.eventRouter.addEventListener(pythonEventListenerWrapper);
+            }
+        } else {
+            // Initialize user event listeners from configuration
+            eventRouter.initEventListeners(getRuntimeContext());
+        }
 
         // Since an operator restart may change the key range it manages due to changes in
         // parallelism,

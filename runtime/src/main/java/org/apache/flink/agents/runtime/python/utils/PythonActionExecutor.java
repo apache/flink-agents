@@ -68,6 +68,8 @@ public class PythonActionExecutor {
     private static final String GET_OUTPUT_FROM_OUTPUT_EVENT =
             "python_java_utils.get_output_from_output_event";
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     private final PythonInterpreter interpreter;
     private final AgentPlan agentPlan;
     private final PythonRunnerContextImpl runnerContext;
@@ -108,7 +110,7 @@ public class PythonActionExecutor {
                         interpreter.invoke(
                                 CREATE_FLINK_RUNNER_CONTEXT,
                                 runnerContext,
-                                new ObjectMapper().writeValueAsString(agentPlan),
+                                OBJECT_MAPPER.writeValueAsString(agentPlan),
                                 pythonAsyncThreadPool,
                                 javaResourceAdapter,
                                 jobIdentifier);
@@ -132,8 +134,7 @@ public class PythonActionExecutor {
         interpreter.invoke(
                 FLINK_RUNNER_CONTEXT_SWITCH_ACTION_CONTEXT, pythonRunnerContext, hashOfKey);
 
-        String eventJson = new ObjectMapper().writeValueAsString(event);
-        Object pythonEventObject = interpreter.invoke(CONVERT_JSON_TO_PYTHON_EVENT, eventJson);
+        final Object pythonEventObject = this.convertJsonToPythonEvent(event);
 
         try {
             Object calledResult = function.call(pythonEventObject, pythonRunnerContext);
@@ -151,6 +152,11 @@ public class PythonActionExecutor {
             runnerContext.drainEvents(null);
             throw new PythonActionExecutionException("Failed to execute Python action", e);
         }
+    }
+
+    public Object convertJsonToPythonEvent(Event event) throws JsonProcessingException {
+        String eventJson = OBJECT_MAPPER.writeValueAsString(event);
+        return interpreter.invoke(CONVERT_JSON_TO_PYTHON_EVENT, eventJson);
     }
 
     public Event wrapToInputEvent(Object eventData) throws IOException {
