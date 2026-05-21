@@ -5,6 +5,7 @@ python/.idea
 *.iml
 .qwen
 .qoder
+.claude
 
 # OS
 .DS_Store
