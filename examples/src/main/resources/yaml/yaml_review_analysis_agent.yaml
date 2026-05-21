@@ -1,0 +1,72 @@
+agents:
+  - name: review_analysis_agent
+    description: |
+      YAML-declared review analysis agent. Reuses the static methods of
+      ReviewAnalysisAgent from the workflow_agent quickstart as actions
+      and tool, but wires everything together through this YAML file
+      instead of class-level annotations.
+
+    actions:
+      - name: processInput
+        type: java
+        function: org.apache.flink.agents.examples.agents.ReviewAnalysisAgent:processInput
+        listen_to: [input]
+      - name: processChatResponse
+        type: java
+        function: org.apache.flink.agents.examples.agents.ReviewAnalysisAgent:processChatResponse
+        listen_to: [chat_response]
+
+    chat_model_connections:
+      - name: ollama_server
+        clazz: ollama
+        type: java
+        endpoint: http://localhost:11434
+        requestTimeout: 120
+
+    prompts:
+      - name: review_analysis_prompt
+        messages:
+          - role: system
+            content: |
+              Analyze the user review and product information to determine a
+              satisfaction score (1-5) and potential reasons for dissatisfaction.
+
+              Example input format:
+              {
+                  "id": "12345",
+                  "review": "The headphones broke after one week. Very poor quality."
+              }
+
+              Ensure your response can be parsed by Java JSON, using this
+              format as an example:
+              {
+               "id": "12345",
+               "score": 1,
+               "reasons": ["poor quality"]
+              }
+
+              If the review mentions shipping dissatisfaction, first call
+              notifyShippingManager, then return the JSON above with no
+              mention of the tool call.
+          - role: user
+            content: |
+              "input":
+              {input}
+
+    # Action ``processInput`` sends ``ChatRequestEvent("reviewAnalysisModel", ...)``,
+    # so the chat-model setup MUST be named ``reviewAnalysisModel``.
+    chat_model_setups:
+      - name: reviewAnalysisModel
+        clazz: ollama
+        type: java
+        connection: ollama_server
+        model: qwen3:8b
+        prompt: review_analysis_prompt
+        tools: [notifyShippingManager]
+        extract_reasoning: true
+
+    tools:
+      - name: notifyShippingManager
+        type: java
+        function: org.apache.flink.agents.examples.agents.ReviewAnalysisAgent:notifyShippingManager
+        parameter_types: [java.lang.String, java.lang.String]
