@@ -17,7 +17,10 @@
 # limitations under the License.
 ################################################################################
 
-set -euo pipefail
+# -E (errtrace) propagates the ERR trap into functions and command
+# substitutions so the failure banner fires from anywhere in the script,
+# not only at the top level.
+set -Eeuo pipefail
 
 BOLD='\033[1m'
 ACCENT='\033[38;2;255;77;77m'       # coral-bright
@@ -341,8 +344,46 @@ die_cancelled() {
     exit 130
 }
 
+# Fires on any command that exits non-zero under set -e — the cases that
+# would otherwise dump a tail of pip / curl / tar noise and silently exit.
+# `die`/`die_cancelled` use plain `exit` (not a non-zero command), so they
+# do NOT trip this trap; they print their own friendly message and exit
+# straight away. That keeps the banner reserved for genuinely unexpected
+# failures.
+on_error() {
+    local rc=$1
+    local line=$2
+    local cmd=$3
+    # Suppress ourselves if we re-enter (e.g. echo failing under set -e
+    # inside the handler itself).
+    trap - ERR
+    {
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        if (( INSTALL_STAGE_CURRENT > 0 )); then
+            printf '%b Installation failed at stage %d/%d (%s).\n' \
+                "${ERROR}✗${NC}" \
+                "$INSTALL_STAGE_CURRENT" "$INSTALL_STAGE_TOTAL" \
+                "$INSTALL_STAGE_TITLE"
+        else
+            printf '%b Installation failed.\n' "${ERROR}✗${NC}"
+        fi
+        echo ""
+        echo "  Command:   ${cmd}"
+        echo "  Source:    install.sh:${line}"
+        echo "  Exit code: ${rc}"
+        echo ""
+        echo "  Re-run with --verbose for full output, or report at:"
+        echo "    https://github.com/apache/flink-agents/issues"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    } >&2
+    exit "$rc"
+}
+trap 'on_error $? $LINENO "$BASH_COMMAND"' ERR
+
 INSTALL_STAGE_TOTAL=5
 INSTALL_STAGE_CURRENT=0
+INSTALL_STAGE_TITLE=""
 
 ui_section() {
     local title="$1"
@@ -357,6 +398,10 @@ ui_section() {
 ui_stage() {
     local title="$1"
     INSTALL_STAGE_CURRENT=$((INSTALL_STAGE_CURRENT + 1))
+    # Remember the stage title so on_error can include it in the
+    # failure banner ("Installation failed at stage 3/5 (Installing
+    # Apache Flink)").
+    INSTALL_STAGE_TITLE="$title"
     ui_section "[${INSTALL_STAGE_CURRENT}/${INSTALL_STAGE_TOTAL}] ${title}"
 }
 
