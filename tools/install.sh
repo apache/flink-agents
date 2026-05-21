@@ -771,6 +771,75 @@ plan_flink_agents() {
     fi
 }
 
+# Classify a candidate VENV_DIR path. Echoes one of:
+#   new       — path doesn't exist; caller should mkdir + python -m venv
+#   empty     — empty directory; safe to use as venv root
+#   venv      — already a real Python venv (pyvenv.cfg marker present)
+#   nonempty  — directory contains foreign files; caller MUST re-prompt
+#   file      — path is a regular file or invalid; caller MUST re-prompt
+# Exit code: 0 for the safe-to-use cases, 1 for the must-re-prompt cases.
+#
+# We only treat pyvenv.cfg as the venv marker — `bin/activate` alone is
+# not enough since arbitrary projects sometimes ship a file by that name.
+validate_venv_dir() {
+    local p="$1"
+    if [[ -z "$p" ]]; then
+        printf 'file'
+        return 1
+    fi
+    if [[ ! -e "$p" ]]; then
+        printf 'new'
+        return 0
+    fi
+    if [[ ! -d "$p" ]]; then
+        printf 'file'
+        return 1
+    fi
+    if [[ -f "$p/pyvenv.cfg" ]]; then
+        printf 'venv'
+        return 0
+    fi
+    # Directory exists. Empty iff no entries including dotfiles.
+    local entries
+    entries="$(find "$p" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)"
+    if [[ -z "$entries" ]]; then
+        printf 'empty'
+        return 0
+    fi
+    printf 'nonempty'
+    return 1
+}
+
+# Drive the "Choose Python venv directory" picker, then loop until the
+# user picks a path that's either non-existent, empty, or an actual
+# Python venv. Sets the global VENV_DIR. Caller must already have
+# ensured we're in an interactive shell (is_promptable).
+prompt_and_validate_venv_dir() {
+    local seed_default="$1"
+    VENV_DIR="$(prompt_path_choice_interactive \
+        "Choose Python venv directory" \
+        "$seed_default" \
+        "/path/to/venv")"
+    VENV_DIR="$(normalize_path "$VENV_DIR")"
+    local kind
+    while true; do
+        kind="$(validate_venv_dir "$VENV_DIR")" || true
+        case "$kind" in
+            new|empty|venv) return 0 ;;
+            nonempty)
+                ui_warn "${VENV_DIR} already exists and is not a Python venv. Pick a different path, or remove its contents and try again."
+                ;;
+            file|*)
+                ui_warn "${VENV_DIR} is not a directory. Pick a different path."
+                ;;
+        esac
+        VENV_DIR="$(prompt_path_input \
+            "Enter Python venv directory" \
+            "/path/to/venv")"
+        VENV_DIR="$(normalize_path "$VENV_DIR")"
+    done
+}
+
 plan_pyflink() {
     case "$ENABLE_PYFLINK" in
         Yes|No)
@@ -792,16 +861,32 @@ plan_pyflink() {
     fi
 
     PYFLINK_ACTUALLY_ENABLED=1
-    resolve_python
 
+    # Validate VENV_DIR before doing anything Python-related — if the
+    # user picked a bad path we want to bail before we make them resolve
+    # a Python interpreter, and certainly before stage 3 downloads Flink.
     if [[ "$VENV_DIR_EXPLICIT" -eq 0 ]] && is_promptable; then
-        VENV_DIR="$(prompt_path_choice_interactive \
-            "Choose Python venv directory" \
-            "$VENV_DIR" \
-            "/path/to/venv")"
+        prompt_and_validate_venv_dir "$VENV_DIR"
+    else
+        VENV_DIR="$(normalize_path "$VENV_DIR")"
+        # No prompt available (--non-interactive / NO_PROMPT / explicit
+        # VENV_DIR). Refuse to scribble into a foreign directory; tell
+        # the caller exactly what's wrong instead of silently mixing the
+        # venv into their codebase.
+        local kind
+        kind="$(validate_venv_dir "$VENV_DIR")" || true
+        case "$kind" in
+            new|empty|venv) ;;
+            nonempty)
+                die "VENV_DIR=${VENV_DIR} already exists and is not a Python venv. Set VENV_DIR to a new or empty path, or to an existing venv."
+                ;;
+            file|*)
+                die "VENV_DIR=${VENV_DIR} is not a directory."
+                ;;
+        esac
     fi
 
-    VENV_DIR="$(normalize_path "$VENV_DIR")"
+    resolve_python
 }
 
 # Echo one of: "confirm" | "edit" | "cancel"
@@ -1020,22 +1105,14 @@ edit_plan_interactive() {
                         ENABLE_PYFLINK=Yes
                         PYFLINK_ACTUALLY_ENABLED=1
                         resolve_python
-                        VENV_DIR="$(prompt_path_choice_interactive \
-                            "Choose Python venv directory" \
-                            "$VENV_DIR" \
-                            "/path/to/venv")"
-                        VENV_DIR="$(normalize_path "$VENV_DIR")"
+                        prompt_and_validate_venv_dir "$VENV_DIR"
                     fi
                 else
                     ENABLE_PYFLINK=No
                 fi
                 ;;
             venv_dir)
-                VENV_DIR="$(prompt_path_choice_interactive \
-                    "Choose Python venv directory" \
-                    "$VENV_DIR" \
-                    "/path/to/venv")"
-                VENV_DIR="$(normalize_path "$VENV_DIR")"
+                prompt_and_validate_venv_dir "$VENV_DIR"
                 ;;
         esac
 
