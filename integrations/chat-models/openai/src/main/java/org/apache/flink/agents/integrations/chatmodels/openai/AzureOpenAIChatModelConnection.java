@@ -64,8 +64,10 @@ import java.util.Map;
  * <p>Optional connection arguments:
  *
  * <ul>
- *   <li><b>timeout</b> (Number): seconds before an API call times out (default 60)
- *   <li><b>max_retries</b> (Number): retry attempts on failure (default 3)
+ *   <li><b>timeout</b> (Number): seconds before an API call times out; must be greater than 0,
+ *       otherwise ignored (SDK default applies)
+ *   <li><b>max_retries</b> (Number): retry attempts on failure; must be non-negative, otherwise
+ *       ignored (SDK default applies)
  *   <li><b>azure_url_path_mode</b> (String): one of {@code "AUTO"}, {@code "LEGACY"}, or {@code
  *       "UNIFIED"} (default {@code "AUTO"}). Controls how the SDK constructs Azure OpenAI request
  *       URLs. In {@code AUTO} mode the SDK only treats the endpoint as Azure when its hostname
@@ -112,23 +114,21 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
             throw new IllegalArgumentException("azure_endpoint should not be null or empty.");
         }
 
-        Integer timeoutSeconds = descriptor.getArgument("timeout");
-        if (timeoutSeconds == null) {
-            timeoutSeconds = 60;
-        }
-
-        Integer maxRetries = descriptor.getArgument("max_retries");
-        if (maxRetries == null) {
-            maxRetries = 3;
-        }
-
         OpenAIOkHttpClient.Builder clientBuilder =
                 OpenAIOkHttpClient.builder()
                         .baseUrl(azureEndpoint)
                         .credential(AzureApiKeyCredential.create(apiKey))
-                        .azureServiceVersion(AzureOpenAIServiceVersion.fromString(apiVersion))
-                        .timeout(Duration.ofSeconds(timeoutSeconds))
-                        .maxRetries(maxRetries);
+                        .azureServiceVersion(AzureOpenAIServiceVersion.fromString(apiVersion));
+
+        Integer timeoutSeconds = descriptor.getArgument("timeout");
+        if (timeoutSeconds != null && timeoutSeconds > 0) {
+            clientBuilder.timeout(Duration.ofSeconds(timeoutSeconds));
+        }
+
+        Integer maxRetries = descriptor.getArgument("max_retries");
+        if (maxRetries != null && maxRetries >= 0) {
+            clientBuilder.maxRetries(maxRetries);
+        }
 
         String azureUrlPathMode = descriptor.getArgument("azure_url_path_mode");
         if (azureUrlPathMode != null && !azureUrlPathMode.isBlank()) {
