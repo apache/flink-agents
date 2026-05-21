@@ -141,7 +141,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void open() throws Exception {
         super.open();
 
-        stateManager.initializeKeyedStates(getRuntimeContext());
+        stateManager.initializeKeyedStates(getRuntimeContext(), agentPlan);
         stateManager.initializeOperatorStates(getOperatorStateBackend());
 
         // ResourceCache constructs its own long-lived ResourceContextImpl internally; on
