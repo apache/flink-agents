@@ -18,7 +18,7 @@ setup() {
     local got
     got="$(shim_calls curl)"
     local expected
-    expected=$'-fL\t--progress-bar\t--proto\t=https\t--tlsv1.2\t--retry\t3\t--max-time\t600\t--retry-delay\t1\t--retry-connrefused\t-o\t'"$BATS_TEST_TMPDIR/out"$'\thttps://example.test/x.tgz'
+    expected=$'-fL\t--progress-bar\t--proto\t=https\t--tlsv1.2\t--retry\t3\t--max-time\t900\t--retry-delay\t1\t--retry-connrefused\t-o\t'"$BATS_TEST_TMPDIR/out"$'\thttps://example.test/x.tgz'
     [ "$got" = "$expected" ]
 }
 
@@ -57,7 +57,7 @@ setup() {
     local got
     got="$(shim_calls wget)"
     local expected
-    expected=$'-q\t--show-progress\t--https-only\t--secure-protocol=TLSv1_2\t--tries=3\t--timeout=600\t-O\t'"$BATS_TEST_TMPDIR/out"$'\thttps://example.test/x.tgz'
+    expected=$'-q\t--show-progress\t--https-only\t--secure-protocol=TLSv1_2\t--tries=3\t--timeout=900\t-O\t'"$BATS_TEST_TMPDIR/out"$'\thttps://example.test/x.tgz'
     [ "$got" = "$expected" ]
 }
 

@@ -69,10 +69,10 @@ download_file() {
         detect_downloader
     fi
     if [[ "$DOWNLOADER" == "curl" ]]; then
-        curl -fL --progress-bar --proto '=https' --tlsv1.2 --retry 3 --max-time 600 --retry-delay 1 --retry-connrefused -o "$output" "$url"
+        curl -fL --progress-bar --proto '=https' --tlsv1.2 --retry 3 --max-time 900 --retry-delay 1 --retry-connrefused -o "$output" "$url"
         return
     fi
-    wget -q --show-progress --https-only --secure-protocol=TLSv1_2 --tries=3 --timeout=600 -O "$output" "$url"
+    wget -q --show-progress --https-only --secure-protocol=TLSv1_2 --tries=3 --timeout=900 -O "$output" "$url"
 }
 
 GUM_VERSION="${FLINK_AGENTS_GUM_VERSION:-0.17.0}"
@@ -489,6 +489,13 @@ require_cmd() {
 #   - "/./" segments and trailing "/." are folded away
 #   - trailing slashes are stripped, except for the root "/"
 #   - runs of '/' collapse to a single '/'
+#
+# Implementation note: the folding steps use sed instead of bash
+# `${var//pattern/replacement}`. Bash 3.2 (macOS /bin/bash) does not
+# strip the backslash from an escaped slash in the replacement, so
+# `${p//\/.\//\/}` leaves a literal `\/` in the result (concretely:
+# normalize_path "./" under PWD=/tmp/x produced /tmp/x\ on macOS).
+# sed sidesteps the parameter-expansion quirk entirely.
 normalize_path() {
     local p="$1"
     if [[ -z "$p" ]]; then
@@ -499,18 +506,8 @@ normalize_path() {
     if [[ "$p" != /* ]]; then
         p="$PWD/$p"
     fi
-    while [[ "$p" == *//* ]]; do
-        p="${p//\/\//\/}"
-    done
-    while [[ "$p" == */./* ]]; do
-        p="${p//\/.\//\/}"
-    done
-    while [[ "$p" == */. ]]; do
-        p="${p%/.}"
-    done
-    while [[ "${#p}" -gt 1 && "$p" == */ ]]; do
-        p="${p%/}"
-    done
+    p="$(printf '%s' "$p" | sed -E 's|/+|/|g; s|/\./|/|g; s|/\.$||; s|/+$||')"
+    [[ -z "$p" ]] && p='/'
     printf '%s' "$p"
 }
 
