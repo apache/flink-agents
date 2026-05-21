@@ -139,6 +139,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             msg = "model is required for Azure OpenAI API calls"
             raise ValueError(msg)
         model_of_azure_deployment = kwargs.pop("model_of_azure_deployment", None)
+        additional_kwargs = kwargs.pop("additional_kwargs", None) or {}
 
         response = self.client.chat.completions.create(
             # Azure OpenAI APIs use Azure deployment name as the model parameter
@@ -146,6 +147,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             messages=convert_to_openai_messages(messages),
             tools=tool_specs or NOT_GIVEN,
             **kwargs,
+            **additional_kwargs,
         )
 
         extra_args = {}
@@ -257,6 +259,6 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
             base_kwargs["temperature"] = self.temperature
         if self.max_tokens is not None:
             base_kwargs["max_tokens"] = self.max_tokens
-
-        all_kwargs = {**base_kwargs, **self.additional_kwargs}
-        return all_kwargs
+        if self.additional_kwargs:
+            base_kwargs["additional_kwargs"] = self.additional_kwargs
+        return base_kwargs
