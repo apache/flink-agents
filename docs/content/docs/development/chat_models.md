@@ -390,10 +390,6 @@ Model availability and specifications may change. Always check the official Azur
 
 Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azure's cloud infrastructure, using the same OpenAI SDK with Azure-specific authentication and endpoints. This offers enterprise security, compliance, and regional availability while using familiar OpenAI APIs.
 
-{{< hint info >}}
-Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
-{{< /hint >}}
-
 {{< hint warning >}}
 **Azure OpenAI vs Azure AI:** Azure OpenAI uses the OpenAI SDK to access OpenAI models (GPT-4, etc.) hosted on Azure. If you want to use other models like Llama, Mistral, or Phi deployed via Azure AI Studio, see [Azure AI](#azure-ai) instead.
 {{< /hint >}}
@@ -420,6 +416,19 @@ Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Jav
 
 {{< /tab >}}
 
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | Azure OpenAI API key for authentication |
+| `api_version` | String | Required | Azure OpenAI REST API version (e.g., "2024-02-01"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
+| `azure_endpoint` | String | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) — either a direct Azure resource or a proxy/gateway URL that fronts an Azure OpenAI service |
+| `timeout` | int | None | Timeout in seconds for API requests; must be greater than 0, otherwise ignored (SDK default applies) |
+| `max_retries` | int | None | Maximum number of API retry attempts; must be non-negative, otherwise ignored (SDK default applies) |
+| `azure_url_path_mode` | String | `"AUTO"` | Controls how the SDK constructs Azure OpenAI request URLs. One of `"AUTO"`, `"LEGACY"`, or `"UNIFIED"`. Custom gateways that proxy Azure OpenAI typically need `"LEGACY"` to force the `/openai/deployments/{model}` path |
+
+{{< /tab >}}
+
 {{< /tabs >}}
 
 #### AzureOpenAIChatModelSetup Parameters
@@ -439,6 +448,22 @@ Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Jav
 | `max_tokens` | int | None | Maximum number of tokens to generate |
 | `logprobs` | bool | `False` | Whether to return log probabilities of output tokens |
 | `additional_kwargs` | dict | `{}` | Additional Azure OpenAI API parameters |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | Required | Azure deployment name (not the underlying OpenAI model name) |
+| `model_of_azure_deployment` | String | None | The underlying model name (e.g., 'gpt-4', 'gpt-4o'). Used solely for token metrics tracking |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | None | Sampling temperature (0.0 to 2.0). Not supported by reasoning models |
+| `max_tokens` | int | None | Maximum number of tokens to generate (must be greater than 0) |
+| `logprobs` | boolean | `false` | Whether to return log probabilities of output tokens |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Azure OpenAI API parameters (forwarded to the OpenAI request body) |
 
 {{< /tab >}}
 
@@ -474,6 +499,34 @@ class MyAgent(Agent):
         )
 
     ...
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor azureOpenAIConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_OPENAI_CONNECTION)
+                .addInitialArgument("api_key", "<your-api-key>")
+                .addInitialArgument("api_version", "2024-02-01")
+                .addInitialArgument("azure_endpoint", "https://your-resource.openai.azure.com")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor azureOpenAIChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_OPENAI_SETUP)
+                .addInitialArgument("connection", "azureOpenAIConnection")
+                .addInitialArgument("model", "my-gpt4-deployment")          // Your Azure deployment name
+                .addInitialArgument("model_of_azure_deployment", "gpt-4")   // Underlying model for metrics
+                .addInitialArgument("temperature", 0.3d)
+                .addInitialArgument("max_tokens", 1000)
+                .build();
+    }
+
+    ...
+}
 ```
 {{< /tab >}}
 
