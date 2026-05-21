@@ -105,7 +105,7 @@ public class AzureOpenAIChatModelSetup extends BaseChatModelSetup {
             params.put("max_tokens", maxTokens);
         }
         if (additionalKwargs != null && !additionalKwargs.isEmpty()) {
-            params.putAll(additionalKwargs);
+            params.put("additional_kwargs", additionalKwargs);
         }
         return params;
     }

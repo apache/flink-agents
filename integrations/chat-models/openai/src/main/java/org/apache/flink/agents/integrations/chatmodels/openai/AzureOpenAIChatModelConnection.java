@@ -184,11 +184,14 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
                 builder.logprobs(true);
             }
 
-            // Pass-through: AzureOpenAIChatModelSetup flattens additional_kwargs into the top
-            // level, so any remaining entries here are user-provided extras that should flow
-            // through to the OpenAI request body.
-            for (Map.Entry<String, Object> entry : mutableArgs.entrySet()) {
-                builder.putAdditionalBodyProperty(entry.getKey(), toJsonValue(entry.getValue()));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> additionalKwargs =
+                    (Map<String, Object>) mutableArgs.remove("additional_kwargs");
+            if (additionalKwargs != null) {
+                for (Map.Entry<String, Object> entry : additionalKwargs.entrySet()) {
+                    builder.putAdditionalBodyProperty(
+                            entry.getKey(), toJsonValue(entry.getValue()));
+                }
             }
 
             ChatCompletion completion = client.chat().completions().create(builder.build());

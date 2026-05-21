@@ -75,8 +75,8 @@ class AzureOpenAIChatModelSetupTest {
     }
 
     @Test
-    @DisplayName("getParameters flattens additional_kwargs into the top-level map")
-    void testGetParametersFlattensAdditionalKwargs() {
+    @DisplayName("getParameters nests additional_kwargs under a dedicated key")
+    void testGetParametersNestsAdditionalKwargs() {
         ResourceDescriptor desc =
                 descriptorBuilder()
                         .addInitialArgument("model", "my-deployment")
@@ -88,9 +88,8 @@ class AzureOpenAIChatModelSetupTest {
         Map<String, Object> params = setup.getParameters();
         assertThat(params)
                 .containsEntry("model", "my-deployment")
-                .containsEntry("seed", 42)
-                .containsEntry("user", "user-123")
-                .doesNotContainKey("additional_kwargs");
+                .containsEntry("additional_kwargs", Map.of("seed", 42, "user", "user-123"))
+                .doesNotContainKeys("seed", "user");
     }
 
     @Test
