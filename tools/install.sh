@@ -1325,7 +1325,12 @@ verify_flink_agents_jar_sha512() {
         return 0
     fi
 
-    if [[ "${expected,,}" != "${actual,,}" ]]; then
+    # Use `tr` for case-folding instead of `${var,,}` — the latter is
+    # bash 4+ only, and macOS still ships /bin/bash 3.2.
+    local expected_lc actual_lc
+    expected_lc="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
+    actual_lc="$(printf '%s' "$actual"   | tr '[:upper:]' '[:lower:]')"
+    if [[ "$expected_lc" != "$actual_lc" ]]; then
         die "SHA512 mismatch for $(basename "$jar") (expected ${expected:0:16}…, got ${actual:0:16}…)"
     fi
     ui_success "SHA512 verified"
