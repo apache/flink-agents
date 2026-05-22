@@ -48,6 +48,21 @@ jobs:
       - name: Check code style
         run: ./tools/lint.sh -c
 
+  install_sh_tests:
+    name: install.sh tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bash 4+ (macOS)
+        if: runner.os == 'macOS'
+        run: brew install bash
+      - name: Run install.sh tests
+        run: bash tools/test/run.sh
+
   build_backend_tests:
     name: ut-build-backend
     runs-on: ubuntu-latest
