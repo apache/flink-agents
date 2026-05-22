@@ -27,12 +27,15 @@ import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.metrics.Counter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -102,7 +105,7 @@ class ChatModelActionRetryTest {
     @Test
     void chatSucceedsWithoutRetry_retryCountIsZero() throws Exception {
         configureRetryStrategy(3, 1);
-        when(mockChatModel.chat(any(), any()))
+        when(mockChatModel.chat(any(), any(), any()))
                 .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "hello"));
 
         UUID requestId = UUID.randomUUID();
@@ -110,6 +113,7 @@ class ChatModelActionRetryTest {
                 requestId,
                 "test-model",
                 List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
                 null,
                 mockCtx);
 
@@ -128,7 +132,7 @@ class ChatModelActionRetryTest {
         configureRetryStrategy(3, 1);
 
         AtomicInteger callCount = new AtomicInteger(0);
-        when(mockChatModel.chat(any(), any()))
+        when(mockChatModel.chat(any(), any(), any()))
                 .thenAnswer(
                         inv -> {
                             int count = callCount.incrementAndGet();
@@ -145,6 +149,7 @@ class ChatModelActionRetryTest {
                 requestId,
                 "test-model",
                 List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
                 null,
                 mockCtx);
         long elapsed = System.currentTimeMillis() - startTime;
@@ -167,7 +172,8 @@ class ChatModelActionRetryTest {
     void chatExhaustsRetriesAndThrows() {
         configureRetryStrategy(2, 0);
 
-        when(mockChatModel.chat(any(), any())).thenThrow(new RuntimeException("persistent error"));
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenThrow(new RuntimeException("persistent error"));
 
         UUID requestId = UUID.randomUUID();
 
@@ -177,6 +183,7 @@ class ChatModelActionRetryTest {
                                         requestId,
                                         "test-model",
                                         List.of(new ChatMessage(MessageRole.USER, "hi")),
+                                        Map.of(),
                                         null,
                                         mockCtx))
                 .isInstanceOf(RuntimeException.class)
@@ -209,6 +216,52 @@ class ChatModelActionRetryTest {
     @Test
     void retryWaitIntervalDefaultValue() {
         assertThat(AgentExecutionOptions.RETRY_WAIT_INTERVAL.getDefaultValue()).isEqualTo(1);
+    }
+
+    @Test
+    void processToolResponseForwardsSavedArgumentsToChat() throws Exception {
+        configureRetryStrategy(0, 0);
+
+        UUID initialRequestId = UUID.randomUUID();
+        UUID toolRequestEventId = UUID.randomUUID();
+        String toolCallId = "call-1";
+        Map<String, Object> savedArguments = Map.of("k", "v");
+
+        // Pre-seed sensory memory with the tool-request-event context that
+        // processToolResponse will look up. This simulates a prior chat round
+        // that produced a tool call.
+        Map<UUID, Object> toolRequestEventContext = new HashMap<>();
+        Map<String, Object> contextEntry = new HashMap<>();
+        contextEntry.put("initialRequestId", initialRequestId);
+        contextEntry.put("model", "test-model");
+        contextEntry.put("arguments", savedArguments);
+        toolRequestEventContext.put(toolRequestEventId, contextEntry);
+        sensoryMemory.set("_TOOL_REQUEST_EVENT_CONTEXT", toolRequestEventContext);
+
+        // Pre-seed the tool-call context with the initial messages so
+        // updateToolCallContext can extend them with the tool response.
+        Map<UUID, Object> toolCallContext = new HashMap<>();
+        toolCallContext.put(
+                initialRequestId,
+                new ArrayList<>(List.of(new ChatMessage(MessageRole.USER, "hi"))));
+        sensoryMemory.set("_TOOL_CALL_CONTEXT", toolCallContext);
+
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "done"));
+
+        ToolResponseEvent toolResponseEvent =
+                new ToolResponseEvent(
+                        toolRequestEventId,
+                        Map.of(toolCallId, ToolResponse.success("42")),
+                        Map.of(toolCallId, true),
+                        Map.of());
+
+        ChatModelAction.processChatRequestOrToolResponse(toolResponseEvent, mockCtx);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> argumentsCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(mockChatModel).chat(any(), argumentsCaptor.capture(), any());
+        assertThat(argumentsCaptor.getValue()).isEqualTo(savedArguments);
     }
 
     // --- Helper methods ---

@@ -91,11 +91,8 @@ class AsyncTestAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="slow_chat_model",
-                messages=[
-                    ChatMessage(
-                        role=MessageRole.USER, content=input, extra_args={"task": input}
-                    )
-                ],
+                messages=[ChatMessage(role=MessageRole.USER, content=input)],
+                arguments={"task": input},
             )
         )
 

@@ -31,8 +31,12 @@ from flink_agents.api.core_options import (
     ErrorHandlingStrategy,
 )
 from flink_agents.api.events.chat_event import ChatResponseEvent
+from flink_agents.api.events.tool_event import ToolResponseEvent
 from flink_agents.api.metric_group import Counter, MetricGroup
-from flink_agents.plan.actions.chat_model_action import chat
+from flink_agents.plan.actions.chat_model_action import (
+    chat,
+    process_chat_request_or_tool_response,
+)
 
 # ============================================================================
 # Mock infrastructure
@@ -157,6 +161,7 @@ class TestChatModelActionRetry:
                 request_id,
                 chat_model.connection,
                 [ChatMessage(role=MessageRole.USER, content="hi")],
+                {},
                 None,
                 ctx,
             )
@@ -197,6 +202,7 @@ class TestChatModelActionRetry:
                 request_id,
                 "test-model",
                 [ChatMessage(role=MessageRole.USER, content="hi")],
+                {},
                 None,
                 ctx,
             )
@@ -232,6 +238,7 @@ class TestChatModelActionRetry:
                     request_id,
                     "test-model",
                     [ChatMessage(role=MessageRole.USER, content="hi")],
+                    {},
                     None,
                     ctx,
                 )
@@ -270,3 +277,67 @@ class TestRetryWaitIntervalConfig:
     def test_default_value(self) -> None:
         """Default value is 1 second."""
         assert AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_default_value() == 1
+
+
+class TestProcessToolResponseArgumentsForwarding:
+    """Locks the contract that `_process_tool_response` forwards the saved
+    `arguments` from the tool-request-event context into the round-2 call
+    to `chat_model.chat(...)`.
+    """
+
+    def test_forwards_saved_arguments_to_chat(self) -> None:
+        initial_request_id = uuid4()
+        tool_request_event_id = uuid4()
+        tool_call_id = "call-1"
+        saved_arguments = {"k": "v"}
+
+        captured_arguments: list[dict] = []
+
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+            captured_arguments.append(kwargs.get("arguments"))
+            return ChatMessage(role=MessageRole.ASSISTANT, content="done")
+
+        chat_model = MagicMock()
+        chat_model.chat = mock_chat
+
+        ctx, sent_events, _, sensory_memory = _create_mock_runner_context(
+            chat_model, max_retries=0, retry_wait_interval_sec=0
+        )
+
+        # Pre-seed the tool-request-event context with saved arguments so
+        # _process_tool_response can look them up.
+        sensory_memory.set(
+            "_TOOL_REQUEST_EVENT_CONTEXT",
+            {
+                str(tool_request_event_id): {
+                    "initial_request_id": initial_request_id,
+                    "model": "test-model",
+                    "arguments": saved_arguments,
+                    "output_schema": None,
+                }
+            },
+        )
+
+        # Pre-seed the tool-call context with prior messages so
+        # _update_tool_call_context can extend them with the tool response.
+        sensory_memory.set(
+            "_TOOL_CALL_CONTEXT",
+            {
+                str(initial_request_id): [
+                    ChatMessage(role=MessageRole.USER, content="hi")
+                ]
+            },
+        )
+
+        tool_response_event = ToolResponseEvent(
+            request_id=tool_request_event_id,
+            responses={tool_call_id: "42"},
+            external_ids={},
+        )
+
+        asyncio.run(process_chat_request_or_tool_response(tool_response_event, ctx))
+
+        assert len(captured_arguments) == 1
+        assert captured_arguments[0] == saved_arguments
+        assert len(sent_events) == 1
+        assert isinstance(sent_events[0], ChatResponseEvent)

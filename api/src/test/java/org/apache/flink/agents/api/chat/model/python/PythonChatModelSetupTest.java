@@ -93,6 +93,8 @@ public class PythonChatModelSetupTest {
         ChatMessage inputMessage = mock(ChatMessage.class);
         ChatMessage outputMessage = mock(ChatMessage.class);
         List<ChatMessage> messages = Collections.singletonList(inputMessage);
+        Map<String, Object> arguments = new HashMap<>();
+        arguments.put("input", "value");
         Map<String, Object> parameters = new HashMap<>();
         parameters.put("temperature", 0.7);
         parameters.put("max_tokens", 100);
@@ -105,7 +107,7 @@ public class PythonChatModelSetupTest {
                 .thenReturn(pythonOutputMessage);
         when(mockAdapter.fromPythonChatMessage(pythonOutputMessage)).thenReturn(outputMessage);
 
-        ChatMessage result = pythonChatModelSetup.chat(messages, parameters);
+        ChatMessage result = pythonChatModelSetup.chat(messages, arguments, parameters);
 
         assertThat(result).isEqualTo(outputMessage);
 
@@ -117,8 +119,10 @@ public class PythonChatModelSetupTest {
                         argThat(
                                 kwargs -> {
                                     assertThat(kwargs).containsKey("messages");
+                                    assertThat(kwargs).containsKey("arguments");
                                     assertThat(kwargs).containsKey("temperature");
                                     assertThat(kwargs).containsKey("max_tokens");
+                                    assertThat(kwargs.get("arguments")).isEqualTo(arguments);
                                     assertThat(kwargs.get("temperature")).isEqualTo(0.7);
                                     assertThat(kwargs.get("max_tokens")).isEqualTo(100);
                                     List<?> pythonMessages = (List<?>) kwargs.get("messages");
@@ -136,9 +140,10 @@ public class PythonChatModelSetupTest {
 
         ChatMessage inputMessage = mock(ChatMessage.class);
         List<ChatMessage> messages = Collections.singletonList(inputMessage);
+        Map<String, Object> arguments = new HashMap<>();
         Map<String, Object> parameters = new HashMap<>();
 
-        assertThatThrownBy(() -> setupWithNullModel.chat(messages, parameters))
+        assertThatThrownBy(() -> setupWithNullModel.chat(messages, arguments, parameters))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ChatModelSetup is not initialized")
                 .hasMessageContaining("Cannot perform chat operation");

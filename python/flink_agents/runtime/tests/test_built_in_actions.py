@@ -81,7 +81,12 @@ class MockChatModel(BaseChatModelSetup):
         """Return model kwargs."""
         return {}
 
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        arguments: Dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
         """Execute chat conversation."""
         # Get model connection
         server = self.resource_context.get_resource(
@@ -99,12 +104,10 @@ class MockChatModel(BaseChatModelSetup):
                 prompt = self.prompt
 
             if "sum" in messages[-1].content:
-                input_variable = {}
-                for msg in messages:
-                    # Convert Any values to str to match format_messages signature
-                    str_extra_args = {k: str(v) for k, v in msg.extra_args.items()}
-                    input_variable.update(str_extra_args)
-                messages = prompt.format_messages(**input_variable)
+                str_arguments = (
+                    {k: str(v) for k, v in arguments.items()} if arguments else {}
+                )
+                messages = prompt.format_messages(**str_arguments)
 
         # Bind tools
         tools = None
@@ -179,11 +182,8 @@ class MyAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="mock_chat_model",
-                messages=[
-                    ChatMessage(
-                        role=MessageRole.USER, content=input, extra_args={"task": input}
-                    )
-                ],
+                messages=[ChatMessage(role=MessageRole.USER, content=input)],
+                arguments={"task": input},
             )
         )
 

@@ -101,9 +101,11 @@ public class ReviewAnalysisAgent extends Agent {
                 String.format(
                         "{\n" + "\"id\": %s,\n" + "\"review\": \"%s\"\n" + "}",
                         inputObj.getId(), inputObj.getReview());
-        ChatMessage msg = new ChatMessage(MessageRole.USER, "", Map.of("input", content));
+        ChatMessage msg = new ChatMessage(MessageRole.USER, "");
 
-        ctx.sendEvent(new ChatRequestEvent("reviewAnalysisModel", List.of(msg)));
+        ctx.sendEvent(
+                new ChatRequestEvent(
+                        "reviewAnalysisModel", List.of(msg), Map.of("input", content), null));
     }
 
     @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})

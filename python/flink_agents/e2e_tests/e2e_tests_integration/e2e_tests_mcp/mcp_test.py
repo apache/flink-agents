@@ -120,9 +120,13 @@ class MyMCPAgent(Agent):
         if mcp_mode == "with_prompts":
             # Send chat request with MCP prompt variables
             # The prompt template will be filled with a and b values
-            msg = ChatMessage(
-                role=MessageRole.USER,
-                extra_args={"a": str(input_data.a), "b": str(input_data.b)},
+            msg = ChatMessage(role=MessageRole.USER)
+            ctx.send_event(
+                ChatRequestEvent(
+                    model="math_chat_model",
+                    messages=[msg],
+                    arguments={"a": str(input_data.a), "b": str(input_data.b)},
+                )
             )
         else:
             # Send chat request asking to use the add tool
@@ -130,8 +134,7 @@ class MyMCPAgent(Agent):
                 role=MessageRole.USER,
                 content=f"Please use the add tool to calculate the sum of {input_data.a} and {input_data.b}.",
             )
-
-        ctx.send_event(ChatRequestEvent(model="math_chat_model", messages=[msg]))
+            ctx.send_event(ChatRequestEvent(model="math_chat_model", messages=[msg]))
 
     @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod

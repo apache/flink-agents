@@ -87,9 +87,11 @@ public class ProductSuggestionAgent extends Agent {
                         "{\n\"id\": %s,\n\"score_histogram\": %s,\n\"unsatisfied_reasons\": %s\n}",
                         summary.getId(), summary.getScoreHist(), summary.getUnsatisfiedReasons());
 
-        ChatMessage msg = new ChatMessage(MessageRole.USER, "", Map.of("input", content));
+        ChatMessage msg = new ChatMessage(MessageRole.USER, "");
 
-        ctx.sendEvent(new ChatRequestEvent("generateSuggestionModel", List.of(msg)));
+        ctx.sendEvent(
+                new ChatRequestEvent(
+                        "generateSuggestionModel", List.of(msg), Map.of("input", content), null));
     }
 
     /** Process chat response event. */

@@ -24,10 +24,12 @@ import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.Tool;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -60,7 +62,10 @@ class BaseChatModelTest {
         }
 
         @Override
-        public ChatMessage chat(List<ChatMessage> messages, Map<String, Object> parameters) {
+        public ChatMessage chat(
+                List<ChatMessage> messages,
+                Map<String, Object> arguments,
+                Map<String, Object> parameters) {
             // Simple test implementation that echoes the last user message
 
             String lastUserContent = "";
@@ -227,6 +232,92 @@ class BaseChatModelTest {
         assertNotNull(response.getToolCalls());
         assertNotNull(response.getExtraArgs());
         assertTrue(response.getContent().length() > 0);
+    }
+
+    /** Connection that captures the messages passed to it for assertions. */
+    private static class RecordingConnection extends BaseChatModelConnection {
+        List<ChatMessage> capturedMessages;
+
+        RecordingConnection() {
+            super(
+                    new ResourceDescriptor(
+                            RecordingConnection.class.getName(), Collections.emptyMap()),
+                    null);
+        }
+
+        @Override
+        public ChatMessage chat(
+                List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
+            this.capturedMessages = new ArrayList<>(messages);
+            return new ChatMessage(MessageRole.ASSISTANT, "ok");
+        }
+    }
+
+    /** Subclass that exposes setters so we can inject the connection and prompt directly. */
+    private static class RecordingChatModelSetup extends BaseChatModelSetup {
+        RecordingChatModelSetup(BaseChatModelConnection connection, Prompt prompt) {
+            super(
+                    new ResourceDescriptor(
+                            RecordingChatModelSetup.class.getName(), Collections.emptyMap()),
+                    null);
+            this.connection = connection;
+            this.prompt = prompt;
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return new HashMap<>();
+        }
+    }
+
+    @Test
+    @DisplayName("chat() fills prompt template from arguments parameter")
+    void testChatFillsTemplateFromArgumentsParameter() {
+        RecordingConnection connection = new RecordingConnection();
+        Prompt prompt = Prompt.fromText("Task: {key}");
+        RecordingChatModelSetup setup = new RecordingChatModelSetup(connection, prompt);
+
+        setup.chat(Collections.emptyList(), Map.of("key", "value"), Map.of());
+
+        assertNotNull(connection.capturedMessages);
+        assertEquals(1, connection.capturedMessages.size());
+        assertEquals("Task: value", connection.capturedMessages.get(0).getContent());
+    }
+
+    @Test
+    @DisplayName("chat() does not read template vars from ChatMessage.extraArgs")
+    void testChatDoesNotReadTemplateVarsFromExtraArgs() {
+        RecordingConnection connection = new RecordingConnection();
+        Prompt prompt = Prompt.fromText("Task: {key}");
+        RecordingChatModelSetup setup = new RecordingChatModelSetup(connection, prompt);
+
+        ChatMessage userMessage =
+                new ChatMessage(MessageRole.USER, "hello", Map.of("key", "value"));
+        setup.chat(List.of(userMessage), Map.of(), Map.of());
+
+        assertNotNull(connection.capturedMessages);
+        assertEquals(2, connection.capturedMessages.size());
+        assertEquals("Task: {key}", connection.capturedMessages.get(0).getContent());
+        assertEquals("hello", connection.capturedMessages.get(1).getContent());
+    }
+
+    @Test
+    @DisplayName("chat() re-fills prompt template on subsequent invocations when args supplied")
+    void testChatRefillsTemplateOnSubsequentInvocations() {
+        RecordingConnection connection = new RecordingConnection();
+        Prompt prompt = Prompt.fromText("Task: {key}");
+        RecordingChatModelSetup setup = new RecordingChatModelSetup(connection, prompt);
+
+        setup.chat(Collections.emptyList(), Map.of("key", "v1"), Map.of());
+        assertNotNull(connection.capturedMessages);
+        assertEquals(1, connection.capturedMessages.size());
+        assertEquals("Task: v1", connection.capturedMessages.get(0).getContent());
+
+        ChatMessage toolResponse = new ChatMessage(MessageRole.TOOL, "tool result");
+        setup.chat(List.of(toolResponse), Map.of("key", "v1"), Map.of());
+        assertEquals(2, connection.capturedMessages.size());
+        assertEquals("Task: v1", connection.capturedMessages.get(0).getContent());
+        assertEquals("tool result", connection.capturedMessages.get(1).getContent());
     }
 
     @Test
