@@ -24,7 +24,6 @@ reset_install_sh_state() {
     DRY_RUN=0
     NO_PROMPT=0
     VERBOSE=0
-    VERIFY_INSTALL=0
     INSTALL_FLINK="Ask"
     ENABLE_PYFLINK="Ask"
     PYTHON_BIN=""
