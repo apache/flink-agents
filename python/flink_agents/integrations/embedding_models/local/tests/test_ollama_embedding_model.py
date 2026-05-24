@@ -31,6 +31,8 @@ from flink_agents.integrations.embedding_models.local.ollama_embedding_model imp
     OllamaEmbeddingModelSetup,
 )
 
+pytestmark = pytest.mark.integration
+
 test_model = os.environ.get("OLLAMA_EMBEDDING_MODEL", "all-minilm:22m")
 current_dir = Path(__file__).parent
 

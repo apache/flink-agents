@@ -62,9 +62,12 @@ if _backend_available:
         Mem0VectorStore,
     )
 
-pytestmark = pytest.mark.skipif(
-    not _backend_available, reason="mem0 / chromadb is not available"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not _backend_available, reason="mem0 / chromadb is not available"
+    ),
+    pytest.mark.integration,
+]
 
 
 # ---------------------------------------------------------------------------

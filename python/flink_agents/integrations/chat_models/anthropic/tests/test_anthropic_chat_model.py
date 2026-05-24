@@ -30,6 +30,8 @@ from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import
     AnthropicChatModelSetup,
 )
 
+pytestmark = pytest.mark.integration
+
 test_model = os.environ.get("TEST_MODEL")
 api_key = os.environ.get("TEST_API_KEY")
 

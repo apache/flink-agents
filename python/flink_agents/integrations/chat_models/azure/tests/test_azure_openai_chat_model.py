@@ -30,6 +30,8 @@ from flink_agents.integrations.chat_models.azure.azure_openai_chat_model import 
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
+pytestmark = pytest.mark.integration
+
 test_deployment = os.environ.get("TEST_AZURE_DEPLOYMENT")
 api_key = os.environ.get("AZURE_OPENAI_API_KEY")
 azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")

@@ -42,6 +42,8 @@ from flink_agents.integrations.vector_stores.chroma.chroma_vector_store import (
     _translate_filters_to_chroma_where,
 )
 
+pytestmark = pytest.mark.integration
+
 api_key = os.environ.get("TEST_API_KEY")
 tenant = os.environ.get("TEST_TENANT")
 database = os.environ.get("TEST_DATABASE")

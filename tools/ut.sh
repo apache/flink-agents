@@ -229,6 +229,7 @@ python_tests() {
             if $run_e2e; then
                 # There will be an individual build step before run e2e test for including java dist
                 uv pip install apache-flink~=${version}.0
+                # Arm 1: existing e2e tests (directory-based selector).
                 uv run --no-sync pytest flink_agents \
                 -s \
                 -k "e2e_tests_integration" \
@@ -236,15 +237,32 @@ python_tests() {
                 --reruns-delay 5 \
                 -o log_cli=true \
                 -o log_cli_level=${LOG_LEVEL:-CRITICAL}
+                rc1=$?
+                # Arm 2: integration-marked tests (registered in pyproject.toml).
+                # Trap exit code 5 (no tests collected) as failure to defend
+                # against -m selector typos that --strict-markers does not catch.
+                uv run --no-sync pytest flink_agents \
+                -s \
+                -m "integration" \
+                -o log_cli=true \
+                -o log_cli_level=${LOG_LEVEL:-CRITICAL}
+                rc2=$?
+                if [ $rc2 -eq 5 ]; then rc2=1; fi
+                # Logical-OR aggregation: any nonzero exit on either arm yields testcode=1.
+                # Side effect: pytest exit 5 (no tests collected) becomes failure on BOTH
+                # arms, not just arm 2 — which is the correct semantics (zero collection
+                # on either arm indicates a selector regression).
+                testcode=$((rc1 || rc2))
             else
                 uv sync --extra test
                 uv pip install apache-flink~=${version}.0
                 uv run --no-sync pytest flink_agents \
                 -k "not e2e_tests" \
+                -m "not integration" \
                 -o log_cli=true \
-                -o log_cli_level=${LOG_LEVEL:-CRITICAL}            
+                -o log_cli_level=${LOG_LEVEL:-CRITICAL}
+                testcode=$?
             fi
-            testcode=$?
         else
             if $verbose; then
                 echo "uv not found, falling back to pip"
@@ -262,10 +280,20 @@ python_tests() {
             fi
             if $run_e2e; then
                 pytest flink_agents -k "e2e_tests_integration" --reruns 2 --reruns-delay 5 -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                rc1=$?
+                # Arm 2: integration-marked tests; trap exit code 5 as failure.
+                pytest flink_agents -m "integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                rc2=$?
+                if [ $rc2 -eq 5 ]; then rc2=1; fi
+                # Logical-OR aggregation: any nonzero exit on either arm yields testcode=1.
+                # Side effect: pytest exit 5 (no tests collected) becomes failure on BOTH
+                # arms, not just arm 2 — which is the correct semantics (zero collection
+                # on either arm indicates a selector regression).
+                testcode=$((rc1 || rc2))
             else
-                pytest flink_agents -k "not e2e_tests" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                pytest flink_agents -k "not e2e_tests" -m "not integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                testcode=$?
             fi
-            testcode=$?
         fi
 
         # Handle pytest exit codes

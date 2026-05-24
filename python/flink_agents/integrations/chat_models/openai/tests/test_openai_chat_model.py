@@ -31,6 +31,8 @@ from flink_agents.integrations.chat_models.openai.openai_chat_model import (
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
+pytestmark = pytest.mark.integration
+
 test_model = os.environ.get("TEST_MODEL")
 api_key = os.environ.get("TEST_API_KEY")
 api_base_url = os.environ.get("TEST_API_BASE_URL")

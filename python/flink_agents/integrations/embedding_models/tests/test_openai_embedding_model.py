@@ -27,6 +27,8 @@ from flink_agents.integrations.embedding_models.openai_embedding_model import (
     OpenAIEmbeddingModelSetup,
 )
 
+pytestmark = pytest.mark.integration
+
 test_model = os.environ.get("TEST_EMBEDDING_MODEL", "text-embedding-3-small")
 api_key = os.environ.get("TEST_API_KEY")
 
