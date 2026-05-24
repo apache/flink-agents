@@ -1824,6 +1824,10 @@ main() {
         return 0
     fi
 
+    if [[ "${NO_PROMPT:-0}" != "1" ]] && [[ ! -t 0 ]] && { : </dev/tty; } 2>/dev/null; then
+        exec </dev/tty
+    fi
+
     bootstrap_gum_temp || true
     print_installer_banner
     print_gum_status
