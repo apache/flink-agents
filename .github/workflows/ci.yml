@@ -43,7 +43,7 @@ jobs:
           python-version: 3.11
       - name: Install uv
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Check code style
         run: ./tools/lint.sh -c
@@ -86,7 +86,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Run Python Tests
         run: tools/ut.sh -p
@@ -112,7 +112,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Build flink-agents
         run: bash tools/build.sh

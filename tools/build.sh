@@ -52,8 +52,9 @@ cp "${PROJECT_ROOT}/dist/target/flink-agents-dist-${PROJECT_VERSION}.jar" ${PYTH
 # build python
 cd python
 rm -rf dist/  # Clean old build artifacts before building
-pip install uv
+pip install uv==0.11.0
 uv sync --extra dev
+uv run python -m ensurepip --default-pip
 uv run python -m build
 uv pip install dist/*.whl
 
