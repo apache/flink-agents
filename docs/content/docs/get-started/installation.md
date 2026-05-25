@@ -68,14 +68,6 @@ Run the one-liner from any directory you want the virtual environment created in
 curl -fsSL https://raw.githubusercontent.com/apache/flink-agents/main/tools/install.sh | bash
 ```
 
-### What the script does
-
-- Verifies that Java 11+ is available on your `PATH`. It does **not** install Java for you.
-- Downloads and extracts Apache Flink into `$INSTALL_DIR` (default: `$HOME/.local/flink`), or reuses an existing `$FLINK_HOME` if you tell it not to install Flink.
-- Creates a Python virtual environment (default: `./.flink-agents-env`) and runs `pip install flink-agents apache-flink` inside it.
-- Copies `flink-python-<version>.jar`, `flink-agents-dist-common-*.jar`, and the version-specific `flink-agents-dist-*` thin JAR into `$FLINK_HOME/lib`.
-- Runs post-install verification (Flink binary, Python package, and JAR presence) before exiting.
-
 ## Manual installation
 
 Use this path when you want full control over each step, when running `install.sh` is not feasible in your environment, or when building Flink Agents from source.
