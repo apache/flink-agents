@@ -36,11 +36,6 @@ setup() {
     [ "$DRY_RUN" = "1" ]
 }
 
-@test "parse_args: --verify sets VERIFY_INSTALL=1" {
-    parse_args --verify
-    [ "$VERIFY_INSTALL" = "1" ]
-}
-
 @test "parse_args: --python <path> sets PYTHON_BIN" {
     parse_args --python /opt/py/bin/python3
     [ "$PYTHON_BIN" = "/opt/py/bin/python3" ]
@@ -74,9 +69,8 @@ setup() {
 }
 
 @test "parse_args: combined flags all apply" {
-    parse_args --non-interactive --install-flink --enable-pyflink --verify
+    parse_args --non-interactive --install-flink --enable-pyflink
     [ "$NO_PROMPT" = "1" ]
     [ "$INSTALL_FLINK" = "Yes" ]
     [ "$ENABLE_PYFLINK" = "Yes" ]
-    [ "$VERIFY_INSTALL" = "1" ]
 }

@@ -473,7 +473,6 @@ PYTHON_BIN="${PYTHON_BIN:-}"
 NO_PROMPT="${NO_PROMPT:-0}"
 VERBOSE="${FLINK_AGENTS_VERBOSE:-0}"
 DRY_RUN="${FLINK_AGENTS_DRY_RUN:-0}"
-VERIFY_INSTALL="${FLINK_AGENTS_VERIFY_INSTALL:-0}"
 HELP=0
 PYFLINK_ACTUALLY_ENABLED=0
 
@@ -491,7 +490,6 @@ Options:
   --enable-pyflink        Enable PyFlink and install Python packages
   --verbose               Print debug output (set -x)
   --dry-run               Print install plan without making changes
-  --verify                Run post-install verification checks
   --python <path>         Path to a Python3 interpreter (overrides PATH lookup)
   --flink-version <ver>   Apache Flink version (e.g. 2.2.0); overrides the interactive picker
   --flink-agents-version <ver>
@@ -513,7 +511,6 @@ Environment variables:
   NO_PROMPT                 1 to disable all prompts
   FLINK_AGENTS_VERBOSE      1 to enable verbose output
   FLINK_AGENTS_DRY_RUN      1 to enable dry-run mode
-  FLINK_AGENTS_VERIFY_INSTALL  1 to enable post-install verification
 
 Examples:
   bash install.sh --install-flink --enable-pyflink --non-interactive
@@ -1670,17 +1667,9 @@ show_install_plan() {
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_kv "Dry run" "yes"
     fi
-    if [[ "$VERIFY_INSTALL" == "1" ]]; then
-        ui_kv "Verify" "yes"
-    fi
 }
 
 verify_installation() {
-    if [[ "${VERIFY_INSTALL}" != "1" ]]; then
-        return 0
-    fi
-
-    ui_stage "Verifying installation"
 
     if [[ -x "$FLINK_HOME/bin/flink" ]]; then
         local flink_ver
@@ -1703,7 +1692,7 @@ verify_installation() {
     fi
 
     if [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
-        if python -c "import flink_agents; print('flink-agents', flink_agents.__version__)" 2>/dev/null; then
+        if "$VENV_DIR/bin/python3" -c "import flink_agents; print('flink-agents ready')" 2>/dev/null; then
             ui_success "flink-agents Python package verified"
         else
             ui_error "flink-agents Python package import failed"
@@ -1718,6 +1707,24 @@ verify_installation() {
     fi
 
     ui_success "Verification complete"
+}
+
+show_next_step(){
+      echo ""
+      ui_celebrate "Apache Flink Agents installation finished!"
+      echo ""
+      ui_section "Next steps"
+      ui_success "1) Point FLINK_HOME at this install (Flink CLI and clients read it):"
+      ui_info  "       export FLINK_HOME=${FLINK_HOME}"
+      if [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
+          ui_success "2) Activate the Python venv (PyFlink + flink-agents are installed there):"
+          ui_info  "       source ${VENV_DIR}/bin/activate"
+          ui_success "3) To make both permanent, append the two lines above to your shell rc"
+          ui_info  "   (~/.zshrc or ~/.bashrc)."
+      else
+          ui_success "2) To make it permanent, append the line above to your shell rc"
+          ui_info  "   (~/.zshrc or ~/.bashrc)."
+      fi
 }
 
 show_footer_links() {
@@ -1749,10 +1756,6 @@ parse_args() {
                 ;;
             --dry-run)
                 DRY_RUN=1
-                shift
-                ;;
-            --verify)
-                VERIFY_INSTALL=1
                 shift
                 ;;
             --python)
@@ -1821,6 +1824,10 @@ main() {
         return 0
     fi
 
+    if [[ "${NO_PROMPT:-0}" != "1" ]] && [[ ! -t 0 ]] && { : </dev/tty; } 2>/dev/null; then
+        exec </dev/tty
+    fi
+
     bootstrap_gum_temp || true
     print_installer_banner
     print_gum_status
@@ -1859,21 +1866,7 @@ main() {
 
     verify_installation
 
-    echo ""
-    ui_celebrate "Apache Flink Agents installation finished!"
-    echo ""
-    ui_section "Next steps"
-    ui_success "1) Point FLINK_HOME at this install (Flink CLI and clients read it):"
-    ui_info  "       export FLINK_HOME=${FLINK_HOME}"
-    if [[ "$PYFLINK_ACTUALLY_ENABLED" -eq 1 ]]; then
-        ui_success "2) Activate the Python venv (PyFlink + flink-agents are installed there):"
-        ui_info  "       source ${VENV_DIR}/bin/activate"
-        ui_success "3) To make both permanent, append the two lines above to your shell rc"
-        ui_info  "   (~/.zshrc or ~/.bashrc)."
-    else
-        ui_success "2) To make it permanent, append the line above to your shell rc"
-        ui_info  "   (~/.zshrc or ~/.bashrc)."
-    fi
+    show_next_step
 
     show_footer_links
 }
