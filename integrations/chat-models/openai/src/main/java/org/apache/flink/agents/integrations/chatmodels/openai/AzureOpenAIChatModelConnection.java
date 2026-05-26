@@ -198,7 +198,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
 
             ChatMessage response =
                     OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
-                            completion.choices().get(0).message(), Map.of());
+                            completion.choices().get(0).message());
 
             if (modelOfAzureDeployment != null
                     && !modelOfAzureDeployment.isBlank()

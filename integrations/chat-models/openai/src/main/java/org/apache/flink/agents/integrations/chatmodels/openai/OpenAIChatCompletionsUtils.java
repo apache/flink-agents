@@ -106,18 +106,14 @@ final class OpenAIChatCompletionsUtils {
     }
 
     /**
-     * Convert an OpenAI {@link ChatCompletionMessage} to a Flink Agents {@link ChatMessage}.
-     * Caller-provided {@code extraArgs} are copied into the returned ChatMessage's own extraArgs
-     * map (the caller's input is treated as read-only; {@code Map.of()} is safe). Additionally,
-     * {@code message.refusal()} is written as {@code extraArgs["refusal"]} when present, preserving
-     * prior Java behavior.
+     * Convert an OpenAI {@link ChatCompletionMessage} to a Flink Agents {@link ChatMessage}. {@code
+     * message.refusal()} is written as {@code extraArgs["refusal"]} on the returned ChatMessage
+     * when present, preserving prior Java behavior.
      */
-    public static ChatMessage convertFromOpenAIMessage(
-            ChatCompletionMessage message, Map<String, Object> extraArgs) {
+    public static ChatMessage convertFromOpenAIMessage(ChatCompletionMessage message) {
         String content = message.content().orElse("");
         ChatMessage response = ChatMessage.assistant(content);
 
-        response.getExtraArgs().putAll(extraArgs);
         message.refusal().ifPresent(refusal -> response.getExtraArgs().put("refusal", refusal));
 
         List<ChatCompletionMessageToolCall> toolCalls = message.toolCalls().orElse(List.of());

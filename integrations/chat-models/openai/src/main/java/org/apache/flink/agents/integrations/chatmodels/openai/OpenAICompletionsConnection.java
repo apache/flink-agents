@@ -127,7 +127,7 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             ChatCompletion completion = client.chat().completions().create(params);
             ChatMessage response =
                     OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
-                            completion.choices().get(0).message(), Map.of());
+                            completion.choices().get(0).message());
 
             // Record token metrics
             if (completion.usage().isPresent()) {
