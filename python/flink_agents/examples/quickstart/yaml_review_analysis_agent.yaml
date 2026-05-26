@@ -49,6 +49,8 @@ agents:
               "input":
               {input}
 
+    # Action ``process_input`` sends ``ChatRequestEvent(model="review_analysis_model", ...)``,
+    # so the chat-model setup MUST be named ``review_analysis_model``.
     chat_model_setups:
       - name: review_analysis_model
         clazz: ollama

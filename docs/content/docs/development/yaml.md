@@ -153,7 +153,7 @@ tools:
     parameter_types: [java.lang.Integer, java.lang.Integer]
 ```
 
-**Skills** — bundles of agent skill assets loaded from one or more sources. At least one of `paths` / `urls` / `classpath` / `package` must be non-empty; multiple sources can coexist. See [Agent Skills]({{< ref "docs/development/workflow_agent" >}}) for the skill loading model.
+**Skills** — bundles of agent skill assets loaded from one or more sources. At least one of `paths` / `urls` / `classpath` / `package` must be non-empty; multiple sources can coexist.
 
 | Field | Required | Description |
 |-------|----------|-------------|
