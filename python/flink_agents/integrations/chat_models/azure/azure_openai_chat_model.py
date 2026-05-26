@@ -35,6 +35,10 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
 
 logger = logging.getLogger(__name__)
 
+_RESERVED_KWARG_KEYS = frozenset(
+    {"model", "model_of_azure_deployment", "temperature", "max_tokens", "logprobs"}
+)
+
 
 class AzureOpenAIChatModelConnection(BaseChatModelConnection):
     """The connection to the Azure OpenAI LLM.
@@ -143,6 +147,15 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             raise ValueError(msg)
         model_of_azure_deployment = kwargs.pop("model_of_azure_deployment", None)
         additional_kwargs = kwargs.pop("additional_kwargs", None) or {}
+
+        collisions = _RESERVED_KWARG_KEYS & additional_kwargs.keys()
+        if collisions:
+            msg = (
+                f"additional_kwargs must not contain reserved typed fields: "
+                f"{sorted(collisions)}. Set these via the corresponding "
+                f"Setup field instead."
+            )
+            raise ValueError(msg)
 
         response = self.client.chat.completions.create(
             # Azure OpenAI APIs use Azure deployment name as the model parameter

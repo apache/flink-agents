@@ -43,8 +43,10 @@ import org.apache.flink.agents.api.tools.ToolMetadata;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Chat model integration for Azure OpenAI Service. Built on the openai-java SDK using its built-in
@@ -92,6 +94,9 @@ import java.util.Map;
 public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
 
     private static final ObjectMapper mapper = new ObjectMapper();
+
+    private static final Set<String> RESERVED_KWARG_KEYS =
+            Set.of("model", "model_of_azure_deployment", "temperature", "max_tokens", "logprobs");
 
     private final OpenAIClient client;
 
@@ -188,6 +193,14 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
             Map<String, Object> additionalKwargs =
                     (Map<String, Object>) mutableArgs.remove("additional_kwargs");
             if (additionalKwargs != null) {
+                Set<String> collisions = new HashSet<>(additionalKwargs.keySet());
+                collisions.retainAll(RESERVED_KWARG_KEYS);
+                if (!collisions.isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "additional_kwargs must not contain reserved typed fields: "
+                                    + collisions
+                                    + ". Set these via the corresponding Setup field instead.");
+                }
                 for (Map.Entry<String, Object> entry : additionalKwargs.entrySet()) {
                     builder.putAdditionalBodyProperty(
                             entry.getKey(), toJsonValue(entry.getValue()));
@@ -210,6 +223,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
             }
 
             return response;
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Failed to call Azure OpenAI chat completions API.", e);
         }

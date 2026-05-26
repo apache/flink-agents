@@ -18,11 +18,16 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -91,5 +96,36 @@ class AzureOpenAIChatModelConnectionTest {
                         .build();
         AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
         assertThat(conn).isInstanceOf(BaseChatModelConnection.class);
+    }
+
+    @Test
+    @DisplayName("chat() rejects additional_kwargs that collide with reserved typed fields")
+    void testChatRejectsReservedKeyInAdditionalKwargs() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .build();
+        AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
+
+        Map<String, Object> args =
+                Map.of(
+                        "model",
+                        "my-deployment",
+                        "temperature",
+                        0.3d,
+                        "additional_kwargs",
+                        Map.of("temperature", 5.0d));
+
+        assertThatThrownBy(
+                        () ->
+                                conn.chat(
+                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
+                                        null,
+                                        args))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("additional_kwargs")
+                .hasMessageContaining("temperature");
     }
 }
