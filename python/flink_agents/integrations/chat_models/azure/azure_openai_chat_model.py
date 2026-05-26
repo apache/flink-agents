@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import logging
 from typing import Any, Dict, List, Sequence
 
 from openai import NOT_GIVEN, AzureOpenAI
@@ -31,6 +32,8 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
     convert_from_openai_message,
     convert_to_openai_messages,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AzureOpenAIChatModelConnection(BaseChatModelConnection):
@@ -237,6 +240,12 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
     ) -> None:
         """Init method."""
         additional_kwargs = additional_kwargs or {}
+        if not model_of_azure_deployment:
+            logger.warning(
+                "model_of_azure_deployment is not set; token usage metrics will "
+                "not be recorded for this Azure OpenAI deployment '%s'.",
+                model,
+            )
         super().__init__(
             model=model,
             model_of_azure_deployment=model_of_azure_deployment,

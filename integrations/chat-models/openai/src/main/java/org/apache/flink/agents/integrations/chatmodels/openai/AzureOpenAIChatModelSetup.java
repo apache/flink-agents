@@ -20,6 +20,8 @@ package org.apache.flink.agents.integrations.chatmodels.openai;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -49,6 +51,8 @@ import java.util.Optional;
  */
 public class AzureOpenAIChatModelSetup extends BaseChatModelSetup {
 
+    private static final Logger LOG = LoggerFactory.getLogger(AzureOpenAIChatModelSetup.class);
+
     private final String modelOfAzureDeployment;
     private final Double temperature;
     private final Integer maxTokens;
@@ -60,6 +64,11 @@ public class AzureOpenAIChatModelSetup extends BaseChatModelSetup {
         super(descriptor, resourceContext);
 
         this.modelOfAzureDeployment = descriptor.getArgument("model_of_azure_deployment");
+        if (this.modelOfAzureDeployment == null || this.modelOfAzureDeployment.isBlank()) {
+            LOG.warn(
+                    "model_of_azure_deployment is not set; token usage metrics will not be recorded for this Azure OpenAI deployment '{}'.",
+                    this.model);
+        }
 
         this.temperature =
                 Optional.ofNullable(descriptor.<Number>getArgument("temperature"))
