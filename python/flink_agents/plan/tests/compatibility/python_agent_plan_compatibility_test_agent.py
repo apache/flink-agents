@@ -70,6 +70,8 @@ class PythonAgentPlanCompatibilityTestAgent(Agent):
             name="chat_model",
             prompt="prompt",
             tools=["add"],
+            connection="mock_connection",
+            model="mock-model",
         )
 
     @tool

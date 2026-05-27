@@ -1,0 +1,23 @@
+agents:
+  - name: a1
+    actions:
+      - shared_inc
+      - name: own_dec
+        function: org.apache.flink.agents.api.yaml.LoaderTargets:decrement
+        type: java
+        listen_to: [chat_response]
+  - name: a2
+    actions:
+      - shared_inc
+
+chat_model_connections:
+  - name: shared_conn
+    clazz: ollama
+    type: java
+    base_url: http://example
+
+actions:
+  - name: shared_inc
+    function: org.apache.flink.agents.api.yaml.LoaderTargets:increment
+    type: java
+    listen_to: [input]

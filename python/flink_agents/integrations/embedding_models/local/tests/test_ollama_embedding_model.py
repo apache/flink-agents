@@ -78,6 +78,7 @@ def test_ollama_embedding_setup() -> None:
         truncate=True,
         resource_context=mock_ctx,
     )
+    setup.open()
 
     # Test embedding through setup
     embedding = setup.embed("This is a test sentence for embedding.")

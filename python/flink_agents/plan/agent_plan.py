@@ -20,6 +20,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, cast
 from pydantic import BaseModel, field_serializer, model_validator
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.function import Function as ApiFunction
+from flink_agents.api.function import JavaFunction as ApiJavaFunction
+from flink_agents.api.function import PythonFunction as ApiPythonFunction
 from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
@@ -30,12 +33,14 @@ from flink_agents.api.skills import (
     LOAD_SKILL_TOOL,
     Skills,
 )
+from flink_agents.api.tools.function_tool import FunctionTool as ApiFunctionTool
+from flink_agents.api.tools.tool import Tool
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
 from flink_agents.plan.actions.context_retrieval_action import CONTEXT_RETRIEVAL_ACTION
 from flink_agents.plan.actions.tool_call_action import TOOL_CALL_ACTION
 from flink_agents.plan.configuration import AgentConfiguration
-from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.function import JavaFunction, PythonFunction
 from flink_agents.plan.resource_provider import (
     JavaResourceProvider,
     JavaSerializableResourceProvider,
@@ -43,7 +48,7 @@ from flink_agents.plan.resource_provider import (
     PythonSerializableResourceProvider,
     ResourceProvider,
 )
-from flink_agents.plan.tools.function_tool import from_callable
+from flink_agents.plan.tools.function_tool import FunctionTool
 
 if TYPE_CHECKING:
     from flink_agents.api.resource import (
@@ -262,7 +267,7 @@ def _get_actions(agent: Agent) -> List[Action]:
         actions.append(
             Action(
                 name=name,
-                exec=PythonFunction.from_callable(action_tuple[1]),
+                exec=_to_plan_function(action_tuple[1]),
                 listen_event_types=[
                     _resolve_event_type(et)
                     for et in action_tuple[0]
@@ -271,6 +276,27 @@ def _get_actions(agent: Agent) -> List[Action]:
             )
         )
     return actions
+
+
+def _to_plan_function(func: ApiFunction) -> PythonFunction | JavaFunction:
+    """Promote an api Function descriptor to its executable plan counterpart.
+
+    Agent stores api-layer descriptors (pure data). Action.exec needs the
+    plan-layer executable variants for ``check_signature`` and
+    ``__call__``, so we rebuild here.
+    """
+    if isinstance(func, ApiPythonFunction):
+        return PythonFunction(module=func.module, qualname=func.qualname)
+    if isinstance(func, ApiJavaFunction):
+        return JavaFunction(
+            qualname=func.qualname,
+            method_name=func.method_name,
+            parameter_types=list(func.parameter_types),
+        )
+    msg = f"Unsupported function descriptor: {type(func).__name__}"
+    raise TypeError(msg)
+
+
 
 
 def _get_resource_providers(
@@ -307,10 +333,11 @@ def _get_resource_providers(
 
             if callable(value):
                 # TODO: support other tool type.
-                tool = from_callable(func=value)
+                tool = Tool.from_callable(func=value)
                 resource_providers.append(
                     PythonSerializableResourceProvider.from_resource(
-                        name=name, resource=tool
+                        name=name,
+                        resource=FunctionTool(func=_to_plan_function(tool.func)),
                     )
                 )
         elif hasattr(value, "_is_prompt"):
@@ -342,7 +369,12 @@ def _get_resource_providers(
     for name, tool in agent.resources[ResourceType.TOOL].items():
         resource_providers.append(
             PythonSerializableResourceProvider.from_resource(
-                name=name, resource=from_callable(tool.func)
+                name=name,
+                resource=(
+                    FunctionTool(func=_to_plan_function(tool.func))
+                    if isinstance(tool, ApiFunctionTool)
+                    else tool
+                ),
             )
         )
 
@@ -467,11 +499,11 @@ def _add_skills(
     #  skill names and which skill manager they belong to when declaring a chat
     #  model setup. MCP prompts and tools face the same situation, we can refactor
     #  them as a whole.
-    paths: List[str] = []
+    sources = []
     for skills_obj in skills_objects.values():
-        paths.extend(skills_obj.paths)
+        sources.extend(skills_obj.sources)
 
-    merged = Skills.from_local_dir(*dict.fromkeys(paths))
+    merged = Skills(sources=list(dict.fromkeys(sources)))
 
     resource_providers.append(
         PythonSerializableResourceProvider.from_resource(

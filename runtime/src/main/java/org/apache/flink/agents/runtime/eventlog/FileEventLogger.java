@@ -81,14 +81,9 @@ import java.util.Map;
  * </pre>
  */
 public class FileEventLogger implements EventLogger {
-    public static final String BASE_LOG_DIR_PROPERTY_KEY = "baseLogDir";
-    public static final String PRETTY_PRINT_PROPERTY_KEY = "prettyPrint";
     // The default base log directory if not specified in the configuration
     private static final String DEFAULT_BASE_LOG_DIR =
             Paths.get(System.getProperty("java.io.tmpdir"), "flink-agents").toString();
-
-    /** Property key for passing the full agent config data map into the logger. */
-    public static final String AGENT_CONFIG_PROPERTY_KEY = "agentConfig";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -105,7 +100,20 @@ public class FileEventLogger implements EventLogger {
 
     @Override
     public void open(EventLoggerOpenParams params) throws Exception {
-        String logFilePath = generateSubTaskLogFilePath(params);
+        // The full agent config is the single source of truth for all logger settings.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> agentConfig =
+                (Map<String, Object>)
+                        config.getProperties()
+                                .getOrDefault(
+                                        EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY,
+                                        Collections.emptyMap());
+
+        String baseLogDir =
+                (String)
+                        agentConfig.getOrDefault(
+                                AgentConfigOptions.BASE_LOG_DIR.getKey(), DEFAULT_BASE_LOG_DIR);
+        String logFilePath = generateSubTaskLogFilePath(params, baseLogDir);
         // Create base directory if it doesn't exist
         Path logPath = Paths.get(logFilePath).getParent();
         if (!Files.exists(logPath)) {
@@ -114,14 +122,11 @@ public class FileEventLogger implements EventLogger {
         // Create writer in append mode
         writer = new PrintWriter(new BufferedWriter(new FileWriter(logFilePath, true)));
         prettyPrint =
-                (Boolean) config.getProperties().getOrDefault(PRETTY_PRINT_PROPERTY_KEY, false);
+                (Boolean)
+                        agentConfig.getOrDefault(
+                                AgentConfigOptions.PRETTY_PRINT.getKey(),
+                                AgentConfigOptions.PRETTY_PRINT.getDefaultValue());
 
-        // Initialize level resolver and truncator from agent config
-        @SuppressWarnings("unchecked")
-        Map<String, Object> agentConfig =
-                (Map<String, Object>)
-                        config.getProperties()
-                                .getOrDefault(AGENT_CONFIG_PROPERTY_KEY, Collections.emptyMap());
         this.levelResolver = new EventLogLevelResolver(agentConfig);
         int maxStringLength =
                 getIntFromConfig(
@@ -156,12 +161,7 @@ public class FileEventLogger implements EventLogger {
         }
     }
 
-    private String generateSubTaskLogFilePath(EventLoggerOpenParams params) {
-        // Get base log directory from properties
-        String baseLogDir =
-                (String)
-                        config.getProperties()
-                                .getOrDefault(BASE_LOG_DIR_PROPERTY_KEY, DEFAULT_BASE_LOG_DIR);
+    private String generateSubTaskLogFilePath(EventLoggerOpenParams params, String baseLogDir) {
         String jobId = params.getRuntimeContext().getJobInfo().getJobId().toString();
         String taskName =
                 params.getRuntimeContext()

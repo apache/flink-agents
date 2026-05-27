@@ -72,6 +72,11 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     static final String FROM_JAVA_VECTOR_STORE_QUERY =
             PYTHON_MODULE_PREFIX + "from_java_vector_store_query";
 
+    static final String GET_PYTHON_TOOL_METADATA =
+            PYTHON_MODULE_PREFIX + "get_python_tool_metadata";
+
+    static final String INVOKE_PYTHON_TOOL = PYTHON_MODULE_PREFIX + "invoke_python_tool";
+
     private final ResourceContext resourceContext;
     private final PythonInterpreter interpreter;
     private final JavaResourceAdapter javaResourceAdapter;
@@ -198,5 +203,23 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     @Override
     public Object invoke(String name, Object... args) {
         return interpreter.invoke(name, args);
+    }
+
+    @Override
+    public Map<String, String> getPythonToolMetadata(String module, String qualName) {
+        @SuppressWarnings("unchecked")
+        Map<String, String> result =
+                (Map<String, String>)
+                        interpreter.invoke(GET_PYTHON_TOOL_METADATA, module, qualName);
+        if (result == null) {
+            throw new IllegalStateException(
+                    "Python get_python_tool_metadata returned null for " + module + ":" + qualName);
+        }
+        return result;
+    }
+
+    @Override
+    public Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs) {
+        return interpreter.invoke(INVOKE_PYTHON_TOOL, module, qualName, kwargs);
     }
 }

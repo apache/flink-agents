@@ -4,6 +4,10 @@ docs
 .git
 .gitignore
 .gitmodules
+\.bats-cache
+.*\.bats$
+.*\.bash$
+\.gitkeep
 .*\.lock$
 .venv/*
 .idea/*
@@ -18,3 +22,4 @@ PULL_REQUEST_TEMPLATE.md
 .*\.egg-info/*
 licenses/*
 skills/*
+.*\.yaml$

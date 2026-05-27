@@ -17,18 +17,28 @@
 #################################################################################
 from typing import Any, List
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 from typing_extensions import override
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
-from flink_agents.api.tools.tool import Tool, ToolType
+from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
 
 
 class JavaTool(Tool):
     """Java Tool that carries tool metadata and can be recognized by PythonChatModel."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    metadata_: ToolMetadata = Field(exclude=True, alias="metadata")
+
+    @property
+    @override
+    def metadata(self) -> ToolMetadata:
+        """Return the tool metadata."""
+        return self.metadata_
 
     @classmethod
     @override

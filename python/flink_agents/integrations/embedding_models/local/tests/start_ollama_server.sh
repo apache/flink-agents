@@ -36,5 +36,4 @@ if [[ $os == "Linux" ]]; then
   fi
 
   ollama pull all-minilm:22m
-  ollama run all-minilm:22m
 fi

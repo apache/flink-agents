@@ -41,7 +41,6 @@ from flink_agents.e2e_tests.test_utils import pull_model
 current_dir = Path(__file__).parent
 
 OLLAMA_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
-os.environ["OLLAMA_CHAT_MODEL"] = OLLAMA_MODEL
 
 client = pull_model(OLLAMA_MODEL)
 
@@ -51,7 +50,10 @@ os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 @pytest.mark.skipif(
     client is None, reason="Ollama client is not available or test model is missing."
 )
-def test_java_chat_model_integration(tmp_path: Path) -> None:
+def test_java_chat_model_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OLLAMA_CHAT_MODEL", OLLAMA_MODEL)
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)

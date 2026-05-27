@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.api.agents;
 
+import org.apache.flink.agents.api.function.Function;
+import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
@@ -31,7 +33,7 @@ import java.util.Map;
 
 /** Base class for defining agent logic. */
 public class Agent {
-    private final Map<String, Tuple3<String[], Method, Map<String, Object>>> actions;
+    private final Map<String, Tuple3<String[], Function, Map<String, Object>>> actions;
 
     private final Map<ResourceType, Map<String, Object>> resources;
 
@@ -43,7 +45,7 @@ public class Agent {
         this.actions = new HashMap<>();
     }
 
-    public Map<String, Tuple3<String[], Method, Map<String, Object>>> getActions() {
+    public Map<String, Tuple3<String[], Function, Map<String, Object>>> getActions() {
         return actions;
     }
 
@@ -60,12 +62,7 @@ public class Agent {
      */
     public Agent addAction(
             String[] eventTypes, Method method, @Nullable Map<String, Object> config) {
-        String name = method.getName();
-        if (actions.containsKey(name)) {
-            throw new IllegalArgumentException(String.format("Action %s already defined.", name));
-        }
-        actions.put(name, new Tuple3<>(eventTypes, method, config));
-        return this;
+        return addAction(method.getName(), eventTypes, JavaFunction.fromMethod(method), config);
     }
 
     /**
@@ -76,6 +73,27 @@ public class Agent {
      */
     public Agent addAction(String[] eventTypes, Method method) {
         return addAction(eventTypes, method, null);
+    }
+
+    /**
+     * Add action to agent.
+     *
+     * @param name The action name. Must be unique within this agent.
+     * @param eventTypes The event type strings this action listens to.
+     * @param function The api-layer function descriptor; will be promoted to a plan-layer
+     *     executable at {@code AgentPlan} construction.
+     * @param config Optional config for this action.
+     */
+    public Agent addAction(
+            String name,
+            String[] eventTypes,
+            Function function,
+            @Nullable Map<String, Object> config) {
+        if (actions.containsKey(name)) {
+            throw new IllegalArgumentException(String.format("Action %s already defined.", name));
+        }
+        actions.put(name, new Tuple3<>(eventTypes, function, config));
+        return this;
     }
 
     public void addResourcesIfAbsent(Map<ResourceType, Map<String, Object>> resources) {

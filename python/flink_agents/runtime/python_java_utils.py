@@ -34,7 +34,6 @@ from flink_agents.api.vector_stores.vector_store import (
     Document,
     VectorStoreQuery,
     VectorStoreQueryMode,
-    VectorStoreQueryResult,
 )
 from flink_agents.plan.resource_provider import JAVA_RESOURCE_MAPPING
 from flink_agents.runtime.java.java_resource_wrapper import (
@@ -125,6 +124,49 @@ def from_java_tool(j_tool: Any) -> JavaTool:
         ),
     )
     return JavaTool(metadata=metadata)
+
+
+def get_python_tool_metadata(module: str, qual_name: str) -> Dict[str, str]:
+    """Introspect a Python callable into the flat tool-metadata shape expected by
+    the Java-side ``PythonResourceAdapter.getPythonToolMetadata``.
+
+    Mirrors the Python side's eager-metadata derivation for
+    ``PythonFunction``-backed ``FunctionTool``s. Returns the same three-key shape
+    ``JavaResourceAdapter.getJavaToolMetadata`` returns in the reverse direction
+    so the Java side can rebuild ``ToolMetadata`` from String fields only —
+    avoiding pemja's SIGSEGV when wrapping arbitrary Python objects on non-main
+    interpreter threads.
+    """
+    from docstring_parser import parse
+
+    from flink_agents.api.function import PythonFunction
+    from flink_agents.api.tools.utils import (
+        create_java_tool_schema_str_from_model,
+        create_schema_from_function,
+    )
+
+    descriptor = PythonFunction(module=module, qualname=qual_name)
+    callable_ = descriptor.as_callable()
+    name = callable_.__name__
+    description = (parse(callable_.__doc__).description or "") if callable_.__doc__ else ""
+    args_schema_model = create_schema_from_function(name, callable_)
+    input_schema = create_java_tool_schema_str_from_model(args_schema_model)
+    return {"name": name, "description": description, "inputSchema": input_schema}
+
+
+def invoke_python_tool(
+    module: str, qual_name: str, kwargs: Dict[str, Any]
+) -> Any:
+    """Invoke a Python callable as a tool, passing the provided keyword arguments.
+
+    Used by the Java-side ``PythonResourceAdapter.invokePythonTool`` so a Java host can
+    dispatch a Python function tool from a Java chat model without the Python side
+    needing to know about Pemja's threading model.
+    """
+    from flink_agents.api.function import PythonFunction
+
+    descriptor = PythonFunction(module=module, qualname=qual_name)
+    return descriptor.as_callable()(**kwargs)
 
 
 def from_java_prompt(j_prompt: Any) -> JavaPrompt:
@@ -263,15 +305,6 @@ def from_java_vector_store_query(j_query: Any) -> VectorStoreQuery:
     )
 
 
-def from_java_vector_store_query_result(j_query: Any) -> VectorStoreQueryResult:
-    """Convert a Java vector store query result to a Python query result."""
-    return VectorStoreQueryResult(
-        documents=[
-            from_java_document(j_document) for j_document in j_query.getDocuments()
-        ],
-    )
-
-
 def from_java_message_role(j_role: Any) -> MessageRole:
     """Convert a Java message role to a Python message role."""
     return MessageRole(j_role.getValue())
@@ -286,11 +319,6 @@ def get_java_tool_metadata_from_tool(tool: Tool) -> typing.Dict[str, str]:
             tool.metadata.args_schema
         ),
     }
-
-
-def get_mode_value(query: VectorStoreQuery) -> str:
-    """Get the mode value of a VectorStoreQuery."""
-    return query.mode.value
 
 
 def get_long_term_memory(ctx: Any) -> Any:

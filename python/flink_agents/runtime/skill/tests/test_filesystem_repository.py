@@ -17,6 +17,7 @@
 ################################################################################
 """Unit tests for Skill Repository components."""
 
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -47,9 +48,9 @@ class TestFileSystemSkillRepository:
             FileSystemSkillRepository("/nonexistent/path")
 
     def test_get_all_skill_names(self, skills_dir: Path) -> None:
-        """Test getting all skill names."""
+        """Test getting all skills (verifies skill discovery)."""
         repo = FileSystemSkillRepository(skills_dir)
-        names = repo._get_all_skill_names()
+        names = [s.name for s in repo.get_skills()]
         assert len(names) == 2
         assert "github" in names
         assert "nano-banana-pro" in names
@@ -94,3 +95,48 @@ class TestFileSystemSkillRepository:
         names = {s.name for s in skills}
         assert "github" in names
         assert "nano-banana-pro" in names
+
+
+def _zip_dir(src: Path, dst_zip: Path) -> None:
+    """Zip ``src`` so that ``src``'s immediate children are at the zip top level."""
+    with zipfile.ZipFile(dst_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in src.rglob("*"):
+            if path.is_file():
+                zf.write(path, arcname=path.relative_to(src))
+
+
+class TestFileSystemSkillRepositoryZip:
+    @pytest.fixture
+    def skills_zip(self, tmp_path: Path) -> Path:
+        # Reuse the existing on-disk skills directory; package it into a zip
+        # whose top level is the baseDir (skill subdirs at the top).
+        src = Path(__file__).parent / "resources" / "skills"
+        zip_path = tmp_path / "skills.zip"
+        _zip_dir(src, zip_path)
+        return zip_path
+
+    def test_create_repository_from_zip(self, skills_zip: Path) -> None:
+        repo = FileSystemSkillRepository(skills_zip)
+
+        # base_dir resolves to a temp directory containing the extracted layout
+        assert repo.base_dir.is_dir()
+        names = {p.name for p in repo.base_dir.iterdir()}
+        assert "github" in names
+        assert "nano-banana-pro" in names
+
+    def test_get_skills_from_zip(self, skills_zip: Path) -> None:
+        repo = FileSystemSkillRepository(skills_zip)
+        skills = repo.get_skills()
+        names = {s.name for s in skills}
+        assert names == {"github", "nano-banana-pro"}
+
+    def test_get_resources_from_zip(self, skills_zip: Path) -> None:
+        repo = FileSystemSkillRepository(skills_zip)
+        resources = repo.get_resources("nano-banana-pro")
+        assert "_meta.json" in resources
+
+    def test_invalid_path_kind(self, tmp_path: Path) -> None:
+        non_zip_file = tmp_path / "data.txt"
+        non_zip_file.write_text("not a zip")
+        with pytest.raises(ValueError, match=r"must be a directory or a \.zip file"):
+            FileSystemSkillRepository(non_zip_file)

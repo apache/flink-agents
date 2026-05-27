@@ -203,12 +203,13 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
     ----------
     connection : str
         Name of the referenced connection. (Inherited from BaseChatModelSetup)
+    model : str
+        The OpenAI model to use. Defaults to ``DEFAULT_OPENAI_MODEL`` when omitted via
+        ``__init__``. (Inherited from BaseChatModelSetup)
     prompt : Optional[Union[Prompt, str]
         Prompt template or string for the model. (Inherited from BaseChatModelSetup)
     tools : Optional[List[str]]
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
-    model : str
-        The OpenAI model to use.
     temperature : float
         The temperature to use during generation.
     max_tokens : Optional[int]
@@ -225,9 +226,6 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         The effort to use for reasoning models.
     """
 
-    model: str = Field(
-        default=DEFAULT_OPENAI_MODEL, description="The OpenAI model to use."
-    )
     temperature: float = Field(
         default=DEFAULT_TEMPERATURE,
         description="The temperature to use during generation.",

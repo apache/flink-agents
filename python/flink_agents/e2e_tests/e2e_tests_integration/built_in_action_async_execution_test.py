@@ -72,6 +72,7 @@ class AsyncTestAgent(Agent):
         return ResourceDescriptor(
             clazz=f"{SlowMockChatModel.__module__}.{SlowMockChatModel.__name__}",
             connection="placement",
+            model="slow-mock-model",
             tools=["add"],
         )
 

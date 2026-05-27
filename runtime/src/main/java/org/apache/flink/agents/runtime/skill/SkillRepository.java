@@ -20,14 +20,19 @@ package org.apache.flink.agents.runtime.skill;
 
 import javax.annotation.Nullable;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
 /**
  * Source of skills. Mirrors the Python {@code
  * flink_agents.runtime.skill.skill_repository.SkillRepository}.
+ *
+ * <p>Implementations that own a materialized temp directory (URL / classpath / zip) should override
+ * {@link #close()} to release it eagerly; otherwise the JVM shutdown hook registered by {@code
+ * SkillMaterializer} is the fallback.
  */
-public interface SkillRepository {
+public interface SkillRepository extends AutoCloseable {
 
     /** Return the named skill, or {@code null} if not found. */
     @Nullable
@@ -41,4 +46,19 @@ public interface SkillRepository {
      * values are the file contents.
      */
     Map<String, String> getResources(String name);
+
+    /**
+     * Return the absolute on-disk directory backing the named skill, or {@code null} if this
+     * repository is not filesystem-backed. Filesystem-backed implementations should return {@code
+     * baseDir.resolve(name)} regardless of whether {@code name} actually exists — callers verify
+     * existence themselves where needed.
+     */
+    @Nullable
+    default Path getSkillDir(String name) {
+        return null;
+    }
+
+    /** Default no-op for repositories that don't own a temp directory. */
+    @Override
+    default void close() {}
 }

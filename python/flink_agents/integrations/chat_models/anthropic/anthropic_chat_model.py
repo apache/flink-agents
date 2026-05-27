@@ -246,23 +246,19 @@ class AnthropicChatModelSetup(BaseChatModelSetup):
     ----------
     connection : str
         Name of the referenced connection. (Inherited from BaseChatModelSetup)
+    model : str
+        Specifies the Anthropic model to use. Defaults to claude-sonnet-4-20250514
+        when omitted via ``__init__``. (Inherited from BaseChatModelSetup)
     prompt : Optional[Union[Prompt, str]
         Prompt template or string for the model. (Inherited from BaseChatModelSetup)
     tools : Optional[List[str]]
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
-    model : str
-        Specifies the Anthropic model to use. Defaults to claude-sonnet-4-20250514.
     max_tokens: int
         The maximum number of tokens to generate before stopping. Defaults to 1024.
     temperature : float
         Amount of randomness injected into the response.
     """
 
-    model: str = Field(
-        default=DEFAULT_ANTHROPIC_MODEL,
-        description="Specifies the Anthropic model to use. Defaults to "
-        "claude-sonnet-4-20250514.",
-    )
     max_tokens: int = Field(
         default=DEFAULT_MAX_TOKENS,
         description="The maximum number of tokens to generate before stopping. Defaults to 1024.",

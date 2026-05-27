@@ -47,6 +47,8 @@ jobs:
   java_tests:
     name: java tests on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +92,8 @@ jobs:
   e2e_tests:
     name: e2e tests on ${{ matrix.os }} ${{ matrix.python-version}}
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -118,6 +122,8 @@ jobs:
   build_python_wheels:
     name: "Build Python Wheels"
     runs-on: ubuntu-latest
+    env:
+      SKIP_SPOTLESS_CHECK: true
     steps:
       - name: "Checkout the repository"
         uses: actions/checkout@v4

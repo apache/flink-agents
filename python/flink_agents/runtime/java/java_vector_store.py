@@ -25,14 +25,9 @@ from flink_agents.api.vector_stores.java_vector_store import (
 )
 from flink_agents.api.vector_stores.vector_store import (
     Document,
-    VectorStoreQuery,
-    VectorStoreQueryResult,
     _maybe_cast_to_list,
 )
-from flink_agents.runtime.python_java_utils import (
-    from_java_document,
-    from_java_vector_store_query_result,
-)
+from flink_agents.runtime.python_java_utils import from_java_document
 
 
 class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
@@ -56,6 +51,10 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
         """
         # embedding_model are required parameters for BaseVectorStore
         embedding_model = kwargs.pop("embedding_model", "")
+        # Elasticsearch/OpenSearch call their document container "index";
+        # expose it as BaseVectorStore's generic default collection.
+        if kwargs.get("collection") is None and kwargs.get("index") is not None:
+            kwargs["collection"] = kwargs["index"]
         super().__init__(embedding_model=embedding_model, **kwargs)
 
         self._j_resource = j_resource
@@ -68,27 +67,15 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
 
     @override
     def open(self) -> None:
+        # Resolve ``embedding_model`` (string → BaseEmbeddingModelSetup instance) on
+        # the Python side via ``BaseVectorStore.open`` so that ``add``/``query``/
+        # ``update`` can embed in Python before crossing to Java. Doing the embed
+        # on the Java side would force a Java→Python re-entry through pemja for
+        # PYTHON-backed embedding models, which corrupts the CPython per-thread
+        # state and crashes the next ``interpreter.get(...)`` inside
+        # ``JcpPyDecimal_Check → PyImport_ImportModule``.
+        super().open()
         self._j_resource.open()
-
-    @override
-    def add(
-        self,
-        documents: Document | List[Document],
-        collection_name: str | None = None,
-        **kwargs: Any,
-    ) -> List[str]:
-        documents = _maybe_cast_to_list(documents)
-        j_documents = [
-            _to_j_document(self._j_resource_adapter, doc) for doc in documents
-        ]
-
-        return self._j_resource.add(j_documents, collection_name, kwargs)
-
-    @override
-    def query(self, query: VectorStoreQuery) -> VectorStoreQueryResult:
-        j_query = self._j_resource_adapter.fromPythonVectorStoreQuery(query)
-        j_query_result = self._j_resource.query(j_query)
-        return from_java_vector_store_query_result(j_query_result)
 
     @override
     def get(
@@ -113,19 +100,6 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
     ) -> List[str]:
         ids = _maybe_cast_to_list(ids)
         return self._j_resource.delete(ids, collection_name, filters, kwargs)
-
-    @override
-    def update(
-        self,
-        documents: Document | List[Document],
-        collection_name: str | None = None,
-        **kwargs: Any,
-    ) -> None:
-        documents = _maybe_cast_to_list(documents)
-        j_documents = [
-            _to_j_document(self._j_resource_adapter, doc) for doc in documents
-        ]
-        self._j_resource.update(j_documents, collection_name, kwargs)
 
     @override
     def create_collection_if_not_exists(self, name: str, **kwargs: Any) -> None:

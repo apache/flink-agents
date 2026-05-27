@@ -18,7 +18,6 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -33,7 +32,6 @@ import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.JavaResourceAdapter;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
-import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.python.env.PythonDependencyInfo;
@@ -111,6 +109,9 @@ class PythonBridgeManager implements AutoCloseable {
      * @param metricGroup the agent metric group, exposed to Python via the runner context.
      * @param mailboxThreadChecker hook used by the runner context to assert mailbox-thread access.
      * @param jobIdentifier the job identifier used to scope Python state.
+     * @param userCodeClassLoader the operator's user-code class loader, propagated to {@link
+     *     JavaResourceAdapter} so reflective Java tool resolution sees user jars added via {@code
+     *     env.add_jars(...)}.
      */
     void open(
             AgentPlan agentPlan,
@@ -121,7 +122,8 @@ class PythonBridgeManager implements AutoCloseable {
             JobID jobId,
             FlinkAgentsMetricGroupImpl metricGroup,
             Runnable mailboxThreadChecker,
-            String jobIdentifier)
+            String jobIdentifier,
+            ClassLoader userCodeClassLoader)
             throws Exception {
         boolean containPythonAction =
                 agentPlan.getActions().values().stream()
@@ -161,15 +163,9 @@ class PythonBridgeManager implements AutoCloseable {
 
             javaResourceAdapter =
                     new JavaResourceAdapter(
-                            new ResourceContextImpl(
-                                    (name, type) -> {
-                                        try {
-                                            return resourceCache.getResource(name, type);
-                                        } catch (Exception e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }),
-                            pythonInterpreter);
+                            resourceCache.getResourceContext(),
+                            pythonInterpreter,
+                            userCodeClassLoader);
             if (containPythonResource || mem0Configured) {
                 initPythonResourceAdapter(agentPlan, resourceCache);
             }
@@ -257,16 +253,7 @@ class PythonBridgeManager implements AutoCloseable {
             throws Exception {
         pythonResourceAdapter =
                 new PythonResourceAdapterImpl(
-                        new ResourceContextImpl(
-                                (String anotherName, ResourceType anotherType) -> {
-                                    try {
-                                        return resourceCache.getResource(anotherName, anotherType);
-                                    } catch (Exception e) {
-                                        throw new RuntimeException(e);
-                                    }
-                                }),
-                        pythonInterpreter,
-                        javaResourceAdapter);
+                        resourceCache.getResourceContext(), pythonInterpreter, javaResourceAdapter);
         pythonResourceAdapter.open();
         PythonMCPResourceDiscovery.discoverPythonMCPResources(
                 agentPlan.getResourceProviders(), pythonResourceAdapter, resourceCache);

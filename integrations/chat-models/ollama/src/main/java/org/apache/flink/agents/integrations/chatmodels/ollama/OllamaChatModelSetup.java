@@ -53,13 +53,11 @@ import java.util.Map;
  */
 public class OllamaChatModelSetup extends BaseChatModelSetup {
 
-    private final String model;
     private final Object think;
     private final boolean extractReasoning;
 
     public OllamaChatModelSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        this.model = descriptor.getArgument("model");
         this.think = descriptor.getArgument("think", true);
         this.extractReasoning = descriptor.getArgument("extract_reasoning", true);
     }

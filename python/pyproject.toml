@@ -70,6 +70,7 @@ exclude = ["_build_backend*"]
 
 [tool.setuptools.package-data]
 "flink_agents.lib" = ["**/*.jar"]
+"flink_agents.examples.quickstart" = ["**/*.yaml"]
 "flink_agents.examples.quickstart.resources" = ["**/*.txt"]
 
 # Optional dependencies (dependency groups)

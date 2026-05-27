@@ -20,6 +20,23 @@ from typing import Callable, Dict, List
 from pydantic import BaseModel, Field, PrivateAttr
 
 
+class SkillOrigin(BaseModel):
+    """Identifies the source from which an :class:`AgentSkill` was loaded.
+
+    Attached to each skill at registration time and used for logging (e.g.
+    duplicate-name WARN) and debugging. ``scheme`` mirrors the
+    ``SkillSourceSpec`` scheme (``"local"`` / ``"url"`` / ``"package"`` /
+    ``"classpath"``); ``location`` is a human-readable identifier such as a
+    filesystem path, URL, ``<package>/<resource>``, or classpath resource name.
+    """
+
+    scheme: str
+    location: str
+
+    def __str__(self) -> str:
+        return f"{self.scheme}:{self.location}"
+
+
 class AgentSkill(BaseModel):
     """Represents an agent skill that can be loaded and used by agents.
 
@@ -53,6 +70,7 @@ class AgentSkill(BaseModel):
     compatibility: str | None = Field(default=None, max_length=500)
     metadata: Dict[str, str] | None = Field(default=None)
     resources: Dict[str, str] | None = None
+    origin: SkillOrigin | None = Field(default=None)
 
     _resource_loader: Callable[[], Dict[str, str]] | None = PrivateAttr(default=None)
     _activated: bool = PrivateAttr(default=False)
@@ -60,6 +78,12 @@ class AgentSkill(BaseModel):
     def set_resource_loader(self, loader: Callable[[], Dict[str, str]]) -> None:
         """Set a lazy resource loader for this skill."""
         self._resource_loader = loader
+
+    def set_origin(self, origin: SkillOrigin) -> None:
+        """Set the source this skill was loaded from. Called by ``SkillManager`` at
+        registration time; used for duplicate-name WARN and debugging.
+        """
+        self.origin = origin
 
     def _activate(self) -> None:
         """Load resources lazily on first access."""

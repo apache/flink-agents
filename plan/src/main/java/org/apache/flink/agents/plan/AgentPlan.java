@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.plan.actions.Action;
@@ -57,6 +58,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -181,24 +183,22 @@ public class AgentPlan implements Serializable {
     }
 
     private void extractActions(
-            String[] listenEventTypeStrings, Method method, Map<String, Object> config)
+            String actionName,
+            String[] listenEventTypeStrings,
+            org.apache.flink.agents.plan.Function function,
+            Map<String, Object> config)
             throws Exception {
         List<String> eventTypeNames = new ArrayList<>(Arrays.asList(listenEventTypeStrings));
 
         if (eventTypeNames.isEmpty()) {
             throw new IllegalArgumentException(
-                    "Action method "
-                            + method.getName()
+                    "Action "
+                            + actionName
                             + " must specify at least one event type via listenEventTypes.");
         }
 
-        // Create a JavaFunction for this method
-        JavaFunction javaFunction =
-                new JavaFunction(
-                        method.getDeclaringClass(), method.getName(), method.getParameterTypes());
-
         // Create an Action
-        Action action = new Action(method.getName(), javaFunction, eventTypeNames, config);
+        Action action = new Action(actionName, function, eventTypeNames, config);
 
         // Add to actions map
         actions.put(action.getName(), action);
@@ -235,15 +235,39 @@ public class AgentPlan implements Serializable {
                 String[] listenEventTypeStrings =
                         Objects.requireNonNull(actionAnnotation).listenEventTypes();
 
-                extractActions(listenEventTypeStrings, method, null);
+                org.apache.flink.agents.plan.JavaFunction javaFunction =
+                        new org.apache.flink.agents.plan.JavaFunction(
+                                method.getDeclaringClass(),
+                                method.getName(),
+                                method.getParameterTypes());
+                extractActions(method.getName(), listenEventTypeStrings, javaFunction, null);
             }
         }
 
-        for (Map.Entry<String, Tuple3<String[], Method, Map<String, Object>>> action :
-                agent.getActions().entrySet()) {
-            Tuple3<String[], Method, Map<String, Object>> tuple = action.getValue();
-            extractActions(tuple.f0, tuple.f1, tuple.f2);
+        for (Map.Entry<
+                        String,
+                        Tuple3<
+                                String[],
+                                org.apache.flink.agents.api.function.Function,
+                                Map<String, Object>>>
+                action : agent.getActions().entrySet()) {
+            String actionName = action.getKey();
+            Tuple3<String[], org.apache.flink.agents.api.function.Function, Map<String, Object>>
+                    tuple = action.getValue();
+            extractActions(actionName, tuple.f0, toPlanFunction(tuple.f1), tuple.f2);
         }
+    }
+
+    private static ResourceDescriptor requireResourceDescriptor(
+            String name, ResourceType type, Object value) {
+        if (!(value instanceof ResourceDescriptor)) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Resource '%s' of type %s must be a ResourceDescriptor when added via"
+                                    + " Agent.addResource, but got %s",
+                            name, type, value == null ? "null" : value.getClass().getName()));
+        }
+        return (ResourceDescriptor) value;
     }
 
     private void extractResource(ResourceType type, Method method) throws Exception {
@@ -462,25 +486,7 @@ public class AgentPlan implements Serializable {
 
         for (Map.Entry<ResourceType, Map<String, Object>> entry : agent.getResources().entrySet()) {
             ResourceType type = entry.getKey();
-            if (type == ResourceType.CHAT_MODEL || type == ResourceType.CHAT_MODEL_CONNECTION) {
-                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
-                    ResourceProvider provider;
-                    if (PythonResourceWrapper.class.isAssignableFrom(
-                            Class.forName(
-                                    ((ResourceDescriptor) kv.getValue()).getClazz(),
-                                    true,
-                                    Thread.currentThread().getContextClassLoader()))) {
-                        provider =
-                                new PythonResourceProvider(
-                                        kv.getKey(), type, (ResourceDescriptor) kv.getValue());
-                    } else {
-                        provider =
-                                new JavaResourceProvider(
-                                        kv.getKey(), type, (ResourceDescriptor) kv.getValue());
-                    }
-                    addResourceProvider(provider);
-                }
-            } else if (type == PROMPT) {
+            if (type == PROMPT) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     JavaSerializableResourceProvider provider =
                             JavaSerializableResourceProvider.createResourceProvider(
@@ -490,15 +496,51 @@ public class AgentPlan implements Serializable {
                 }
             } else if (type == TOOL) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
-                    extractTool(
-                            ((org.apache.flink.agents.api.tools.FunctionTool) kv.getValue())
-                                    .getMethod());
+                    String resourceName = kv.getKey();
+                    Object value = kv.getValue();
+                    if (value instanceof org.apache.flink.agents.api.tools.FunctionTool) {
+                        registerApiFunctionTool(
+                                resourceName,
+                                (org.apache.flink.agents.api.tools.FunctionTool) value);
+                    } else if (value instanceof SerializableResource) {
+                        // Plan-layer tools added directly (MCP-generated, etc.) — pass through.
+                        addResourceProvider(
+                                JavaSerializableResourceProvider.createResourceProvider(
+                                        resourceName, TOOL, (SerializableResource) value));
+                    } else {
+                        throw new IllegalStateException(
+                                "Unsupported tool resource '" + resourceName + "': " + value);
+                    }
                 }
             } else if (type == ResourceType.SKILLS) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     if (kv.getValue() instanceof Skills) {
                         skillsObjects.put(kv.getKey(), (Skills) kv.getValue());
                     }
+                }
+            } else if (type == MCP_SERVER) {
+                if (!entry.getValue().isEmpty()) {
+                    throw new UnsupportedOperationException(
+                            "Adding an MCP server via Agent.addResource is not supported."
+                                    + " Declare the MCP server with a @MCPServer-annotated static"
+                                    + " method on your Agent class so its tools and prompts can be"
+                                    + " discovered.");
+                }
+            } else {
+                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
+                    ResourceDescriptor descriptor =
+                            requireResourceDescriptor(kv.getKey(), type, kv.getValue());
+                    ResourceProvider provider;
+                    if (PythonResourceWrapper.class.isAssignableFrom(
+                            Class.forName(
+                                    descriptor.getClazz(),
+                                    true,
+                                    Thread.currentThread().getContextClassLoader()))) {
+                        provider = new PythonResourceProvider(kv.getKey(), type, descriptor);
+                    } else {
+                        provider = new JavaResourceProvider(kv.getKey(), type, descriptor);
+                    }
+                    addResourceProvider(provider);
                 }
             }
         }
@@ -532,11 +574,15 @@ public class AgentPlan implements Serializable {
                         ResourceType.TOOL,
                         new ResourceDescriptor(BashTool.class.getName(), new HashMap<>())));
 
-        LinkedHashSet<String> paths = new LinkedHashSet<>();
-        for (Skills s : skillsObjects.values()) {
-            paths.addAll(s.getPaths());
+        // Sort by key before merging: getDeclaredMethods() makes no order guarantee, so without
+        // this the winner on a duplicate skill name would vary across JDK / class layout.
+        List<String> orderedKeys = new ArrayList<>(skillsObjects.keySet());
+        Collections.sort(orderedKeys);
+        LinkedHashSet<SkillSourceSpec> sources = new LinkedHashSet<>();
+        for (String key : orderedKeys) {
+            sources.addAll(skillsObjects.get(key).getSources());
         }
-        Skills merged = Skills.fromLocalDir(paths.toArray(new String[0]));
+        Skills merged = new Skills(new ArrayList<>(sources));
         addResourceProvider(
                 JavaSerializableResourceProvider.createResourceProvider(
                         Skills.SKILLS_CONFIG, ResourceType.SKILLS, merged));
@@ -565,5 +611,106 @@ public class AgentPlan implements Serializable {
         resourceProviders
                 .computeIfAbsent(provider.getType(), k -> new HashMap<>())
                 .put(provider.getName(), provider);
+    }
+
+    /**
+     * Promote an api-layer {@link org.apache.flink.agents.api.function.Function} descriptor to its
+     * plan-layer twin. Java parameter type strings are resolved to {@link Class} here; Python
+     * descriptors pass through unchanged.
+     */
+    private static org.apache.flink.agents.plan.Function toPlanFunction(
+            org.apache.flink.agents.api.function.Function f) throws Exception {
+        if (f instanceof org.apache.flink.agents.api.function.JavaFunction) {
+            org.apache.flink.agents.api.function.JavaFunction jf =
+                    (org.apache.flink.agents.api.function.JavaFunction) f;
+            Class<?>[] params = resolveParameterTypes(jf.getParameterTypes());
+            Class<?> clazz =
+                    Class.forName(
+                            jf.getQualName(), true, Thread.currentThread().getContextClassLoader());
+            return new org.apache.flink.agents.plan.JavaFunction(clazz, jf.getMethodName(), params);
+        }
+        if (f instanceof org.apache.flink.agents.api.function.PythonFunction) {
+            org.apache.flink.agents.api.function.PythonFunction pf =
+                    (org.apache.flink.agents.api.function.PythonFunction) f;
+            return new org.apache.flink.agents.plan.PythonFunction(
+                    pf.getModule(), pf.getQualName());
+        }
+        throw new IllegalStateException("Unknown api.function.Function: " + f);
+    }
+
+    private static Class<?>[] resolveParameterTypes(List<String> names)
+            throws ClassNotFoundException {
+        Class<?>[] out = new Class<?>[names.size()];
+        for (int i = 0; i < names.size(); i++) {
+            out[i] = resolveParameterType(names.get(i));
+        }
+        return out;
+    }
+
+    private static Class<?> resolveParameterType(String name) throws ClassNotFoundException {
+        switch (name) {
+            case "boolean":
+                return boolean.class;
+            case "byte":
+                return byte.class;
+            case "short":
+                return short.class;
+            case "int":
+                return int.class;
+            case "long":
+                return long.class;
+            case "float":
+                return float.class;
+            case "double":
+                return double.class;
+            case "char":
+                return char.class;
+            case "void":
+                return void.class;
+            default:
+                return Class.forName(name, true, Thread.currentThread().getContextClassLoader());
+        }
+    }
+
+    /**
+     * Promote an api-layer {@link org.apache.flink.agents.api.tools.FunctionTool} to a plan-layer
+     * executable {@link FunctionTool} and register it under the YAML-declared resource name.
+     */
+    private void registerApiFunctionTool(
+            String resourceName, org.apache.flink.agents.api.tools.FunctionTool apiTool)
+            throws Exception {
+        org.apache.flink.agents.api.function.Function func = apiTool.getFunc();
+        if (func instanceof org.apache.flink.agents.api.function.JavaFunction) {
+            org.apache.flink.agents.api.function.JavaFunction jf =
+                    (org.apache.flink.agents.api.function.JavaFunction) func;
+            Class<?>[] params = resolveParameterTypes(jf.getParameterTypes());
+            Class<?> clazz =
+                    Class.forName(
+                            jf.getQualName(), true, Thread.currentThread().getContextClassLoader());
+            Method method = clazz.getMethod(jf.getMethodName(), params);
+            ToolMetadata metadata = ToolMetadataFactory.fromStaticMethod(method);
+            org.apache.flink.agents.plan.JavaFunction planFunc =
+                    new org.apache.flink.agents.plan.JavaFunction(clazz, method.getName(), params);
+            FunctionTool tool = new FunctionTool(metadata, planFunc);
+            addResourceProvider(
+                    JavaSerializableResourceProvider.createResourceProvider(
+                            resourceName, TOOL, tool));
+        } else if (func instanceof org.apache.flink.agents.api.function.PythonFunction) {
+            org.apache.flink.agents.api.function.PythonFunction pf =
+                    (org.apache.flink.agents.api.function.PythonFunction) func;
+            org.apache.flink.agents.plan.PythonFunction planFunc =
+                    new org.apache.flink.agents.plan.PythonFunction(
+                            pf.getModule(), pf.getQualName());
+            // Placeholder metadata: ResourceCache will replace it with introspected values from
+            // the Python bridge via FunctionTool.setPythonResourceAdapter at first resolve.
+            ToolMetadata metadata = new ToolMetadata(resourceName, "", "{}");
+            FunctionTool tool = new FunctionTool(metadata, planFunc);
+            addResourceProvider(
+                    JavaSerializableResourceProvider.createResourceProvider(
+                            resourceName, TOOL, tool));
+        } else {
+            throw new IllegalStateException(
+                    "Unknown api.function.Function for tool '" + resourceName + "': " + func);
+        }
     }
 }

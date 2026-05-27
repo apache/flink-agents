@@ -1,0 +1,2 @@
+Calculate BMI for someone who is 1.75 meters tall and weighs 70 kg.
+Tell me a joke about cats.

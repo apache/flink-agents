@@ -52,7 +52,7 @@ class LocalAgentBuilder(AgentBuilder):
         self.__output = []
         self.__config = config
 
-    def apply(self, agent: Agent) -> AgentBuilder:
+    def apply(self, agent: Agent | str) -> AgentBuilder:
         """Create local runner to execute given agent.
 
         Doesn't support apply multiple Agents.
@@ -60,6 +60,14 @@ class LocalAgentBuilder(AgentBuilder):
         if self.__runner is not None:
             err_msg = "LocalAgentBuilder doesn't support apply multiple agents."
             raise RuntimeError(err_msg)
+        if isinstance(agent, str):
+            if agent not in self.__env._agents:
+                msg = (
+                    f"No agent named {agent!r} is registered on this "
+                    "environment. Did you call load_yaml first?"
+                )
+                raise ValueError(msg)
+            agent = self.__env._agents[agent]
         # inspect resources from environment to agent instance.
         registered_resources = self.__env.resources
         for type, name_to_resource in registered_resources.items():

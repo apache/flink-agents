@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 
 import java.util.HashMap;
@@ -45,18 +46,47 @@ public class ResourceCache implements AutoCloseable {
     private final Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
     private final Map<ResourceType, Map<String, Resource>> cache = new ConcurrentHashMap<>();
     private volatile PythonResourceAdapter pythonResourceAdapter;
+    private final ResourceContextImpl resourceContext;
 
-    public ResourceCache(Map<ResourceType, Map<String, ResourceProvider>> resourceProviders) {
+    /**
+     * Construct a cache that resolves {@code classpath:} skill sources via {@code classLoader}.
+     * Production code passes the Flink user-code class loader (from {@code
+     * ActionExecutionOperator.getRuntimeContext().getUserCodeClassLoader()}); tests may call {@link
+     * #ResourceCache(Map)}.
+     */
+    public ResourceCache(
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            ClassLoader classLoader) {
         // Defensive copy: the cache must not be affected by later mutations to the source map.
         this.resourceProviders = new HashMap<>();
         for (Map.Entry<ResourceType, Map<String, ResourceProvider>> entry :
                 resourceProviders.entrySet()) {
             this.resourceProviders.put(entry.getKey(), new HashMap<>(entry.getValue()));
         }
+
+        this.resourceContext =
+                new ResourceContextImpl(
+                        (name, type) -> {
+                            try {
+                                return this.getResource(name, type);
+                            } catch (Exception e) {
+                                throw new RuntimeException(e);
+                            }
+                        },
+                        classLoader);
+    }
+
+    /** Convenience overload that uses the current thread's context class loader. */
+    public ResourceCache(Map<ResourceType, Map<String, ResourceProvider>> resourceProviders) {
+        this(resourceProviders, Thread.currentThread().getContextClassLoader());
     }
 
     void setPythonResourceAdapter(PythonResourceAdapter adapter) {
         this.pythonResourceAdapter = adapter;
+    }
+
+    public ResourceContextImpl getResourceContext() {
+        return resourceContext;
     }
 
     /**
@@ -86,16 +116,12 @@ public class ResourceCache implements AutoCloseable {
             ((PythonResourceProvider) provider).setPythonResourceAdapter(pythonResourceAdapter);
         }
 
-        Resource resource =
-                provider.provide(
-                        new ResourceContextImpl(
-                                (anotherName, anotherType) -> {
-                                    try {
-                                        return this.getResource(anotherName, anotherType);
-                                    } catch (Exception e) {
-                                        throw new RuntimeException(e);
-                                    }
-                                }));
+        Resource resource = provider.provide(resourceContext);
+
+        if (pythonResourceAdapter != null && resource instanceof FunctionTool) {
+            ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
+        }
+
         resource.open();
         cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
         return resource;
@@ -129,6 +155,15 @@ public class ResourceCache implements AutoCloseable {
             }
         }
         cache.clear();
+        try {
+            resourceContext.close();
+        } catch (Exception e) {
+            if (firstException == null) {
+                firstException = e;
+            } else {
+                firstException.addSuppressed(e);
+            }
+        }
         if (firstException != null) {
             throw firstException;
         }

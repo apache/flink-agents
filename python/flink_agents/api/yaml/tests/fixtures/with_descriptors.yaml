@@ -1,0 +1,14 @@
+agents:
+  - name: chat_agent
+    actions:
+      - name: increment
+        function: flink_agents.api.yaml.tests.fixtures.loader_targets:increment
+        listen_to: [input]
+      - name: decrement
+        function: flink_agents.api.yaml.tests.fixtures.loader_targets:decrement
+        listen_to: [chat_response]
+    chat_model_connections:
+      - name: ollama_conn
+        clazz: ollama
+        base_url: http://localhost:11434
+        request_timeout: 30

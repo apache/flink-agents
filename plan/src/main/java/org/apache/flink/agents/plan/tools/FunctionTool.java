@@ -20,9 +20,11 @@
 
 package org.apache.flink.agents.plan.tools;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.annotation.ToolParam;
+import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
@@ -30,12 +32,15 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.plan.Function;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonDeserializer;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonSerializer;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Plan-level implementation of a tool that wraps a static Java method. This belongs in the plan
@@ -47,6 +52,8 @@ import java.lang.reflect.Parameter;
 public class FunctionTool extends Tool {
 
     private final Function function;
+
+    @JsonIgnore private transient PythonResourceAdapter pythonResourceAdapter;
 
     /** Create a FunctionTool from ToolMetadata and Function */
     public FunctionTool(ToolMetadata metadata, Function function) {
@@ -104,38 +111,84 @@ public class FunctionTool extends Tool {
     @Override
     public ToolResponse call(ToolParameters parameters) {
         try {
-            // Map ToolParameters to method arguments by name and type
-            Method method = ((JavaFunction) function).getMethod();
-            Parameter[] methodParams = method.getParameters();
-            Object[] args = new Object[methodParams.length];
-            for (int i = 0; i < methodParams.length; i++) {
-                Parameter p = methodParams[i];
-                String paramName = p.getName();
-                if (p.isAnnotationPresent(ToolParam.class)) {
-                    ToolParam ann = p.getAnnotation(ToolParam.class);
-                    if (!ann.name().isEmpty()) {
-                        paramName = ann.name();
-                    }
-                }
-                Object value = parameters.getParameter(paramName, p.getType());
-                if (value == null && p.isAnnotationPresent(ToolParam.class)) {
-                    ToolParam ann = p.getAnnotation(ToolParam.class);
-                    if (ann.required() && ann.defaultValue().isEmpty()) {
-                        throw new IllegalArgumentException(
-                                "Missing required parameter: " + paramName);
-                    }
-                }
-                args[i] = value;
+            if (function instanceof PythonFunction) {
+                return callPython((PythonFunction) function, parameters);
             }
-
-            Object result = function.call(args);
-            return ToolResponse.success(result);
+            return callJava(parameters);
         } catch (Exception e) {
             return ToolResponse.error(e);
         }
     }
 
+    private ToolResponse callJava(ToolParameters parameters) throws Exception {
+        // Map ToolParameters to method arguments by name and type
+        Method method = ((JavaFunction) function).getMethod();
+        Parameter[] methodParams = method.getParameters();
+        Object[] args = new Object[methodParams.length];
+        for (int i = 0; i < methodParams.length; i++) {
+            Parameter p = methodParams[i];
+            String paramName = p.getName();
+            if (p.isAnnotationPresent(ToolParam.class)) {
+                ToolParam ann = p.getAnnotation(ToolParam.class);
+                if (!ann.name().isEmpty()) {
+                    paramName = ann.name();
+                }
+            }
+            Object value = parameters.getParameter(paramName, p.getType());
+            if (value == null && p.isAnnotationPresent(ToolParam.class)) {
+                ToolParam ann = p.getAnnotation(ToolParam.class);
+                if (ann.required() && ann.defaultValue().isEmpty()) {
+                    throw new IllegalArgumentException("Missing required parameter: " + paramName);
+                }
+            }
+            args[i] = value;
+        }
+        Object result = function.call(args);
+        return ToolResponse.success(result);
+    }
+
+    private ToolResponse callPython(PythonFunction pf, ToolParameters parameters) {
+        if (pythonResourceAdapter == null) {
+            return ToolResponse.error(
+                    new IllegalStateException(
+                            "Python tool '"
+                                    + pf.getQualName()
+                                    + "' has no PythonResourceAdapter; runtime should inject one"
+                                    + " before invocation."));
+        }
+        Map<String, Object> kwargs = new HashMap<>();
+        for (String name : parameters.getParameterNames()) {
+            kwargs.put(name, parameters.getParameter(name));
+        }
+        Object result =
+                pythonResourceAdapter.invokePythonTool(pf.getModule(), pf.getQualName(), kwargs);
+        return ToolResponse.success(result);
+    }
+
     public Function getFunction() {
         return function;
+    }
+
+    /**
+     * Refresh this tool's metadata via the Python bridge when the underlying function is a {@link
+     * PythonFunction}. No-op for Java-backed tools.
+     *
+     * <p>Called by the runtime resource cache the first time the tool is resolved, so the
+     * placeholder metadata that {@code AgentPlan.registerApiFunctionTool} writes for Python tools
+     * gets replaced with real introspected values (name, description, inputSchema) sourced from the
+     * Python callable's signature and docstring.
+     */
+    public void setPythonResourceAdapter(PythonResourceAdapter adapter) {
+        if (!(function instanceof PythonFunction)) {
+            return;
+        }
+        this.pythonResourceAdapter = adapter;
+        PythonFunction pf = (PythonFunction) function;
+        Map<String, String> flat = adapter.getPythonToolMetadata(pf.getModule(), pf.getQualName());
+        setMetadata(
+                new ToolMetadata(
+                        flat.get("name"),
+                        flat.getOrDefault("description", ""),
+                        flat.getOrDefault("inputSchema", "{}")));
     }
 }

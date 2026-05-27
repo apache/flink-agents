@@ -48,6 +48,21 @@ jobs:
       - name: Check code style
         run: ./tools/lint.sh -c
 
+  install_sh_tests:
+    name: install.sh tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bash 4+ (macOS)
+        if: runner.os == 'macOS'
+        run: brew install bash
+      - name: Run install.sh tests
+        run: bash tools/test/run.sh
+
   build_backend_tests:
     name: ut-build-backend
     runs-on: ubuntu-latest
@@ -72,6 +87,8 @@ jobs:
   java_tests:
     name: ut-java [${{ matrix.os }}] [java-${{ matrix.java-version}}] [python-3.12]
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -136,6 +153,8 @@ jobs:
   python_it_tests:
     name: it-python [${{ matrix.os }}] [java-17] [python-${{ matrix.python-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -179,6 +198,8 @@ jobs:
   java_it_tests:
     name: it-java [${{ matrix.os }}] [java-${{ matrix.java-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -214,21 +235,8 @@ jobs:
   cross_language_tests:
     name: cross-language [${{ matrix.os }}] [python-${{ matrix.python-version}}] [java-${{ matrix.java-version}}]
     runs-on: ${{ matrix.os }}
-    services:
-      elasticsearch:
-        image: docker.elastic.co/elasticsearch/elasticsearch:8.19.0
-        env:
-          discovery.type: single-node
-          xpack.security.enabled: false
-          ES_JAVA_OPTS: "-Xms512m -Xmx512m"
-        ports:
-          - 9200:9200
-        options: >-
-          --health-cmd "curl -f http://localhost:9200/_cluster/health || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-          --health-start-period 30s
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -265,9 +273,26 @@ jobs:
         run: bash tools/build.sh
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
+      - name: Start Elasticsearch
+        run: |
+          docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v
+          docker compose -f tools/docker/elasticsearch/docker-compose.yml up -d
+          timeout 180 bash -c 'until curl -fsS http://localhost:9200/_cluster/health; do sleep 5; done'
+      - name: Start Milvus
+        run: |
+          docker compose -f tools/docker/milvus/docker-compose.yml down -v
+          docker compose -f tools/docker/milvus/docker-compose.yml up -d
+          timeout 180 bash -c 'until curl -fsS http://localhost:9091/healthz; do sleep 5; done'
       - name: Run e2e tests
         env:
           LOG_LEVEL: INFO
         run: |
           export ES_HOST="http://localhost:9200"
+          export MILVUS_URI="http://localhost:19530"
           tools/e2e.sh
+      - name: Stop Milvus
+        if: always()
+        run: docker compose -f tools/docker/milvus/docker-compose.yml down -v
+      - name: Stop Elasticsearch
+        if: always()
+        run: docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v

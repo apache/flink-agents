@@ -1,4 +1,9 @@
 {
+    "func": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.tests.tools.test_function_tool",
+        "qualname": "foo"
+    },
     "metadata": {
         "name": "foo",
         "description": "Function for testing ToolMetadata.\n",
@@ -22,10 +27,5 @@
             "title": "foo",
             "type": "object"
         }
-    },
-    "func": {
-        "module": "flink_agents.plan.tests.tools.test_function_tool",
-        "qualname": "foo",
-        "func_type": "PythonFunction"
     }
 }

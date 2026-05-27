@@ -100,7 +100,7 @@ class TestBaseChatModelTokenMetrics:
 
     def test_record_token_metrics_with_metric_group(self) -> None:
         """Test token metrics are recorded when metric group is set."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         mock_metric_group = _MockMetricGroup()
 
         # Set the metric group
@@ -116,7 +116,7 @@ class TestBaseChatModelTokenMetrics:
 
     def test_record_token_metrics_without_metric_group(self) -> None:
         """Test token metrics are not recorded when metric group is null."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
 
         # Do not set metric group (should be None by default)
         # Record token metrics - should not throw
@@ -125,7 +125,7 @@ class TestBaseChatModelTokenMetrics:
 
     def test_token_metrics_hierarchy(self) -> None:
         """Test token metrics hierarchy: actionMetricGroup -> modelName -> counters."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         mock_metric_group = _MockMetricGroup()
 
         # Set the metric group
@@ -148,7 +148,7 @@ class TestBaseChatModelTokenMetrics:
 
     def test_token_metrics_accumulation(self) -> None:
         """Test that token metrics accumulate across multiple calls."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         mock_metric_group = _MockMetricGroup()
 
         # Set the metric group
@@ -165,12 +165,12 @@ class TestBaseChatModelTokenMetrics:
 
     def test_resource_type(self) -> None:
         """Test resource type is CHAT_MODEL_CONNECTION."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         assert chat_model.resource_type() == ResourceType.CHAT_MODEL
 
     def test_bound_metric_group_property(self) -> None:
         """Test bound_metric_group property."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
 
         # Initially should be None
         assert chat_model.metric_group is None

@@ -38,15 +38,28 @@ import java.util.function.BiFunction;
  * skill methods lazily build a {@link SkillManager} from the {@code _skills_config} resource — if
  * no such resource is registered they return safe defaults (empty string / empty list).
  */
-public class ResourceContextImpl implements ResourceContext {
+public class ResourceContextImpl implements ResourceContext, AutoCloseable {
 
     private final BiFunction<String, ResourceType, Resource> getResource;
+    private final ClassLoader classLoader;
 
-    @Nullable private volatile SkillManager skillManager;
-    @Nullable private volatile Skills cachedSkillsConfig;
+    @Nullable private SkillManager skillManager;
+    private boolean skillManagerInitialized;
 
-    public ResourceContextImpl(BiFunction<String, ResourceType, Resource> getResource) {
+    /**
+     * Construct a context that resolves {@code classpath:} skill sources via {@code classLoader}.
+     * Production code passes the Flink user-code class loader (threaded through {@code
+     * ResourceCache}); standalone use may use {@link #ResourceContextImpl(BiFunction)}.
+     */
+    public ResourceContextImpl(
+            BiFunction<String, ResourceType, Resource> getResource, ClassLoader classLoader) {
         this.getResource = getResource;
+        this.classLoader = classLoader;
+    }
+
+    /** Convenience overload that uses the current thread's context class loader. */
+    public ResourceContextImpl(BiFunction<String, ResourceType, Resource> getResource) {
+        this(getResource, Thread.currentThread().getContextClassLoader());
     }
 
     @Override
@@ -83,6 +96,15 @@ public class ResourceContextImpl implements ResourceContext {
 
     @Nullable
     private synchronized SkillManager ensureSkillManager() throws Exception {
+        if (!skillManagerInitialized) {
+            skillManagerInitialized = true;
+            skillManager = createSkillManager();
+        }
+        return skillManager;
+    }
+
+    @Nullable
+    private SkillManager createSkillManager() throws Exception {
         Skills config;
         try {
             Resource r = getResource(Skills.SKILLS_CONFIG, ResourceType.SKILLS);
@@ -94,10 +116,23 @@ public class ResourceContextImpl implements ResourceContext {
             // No skills config registered — that's fine, return null.
             return null;
         }
-        if (config != cachedSkillsConfig) {
-            cachedSkillsConfig = config;
-            skillManager = new SkillManager(config);
+        return new SkillManager(config, classLoader);
+    }
+
+    /**
+     * Close the lazily-cached {@link SkillManager}, releasing every materialized temp directory
+     * owned by its repositories. Idempotent. Called via {@code ResourceCache.close()} on operator
+     * close, including during Flink failover when the JVM stays up.
+     */
+    @Override
+    public synchronized void close() throws Exception {
+        if (skillManager != null) {
+            try {
+                skillManager.close();
+            } finally {
+                skillManager = null;
+                skillManagerInitialized = false;
+            }
         }
-        return skillManager;
     }
 }

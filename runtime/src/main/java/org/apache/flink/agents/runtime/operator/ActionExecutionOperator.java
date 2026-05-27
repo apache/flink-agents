@@ -144,7 +144,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         stateManager.initializeKeyedStates(getRuntimeContext());
         stateManager.initializeOperatorStates(getOperatorStateBackend());
 
-        resourceCache = new ResourceCache(agentPlan.getResourceProviders());
+        // ResourceCache constructs its own long-lived ResourceContextImpl internally; on
+        // close() the cache cascades close to it and to the cached SkillManager, covering
+        // Flink failover when the JVM does not exit. The user-code class loader is threaded
+        // down so classpath: skill sources resolve against the Flink user JAR regardless of
+        // which thread (mailbox / Python interpreter / async pool) later triggers the lazy
+        // SkillManager construction.
+        resourceCache =
+                new ResourceCache(
+                        agentPlan.getResourceProviders(),
+                        getRuntimeContext().getUserCodeClassLoader());
 
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
@@ -166,7 +175,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 getRuntimeContext().getJobInfo().getJobId(),
                 metricGroup,
                 this::checkMailboxThread,
-                jobIdentifier);
+                jobIdentifier,
+                getRuntimeContext().getUserCodeClassLoader());
 
         // Capture the wired Mem0 long-term memory, if any, so it can be plumbed into the Java
         // runner context created by ActionTaskContextManager.
@@ -181,6 +191,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         // Initialize the event logger if it is set.
         eventRouter.initEventLogger(getRuntimeContext());
+
+        // Initialize user event listeners from configuration
+        eventRouter.initEventListeners(getRuntimeContext());
 
         // Since an operator restart may change the key range it manages due to changes in
         // parallelism,
@@ -506,6 +519,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void notifyCheckpointComplete(long checkpointId) throws Exception {
         durableExecManager.notifyCheckpointComplete(checkpointId);
         super.notifyCheckpointComplete(checkpointId);
+    }
+
+    @Override
+    public void notifyCheckpointAborted(long checkpointId) throws Exception {
+        durableExecManager.notifyCheckpointAborted(checkpointId);
+        super.notifyCheckpointAborted(checkpointId);
     }
 
     private MailboxProcessor getMailboxProcessor() throws Exception {

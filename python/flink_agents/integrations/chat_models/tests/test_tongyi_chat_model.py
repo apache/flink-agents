@@ -25,10 +25,12 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.tongyi_chat_model import (
+    DEFAULT_MODEL,
     TongyiChatModelConnection,
     TongyiChatModelSetup,
 )
-from flink_agents.plan.tools.function_tool import FunctionTool, from_callable
+from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.tools.function_tool import FunctionTool
 
 test_model = os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus")
 api_key_available = "DASHSCOPE_API_KEY" in os.environ
@@ -67,7 +69,7 @@ def add(a: int, b: int) -> int:
 
 def get_tool(name: str, type: ResourceType) -> FunctionTool:
     """Helper function to create a tool for testing."""
-    return from_callable(func=add)
+    return FunctionTool(func=PythonFunction.from_callable(add))
 
 
 @pytest.mark.skipif(not api_key_available, reason="DashScope API key is not set")
@@ -175,3 +177,16 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
     assert "reasoning" in response.extra_args
     assert "philosophical perspectives" in response.extra_args["reasoning"]
     assert "Hitchhiker's Guide to the Galaxy" in response.extra_args["reasoning"]
+
+
+def test_model_field_roundtrip() -> None:
+    """Verify `model` is preserved through pydantic dump/validate round-trip."""
+    setup = TongyiChatModelSetup(connection="conn", model="test-model")
+    restored = TongyiChatModelSetup.model_validate(setup.model_dump())
+    assert restored.model == "test-model"
+
+
+def test_default_model_when_omitted() -> None:
+    """Verify per-integration default applies when `model` is omitted from __init__."""
+    setup = TongyiChatModelSetup(connection="conn")
+    assert setup.model == DEFAULT_MODEL

@@ -19,12 +19,16 @@ package org.apache.flink.agents.runtime.operator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.listener.EventListener;
+import org.apache.flink.agents.api.logger.EventLoggerConfig;
+import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -306,6 +310,55 @@ public class ActionExecutionOperatorTest {
         }
     }
 
+    /** A EventListener for unit test */
+    public static class TestEventListener implements EventListener {
+        public boolean called = false;
+
+        @Override
+        public void onEventProcessed(EventContext context, Event event) {
+            this.called = true;
+        }
+    }
+
+    @Test
+    void testEventListenersFromAgentConfig() throws Exception {
+        final AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.EVENT_LISTENERS, List.of(TestEventListener.class.getName()));
+        final AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            final ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            final Field eventListenersField = EventRouter.class.getDeclaredField("eventListeners");
+            eventListenersField.setAccessible(true);
+            final Object obj = eventListenersField.get(operator.getEventRouter());
+            assertThat(obj).isNotNull();
+            assertThat(obj).isInstanceOf(List.class);
+
+            final List eventListeners = (List) obj;
+            assertThat(eventListeners.size()).isEqualTo(1);
+
+            final Object listener = eventListeners.get(0);
+            assertThat(listener).isInstanceOf(TestEventListener.class);
+
+            // listener should not have been triggered yet
+            boolean called = ((TestEventListener) listener).called;
+            assertThat(called).isFalse();
+
+            // process a some element to trigger the operator logic
+            testHarness.processElement(new StreamRecord<>(1L));
+
+            // listener should have been invoked after element processing
+            called = ((TestEventListener) listener).called;
+            assertThat(called).isTrue();
+        }
+    }
+
     @Test
     void testDoesNotPruneBeforeCheckpointComplete() throws Exception {
         AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
@@ -366,6 +419,7 @@ public class ActionExecutionOperatorTest {
     void testEventLogBaseDirFromAgentConfig() throws Exception {
         String baseLogDir = "/tmp/flink-agents-test";
         AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.EVENT_LOGGER_TYPE, LoggerType.FILE);
         config.set(AgentConfigOptions.BASE_LOG_DIR, baseLogDir);
         config.set(AgentConfigOptions.PRETTY_PRINT, true);
         AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
@@ -389,9 +443,13 @@ public class ActionExecutionOperatorTest {
             @SuppressWarnings("unchecked")
             Map<String, Object> properties =
                     (Map<String, Object>) propertiesField.get(loggerConfig);
-            assertThat(properties.get(FileEventLogger.BASE_LOG_DIR_PROPERTY_KEY))
+            @SuppressWarnings("unchecked")
+            Map<String, Object> agentConfig =
+                    (Map<String, Object>)
+                            properties.get(EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY);
+            assertThat(agentConfig.get(AgentConfigOptions.BASE_LOG_DIR.getKey()))
                     .isEqualTo(baseLogDir);
-            assertThat(properties.get(FileEventLogger.PRETTY_PRINT_PROPERTY_KEY)).isEqualTo(true);
+            assertThat(agentConfig.get(AgentConfigOptions.PRETTY_PRINT.getKey())).isEqualTo(true);
         }
     }
 

@@ -91,6 +91,16 @@ public class ChatModelIntegrationAgent extends Agent {
                             ResourceName.ChatModel.OPENAI_RESPONSES_CONNECTION)
                     .addInitialArgument("api_key", System.getenv().get("OPENAI_API_KEY"))
                     .build();
+        } else if (provider.equals("AZURE_OPENAI")) {
+            return ResourceDescriptor.Builder.newBuilder(
+                            ResourceName.ChatModel.AZURE_OPENAI_CONNECTION)
+                    .addInitialArgument("api_key", System.getenv().get("AZURE_OPENAI_API_KEY"))
+                    .addInitialArgument(
+                            "api_version", System.getenv().get("AZURE_OPENAI_API_VERSION"))
+                    .addInitialArgument(
+                            "azure_endpoint", System.getenv().get("AZURE_OPENAI_ENDPOINT"))
+                    .addInitialArgument("azure_url_path_mode", "LEGACY")
+                    .build();
         } else if (provider.equals("ANTHROPIC")) {
             String apiKey = System.getenv().get("ANTHROPIC_API_KEY");
             return ResourceDescriptor.Builder.newBuilder(
@@ -146,6 +156,14 @@ public class ChatModelIntegrationAgent extends Agent {
                             ResourceName.ChatModel.OPENAI_RESPONSES_SETUP)
                     .addInitialArgument("connection", "chatModelConnection")
                     .addInitialArgument("model", "gpt-4o-mini")
+                    .addInitialArgument(
+                            "tools",
+                            List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
+                    .build();
+        } else if (provider.equals("AZURE_OPENAI")) {
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_OPENAI_SETUP)
+                    .addInitialArgument("connection", "chatModelConnection")
+                    .addInitialArgument("model", System.getenv().get("AZURE_OPENAI_DEPLOYMENT"))
                     .addInitialArgument(
                             "tools",
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))

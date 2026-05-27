@@ -30,7 +30,7 @@ public final class Utils {
     private static final Logger LOG = LoggerFactory.getLogger(Utils.class);
     private static final String DEFAULT_VALUE = "<unknown>";
     public static final List<String> requiredVersions =
-            List.of("1.20.4", "2.0.1", "2.1.1", "2.2.0");
+            List.of("1.20.4", "2.0.1", "2.1.2", "2.2.0");
 
     static final Versions INSTANCE = new Versions();
 
@@ -57,9 +57,9 @@ public final class Utils {
             int minor = Integer.parseInt(st.nextToken());
             int micro = Integer.parseInt(st.nextToken());
 
-            if ((major == 1 && (minor < 20 || (minor == 20 && micro <= 3)))
+            if ((major == 1 && (minor < 20 || (minor == 20 && micro <= 4)))
                     || (major == 2 && minor == 0 && micro <= 1)
-                    || (major == 2 && minor == 1 && micro <= 1)
+                    || (major == 2 && minor == 1 && micro <= 2)
                     || (major == 2 && minor == 2 && micro <= 0)) {
                 LOG.debug(
                         "Flink {} doesn't support async execution for java resource, will fallback to sync execution.",

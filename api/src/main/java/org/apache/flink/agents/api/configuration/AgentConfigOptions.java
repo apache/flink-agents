@@ -18,9 +18,20 @@
 package org.apache.flink.agents.api.configuration;
 
 import org.apache.flink.agents.api.logger.EventLogLevel;
+import org.apache.flink.agents.api.logger.LoggerType;
+
+import java.util.List;
 
 /** The set of configuration options for agents parameters. */
 public class AgentConfigOptions {
+
+    /**
+     * The config parameter specifies which event logger implementation to use. Defaults to {@link
+     * LoggerType#SLF4J}, which surfaces events in Flink's Web UI; setting {@link LoggerType#FILE}
+     * (or configuring {@link #BASE_LOG_DIR}) routes events to per-subtask log files instead.
+     */
+    public static final ConfigOption<LoggerType> EVENT_LOGGER_TYPE =
+            new ConfigOption<>("eventLoggerType", LoggerType.class, LoggerType.SLF4J);
 
     /** The config parameter specifies the directory for the FileEvent file. */
     public static final ConfigOption<String> BASE_LOG_DIR =
@@ -53,6 +64,48 @@ public class AgentConfigOptions {
     public static final ConfigOption<Integer> KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR =
             new ConfigOption<>("kafkaActionStateTopicReplicationFactor", Integer.class, 1);
 
+    /** The config parameter specifies the Fluss bootstrap servers. */
+    public static final ConfigOption<String> FLUSS_BOOTSTRAP_SERVERS =
+            new ConfigOption<>("flussBootstrapServers", String.class, "localhost:9123");
+
+    /** The config parameter specifies the Fluss database for action state. */
+    public static final ConfigOption<String> FLUSS_ACTION_STATE_DATABASE =
+            new ConfigOption<>("flussActionStateDatabase", String.class, "flink_agents");
+
+    /** The config parameter specifies the Fluss table name for action state. */
+    public static final ConfigOption<String> FLUSS_ACTION_STATE_TABLE =
+            new ConfigOption<>("flussActionStateTable", String.class, null);
+
+    /** The config parameter specifies the number of buckets for the Fluss action state table. */
+    public static final ConfigOption<Integer> FLUSS_ACTION_STATE_TABLE_BUCKETS =
+            new ConfigOption<>("flussActionStateTableBuckets", Integer.class, 64);
+
+    /**
+     * The config parameter specifies the authentication protocol for Fluss client. Valid values:
+     * {@code "PLAINTEXT"} (default, no authentication) and {@code "SASL"} (SASL/PLAIN
+     * authentication). Value is case-insensitive.
+     */
+    public static final ConfigOption<String> FLUSS_SECURITY_PROTOCOL =
+            new ConfigOption<>("flussSecurityProtocol", String.class, "PLAINTEXT");
+
+    /** The config parameter specifies the SASL mechanism for Fluss authentication. */
+    public static final ConfigOption<String> FLUSS_SASL_MECHANISM =
+            new ConfigOption<>("flussSaslMechanism", String.class, "PLAIN");
+
+    /**
+     * The config parameter specifies the JAAS configuration string for Fluss SASL authentication.
+     */
+    public static final ConfigOption<String> FLUSS_SASL_JAAS_CONFIG =
+            new ConfigOption<>("flussSaslJaasConfig", String.class, null);
+
+    /** The config parameter specifies the username for Fluss SASL authentication. */
+    public static final ConfigOption<String> FLUSS_SASL_USERNAME =
+            new ConfigOption<>("flussSaslUsername", String.class, null);
+
+    /** The config parameter specifies the password for Fluss SASL authentication. */
+    public static final ConfigOption<String> FLUSS_SASL_PASSWORD =
+            new ConfigOption<>("flussSaslPassword", String.class, null);
+
     /** The config parameter specifies the unique identifier of job. */
     public static final ConfigOption<String> JOB_IDENTIFIER =
             new ConfigOption<>("job-identifier", String.class, null);
@@ -84,4 +137,9 @@ public class AgentConfigOptions {
      */
     public static final ConfigOption<Integer> EVENT_LOG_MAX_DEPTH =
             new ConfigOption<>("event-log.standard.max-depth", Integer.class, 5);
+
+    /** The config parameter specifies the list of event listener class names. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public static final ConfigOption<List<String>> EVENT_LISTENERS =
+            (ConfigOption) new ConfigOption<>("event-listeners", List.class, null);
 }

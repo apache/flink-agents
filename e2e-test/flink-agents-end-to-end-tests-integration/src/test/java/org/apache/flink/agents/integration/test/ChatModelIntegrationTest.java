@@ -27,8 +27,6 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -41,7 +39,6 @@ import static org.apache.flink.agents.integration.test.ChatModelIntegrationAgent
  * prompts.
  */
 public class ChatModelIntegrationTest extends OllamaPreparationUtils {
-    private static final Logger LOG = LoggerFactory.getLogger(ChatModelIntegrationTest.class);
 
     private static final String API_KEY = "_API_KEY";
     private static final String OLLAMA = "OLLAMA";
@@ -53,7 +50,15 @@ public class ChatModelIntegrationTest extends OllamaPreparationUtils {
     }
 
     @ParameterizedTest()
-    @ValueSource(strings = {"ANTHROPIC", "AZURE", "OLLAMA", "OPENAI", "OPENAI_RESPONSES"})
+    @ValueSource(
+            strings = {
+                "ANTHROPIC",
+                "AZURE",
+                "AZURE_OPENAI",
+                "OLLAMA",
+                "OPENAI",
+                "OPENAI_RESPONSES"
+            })
     public void testChatModeIntegration(String provider) throws Exception {
         Assumptions.assumeTrue(
                 (OLLAMA.equals(provider) && ollamaReady)

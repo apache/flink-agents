@@ -188,6 +188,16 @@ public class ResourceCacheTest {
         public Object invoke(String name, Object... args) {
             return null;
         }
+
+        @Override
+        public Map<String, String> getPythonToolMetadata(String module, String qualName) {
+            return Map.of("name", qualName, "description", "", "inputSchema", "{}");
+        }
+
+        @Override
+        public Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs) {
+            return null;
+        }
     }
 
     @Test

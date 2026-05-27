@@ -30,9 +30,18 @@ import java.lang.reflect.Method;
  */
 public abstract class Tool extends SerializableResource {
 
-    protected final ToolMetadata metadata;
+    protected ToolMetadata metadata;
 
     protected Tool(ToolMetadata metadata) {
+        this.metadata = java.util.Objects.requireNonNull(metadata, "metadata cannot be null");
+    }
+
+    /**
+     * Replace this tool's metadata. Intended for subclasses that derive metadata lazily once a
+     * runtime bridge becomes available (e.g. {@code FunctionTool} backed by a {@code
+     * PythonFunction} refreshing placeholder metadata via the JVM&rarr;Python adapter).
+     */
+    protected void setMetadata(ToolMetadata metadata) {
         this.metadata = java.util.Objects.requireNonNull(metadata, "metadata cannot be null");
     }
 
@@ -68,6 +77,6 @@ public abstract class Tool extends SerializableResource {
 
     /** Get tool keeps a method. */
     public static FunctionTool fromMethod(Method method) {
-        return new FunctionTool(method);
+        return FunctionTool.fromMethod(method);
     }
 }

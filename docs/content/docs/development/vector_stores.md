@@ -1,6 +1,6 @@
 ---
 title: Vector Stores
-weight: 6
+weight: 7
 type: docs
 ---
 <!--
@@ -172,7 +172,7 @@ For vector stores that implement `CollectionManageableVectorStore`, you can crea
 * `delete_collection` / `deleteCollection`: Delete a collection by name.
 
 {{< hint info >}}
-Collection-level operations are only supported for vector stores that implement `CollectionManageableVectorStore`. Among the built-in providers, Chroma (Python), Elasticsearch (Java) and OpenSearch (Java) implement this interface.
+Collection-level operations are only supported for vector stores that implement `CollectionManageableVectorStore`. Among the built-in providers, Chroma (Python), Elasticsearch (Java), OpenSearch (Java), and Milvus (Java) implement this interface.
 {{< /hint >}}
 
 {{< tabs "Collection level operations" >}}
@@ -444,6 +444,204 @@ public class MyAgent extends Agent {
 
 ## Built-in Providers
 
+### Amazon OpenSearch
+
+[Amazon OpenSearch](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/) is a managed vector search service available in two flavors: OpenSearch Service (provisioned domains) and OpenSearch Serverless (AOSS). The Flink Agents integration supports both via a single `service_type` parameter, with IAM (SigV4) or basic authentication.
+
+{{< hint info >}}
+Amazon OpenSearch is only supported in Java currently. To use Amazon OpenSearch from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint info >}}
+Amazon OpenSearch implements `CollectionManageableVectorStore`, enabling [Long-Term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) support. Collections map to OpenSearch indices. OpenSearch indices do not natively support attaching arbitrary metadata, so any `metadata` passed to `createCollectionIfNotExists` is ignored. Callers needing per-document attributes should put them on the documents themselves.
+{{< /hint >}}
+
+#### Prerequisites
+
+1. Either an [OpenSearch Service](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/) provisioned domain with KNN enabled (version 2.x+), or an [OpenSearch Serverless](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/serverless.html) collection of type `VECTORSEARCH`
+2. For IAM auth: IAM credentials configured via the [AWS Default Credentials Provider](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/credentials-chain.html) with appropriate access policies (or a Serverless data-access policy)
+3. For basic auth (Service domains only): username and password for the OpenSearch domain
+
+#### OpenSearchVectorStore Parameters
+
+{{< tabs "OpenSearchVectorStore Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `embedding_model` | String | Required | Reference to embedding model resource name |
+| `endpoint` | String | Required | OpenSearch endpoint URL (e.g. `https://my-domain.us-east-1.es.amazonaws.com` for a domain, or the `*.aoss.amazonaws.com` endpoint for Serverless) |
+| `index` | String | Required | Default index name for document operations |
+| `service_type` | String | `"serverless"` | OpenSearch flavor: `"serverless"` (AOSS) or `"domain"` (OpenSearch Service) |
+| `auth` | String | `"iam"` | Authentication method: `"iam"` (SigV4) or `"basic"`. Basic auth is supported on Service domains only |
+| `username` | String | None | Username for basic authentication (required if `auth=basic`) |
+| `password` | String | None | Password for basic authentication (required if `auth=basic`) |
+| `vector_field` | String | `"embedding"` | Name of the KNN vector field in the index |
+| `content_field` | String | `"content"` | Name of the text content field in the index |
+| `region` | String | `"us-east-1"` | AWS region |
+| `dims` | int | `1024` | Vector dimensionality used when this integration creates an index |
+| `max_bulk_mb` | int | `5` | Maximum bulk payload size in MB |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Amazon OpenSearch Usage Example" >}}
+
+{{< tab "Java" >}}
+
+For an OpenSearch Serverless (AOSS) collection with IAM auth (the default):
+
+```java
+public class MyAgent extends Agent {
+
+    @EmbeddingModelConnection
+    public static ResourceDescriptor bedrockEmbeddingConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.BEDROCK_CONNECTION)
+                .addInitialArgument("region", "us-east-1")
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor bedrockEmbedding() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.BEDROCK_SETUP)
+                .addInitialArgument("connection", "bedrockEmbeddingConnection")
+                .addInitialArgument("dimensions", 1024)
+                .build();
+    }
+
+    @VectorStore
+    public static ResourceDescriptor opensearchStore() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.OPENSEARCH_VECTOR_STORE)
+                .addInitialArgument("embedding_model", "bedrockEmbedding")
+                .addInitialArgument("endpoint", "https://abc123.us-east-1.aoss.amazonaws.com")
+                .addInitialArgument("index", "my-vectors")
+                // service_type defaults to "serverless"; auth defaults to "iam"
+                .addInitialArgument("dims", 1024)
+                .build();
+    }
+
+    ...
+}
+```
+
+For an OpenSearch Service provisioned domain with IAM auth:
+
+```java
+@VectorStore
+public static ResourceDescriptor opensearchDomainStore() {
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.OPENSEARCH_VECTOR_STORE)
+            .addInitialArgument("embedding_model", "bedrockEmbedding")
+            .addInitialArgument("endpoint", "https://my-domain.us-east-1.es.amazonaws.com")
+            .addInitialArgument("index", "my-vectors")
+            .addInitialArgument("service_type", "domain")
+            .addInitialArgument("auth", "iam")
+            .addInitialArgument("dims", 1024)
+            .build();
+}
+```
+
+For an OpenSearch Service domain with basic auth:
+
+```java
+@VectorStore
+public static ResourceDescriptor opensearchDomainBasicAuth() {
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.OPENSEARCH_VECTOR_STORE)
+            .addInitialArgument("embedding_model", "bedrockEmbedding")
+            .addInitialArgument("endpoint", "https://my-domain.us-east-1.es.amazonaws.com")
+            .addInitialArgument("index", "my-vectors")
+            .addInitialArgument("service_type", "domain")
+            .addInitialArgument("auth", "basic")
+            .addInitialArgument("username", "admin")
+            .addInitialArgument("password", "your-password")
+            .addInitialArgument("dims", 1024)
+            .build();
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+### Amazon S3 Vectors
+
+[Amazon S3 Vectors](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html) is a purpose-built vector storage service from Amazon S3 that provides native support for storing and querying vector embeddings with sub-second query performance. It uses the S3 Vectors SDK for PutVectors, QueryVectors, GetVectors, and DeleteVectors operations.
+
+{{< hint info >}}
+Amazon S3 Vectors is only supported in Java currently. To use Amazon S3 Vectors from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint warning >}}
+Amazon S3 Vectors does **not** implement `CollectionManageableVectorStore`, so it does not support [Long-Term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) features. It also does not support `size()` or get-all operations: explicit document IDs are required for `get()` and `delete()`.
+{{< /hint >}}
+
+#### Prerequisites
+
+1. An [S3 Vectors vector bucket](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors-buckets.html) and vector index created in your AWS account
+2. IAM credentials configured via the [AWS Default Credentials Provider](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/credentials-chain.html) with appropriate S3 Vectors permissions
+
+#### S3VectorsVectorStore Parameters
+
+{{< tabs "S3VectorsVectorStore Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `embedding_model` | String | Required | Reference to embedding model resource name |
+| `vector_bucket` | String | Required | S3 Vectors bucket name |
+| `vector_index` | String | Required | S3 Vectors index name within the bucket |
+| `region` | String | `"us-east-1"` | AWS region |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Amazon S3 Vectors Usage Example" >}}
+
+{{< tab "Java" >}}
+
+```java
+public class MyAgent extends Agent {
+
+    @EmbeddingModelConnection
+    public static ResourceDescriptor bedrockEmbeddingConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.BEDROCK_CONNECTION)
+                .addInitialArgument("region", "us-east-1")
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor bedrockEmbedding() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.BEDROCK_SETUP)
+                .addInitialArgument("connection", "bedrockEmbeddingConnection")
+                .addInitialArgument("dimensions", 1024)
+                .build();
+    }
+
+    @VectorStore
+    public static ResourceDescriptor s3VectorsStore() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.S3_VECTORS_VECTOR_STORE)
+                .addInitialArgument("embedding_model", "bedrockEmbedding")
+                .addInitialArgument("vector_bucket", "my-vector-bucket")
+                .addInitialArgument("vector_index", "my-index")
+                .addInitialArgument("region", "us-east-1")
+                .build();
+    }
+
+    ...
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 ### Chroma
 
 [Chroma](https://www.trychroma.com/home) is an open-source vector database that provides efficient storage and querying of embeddings with support for multiple deployment modes.
@@ -642,9 +840,86 @@ public static ResourceDescriptor vectorStore() {
 
 {{< /tabs >}}
 
+### Milvus
+
+[Milvus](https://milvus.io/) is an open-source vector database designed for high-dimensional vector search at scale.
+
+{{< hint info >}}
+Milvus is currently supported in the Java API only. To use Milvus from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. A Milvus server.
+
+#### MilvusVectorStore Parameters
+
+| Parameter                   | Type | Default                              | Description                                                                 |
+|-----------------------------|------|--------------------------------------|-----------------------------------------------------------------------------|
+| `embedding_model`           | str  | Required                             | Reference to embedding model resource name                                  |
+| `collection`                | str  | `"flink_agents_milvus_collection"`   | Default target Milvus collection name                                       |
+| `collection_name`           | str  | None                                 | Alias for `collection`                                                       |
+| `index`                     | str  | None                                 | Alias for `collection`, mainly for cross-provider compatibility              |
+| `id_field`                  | str  | `"id"`                               | Name of the primary key field                                                |
+| `content_field`             | str  | `"content"`                          | Name of the field storing document content                                   |
+| `metadata_field`            | str  | `"metadata"`                         | Name of the JSON field storing document metadata                             |
+| `vector_field`              | str  | `"embedding"`                        | Name of the FloatVector field used for vector search                         |
+| `dims`                      | int  | `768`                                | Vector dimensionality                                                        |
+| `id_max_length`             | int  | `65535`                              | Maximum length for the VarChar primary key field                             |
+| `content_max_length`        | int  | `65535`                              | Maximum length for the VarChar content field                                 |
+| `metric_type`               | str  | `"COSINE"`                           | Milvus metric type used by vector search                                     |
+| `index_type`                | str  | `"AUTOINDEX"`                        | Milvus vector index type                                                     |
+| `index_params`              | map  | `{}`                                 | Extra vector index parameters passed to Milvus                               |
+| `metadata_index_keys`       | list | `user_id`, `agent_id`, `run_id`, `actor_id`, `category` | Additional metadata JSON keys indexed with path indexes |
+| `metadata_index_cast_types` | map  | Default keys use `"VARCHAR"`         | Per-metadata-key JSON path index cast type overrides                         |
+| `num_shards`                | int  | `1`                                  | Number of Milvus shards for newly created collections                        |
+| `consistency_level`         | str  | `"BOUNDED"`                          | Milvus consistency level for collection creation, query, and search          |
+| `max_get_limit`             | int  | `10000`                              | Maximum number of documents returned by `get` when no limit is specified     |
+| `load_timeout_ms`           | long | `120000`                             | Timeout for loading collections                                              |
+| `uri`                       | str  | `"http://localhost:19530"`           | Milvus endpoint                                                              |
+| `host`                      | str  | `"localhost"`                        | Milvus host used when `uri` is not set                                       |
+| `port`                      | int  | `19530`                              | Milvus port used when `uri` is not set                                       |
+| `db_name`                   | str  | None                                 | Milvus database name                                                         |
+| `token`                     | str  | None                                 | Token for Milvus authentication                                              |
+| `username`                  | str  | None                                 | Username for basic authentication                                            |
+| `password`                  | str  | None                                 | Password for basic authentication                                            |
+| `enable_precheck`           | bool | `false`                              | Whether to enable Milvus client precheck                                     |
+
+{{< hint info >}}
+When creating a collection, MilvusVectorStore creates a primary-key field, content field, JSON metadata field, vector field, vector index, and JSON metadata indexes. The default metadata JSON path indexes cover common filter keys such as `user_id`, `agent_id`, `run_id`, `actor_id`, and `category`; add `metadata_index_keys` for application-specific filter keys.
+
+The default shard count is `1`. As a rough capacity-planning rule, use about one shard per 100 million vectors, and increase it for heavier write throughput.
+{{< /hint >}}
+
+#### Usage Example
+
+{{< tabs "Milvus Usage Example" >}}
+
+{{< tab "Java" >}}
+
+```java
+@VectorStore
+public static ResourceDescriptor vectorStore() {
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.MILVUS_VECTOR_STORE)
+            .addInitialArgument("embedding_model", "embeddingModel")
+            .addInitialArgument("uri", "http://localhost:19530")
+            .addInitialArgument("collection", "my_documents")
+            .addInitialArgument("dims", 1536)
+            .addInitialArgument("metric_type", "COSINE")
+            .addInitialArgument("index_type", "AUTOINDEX")
+            // Optional metadata JSON path indexes
+            // .addInitialArgument("metadata_index_keys", List.of("user_id", "agent_id", "run_id"))
+            .build();
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 ## Using Cross-Language Providers
 
-Flink Agents supports cross-language vector store integration, allowing you to use vector stores implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a vector store provider is only available in one language (e.g., Elasticsearch is currently Java-only, Chroma is currently Python-only).
+Flink Agents supports cross-language vector store integration, allowing you to use vector stores implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a vector store provider is only available in one language (e.g., Elasticsearch and Milvus are currently Java-only, Chroma is currently Python-only).
 
 {{< hint warning >}}
 **Limitations:**

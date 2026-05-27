@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import logging
 from typing import Any, Dict, List, Sequence
 
 from openai import NOT_GIVEN, AzureOpenAI
@@ -30,6 +31,12 @@ from flink_agents.integrations.chat_models.chat_model_utils import to_openai_too
 from flink_agents.integrations.chat_models.openai.openai_utils import (
     convert_from_openai_message,
     convert_to_openai_messages,
+)
+
+logger = logging.getLogger(__name__)
+
+_RESERVED_KWARG_KEYS = frozenset(
+    {"model", "model_of_azure_deployment", "temperature", "max_tokens", "logprobs"}
 )
 
 
@@ -139,6 +146,16 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             msg = "model is required for Azure OpenAI API calls"
             raise ValueError(msg)
         model_of_azure_deployment = kwargs.pop("model_of_azure_deployment", None)
+        additional_kwargs = kwargs.pop("additional_kwargs", None) or {}
+
+        collisions = _RESERVED_KWARG_KEYS & additional_kwargs.keys()
+        if collisions:
+            msg = (
+                f"additional_kwargs must not contain reserved typed fields: "
+                f"{sorted(collisions)}. Set these via the corresponding "
+                f"Setup field instead."
+            )
+            raise ValueError(msg)
 
         response = self.client.chat.completions.create(
             # Azure OpenAI APIs use Azure deployment name as the model parameter
@@ -146,6 +163,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             messages=convert_to_openai_messages(messages),
             tools=tool_specs or NOT_GIVEN,
             **kwargs,
+            **additional_kwargs,
         )
 
         extra_args = {}
@@ -167,12 +185,12 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
     ----------
     connection : str
         Name of the referenced connection. (Inherited from BaseChatModelSetup)
+    model : str
+        Name of OpenAI model deployment on Azure. (Inherited from BaseChatModelSetup)
     prompt : Optional[Union[Prompt, str]
         Prompt template or string for the model. (Inherited from BaseChatModelSetup)
     tools : Optional[List[str]]
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
-    model : str
-        Name of OpenAI model deployment on Azure.
     model_of_azure_deployment : Optional[str]
         The underlying model name of the Azure deployment (e.g., 'gpt-4').
         Used for token counting and cost calculation.
@@ -193,9 +211,6 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
         Additional kwargs for the Azure OpenAI API.
     """
 
-    model: str = Field(
-        description="Name of OpenAI model deployment on Azure.",
-    )
     model_of_azure_deployment: str | None = Field(
         default=None,
         description="The underlying model name of the Azure deployment (e.g., 'gpt-4', "
@@ -238,6 +253,12 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
     ) -> None:
         """Init method."""
         additional_kwargs = additional_kwargs or {}
+        if not model_of_azure_deployment:
+            logger.warning(
+                "model_of_azure_deployment is not set; token usage metrics will "
+                "not be recorded for this Azure OpenAI deployment '%s'.",
+                model,
+            )
         super().__init__(
             model=model,
             model_of_azure_deployment=model_of_azure_deployment,
@@ -260,6 +281,6 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
             base_kwargs["temperature"] = self.temperature
         if self.max_tokens is not None:
             base_kwargs["max_tokens"] = self.max_tokens
-
-        all_kwargs = {**base_kwargs, **self.additional_kwargs}
-        return all_kwargs
+        if self.additional_kwargs:
+            base_kwargs["additional_kwargs"] = self.additional_kwargs
+        return base_kwargs

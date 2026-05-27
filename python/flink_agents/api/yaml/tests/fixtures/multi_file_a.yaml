@@ -1,0 +1,10 @@
+agents:
+  - name: file_a_agent
+    actions:
+      - name: increment
+        function: flink_agents.api.yaml.tests.fixtures.loader_targets:increment
+        listen_to: [input]
+chat_model_connections:
+  - name: conn_from_a
+    clazz: ollama
+    base_url: http://a

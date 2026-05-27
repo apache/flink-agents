@@ -40,7 +40,7 @@ public class ContextRetrievalResponseEvent extends Event {
         super(EVENT_TYPE);
         setAttr("request_id", requestId);
         setAttr("query", query);
-        setAttr("documents", documents);
+        setAttr("documents", new ArrayList<>(documents));
     }
 
     public ContextRetrievalResponseEvent(UUID id, Map<String, Object> attributes) {
