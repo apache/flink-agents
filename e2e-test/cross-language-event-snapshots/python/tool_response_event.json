@@ -1,0 +1,13 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "type": "_tool_response_event",
+  "attributes": {
+    "request_id": "00000000-0000-0000-0000-000000000002",
+    "responses": {
+      "call_aaaa": "pong"
+    },
+    "external_ids": {
+      "call_aaaa": null
+    }
+  }
+}

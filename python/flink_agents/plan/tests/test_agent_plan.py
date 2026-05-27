@@ -36,6 +36,7 @@ from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelSetup,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.function import JavaFunction
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.vector_stores.vector_store import (
@@ -82,6 +83,47 @@ def test_to_agent_invalid_signature() -> None:
     agent = InvalidAgent()
     with pytest.raises(TypeError):
         AgentPlan.from_agent(agent, AgentConfiguration())
+
+
+def test_builtin_actions_are_python_native_after_compile() -> None:
+    agent_plan = AgentPlan.from_agent(AgentForTest(), AgentConfiguration())
+
+    for name in ("chat_model_action", "tool_call_action", "context_retrieval_action"):
+        action = agent_plan.actions[name]
+        assert isinstance(action.exec, PythonFunction)
+
+
+_JAVA_HANDLER_QUALNAME = (
+    "org.apache.flink.agents.runtime.operator."
+    "CrossLanguageActionRuntimeTest$Handlers"
+)
+
+
+class AgentWithCrossLanguageDecoratedAction(Agent):
+    @action(
+        InputEvent.EVENT_TYPE,
+        target=JavaFunction(
+            qualname=_JAVA_HANDLER_QUALNAME,
+            method_name="handleInput",
+            parameter_types=[
+                "org.apache.flink.agents.api.Event",
+                "org.apache.flink.agents.api.context.RunnerContext",
+            ],
+        ),
+    )
+    @staticmethod
+    def handle(event: Event, ctx: RunnerContext) -> None:
+        raise NotImplementedError("cross-language stub")
+
+
+def test_decorated_action_with_target_compiles_to_plan_java_function() -> None:
+    plan = AgentPlan.from_agent(
+        AgentWithCrossLanguageDecoratedAction(), AgentConfiguration()
+    )
+    action = plan.actions["handle"]
+    assert action.exec.qualname == _JAVA_HANDLER_QUALNAME
+    assert action.exec.method_name == "handleInput"
+    assert action.listen_event_types == [InputEvent.EVENT_TYPE]
 
 
 class MyEvent(Event):

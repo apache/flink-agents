@@ -1,0 +1,78 @@
+{
+  "actions": {
+    "handle": {
+      "name": "handle",
+      "exec": {
+        "func_type": "JavaFunction",
+        "qualname": "com.example.Handlers",
+        "method_name": "handle",
+        "parameter_types": [
+          "org.apache.flink.agents.api.Event",
+          "org.apache.flink.agents.api.context.RunnerContext"
+        ]
+      },
+      "listen_event_types": [
+        "_input_event"
+      ],
+      "config": null
+    },
+    "chat_model_action": {
+      "name": "chat_model_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.chat_model_action",
+        "qualname": "process_chat_request_or_tool_response"
+      },
+      "listen_event_types": [
+        "_chat_request_event",
+        "_tool_response_event"
+      ],
+      "config": null
+    },
+    "tool_call_action": {
+      "name": "tool_call_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.tool_call_action",
+        "qualname": "process_tool_request"
+      },
+      "listen_event_types": [
+        "_tool_request_event"
+      ],
+      "config": null
+    },
+    "context_retrieval_action": {
+      "name": "context_retrieval_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.context_retrieval_action",
+        "qualname": "process_context_retrieval_request"
+      },
+      "listen_event_types": [
+        "_context_retrieval_request_event"
+      ],
+      "config": null
+    }
+  },
+  "actions_by_event": {
+    "_input_event": [
+      "handle"
+    ],
+    "_chat_request_event": [
+      "chat_model_action"
+    ],
+    "_tool_response_event": [
+      "chat_model_action"
+    ],
+    "_tool_request_event": [
+      "tool_call_action"
+    ],
+    "_context_retrieval_request_event": [
+      "context_retrieval_action"
+    ]
+  },
+  "resource_providers": {},
+  "config": {
+    "conf_data": {}
+  }
+}

@@ -19,6 +19,7 @@ import pytest
 
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.function import JavaFunction
 from flink_agents.api.runner_context import RunnerContext
 
 
@@ -90,3 +91,41 @@ def test_action_decorator_rejects_invalid_types() -> None:
         @action(42)  # type: ignore[arg-type]
         def bad_handler(event: Event, ctx: RunnerContext) -> None:
             pass
+
+
+def _java_target() -> JavaFunction:
+    return JavaFunction(
+        qualname="com.example.Handlers",
+        method_name="handle",
+        parameter_types=[
+            "org.apache.flink.agents.api.Event",
+            "org.apache.flink.agents.api.context.RunnerContext",
+        ],
+    )
+
+
+def test_action_decorator_with_cross_language_target() -> None:
+    target = _java_target()
+
+    @action(InputEvent.EVENT_TYPE, target=target)
+    def stub(event: Event, ctx: RunnerContext) -> None:
+        raise NotImplementedError("cross-language stub")
+
+    assert stub._listen_events == (InputEvent.EVENT_TYPE,)
+    assert stub._target is target
+
+
+def test_action_decorator_rejects_non_function_target() -> None:
+    with pytest.raises(TypeError, match="api-layer Function descriptor"):
+
+        @action(InputEvent.EVENT_TYPE, target="not a function")  # type: ignore[arg-type]
+        def stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_action_decorator_without_target_does_not_set_attribute() -> None:
+    @action(InputEvent.EVENT_TYPE)
+    def regular(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+    assert not hasattr(regular, "_target")
