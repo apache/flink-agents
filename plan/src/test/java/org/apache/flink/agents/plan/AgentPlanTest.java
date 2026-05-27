@@ -290,8 +290,7 @@ public class AgentPlanTest {
 
     /** Plain {@code @Action} (no {@code target}) compiles to a native Java exec. */
     public static class AgentWithNativeJavaAction extends Agent {
-        @org.apache.flink.agents.api.annotation.Action(
-                listenEventTypes = {InputEvent.EVENT_TYPE})
+        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
         public static void handle(Event event, RunnerContext ctx) {
             // intentionally empty
         }

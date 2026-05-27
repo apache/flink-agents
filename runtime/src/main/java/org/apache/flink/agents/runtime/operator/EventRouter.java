@@ -203,9 +203,7 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     OUT getOutputFromOutputEvent(Event event, PythonActionExecutor pythonActionExecutor) {
         checkState(EventUtil.isOutputEvent(event));
         OutputEvent typedEvent =
-                (event instanceof OutputEvent)
-                        ? (OutputEvent) event
-                        : OutputEvent.fromEvent(event);
+                (event instanceof OutputEvent) ? (OutputEvent) event : OutputEvent.fromEvent(event);
         if (inputIsJava) {
             return (OUT) typedEvent.getOutput();
         }

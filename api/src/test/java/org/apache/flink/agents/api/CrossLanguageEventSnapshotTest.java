@@ -58,8 +58,10 @@ class CrossLanguageEventSnapshotTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static final UUID FIXED_EVENT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
-    private static final UUID FIXED_REQUEST_ID = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    private static final UUID FIXED_EVENT_ID =
+            UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final UUID FIXED_REQUEST_ID =
+            UUID.fromString("00000000-0000-0000-0000-000000000002");
     private static final String FIXED_TOOL_CALL_ID = "call_aaaa";
     private static final long FIXED_TIMESTAMP = 1_700_000_000_000L;
 
@@ -91,13 +93,17 @@ class CrossLanguageEventSnapshotTest {
         Path committed = snapshotDir.resolve("java/" + fileName);
         assumeTrue(
                 Files.exists(committed),
-                "Java snapshot " + fileName + " not committed; run with -Dregenerate.snapshots=true first.");
+                "Java snapshot "
+                        + fileName
+                        + " not committed; run with -Dregenerate.snapshots=true first.");
         JsonNode expected = MAPPER.readTree(Files.readString(committed));
 
         assertEquals(
                 expected,
                 actual,
-                "Java serialization of " + fileName + " drifted from committed snapshot; if intentional, regenerate.");
+                "Java serialization of "
+                        + fileName
+                        + " drifted from committed snapshot; if intentional, regenerate.");
     }
 
     private static Event readPythonSnapshot(String fileName) throws Exception {
@@ -132,7 +138,8 @@ class CrossLanguageEventSnapshotTest {
         Event base = readPythonSnapshot("input_event.json");
         InputEvent typed = InputEvent.fromEvent(base);
 
-        assertEquals(FIXED_EVENT_ID, typed.getId(), "ID lost when deserializing Python InputEvent.");
+        assertEquals(
+                FIXED_EVENT_ID, typed.getId(), "ID lost when deserializing Python InputEvent.");
         assertEquals(InputEvent.EVENT_TYPE, typed.getType());
         assertEquals("hello", typed.getInput(), "InputEvent.input mismatch.");
     }
@@ -161,7 +168,8 @@ class CrossLanguageEventSnapshotTest {
         Event base = readPythonSnapshot("output_event.json");
         OutputEvent typed = OutputEvent.fromEvent(base);
 
-        assertEquals(FIXED_EVENT_ID, typed.getId(), "ID lost when deserializing Python OutputEvent.");
+        assertEquals(
+                FIXED_EVENT_ID, typed.getId(), "ID lost when deserializing Python OutputEvent.");
         assertEquals(OutputEvent.EVENT_TYPE, typed.getType());
         assertEquals("world", typed.getOutput(), "OutputEvent.output mismatch.");
     }
@@ -203,12 +211,14 @@ class CrossLanguageEventSnapshotTest {
 
     @Test
     void chatRequestOutputSchemaWireFormatIsJavaShaped() throws Exception {
-        OutputSchema schema = new OutputSchema(
-                new RowTypeInfo(
-                        new TypeInformation[] {BasicTypeInfo.STRING_TYPE_INFO},
-                        new String[] {"name"}));
-        ChatRequestEvent event = new ChatRequestEvent(
-                "test-model", List.of(new ChatMessage(MessageRole.USER, "hi")), schema);
+        OutputSchema schema =
+                new OutputSchema(
+                        new RowTypeInfo(
+                                new TypeInformation[] {BasicTypeInfo.STRING_TYPE_INFO},
+                                new String[] {"name"}));
+        ChatRequestEvent event =
+                new ChatRequestEvent(
+                        "test-model", List.of(new ChatMessage(MessageRole.USER, "hi")), schema);
         String json = MAPPER.writeValueAsString(event);
 
         assertTrue(json.contains("\"fieldNames\""), "Java wire format uses `fieldNames`.");
@@ -378,15 +388,13 @@ class CrossLanguageEventSnapshotTest {
     void regenerateContextRetrievalResponseEventJavaSnapshot() throws Exception {
         assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
         writeJavaSnapshot(
-                "context_retrieval_response_event.json",
-                buildContextRetrievalResponseEvent());
+                "context_retrieval_response_event.json", buildContextRetrievalResponseEvent());
     }
 
     @Test
     void contextRetrievalResponseEventJavaSnapshotIsStable() throws Exception {
         assertJavaSnapshotStable(
-                "context_retrieval_response_event.json",
-                buildContextRetrievalResponseEvent());
+                "context_retrieval_response_event.json", buildContextRetrievalResponseEvent());
     }
 
     @Test
@@ -470,8 +478,6 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void snapshotDirectoryExists() {
         assertNotNull(snapshotDir);
-        assertTrue(
-                Files.isDirectory(snapshotDir),
-                "Expected snapshot directory at " + snapshotDir);
+        assertTrue(Files.isDirectory(snapshotDir), "Expected snapshot directory at " + snapshotDir);
     }
 }

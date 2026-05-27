@@ -98,7 +98,9 @@ public class CrossLanguageActionRuntimeTest {
         assertThat(factory).isNotNull();
     }
 
-    /** Wire format Python emits via {@code AgentPlan.model_dump_json}; pinned symmetric in Layer B. */
+    /**
+     * Wire format Python emits via {@code AgentPlan.model_dump_json}; pinned symmetric in Layer B.
+     */
     private static String pythonShapedPlanJson() {
         String qualName = Handlers.class.getName();
         return "{"

@@ -228,8 +228,7 @@ public class AgentPlan implements Serializable {
         // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
         for (Method method : agentClass.getDeclaredMethods()) {
-            if (!method.isAnnotationPresent(
-                    org.apache.flink.agents.api.annotation.Action.class)) {
+            if (!method.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
                 continue;
             }
             org.apache.flink.agents.api.annotation.Action actionAnnotation =

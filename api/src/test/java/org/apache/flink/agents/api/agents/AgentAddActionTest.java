@@ -102,8 +102,7 @@ class AgentAddActionTest {
                 new JavaFunction("com.example.X", "m", java.util.List.of("java.lang.String"));
         agent.addAction("act", new String[] {"_input_event"}, jf, null);
 
-        assertThatThrownBy(
-                        () -> agent.addAction("act", new String[] {"_input_event"}, jf, null))
+        assertThatThrownBy(() -> agent.addAction("act", new String[] {"_input_event"}, jf, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("act");
     }

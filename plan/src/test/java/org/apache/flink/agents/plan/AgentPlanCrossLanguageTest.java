@@ -42,10 +42,12 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * <p>Mirrors {@code test_agent_plan_cross_language.py}. Confirms:
  *
  * <ul>
- *   <li>api → plan promotion in {@link AgentPlan#toPlanFunction(org.apache.flink.agents.api.function.Function)}
- *       handles both {@code PythonFunction} (cross-language) and {@code JavaFunction} (same-language)
+ *   <li>api → plan promotion in {@link
+ *       AgentPlan#toPlanFunction(org.apache.flink.agents.api.function.Function)} handles both
+ *       {@code PythonFunction} (cross-language) and {@code JavaFunction} (same-language)
  *       descriptors.
- *   <li>The compiled plan serializes to the expected wire JSON (snake_case action {@code exec} block).
+ *   <li>The compiled plan serializes to the expected wire JSON (snake_case action {@code exec}
+ *       block).
  *   <li>JSON round-trips back into a structurally equivalent plan.
  *   <li>Java can deserialize Python's plan snapshot referencing a cross-language Java action body.
  * </ul>
@@ -95,10 +97,7 @@ class AgentPlanCrossLanguageTest {
     private static AgentPlan compileWithPythonAction() throws Exception {
         Agent agent = new Agent();
         agent.addAction(
-                "handle",
-                new String[] {InputEvent.EVENT_TYPE},
-                pythonFunctionDescriptor(),
-                null);
+                "handle", new String[] {InputEvent.EVENT_TYPE}, pythonFunctionDescriptor(), null);
         return new AgentPlan(agent);
     }
 
@@ -146,9 +145,7 @@ class AgentPlanCrossLanguageTest {
         Agent agent = new Agent();
         org.apache.flink.agents.api.function.JavaFunction fake =
                 new org.apache.flink.agents.api.function.JavaFunction(
-                        "com.does.not.Exist",
-                        "ghost",
-                        List.of("java.lang.String"));
+                        "com.does.not.Exist", "ghost", List.of("java.lang.String"));
         agent.addAction("act", new String[] {InputEvent.EVENT_TYPE}, fake, null);
 
         Throwable thrown = null;
