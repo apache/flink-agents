@@ -291,6 +291,10 @@ class ResourceName:
             OPENAI_RESPONSES_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIResponsesModelConnection"
             OPENAI_RESPONSES_SETUP = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIResponsesModelSetup"
 
+            # Azure OpenAI
+            AZURE_OPENAI_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.openai.AzureOpenAIChatModelConnection"
+            AZURE_OPENAI_SETUP = "org.apache.flink.agents.integrations.chatmodels.openai.AzureOpenAIChatModelSetup"
+
     class EmbeddingModel:
         """EmbeddingModel resource names."""
 

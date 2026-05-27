@@ -127,3 +127,42 @@ def test_model_field_roundtrip() -> None:
     setup = AzureOpenAIChatModelSetup(connection="conn", model="test-deployment")
     restored = AzureOpenAIChatModelSetup.model_validate(setup.model_dump())
     assert restored.model == "test-deployment"
+
+
+def test_model_kwargs_nests_additional_kwargs() -> None:
+    """`additional_kwargs` is nested under its own key, not flattened.
+
+    Flattening would allow a colliding key (e.g. `temperature`) in
+    `additional_kwargs` to silently overwrite the field-validated value.
+    """
+    setup = AzureOpenAIChatModelSetup(
+        connection="conn",
+        model="my-deployment",
+        additional_kwargs={"seed": 42, "user": "user-123"},
+    )
+    kwargs = setup.model_kwargs
+    assert kwargs["model"] == "my-deployment"
+    assert kwargs["additional_kwargs"] == {"seed": 42, "user": "user-123"}
+    assert "seed" not in kwargs
+    assert "user" not in kwargs
+
+
+def test_chat_rejects_reserved_key_in_additional_kwargs() -> None:
+    """`additional_kwargs` containing a reserved typed key must raise.
+
+    Without this check, `**kwargs, **additional_kwargs` would raise an opaque
+    TypeError, and (worse) leaves the door open for callers to bypass the
+    field-level validation on `temperature`, `max_tokens`, etc.
+    """
+    connection = AzureOpenAIChatModelConnection(
+        api_key="fake-key",
+        azure_endpoint="https://example.openai.azure.com",
+        api_version="2024-02-01",
+    )
+    with pytest.raises(ValueError, match="additional_kwargs"):
+        connection.chat(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            model="my-deployment",
+            temperature=0.3,
+            additional_kwargs={"temperature": 5.0},
+        )
