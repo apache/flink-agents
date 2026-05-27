@@ -247,6 +247,68 @@ public class AgentPlanTest {
     }
 
     @Test
+    public void testBuiltInActionsAreJavaNativeAfterCompile() throws Exception {
+        AgentPlan agentPlan = new AgentPlan(new Agent() {});
+
+        for (String name :
+                List.of("chat_model_action", "tool_call_action", "context_retrieval_action")) {
+            Action action = agentPlan.getActions().get(name);
+            assertThat(action).isNotNull();
+            assertThat(action.getExec()).isInstanceOf(JavaFunction.class);
+        }
+    }
+
+    /** Cross-language action via {@code @Action(target = @PythonFunction(...))}. */
+    public static class AgentWithCrossLanguageAction extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(
+                listenEventTypes = {InputEvent.EVENT_TYPE},
+                target =
+                        @org.apache.flink.agents.api.annotation.PythonFunction(
+                                module = "my_pkg.handlers",
+                                qualname = "handle_input"))
+        public static void handle(Event event, RunnerContext ctx) {
+            throw new UnsupportedOperationException("cross-language stub");
+        }
+    }
+
+    @Test
+    public void testActionWithPythonTargetCompilesToPythonFunctionExec() throws Exception {
+        AgentPlan plan = new AgentPlan(new AgentWithCrossLanguageAction());
+
+        Action action = plan.getActions().get("handle");
+        assertThat(action).isNotNull();
+        assertThat(action.getExec())
+                .as("non-empty target.module() must compile to a plan PythonFunction exec")
+                .isInstanceOf(org.apache.flink.agents.plan.PythonFunction.class);
+
+        org.apache.flink.agents.plan.PythonFunction exec =
+                (org.apache.flink.agents.plan.PythonFunction) action.getExec();
+        assertThat(exec.getModule()).isEqualTo("my_pkg.handlers");
+        assertThat(exec.getQualName()).isEqualTo("handle_input");
+        assertThat(action.getListenEventTypes()).containsExactly(InputEvent.EVENT_TYPE);
+    }
+
+    /** Plain {@code @Action} (no {@code target}) compiles to a native Java exec. */
+    public static class AgentWithNativeJavaAction extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(
+                listenEventTypes = {InputEvent.EVENT_TYPE})
+        public static void handle(Event event, RunnerContext ctx) {
+            // intentionally empty
+        }
+    }
+
+    @Test
+    public void testActionWithEmptyTargetCompilesToJavaFunctionExec() throws Exception {
+        AgentPlan plan = new AgentPlan(new AgentWithNativeJavaAction());
+
+        Action action = plan.getActions().get("handle");
+        assertThat(action).isNotNull();
+        assertThat(action.getExec())
+                .as("empty target.module() must compile to a plan JavaFunction exec")
+                .isInstanceOf(JavaFunction.class);
+    }
+
+    @Test
     public void testAgentPlanResourceProviders() throws Exception {
         // Test that AgentPlan initializes resource providers correctly
         TestAgent agent = new TestAgent();
