@@ -61,7 +61,9 @@ def test_python_agent_dispatches_java_action_body(tmp_path: Path) -> None:
     env.set_parallelism(1)
     env.add_jars(f"file://{_TEST_JAR}")
 
-    input_stream = env.from_collection([1, 2, 3, 4, 5], type_info=Types.LONG())
+    input_stream = env.from_collection([1, 2, 3, 4, 5], type_info=Types.LONG()).map(
+        lambda x: x
+    )
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
     output_datastream = (

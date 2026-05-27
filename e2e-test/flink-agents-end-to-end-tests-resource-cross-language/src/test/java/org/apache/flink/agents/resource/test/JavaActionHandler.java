@@ -31,7 +31,7 @@ public final class JavaActionHandler {
     private JavaActionHandler() {}
 
     public static void multiplyByTwo(Event event, RunnerContext ctx) {
-        long value = (Long) InputEvent.fromEvent(event).getInput();
+        long value = ((Number) InputEvent.fromEvent(event).getInput()).longValue();
         ctx.sendEvent(new OutputEvent(value * 2));
     }
 }
