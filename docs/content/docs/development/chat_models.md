@@ -1,6 +1,6 @@
 ---
 title: Chat Models
-weight: 3
+weight: 4
 type: docs
 ---
 <!--

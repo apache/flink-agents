@@ -1,0 +1,65 @@
+agents:
+  - name: review_analysis_agent
+    description: |
+      YAML-declared review analysis agent. Reuses the static methods of
+      ReviewAnalysisAgent from the workflow_agent quickstart as actions
+      and tool, but wires everything together through this YAML file
+      instead of class-level decorators.
+
+    actions:
+      - name: process_input
+        function: flink_agents.examples.quickstart.agents.review_analysis_agent:ReviewAnalysisAgent.process_input
+        listen_to: [input]
+      - name: process_chat_response
+        function: flink_agents.examples.quickstart.agents.review_analysis_agent:ReviewAnalysisAgent.process_chat_response
+        listen_to: [chat_response]
+
+    chat_model_connections:
+      - name: ollama_server
+        clazz: ollama
+        request_timeout: 120
+
+    prompts:
+      - name: review_analysis_prompt
+        messages:
+          - role: system
+            content: |
+              Analyze the user review and product information to determine a
+              satisfaction score (1-5) and potential reasons for dissatisfaction.
+
+              Example input format:
+              {
+                  "id": "12345",
+                  "review": "The headphones broke after one week. Very poor quality."
+              }
+
+              Ensure your response can be parsed by Python JSON, using this
+              format as an example:
+              {
+               "id": "12345",
+               "score": 1,
+               "reasons": ["poor quality"]
+              }
+
+              If the review mentions shipping dissatisfaction, first call
+              notify_shipping_manager, then return the JSON above with no
+              mention of the tool call.
+          - role: user
+            content: |
+              "input":
+              {input}
+
+    # Action ``process_input`` sends ``ChatRequestEvent(model="review_analysis_model", ...)``,
+    # so the chat-model setup MUST be named ``review_analysis_model``.
+    chat_model_setups:
+      - name: review_analysis_model
+        clazz: ollama
+        connection: ollama_server
+        model: qwen3:8b
+        prompt: review_analysis_prompt
+        tools: [notify_shipping_manager]
+        extract_reasoning: true
+
+    tools:
+      - name: notify_shipping_manager
+        function: flink_agents.examples.quickstart.agents.review_analysis_agent:ReviewAnalysisAgent.notify_shipping_manager
