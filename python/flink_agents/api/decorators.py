@@ -15,10 +15,15 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Callable, Type
+from typing import Callable, Optional, Type
+
+from flink_agents.api.function import Function
 
 
-def action(*listen_events: str) -> Callable:
+def action(
+    *listen_events: str,
+    target: Optional[Function] = None,
+) -> Callable:
     """Decorator for marking a function as an agent action.
 
     Each argument is a type-identifier string that this action responds to.
@@ -27,6 +32,10 @@ def action(*listen_events: str) -> Callable:
     ----------
     listen_events : str
         Type-identifier strings that this action responds to.
+    target : Function, optional
+        Cross-language function descriptor dispatched instead of the
+        decorated body. The body becomes a stub — raise
+        ``NotImplementedError`` so direct calls fail loud.
 
     Returns:
     -------
@@ -37,6 +46,8 @@ def action(*listen_events: str) -> Callable:
     ------
     AssertionError
         If no events are provided or if an argument is not a string.
+    TypeError
+        If ``target`` is provided but is not a :class:`Function` descriptor.
     """
     assert len(listen_events) > 0, (
         "action must have at least one event type to listen to"
@@ -47,8 +58,17 @@ def action(*listen_events: str) -> Callable:
             f"action must listen to string type identifiers, got {evt!r}"
         )
 
+    if target is not None and not isinstance(target, Function):
+        msg = (
+            f"action(target=...) must be an api-layer Function descriptor, "
+            f"got {type(target).__name__}"
+        )
+        raise TypeError(msg)
+
     def decorator(func: Callable) -> Callable:
         func._listen_events = listen_events
+        if target is not None:
+            func._target = target
         return func
 
     return decorator

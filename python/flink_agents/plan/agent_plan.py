@@ -242,10 +242,15 @@ def _get_actions(agent: Agent) -> List[Action]:
     actions = []
     for name, value in agent.__class__.__dict__.items():
         if isinstance(value, staticmethod) and hasattr(value, "_listen_events"):
+            exec_ = (
+                _to_plan_function(value._target)
+                if hasattr(value, "_target")
+                else PythonFunction.from_callable(value.__func__)
+            )
             actions.append(
                 Action(
                     name=name,
-                    exec=PythonFunction.from_callable(value.__func__),
+                    exec=exec_,
                     listen_event_types=[
                         _resolve_event_type(et)
                         for et in value._listen_events
@@ -253,10 +258,15 @@ def _get_actions(agent: Agent) -> List[Action]:
                 )
             )
         elif callable(value) and hasattr(value, "_listen_events"):
+            exec_ = (
+                _to_plan_function(value._target)
+                if hasattr(value, "_target")
+                else PythonFunction.from_callable(value)
+            )
             actions.append(
                 Action(
                     name=name,
-                    exec=PythonFunction.from_callable(value),
+                    exec=exec_,
                     listen_event_types=[
                         _resolve_event_type(et)
                         for et in value._listen_events
