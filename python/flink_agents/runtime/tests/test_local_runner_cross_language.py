@@ -76,7 +76,7 @@ class _RecordingJavaAdapter:
         self.action_calls: List[Tuple[str, str, List[str], list]] = []
         self.tool_calls: List[Tuple[str, str, List[str], dict]] = []
 
-    def invokeJavaAction(  # noqa: N802
+    def invokeJavaAction(
         self,
         qualname: str,
         method_name: str,
@@ -88,7 +88,7 @@ class _RecordingJavaAdapter:
         )
         return None
 
-    def invokeJavaTool(  # noqa: N802
+    def invokeJavaTool(
         self,
         qualname: str,
         method_name: str,

@@ -27,7 +27,6 @@ from flink_agents.api.runner_context import RunnerContext
 
 def _dummy_action(event: Event, ctx: RunnerContext) -> None:
     """Plain Python callable used as an action body."""
-    pass
 
 
 def _make_java_function() -> JavaFunction:

@@ -25,14 +25,21 @@ import pytest
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.events.event import Event, InputEvent
-from flink_agents.api.function import JavaFunction as ApiJavaFunction
-from flink_agents.api.function import PythonFunction as ApiPythonFunction
+from flink_agents.api.function import (
+    JavaFunction as ApiJavaFunction,
+)
+from flink_agents.api.function import (
+    PythonFunction as ApiPythonFunction,
+)
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
-from flink_agents.plan.function import JavaFunction as PlanJavaFunction
-from flink_agents.plan.function import PythonFunction as PlanPythonFunction
-
+from flink_agents.plan.function import (
+    JavaFunction as PlanJavaFunction,
+)
+from flink_agents.plan.function import (
+    PythonFunction as PlanPythonFunction,
+)
 
 # python/flink_agents/plan/tests/test_*.py -> repo root is parents[4].
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -50,7 +57,6 @@ def _plan_dump_json(plan: AgentPlan) -> str:
 
 def _dummy_action(event: Event, ctx: RunnerContext) -> None:
     """Plain Python callable referenced by Python-target plans."""
-    pass
 
 
 def _make_java_function_descriptor() -> ApiJavaFunction:

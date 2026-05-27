@@ -109,7 +109,8 @@ def test_action_decorator_with_cross_language_target() -> None:
 
     @action(InputEvent.EVENT_TYPE, target=target)
     def stub(event: Event, ctx: RunnerContext) -> None:
-        raise NotImplementedError("cross-language stub")
+        msg = "cross-language stub"
+        raise NotImplementedError(msg)
 
     assert stub._listen_events == (InputEvent.EVENT_TYPE,)
     assert stub._target is target

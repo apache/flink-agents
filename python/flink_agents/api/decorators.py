@@ -15,14 +15,14 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Callable, Optional, Type
+from typing import Callable, Type
 
 from flink_agents.api.function import Function
 
 
 def action(
     *listen_events: str,
-    target: Optional[Function] = None,
+    target: Function | None = None,
 ) -> Callable:
     """Decorator for marking a function as an agent action.
 

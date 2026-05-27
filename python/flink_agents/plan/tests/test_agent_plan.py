@@ -113,7 +113,8 @@ class AgentWithCrossLanguageDecoratedAction(Agent):
     )
     @staticmethod
     def handle(event: Event, ctx: RunnerContext) -> None:
-        raise NotImplementedError("cross-language stub")
+        msg = "cross-language stub"
+        raise NotImplementedError(msg)
 
 
 def test_decorated_action_with_target_compiles_to_plan_java_function() -> None:
