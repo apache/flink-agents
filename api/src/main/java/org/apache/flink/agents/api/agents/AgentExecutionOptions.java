@@ -19,7 +19,6 @@
 package org.apache.flink.agents.api.agents;
 
 import org.apache.flink.agents.api.configuration.ConfigOption;
-import org.apache.flink.api.common.state.StateTtlConfig;
 
 public class AgentExecutionOptions {
     public static final ConfigOption<Agent.ErrorHandlingStrategy> ERROR_HANDLING_STRATEGY =
@@ -52,17 +51,17 @@ public class AgentExecutionOptions {
     public static final ConfigOption<Long> SHORT_TERM_MEMORY_STATE_TTL_MS =
             new ConfigOption<>("short-term-memory.state-ttl.ms", Long.class, 0L);
 
-    public static final ConfigOption<StateTtlConfig.UpdateType>
+    public static final ConfigOption<ShortTermMemoryTtlUpdate>
             SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE =
                     new ConfigOption<>(
                             "short-term-memory.state-ttl.update-type",
-                            StateTtlConfig.UpdateType.class,
-                            StateTtlConfig.UpdateType.OnReadAndWrite);
+                            ShortTermMemoryTtlUpdate.class,
+                            ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE);
 
-    public static final ConfigOption<StateTtlConfig.StateVisibility>
+    public static final ConfigOption<ShortTermMemoryTtlVisibility>
             SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY =
                     new ConfigOption<>(
                             "short-term-memory.state-ttl.visibility",
-                            StateTtlConfig.StateVisibility.class,
-                            StateTtlConfig.StateVisibility.NeverReturnExpired);
+                            ShortTermMemoryTtlVisibility.class,
+                            ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED);
 }

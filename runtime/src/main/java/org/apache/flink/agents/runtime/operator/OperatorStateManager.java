@@ -20,6 +20,8 @@ package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.agents.ShortTermMemoryTtlUpdate;
+import org.apache.flink.agents.api.agents.ShortTermMemoryTtlVisibility;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.api.common.state.ListState;
@@ -143,23 +145,47 @@ class OperatorStateManager {
             return;
         }
 
-        StateTtlConfig.UpdateType updateType =
+        ShortTermMemoryTtlUpdate updateType =
                 agentPlan
                         .getConfig()
                         .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE);
 
-        StateTtlConfig.StateVisibility stateVisibility =
+        ShortTermMemoryTtlVisibility stateVisibility =
                 agentPlan
                         .getConfig()
                         .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY);
 
         StateTtlConfig ttlConfig =
                 StateTtlConfig.newBuilder(Duration.ofMillis(ttlMs))
-                        .setUpdateType(updateType)
-                        .setStateVisibility(stateVisibility)
+                        .setUpdateType(toFlinkUpdateType(updateType))
+                        .setStateVisibility(toFlinkStateVisibility(stateVisibility))
                         .cleanupFullSnapshot()
                         .build();
         descriptor.enableTimeToLive(ttlConfig);
+    }
+
+    private StateTtlConfig.UpdateType toFlinkUpdateType(ShortTermMemoryTtlUpdate updateType) {
+        switch (updateType) {
+            case ON_CREATE_AND_WRITE:
+                return StateTtlConfig.UpdateType.OnCreateAndWrite;
+            case ON_READ_AND_WRITE:
+                return StateTtlConfig.UpdateType.OnReadAndWrite;
+            default:
+                throw new IllegalArgumentException("Unsupported TTL update type: " + updateType);
+        }
+    }
+
+    private StateTtlConfig.StateVisibility toFlinkStateVisibility(
+            ShortTermMemoryTtlVisibility stateVisibility) {
+        switch (stateVisibility) {
+            case NEVER_RETURN_EXPIRED:
+                return StateTtlConfig.StateVisibility.NeverReturnExpired;
+            case RETURN_EXPIRED_IF_NOT_CLEANED_UP:
+                return StateTtlConfig.StateVisibility.ReturnExpiredIfNotCleanedUp;
+            default:
+                throw new IllegalArgumentException(
+                        "Unsupported TTL state visibility: " + stateVisibility);
+        }
     }
 
     /**

@@ -22,11 +22,12 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.agents.ShortTermMemoryTtlUpdate;
+import org.apache.flink.agents.api.agents.ShortTermMemoryTtlVisibility;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentConfiguration;
-import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.junit.jupiter.api.Test;
@@ -85,32 +86,59 @@ class ShortTermMemoryTTLIntegrationTest {
 
     @Test
     void testTTLConfigurationNotApplied() throws Exception {
-        List<String> results = runScenario(1000L, 0L);
+        List<String> results = runScenario(1000L, 0L, true, true);
+
+        assertEquals(List.of("event1|NEW", "event2|NEW", "event1|EXISTING"), results);
+    }
+
+    @Test
+    void testTTLConfigurationDisabledWithZeroTtl() throws Exception {
+        List<String> results = runScenario(0L, 2000L, true, true);
+
+        assertEquals(List.of("event1|NEW", "event2|NEW", "event1|EXISTING"), results);
+    }
+
+    @Test
+    void testTTLConfigurationDisabledByDefault() throws Exception {
+        List<String> results = runScenario(0L, 2000L, false, true);
 
         assertEquals(List.of("event1|NEW", "event2|NEW", "event1|EXISTING"), results);
     }
 
     @Test
     void testTTLConfigurationApplied() throws Exception {
-        List<String> results = runScenario(1000L, 2000L);
+        List<String> results = runScenario(1000L, 2000L, true, true);
 
         assertEquals(List.of("event1|NEW", "event2|NEW", "event1|NEW"), results);
     }
 
-    private static List<String> runScenario(long ttlMs, long sleepMs) throws Exception {
+    @Test
+    void testTTLConfigurationAppliedWithDefaultUpdateTypeAndVisibility() throws Exception {
+        List<String> results = runScenario(1000L, 2000L, true, false);
+
+        assertEquals(List.of("event1|NEW", "event2|NEW", "event1|NEW"), results);
+    }
+
+    private static List<String> runScenario(
+            long ttlMs, long sleepMs, boolean configureTtlMs, boolean configureTtlOptions)
+            throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
         AgentsExecutionEnvironment agentEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
         AgentConfiguration agentsConfig = (AgentConfiguration) agentEnv.getConfig();
-        agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, ttlMs);
-        agentsConfig.set(
-                AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,
-                StateTtlConfig.UpdateType.OnCreateAndWrite);
-        agentsConfig.set(
-                AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY,
-                StateTtlConfig.StateVisibility.NeverReturnExpired);
+        if (configureTtlMs) {
+            agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, ttlMs);
+        }
+        if (configureTtlOptions) {
+            agentsConfig.set(
+                    AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,
+                    ShortTermMemoryTtlUpdate.ON_CREATE_AND_WRITE);
+            agentsConfig.set(
+                    AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY,
+                    ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED);
+        }
 
         List<TestInput> testData = new ArrayList<>();
         testData.add(new TestInput("event1", sleepMs));

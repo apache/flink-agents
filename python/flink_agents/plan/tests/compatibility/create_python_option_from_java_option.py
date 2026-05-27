@@ -19,7 +19,12 @@ from pathlib import Path
 
 from pyflink.util.java_utils import add_jars_to_context_class_loader
 
-from flink_agents.api.core_options import AgentConfigOptions
+from flink_agents.api.core_options import (
+    AgentConfigOptions,
+    AgentExecutionOptions,
+    ShortTermMemoryTtlUpdate,
+    ShortTermMemoryTtlVisibility,
+)
 
 # This script is used to verify that Java-defined configuration options
 # (e.g., AgentConfigOptions) are correctly exposed and accessible in the
@@ -39,3 +44,36 @@ if __name__ == "__main__":
     assert AgentConfigOptions.BASE_LOG_DIR.get_key() == "baseLogDir"
     assert AgentConfigOptions.BASE_LOG_DIR.get_type() is str
     assert AgentConfigOptions.BASE_LOG_DIR.get_default_value() is None
+
+    assert (
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS.get_key()
+        == "short-term-memory.state-ttl.ms"
+    )
+    assert AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS.get_type() is int
+    assert AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS.get_default_value() == 0
+
+    assert (
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE.get_key()
+        == "short-term-memory.state-ttl.update-type"
+    )
+    assert (
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE.get_type()
+        is ShortTermMemoryTtlUpdate
+    )
+    assert (
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE.get_default_value()
+        is ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE
+    )
+
+    assert (
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY.get_key()
+        == "short-term-memory.state-ttl.visibility"
+    )
+    assert (
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY.get_type()
+        is ShortTermMemoryTtlVisibility
+    )
+    assert (
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY.get_default_value()
+        is ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED
+    )
