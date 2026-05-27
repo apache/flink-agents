@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -88,14 +89,17 @@ public class Event {
         attributes.put(name, value);
     }
 
+    @JsonIgnore
     public boolean hasSourceTimestamp() {
         return sourceTimestamp != null;
     }
 
+    @JsonIgnore
     public Long getSourceTimestamp() {
         return sourceTimestamp;
     }
 
+    @JsonIgnore
     public void setSourceTimestamp(long timestamp) {
         this.sourceTimestamp = timestamp;
     }

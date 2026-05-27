@@ -228,20 +228,31 @@ public class AgentPlan implements Serializable {
         // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
         for (Method method : agentClass.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
-                org.apache.flink.agents.api.annotation.Action actionAnnotation =
-                        method.getAnnotation(org.apache.flink.agents.api.annotation.Action.class);
+            if (!method.isAnnotationPresent(
+                    org.apache.flink.agents.api.annotation.Action.class)) {
+                continue;
+            }
+            org.apache.flink.agents.api.annotation.Action actionAnnotation =
+                    Objects.requireNonNull(
+                            method.getAnnotation(
+                                    org.apache.flink.agents.api.annotation.Action.class));
+            String[] listenEventTypeStrings = actionAnnotation.listenEventTypes();
+            org.apache.flink.agents.api.annotation.PythonFunction target =
+                    actionAnnotation.target();
 
-                String[] listenEventTypeStrings =
-                        Objects.requireNonNull(actionAnnotation).listenEventTypes();
-
-                org.apache.flink.agents.plan.JavaFunction javaFunction =
+            org.apache.flink.agents.plan.Function execFunction;
+            if (target.module().isEmpty()) {
+                execFunction =
                         new org.apache.flink.agents.plan.JavaFunction(
                                 method.getDeclaringClass(),
                                 method.getName(),
                                 method.getParameterTypes());
-                extractActions(method.getName(), listenEventTypeStrings, javaFunction, null);
+            } else {
+                execFunction =
+                        new org.apache.flink.agents.plan.PythonFunction(
+                                target.module(), target.qualname());
             }
+            extractActions(method.getName(), listenEventTypeStrings, execFunction, null);
         }
 
         for (Map.Entry<

@@ -180,6 +180,18 @@ public class JavaResourceAdapter {
         return response.getResult();
     }
 
+    /** Invoke a Java static action method with positional arguments from Python. */
+    public Object invokeJavaAction(
+            String className,
+            String methodName,
+            List<String> parameterTypes,
+            List<Object> arguments)
+            throws Exception {
+        Method method = resolveMethod(className, methodName, parameterTypes);
+        Object[] args = arguments == null ? new Object[0] : arguments.toArray();
+        return method.invoke(null, args);
+    }
+
     private Method resolveMethod(String className, String methodName, List<String> parameterTypes)
             throws ClassNotFoundException, NoSuchMethodException {
         ClassLoader classLoader =
