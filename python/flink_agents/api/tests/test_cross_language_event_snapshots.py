@@ -41,6 +41,8 @@ _SNAPSHOT_DIR = _REPO_ROOT / "e2e-test" / "cross-language-event-snapshots"
 _FIXED_EVENT_ID = UUID("00000000-0000-0000-0000-000000000001")
 _FIXED_REQUEST_ID = UUID("00000000-0000-0000-0000-000000000002")
 _FIXED_TOOL_CALL_ID = "call_aaaa"
+_FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb"
+_FIXED_TOOL_CALL_ID_BOOL = "call_cccc"
 
 
 def _regenerate_enabled() -> bool:
@@ -163,7 +165,14 @@ def test_python_can_deserialize_chat_request_event_from_java_snapshot() -> None:
     assert msg.content == "hello world"
 
 
-def test_chat_request_output_schema_wire_format_is_python_shaped() -> None:
+def test_chat_request_row_type_info_output_schema_is_not_portable_across_languages_known_gap() -> None:
+    """Known 0.3 gap — RowTypeInfo-typed output_schema does not round-trip across the language
+    boundary. Python emits ``{"names": [...], "types": [<BasicTypeInfo ordinal>]}`` while Java
+    emits ``{"fieldNames": [...], "types": [<Class>]}``, so a ChatRequestEvent carrying a
+    RowTypeInfo schema cannot be deserialized on the other side. The BaseModel (Pydantic class)
+    branch is symmetric and works. Reconciling the RowTypeInfo wire format requires a canonical
+    shape + bilateral OutputSchema serdes shims; tracked as a follow-up.
+    """
     from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
     from flink_agents.api.agents.types import OutputSchema
@@ -180,6 +189,8 @@ def test_chat_request_output_schema_wire_format_is_python_shaped() -> None:
         output_schema=schema,
     )
     payload = event.model_dump_json()
+    # Pin Python's local shape so a future regression can't silently change it. The gap with
+    # Java's `{"fieldNames": ...}` shape is the documented limitation, not the assertion.
     assert "\"names\"" in payload
     assert "\"fieldNames\"" not in payload
 
@@ -255,10 +266,21 @@ def test_python_can_deserialize_tool_request_event_from_java_snapshot() -> None:
 
 
 def _build_tool_response_event() -> ToolResponseEvent:
+    # Mixed scalar value types pin the Python -> Java round-trip on the Java
+    # ToolResponseEvent.fromEvent fall-through that wraps non-ToolResponse/Map
+    # values via ToolResponse.success(v).
     event = ToolResponseEvent(
         request_id=_FIXED_REQUEST_ID,
-        responses={_FIXED_TOOL_CALL_ID: "pong"},
-        external_ids={_FIXED_TOOL_CALL_ID: None},
+        responses={
+            _FIXED_TOOL_CALL_ID: "pong",
+            _FIXED_TOOL_CALL_ID_NUMERIC: 42,
+            _FIXED_TOOL_CALL_ID_BOOL: True,
+        },
+        external_ids={
+            _FIXED_TOOL_CALL_ID: None,
+            _FIXED_TOOL_CALL_ID_NUMERIC: None,
+            _FIXED_TOOL_CALL_ID_BOOL: None,
+        },
     )
     return _force_id(event, _FIXED_EVENT_ID)
 

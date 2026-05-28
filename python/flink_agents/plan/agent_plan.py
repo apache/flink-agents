@@ -239,40 +239,47 @@ def _get_actions(agent: Agent) -> List[Action]:
     List[Action]
         List of Action defined in the agent.
     """
+    # __dict__ skips inherited @action methods; reject loudly.
+    agent_class = agent.__class__
+    for parent in agent_class.__mro__[1:]:
+        if parent is Agent or parent is object:
+            break
+        for parent_name, parent_value in parent.__dict__.items():
+            parent_inner = (
+                parent_value.__func__
+                if isinstance(parent_value, staticmethod)
+                else parent_value
+            )
+            if hasattr(parent_inner, "_listen_events"):
+                msg = (
+                    f"Inherited @action '{parent.__qualname__}.{parent_name}' is "
+                    f"not supported; declare on the concrete agent."
+                )
+                raise RuntimeError(msg)
+
     actions = []
-    for name, value in agent.__class__.__dict__.items():
-        if isinstance(value, staticmethod) and hasattr(value, "_listen_events"):
-            exec_ = (
-                _to_plan_function(value._target)
-                if hasattr(value, "_target")
-                else PythonFunction.from_callable(value.__func__)
+    for name, value in agent_class.__dict__.items():
+        # Unwrap staticmethod so attribute access works regardless of decorator
+        # order: `@staticmethod` outer (conventional) puts `_listen_events` on
+        # `__func__`, while `@action` outer puts it on the staticmethod wrapper.
+        # Inspecting the inner callable handles both orders.
+        inner = value.__func__ if isinstance(value, staticmethod) else value
+        if not (callable(inner) and hasattr(inner, "_listen_events")):
+            continue
+        exec_ = (
+            _to_plan_function(inner._target)
+            if hasattr(inner, "_target")
+            else PythonFunction.from_callable(inner)
+        )
+        actions.append(
+            Action(
+                name=name,
+                exec=exec_,
+                listen_event_types=[
+                    _resolve_event_type(et) for et in inner._listen_events
+                ],
             )
-            actions.append(
-                Action(
-                    name=name,
-                    exec=exec_,
-                    listen_event_types=[
-                        _resolve_event_type(et)
-                        for et in value._listen_events
-                    ],
-                )
-            )
-        elif callable(value) and hasattr(value, "_listen_events"):
-            exec_ = (
-                _to_plan_function(value._target)
-                if hasattr(value, "_target")
-                else PythonFunction.from_callable(value)
-            )
-            actions.append(
-                Action(
-                    name=name,
-                    exec=exec_,
-                    listen_event_types=[
-                        _resolve_event_type(et)
-                        for et in value._listen_events
-                    ],
-                )
-            )
+        )
     for name, action_tuple in agent.actions.items():
         actions.append(
             Action(

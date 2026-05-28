@@ -282,6 +282,12 @@ class JavaFunction(Function):
                 "set_java_resource_adapter before invocation."
             )
             raise RuntimeError(msg)
+        if args and kwargs:
+            msg = (
+                "JavaFunction does not support mixing positional and keyword "
+                "args; pass one or the other (positional = action, kwargs = tool)."
+            )
+            raise TypeError(msg)
         if args:
             return self._j_resource_adapter.invokeJavaAction(
                 self.qualname,

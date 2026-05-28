@@ -93,6 +93,53 @@ def test_builtin_actions_are_python_native_after_compile() -> None:
         assert isinstance(action.exec, PythonFunction)
 
 
+class AgentWithConventionalDecoratorOrder(Agent):
+    """`@staticmethod` outer, `@action` inner — the conventional Python order.
+
+    The decorator stack puts ``_listen_events`` on the inner function (i.e.
+    ``staticmethod.__func__``) rather than on the staticmethod wrapper, so
+    ``_get_actions`` must unwrap before inspecting attributes.
+    """
+
+    @staticmethod
+    @action(InputEvent.EVENT_TYPE)
+    def handle(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(OutputEvent(output=InputEvent.from_event(event).input))
+
+
+def test_conventional_staticmethod_outer_decorator_order_is_registered() -> None:
+    plan = AgentPlan.from_agent(
+        AgentWithConventionalDecoratorOrder(), AgentConfiguration()
+    )
+    actions = plan.get_actions(InputEvent.EVENT_TYPE)
+    assert len(actions) == 1, (
+        "Action defined with `@staticmethod` outer / `@action` inner was silently "
+        "dropped — `_get_actions` should unwrap the staticmethod before checking "
+        "for `_listen_events`."
+    )
+    assert actions[0].name == "handle"
+
+
+class _BaseAgentWithInheritedAction(Agent):
+    """Base class with an @action — used to verify the inheritance guard."""
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def shared_action(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(OutputEvent(output="shared"))
+
+
+class _ConcreteAgentInheritingAction(_BaseAgentWithInheritedAction):
+    """Concrete agent that inherits ``shared_action`` from the base class."""
+
+
+def test_action_inherited_from_parent_agent_class_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match="Inherited @action") as exc:
+        AgentPlan.from_agent(_ConcreteAgentInheritingAction(), AgentConfiguration())
+    assert "shared_action" in str(exc.value)
+    assert "_BaseAgentWithInheritedAction" in str(exc.value)
+
+
 _JAVA_HANDLER_QUALNAME = (
     "org.apache.flink.agents.runtime.operator."
     "CrossLanguageActionRuntimeTest$Handlers"

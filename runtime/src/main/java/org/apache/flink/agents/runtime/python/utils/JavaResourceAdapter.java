@@ -31,6 +31,7 @@ import org.apache.flink.agents.plan.tools.ToolMetadataFactory;
 import pemja.core.PythonInterpreter;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -188,6 +189,13 @@ public class JavaResourceAdapter {
             List<Object> arguments)
             throws Exception {
         Method method = resolveMethod(className, methodName, parameterTypes);
+        if (!Modifier.isStatic(method.getModifiers())) {
+            throw new IllegalArgumentException(
+                    "JavaAction target must be a static method. Got instance method: "
+                            + className
+                            + "#"
+                            + methodName);
+        }
         Object[] args = arguments == null ? new Object[0] : arguments.toArray();
         return method.invoke(null, args);
     }

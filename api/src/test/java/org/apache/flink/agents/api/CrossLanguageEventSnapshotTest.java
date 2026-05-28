@@ -63,6 +63,8 @@ class CrossLanguageEventSnapshotTest {
     private static final UUID FIXED_REQUEST_ID =
             UUID.fromString("00000000-0000-0000-0000-000000000002");
     private static final String FIXED_TOOL_CALL_ID = "call_aaaa";
+    private static final String FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb";
+    private static final String FIXED_TOOL_CALL_ID_BOOL = "call_cccc";
     private static final long FIXED_TIMESTAMP = 1_700_000_000_000L;
 
     private static Path snapshotDir;
@@ -215,8 +217,18 @@ class CrossLanguageEventSnapshotTest {
         assertEquals("hello world", msg.getContent());
     }
 
+    /**
+     * Known 0.3 gap — {@link RowTypeInfo}-typed {@code output_schema} does not round-trip across
+     * the language boundary. Java emits {@code {"fieldNames": [...], "types": [<Class>]}} while
+     * Python emits {@code {"names": [...], "types": [<BasicTypeInfo ordinal>]}}, so a {@link
+     * ChatRequestEvent} carrying a {@code RowTypeInfo} schema cannot be deserialized on the other
+     * side. The {@code BaseModel} (Pydantic class) branch is symmetric and works. Reconciling the
+     * {@code RowTypeInfo} wire format requires a canonical shape + bilateral {@code OutputSchema}
+     * serdes shims; tracked as a follow-up.
+     */
     @Test
-    void chatRequestOutputSchemaWireFormatIsJavaShaped() throws Exception {
+    void chatRequestRowTypeInfoOutputSchemaIsNotPortableAcrossLanguages_knownGap()
+            throws Exception {
         OutputSchema schema =
                 new OutputSchema(
                         new RowTypeInfo(
@@ -227,6 +239,8 @@ class CrossLanguageEventSnapshotTest {
                         "test-model", List.of(new ChatMessage(MessageRole.USER, "hi")), schema);
         String json = MAPPER.writeValueAsString(event);
 
+        // Pin Java's local shape so a future regression can't silently change it. The gap with
+        // Python's `{"names": ...}` shape is the documented limitation, not the assertion.
         assertTrue(json.contains("\"fieldNames\""), "Java wire format uses `fieldNames`.");
         assertFalse(json.contains("\"names\""), "Java wire format does not use Python's `names`.");
     }
@@ -331,13 +345,30 @@ class CrossLanguageEventSnapshotTest {
     }
 
     @Test
-    void pythonToolResponseEventLosesDataWhenConsumedByJava() throws Exception {
+    void pythonToolResponseEventRoundTripsScalarResponses() throws Exception {
         Event base = readPythonSnapshot("tool_response_event.json");
         ToolResponseEvent typed = ToolResponseEvent.fromEvent(base);
 
         assertEquals(FIXED_REQUEST_ID, typed.getRequestId());
-        assertTrue(typed.getResponses().isEmpty());
 
+        ToolResponse stringResp = typed.getResponses().get(FIXED_TOOL_CALL_ID);
+        assertNotNull(stringResp, "String response should be wrapped as ToolResponse.success.");
+        assertEquals("pong", stringResp.getResult());
+        assertTrue(stringResp.isSuccess());
+
+        ToolResponse numericResp = typed.getResponses().get(FIXED_TOOL_CALL_ID_NUMERIC);
+        assertNotNull(numericResp, "Number response should be wrapped as ToolResponse.success.");
+        assertEquals(42, ((Number) numericResp.getResult()).intValue());
+        assertTrue(numericResp.isSuccess());
+
+        ToolResponse boolResp = typed.getResponses().get(FIXED_TOOL_CALL_ID_BOOL);
+        assertNotNull(boolResp, "Boolean response should be wrapped as ToolResponse.success.");
+        assertEquals(Boolean.TRUE, boolResp.getResult());
+        assertTrue(boolResp.isSuccess());
+
+        // Remaining shape gap: Python's ToolResponseEvent model has no top-level success/error/
+        // timestamp maps (those live inside each ToolResponse on the Java side). Pin it so the
+        // divergence stays visible.
         Map<String, Object> attrs = typed.getAttributes();
         assertFalse(attrs.containsKey("success"));
         assertFalse(attrs.containsKey("error"));

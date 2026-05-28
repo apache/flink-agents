@@ -227,6 +227,22 @@ public class AgentPlan implements Serializable {
 
         // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
+        // getDeclaredMethods() skips inherited @Action methods; reject loudly.
+        for (Class<?> parent = agentClass.getSuperclass();
+                parent != null && parent != Agent.class;
+                parent = parent.getSuperclass()) {
+            for (Method inherited : parent.getDeclaredMethods()) {
+                if (inherited.isAnnotationPresent(
+                        org.apache.flink.agents.api.annotation.Action.class)) {
+                    throw new IllegalStateException(
+                            "Inherited @Action '"
+                                    + parent.getName()
+                                    + "#"
+                                    + inherited.getName()
+                                    + "' is not supported; declare on the concrete agent.");
+                }
+            }
+        }
         for (Method method : agentClass.getDeclaredMethods()) {
             if (!method.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
                 continue;

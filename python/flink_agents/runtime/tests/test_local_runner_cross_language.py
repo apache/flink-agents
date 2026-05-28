@@ -145,3 +145,19 @@ def test_plan_java_function_routes_kwargs_to_tool_dispatch() -> None:
     assert len(adapter.tool_calls) == 1
     _, _, _, kwargs = adapter.tool_calls[0]
     assert kwargs == {"a": 2, "b": 3}
+
+
+def test_plan_java_function_rejects_mixed_positional_and_keyword_args() -> None:
+    plan_fn = PlanJavaFunction(
+        qualname="com.example.Handlers",
+        method_name="handle",
+        parameter_types=["org.apache.flink.agents.api.Event"],
+    )
+    adapter = _RecordingJavaAdapter()
+    plan_fn.set_java_resource_adapter(adapter)
+
+    with pytest.raises(TypeError, match="mixing positional and keyword"):
+        plan_fn(InputEvent(input="x"), extra=1)
+
+    assert not adapter.action_calls
+    assert not adapter.tool_calls

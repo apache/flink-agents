@@ -346,6 +346,27 @@ public class AgentPlanTest {
                 .hasMessageContaining("module");
     }
 
+    /**
+     * @Action declared on a parent agent class — must be rejected loudly, not silently dropped.
+     */
+    public abstract static class BaseAgentWithInheritedAction extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        public static void sharedAction(Event event, RunnerContext ctx) {
+            throw new UnsupportedOperationException("test stub");
+        }
+    }
+
+    public static class ConcreteAgentInheritingAction extends BaseAgentWithInheritedAction {}
+
+    @Test
+    public void testActionInheritedFromParentAgentClassIsRejected() {
+        assertThatThrownBy(() -> new AgentPlan(new ConcreteAgentInheritingAction()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("sharedAction")
+                .hasMessageContaining("BaseAgentWithInheritedAction")
+                .hasMessageContaining("Inherited @Action");
+    }
+
     @Test
     public void testAgentPlanResourceProviders() throws Exception {
         // Test that AgentPlan initializes resource providers correctly
