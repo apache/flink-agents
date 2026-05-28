@@ -91,11 +91,13 @@ class CrossLanguageEventSnapshotTest {
         JsonNode actual = MAPPER.readTree(actualJson);
 
         Path committed = snapshotDir.resolve("java/" + fileName);
-        assumeTrue(
+        assertTrue(
                 Files.exists(committed),
                 "Java snapshot "
                         + fileName
-                        + " not committed; run with -Dregenerate.snapshots=true first.");
+                        + " missing from "
+                        + committed
+                        + ". If you added a new event, regenerate with -Dregenerate.snapshots=true and commit alongside the test.");
         JsonNode expected = MAPPER.readTree(Files.readString(committed));
 
         assertEquals(
@@ -108,9 +110,13 @@ class CrossLanguageEventSnapshotTest {
 
     private static Event readPythonSnapshot(String fileName) throws Exception {
         Path pythonSnapshot = snapshotDir.resolve("python/" + fileName);
-        assumeTrue(
+        assertTrue(
                 Files.exists(pythonSnapshot),
-                "Python snapshot " + fileName + " not present; run Python generator first.");
+                "Python snapshot "
+                        + fileName
+                        + " missing from "
+                        + pythonSnapshot
+                        + ". Regenerate the Python side with REGENERATE_SNAPSHOTS=1 and commit alongside this test.");
         return Event.fromJson(Files.readString(pythonSnapshot));
     }
 

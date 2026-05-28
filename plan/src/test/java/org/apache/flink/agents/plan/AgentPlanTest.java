@@ -45,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Test for {@link AgentPlan} constructor that takes an Agent. */
 public class AgentPlanTest {
@@ -305,6 +306,44 @@ public class AgentPlanTest {
         assertThat(action.getExec())
                 .as("empty target.module() must compile to a plan JavaFunction exec")
                 .isInstanceOf(JavaFunction.class);
+    }
+
+    /** Partially-set target (module without qualname) — must be rejected at compile. */
+    public static class AgentWithHalfSetPythonTargetMissingQualname extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(
+                listenEventTypes = {InputEvent.EVENT_TYPE},
+                target = @org.apache.flink.agents.api.annotation.PythonFunction(module = "pkg"))
+        public static void handle(Event event, RunnerContext ctx) {
+            throw new UnsupportedOperationException("cross-language stub");
+        }
+    }
+
+    @Test
+    public void testActionWithPythonTargetMissingQualnameIsRejected() {
+        assertThatThrownBy(() -> new AgentPlan(new AgentWithHalfSetPythonTargetMissingQualname()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("handle")
+                .hasMessageContaining("qualname");
+    }
+
+    /** Partially-set target (qualname without module) — must be rejected at compile. */
+    public static class AgentWithHalfSetPythonTargetMissingModule extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(
+                listenEventTypes = {InputEvent.EVENT_TYPE},
+                target =
+                        @org.apache.flink.agents.api.annotation.PythonFunction(
+                                qualname = "handle_input"))
+        public static void handle(Event event, RunnerContext ctx) {
+            throw new UnsupportedOperationException("cross-language stub");
+        }
+    }
+
+    @Test
+    public void testActionWithPythonTargetMissingModuleIsRejected() {
+        assertThatThrownBy(() -> new AgentPlan(new AgentWithHalfSetPythonTargetMissingModule()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("handle")
+                .hasMessageContaining("module");
     }
 
     @Test

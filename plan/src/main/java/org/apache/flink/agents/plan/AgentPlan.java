@@ -238,18 +238,27 @@ public class AgentPlan implements Serializable {
             String[] listenEventTypeStrings = actionAnnotation.listenEventTypes();
             org.apache.flink.agents.api.annotation.PythonFunction target =
                     actionAnnotation.target();
+            String targetModule = target.module();
+            String targetQualname = target.qualname();
+            boolean moduleSet = !targetModule.isEmpty();
+            boolean qualnameSet = !targetQualname.isEmpty();
 
             org.apache.flink.agents.plan.Function execFunction;
-            if (target.module().isEmpty()) {
+            if (!moduleSet && !qualnameSet) {
                 execFunction =
                         new org.apache.flink.agents.plan.JavaFunction(
                                 method.getDeclaringClass(),
                                 method.getName(),
                                 method.getParameterTypes());
-            } else {
+            } else if (moduleSet && qualnameSet) {
                 execFunction =
                         new org.apache.flink.agents.plan.PythonFunction(
-                                target.module(), target.qualname());
+                                targetModule, targetQualname);
+            } else {
+                throw new IllegalStateException(
+                        "PythonFunction target on '"
+                                + method.getName()
+                                + "' must set both module and qualname");
             }
             extractActions(method.getName(), listenEventTypeStrings, execFunction, null);
         }

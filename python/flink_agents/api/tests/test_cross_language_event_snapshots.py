@@ -61,10 +61,11 @@ def _write_python_snapshot(name: str, event: Event) -> None:
 def _assert_python_snapshot_stable(name: str, event: Event) -> None:
     actual = json.loads(event.model_dump_json())
     committed_path = _SNAPSHOT_DIR / "python" / name
-    if not committed_path.exists():
-        pytest.skip(
-            f"Python snapshot {name} not committed yet; run with REGENERATE_SNAPSHOTS=1 first."
-        )
+    assert committed_path.exists(), (
+        f"Python snapshot {name} missing from {committed_path}. "
+        f"If you added a new event, regenerate with REGENERATE_SNAPSHOTS=1 "
+        f"and commit alongside the test."
+    )
     expected = json.loads(committed_path.read_text())
     assert actual == expected, (
         f"Python serialization of {name} drifted from committed snapshot."
@@ -73,8 +74,11 @@ def _assert_python_snapshot_stable(name: str, event: Event) -> None:
 
 def _read_java_snapshot(name: str) -> Event:
     java_snapshot = _SNAPSHOT_DIR / "java" / name
-    if not java_snapshot.exists():
-        pytest.skip(f"Java snapshot {name} not present; run Java generator first.")
+    assert java_snapshot.exists(), (
+        f"Java snapshot {name} missing from {java_snapshot}. "
+        f"Regenerate the Java side with -Dregenerate.snapshots=true "
+        f"and commit alongside this test."
+    )
     return Event.from_json(java_snapshot.read_text())
 
 

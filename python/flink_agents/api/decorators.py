@@ -17,7 +17,19 @@
 #################################################################################
 from typing import Callable, Type
 
-from flink_agents.api.function import Function
+from flink_agents.api.function import Function, JavaFunction, PythonFunction
+
+
+def _validate_target(target: Function, owner: str) -> None:
+    """Reject targets with empty required identifiers, attributed to ``owner``."""
+    if isinstance(target, PythonFunction):
+        if not target.module or not target.qualname:
+            msg = f"PythonFunction target on '{owner}' must set both module and qualname"
+            raise ValueError(msg)
+    elif isinstance(target, JavaFunction):
+        if not target.qualname or not target.method_name:
+            msg = f"JavaFunction target on '{owner}' must set both qualname and method_name"
+            raise ValueError(msg)
 
 
 def action(
@@ -66,9 +78,10 @@ def action(
         raise TypeError(msg)
 
     def decorator(func: Callable) -> Callable:
-        func._listen_events = listen_events
         if target is not None:
+            _validate_target(target, func.__qualname__)
             func._target = target
+        func._listen_events = listen_events
         return func
 
     return decorator

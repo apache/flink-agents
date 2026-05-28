@@ -19,7 +19,7 @@ import pytest
 
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
-from flink_agents.api.function import JavaFunction
+from flink_agents.api.function import JavaFunction, PythonFunction
 from flink_agents.api.runner_context import RunnerContext
 
 
@@ -130,3 +130,48 @@ def test_action_decorator_without_target_does_not_set_attribute() -> None:
         pass
 
     assert not hasattr(regular, "_target")
+
+
+def test_action_decorator_rejects_java_target_with_empty_qualname() -> None:
+    bad = JavaFunction(qualname="", method_name="handle", parameter_types=[])
+    with pytest.raises(ValueError, match="qualname"):
+
+        @action(InputEvent.EVENT_TYPE, target=bad)
+        def stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_action_decorator_rejects_java_target_with_empty_method_name() -> None:
+    bad = JavaFunction(qualname="com.example.X", method_name="", parameter_types=[])
+    with pytest.raises(ValueError, match="method_name"):
+
+        @action(InputEvent.EVENT_TYPE, target=bad)
+        def stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_action_decorator_rejects_python_target_with_empty_module() -> None:
+    bad = PythonFunction(module="", qualname="handle")
+    with pytest.raises(ValueError, match="module"):
+
+        @action(InputEvent.EVENT_TYPE, target=bad)
+        def stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_action_decorator_rejects_python_target_with_empty_qualname() -> None:
+    bad = PythonFunction(module="pkg.mod", qualname="")
+    with pytest.raises(ValueError, match="qualname"):
+
+        @action(InputEvent.EVENT_TYPE, target=bad)
+        def stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_action_decorator_target_error_names_decorated_function() -> None:
+    bad = PythonFunction(module="pkg.mod", qualname="")
+    with pytest.raises(ValueError, match="my_named_stub"):
+
+        @action(InputEvent.EVENT_TYPE, target=bad)
+        def my_named_stub(event: Event, ctx: RunnerContext) -> None:
+            pass

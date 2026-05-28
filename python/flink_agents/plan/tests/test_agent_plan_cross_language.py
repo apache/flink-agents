@@ -267,10 +267,10 @@ def test_regenerate_python_plan_with_java_action_snapshot() -> None:
 
 def test_python_plan_with_java_action_snapshot_is_stable() -> None:
     snapshot_path = _SNAPSHOT_DIR / "python" / "agent_plan_with_java_action.json"
-    if not snapshot_path.exists():
-        pytest.skip(
-            "Snapshot not committed yet; run with REGENERATE_SNAPSHOTS=1 first."
-        )
+    assert snapshot_path.exists(), (
+        f"Python plan snapshot missing from {snapshot_path}. "
+        f"Regenerate with REGENERATE_SNAPSHOTS=1 and commit alongside the test."
+    )
 
     actual = json.loads(_plan_dump_json(_java_action_plan()))
     expected = json.loads(snapshot_path.read_text())
@@ -280,16 +280,13 @@ def test_python_plan_with_java_action_snapshot_is_stable() -> None:
 
 
 def test_python_can_deserialize_java_plan_with_python_action() -> None:
-    """Java produces a plan referencing a Python action; Python must read it back.
-
-    The Java-side test suite is responsible for regenerating this
-    snapshot. Skipped until that file exists.
-    """
+    """Java produces a plan referencing a Python action; Python must read it back."""
     snapshot = _SNAPSHOT_DIR / "java" / "agent_plan_with_python_action.json"
-    if not snapshot.exists():
-        pytest.skip(
-            "Java snapshot not present; run the Java side regen first."
-        )
+    assert snapshot.exists(), (
+        f"Java plan snapshot missing from {snapshot}. "
+        f"Regenerate the Java side with -Dregenerate.snapshots=true "
+        f"and commit alongside this test."
+    )
 
     json_str = snapshot.read_text()
     restored = AgentPlan.model_validate_json(json_str)

@@ -34,6 +34,7 @@ import java.nio.file.Paths;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -234,9 +235,11 @@ class AgentPlanCrossLanguageTest {
     @Test
     void javaPlanWithPythonActionSnapshotIsStable() throws Exception {
         Path committed = snapshotDir.resolve("java/agent_plan_with_python_action.json");
-        assumeTrue(
+        assertTrue(
                 Files.exists(committed),
-                "Java plan snapshot not committed yet; run with -Dregenerate.snapshots=true.");
+                "Java plan snapshot missing from "
+                        + committed
+                        + ". Regenerate with -Dregenerate.snapshots=true and commit alongside the test.");
 
         AgentPlan plan = compileWithPythonAction();
         JsonNode actual = MAPPER.readTree(MAPPER.writeValueAsString(plan));
@@ -247,9 +250,11 @@ class AgentPlanCrossLanguageTest {
     @Test
     void javaCanDeserializePythonPlanWithJavaAction() throws Exception {
         Path snapshot = snapshotDir.resolve("python/agent_plan_with_java_action.json");
-        assumeTrue(
+        assertTrue(
                 Files.exists(snapshot),
-                "Python plan snapshot not present; run Python regen first.");
+                "Python plan snapshot missing from "
+                        + snapshot
+                        + ". Regenerate the Python side with REGENERATE_SNAPSHOTS=1 and commit alongside this test.");
 
         String json = Files.readString(snapshot);
         AgentPlan restored = MAPPER.readValue(json, AgentPlan.class);
