@@ -194,18 +194,23 @@ class AgentExecutionOptions:
         default=True,
     )
 
+    # Set to a positive value in milliseconds to enable short-term memory TTL;
+    # 0 disables it.
     SHORT_TERM_MEMORY_STATE_TTL_MS = ConfigOption(
         key="short-term-memory.state-ttl.ms",
         config_type=int,
         default=0,
     )
 
+    # Update policy for short-term memory TTL, consulted only when TTL is enabled.
     SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE = ConfigOption(
         key="short-term-memory.state-ttl.update-type",
         config_type=ShortTermMemoryTtlUpdate,
         default=ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE,
     )
 
+    # Visibility policy for expired short-term memory state, consulted only when TTL
+    # is enabled.
     SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY = ConfigOption(
         key="short-term-memory.state-ttl.visibility",
         config_type=ShortTermMemoryTtlVisibility,

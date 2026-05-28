@@ -123,7 +123,7 @@ def run_scenario(
     return list(output_datastream.execute_and_collect())
 
 
-def test_ttl_configuration_not_applied() -> None:
+def test_value_still_visible_before_ttl_expiry() -> None:
     results = run_scenario(
         1000,
         0,
@@ -156,7 +156,7 @@ def test_ttl_configuration_disabled_by_default() -> None:
     assert results == ["event1|NEW", "event2|NEW", "event1|EXISTING"]
 
 
-def test_ttl_configuration_applied() -> None:
+def test_value_expires_after_ttl() -> None:
     results = run_scenario(
         1000,
         2000,

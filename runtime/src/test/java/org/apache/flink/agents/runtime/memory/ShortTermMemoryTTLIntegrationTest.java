@@ -85,7 +85,7 @@ class ShortTermMemoryTTLIntegrationTest {
     }
 
     @Test
-    void testTTLConfigurationNotApplied() throws Exception {
+    void testValueStillVisibleBeforeTTLExpiry() throws Exception {
         List<String> results = runScenario(1000L, 0L, true, true);
 
         assertEquals(List.of("event1|NEW", "event2|NEW", "event1|EXISTING"), results);
@@ -106,7 +106,7 @@ class ShortTermMemoryTTLIntegrationTest {
     }
 
     @Test
-    void testTTLConfigurationApplied() throws Exception {
+    void testValueExpiresAfterTTL() throws Exception {
         List<String> results = runScenario(1000L, 2000L, true, true);
 
         assertEquals(List.of("event1|NEW", "event2|NEW", "event1|NEW"), results);
