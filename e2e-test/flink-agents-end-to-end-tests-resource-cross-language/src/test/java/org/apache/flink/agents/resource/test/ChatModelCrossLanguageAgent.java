@@ -78,7 +78,7 @@ public class ChatModelCrossLanguageAgent extends Agent {
         return ResourceDescriptor.Builder.newBuilder(
                         ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION)
                 .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_CONNECTION)
-                .addInitialArgument("requestTimeout", 240)
+                .addInitialArgument("request_timeout", 240)
                 .build();
     }
 
