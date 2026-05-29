@@ -24,7 +24,9 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Generator, Tuple
 import pytest
 
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.function import (
+    JavaFunction,
     PythonFunction,
     _is_function_cacheable,
     call_python_function,
@@ -111,6 +113,48 @@ def test_function_signature_generic_type_mismatch() -> None:
     func = PythonFunction.from_callable(check_generic_type)
     with pytest.raises(TypeError):
         func.check_signature(Tuple[str, ...], Dict[str, Any])
+
+
+# ── JavaFunction signature checks ───────────────────────────────────────
+
+
+def _java_action_function() -> JavaFunction:
+    return JavaFunction(
+        qualname="com.example.Handlers",
+        method_name="handle",
+        parameter_types=[
+            "org.apache.flink.agents.api.Event",
+            "org.apache.flink.agents.api.context.RunnerContext",
+        ],
+    )
+
+
+def test_java_function_signature_matching_arity_passes() -> None:
+    _java_action_function().check_signature(Event, RunnerContext)
+
+
+def test_java_function_signature_arity_too_few_raises() -> None:
+    func = JavaFunction(
+        qualname="com.example.Handlers",
+        method_name="handle",
+        parameter_types=["org.apache.flink.agents.api.Event"],
+    )
+    with pytest.raises(TypeError, match="declares 1 parameter type"):
+        func.check_signature(Event, RunnerContext)
+
+
+def test_java_function_signature_arity_too_many_raises() -> None:
+    func = JavaFunction(
+        qualname="com.example.Handlers",
+        method_name="handle",
+        parameter_types=[
+            "org.apache.flink.agents.api.Event",
+            "org.apache.flink.agents.api.context.RunnerContext",
+            "java.lang.String",
+        ],
+    )
+    with pytest.raises(TypeError, match="declares 3 parameter type"):
+        func.check_signature(Event, RunnerContext)
 
 
 current_dir = Path(__file__).parent

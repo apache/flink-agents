@@ -272,17 +272,29 @@ class JavaFunction(Function):
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Invoke the Java method via the JVM resource adapter.
 
-        LLM tool calls always arrive as keyword arguments — positional
-        ``*args`` are ignored because the Java side reorders parameters
-        by name via reflection.
+        Positional args route to ``invokeJavaAction`` (action dispatch);
+        keyword args route to ``invokeJavaTool`` (LLM tool dispatch).
         """
         if self._j_resource_adapter is None:
             msg = (
                 "JavaFunction requires the JVM resource adapter; not set "
-                "on this descriptor. The runtime should inject it via "
+                "on this descriptor. The runtime injects it via "
                 "set_java_resource_adapter before invocation."
             )
             raise RuntimeError(msg)
+        if args and kwargs:
+            msg = (
+                "JavaFunction does not support mixing positional and keyword "
+                "args; pass one or the other (positional = action, kwargs = tool)."
+            )
+            raise TypeError(msg)
+        if args:
+            return self._j_resource_adapter.invokeJavaAction(
+                self.qualname,
+                self.method_name,
+                self.parameter_types,
+                list(args),
+            )
         return self._j_resource_adapter.invokeJavaTool(
             self.qualname,
             self.method_name,
@@ -291,7 +303,15 @@ class JavaFunction(Function):
         )
 
     def check_signature(self, *args: Tuple[Any, ...]) -> None:
-        """Check function signature is legal or not."""
+        """Check declared Java parameter arity matches expectations."""
+        if len(self.parameter_types) != len(args):
+            msg = (
+                f"JavaFunction {self.qualname}.{self.method_name} declares "
+                f"{len(self.parameter_types)} parameter type(s) "
+                f"({self.parameter_types!r}) but the action contract "
+                f"expects {len(args)}."
+            )
+            raise TypeError(msg)
 
 
 def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...]) -> Any:

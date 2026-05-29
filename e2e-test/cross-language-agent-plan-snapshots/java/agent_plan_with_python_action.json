@@ -1,0 +1,58 @@
+{
+  "actions" : {
+    "chat_model_action" : {
+      "name" : "chat_model_action",
+      "exec" : {
+        "func_type" : "JavaFunction",
+        "qualname" : "org.apache.flink.agents.plan.actions.ChatModelAction",
+        "method_name" : "processChatRequestOrToolResponse",
+        "parameter_types" : [ "org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext" ]
+      },
+      "listen_event_types" : [ "_chat_request_event", "_tool_response_event" ],
+      "config" : null
+    },
+    "context_retrieval_action" : {
+      "name" : "context_retrieval_action",
+      "exec" : {
+        "func_type" : "JavaFunction",
+        "qualname" : "org.apache.flink.agents.plan.actions.ContextRetrievalAction",
+        "method_name" : "processContextRetrievalRequest",
+        "parameter_types" : [ "org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext" ]
+      },
+      "listen_event_types" : [ "_context_retrieval_request_event" ],
+      "config" : null
+    },
+    "handle" : {
+      "name" : "handle",
+      "exec" : {
+        "func_type" : "PythonFunction",
+        "module" : "flink_agents.plan.tests.test_agent_plan_cross_language",
+        "qualname" : "_dummy_action"
+      },
+      "listen_event_types" : [ "_input_event" ],
+      "config" : null
+    },
+    "tool_call_action" : {
+      "name" : "tool_call_action",
+      "exec" : {
+        "func_type" : "JavaFunction",
+        "qualname" : "org.apache.flink.agents.plan.actions.ToolCallAction",
+        "method_name" : "processToolRequest",
+        "parameter_types" : [ "org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext" ]
+      },
+      "listen_event_types" : [ "_tool_request_event" ],
+      "config" : null
+    }
+  },
+  "actions_by_event" : {
+    "_context_retrieval_request_event" : [ "context_retrieval_action" ],
+    "_tool_response_event" : [ "chat_model_action" ],
+    "_chat_request_event" : [ "chat_model_action" ],
+    "_tool_request_event" : [ "tool_call_action" ],
+    "_input_event" : [ "handle" ]
+  },
+  "resource_providers" : { },
+  "config" : {
+    "conf_data" : { }
+  }
+}

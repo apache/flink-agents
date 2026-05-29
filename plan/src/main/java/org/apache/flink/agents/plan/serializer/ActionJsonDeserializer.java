@@ -158,7 +158,7 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
         return config;
     }
 
-    private Object deserializePythonConfig(JsonNode node) {
+    static Object deserializePythonConfig(JsonNode node) {
         if (node.isObject()) {
             Map<String, Object> map = new HashMap<>();
             node.fields()
@@ -172,8 +172,16 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
             List<Object> list = new ArrayList<>();
             node.forEach(element -> list.add(deserializePythonConfig(element)));
             return list;
-        } else if (node.isValueNode()) {
-            return node.asText();
+        } else if (node.isNull()) {
+            return null;
+        } else if (node.isBoolean()) {
+            return node.booleanValue();
+        } else if (node.isIntegralNumber()) {
+            return node.canConvertToInt() ? (Object) node.intValue() : (Object) node.longValue();
+        } else if (node.isFloatingPointNumber()) {
+            return node.doubleValue();
+        } else if (node.isTextual()) {
+            return node.textValue();
         } else {
             throw new UnsupportedOperationException("Unsupported node type: " + node.getNodeType());
         }

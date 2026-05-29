@@ -83,6 +83,8 @@ public class ToolResponseEvent extends Event {
                     responses.put(entry.getKey(), (ToolResponse) v);
                 } else if (v instanceof Map) {
                     responses.put(entry.getKey(), MAPPER.convertValue(v, ToolResponse.class));
+                } else {
+                    responses.put(entry.getKey(), ToolResponse.success(v));
                 }
             }
             attrs.put("responses", responses);
