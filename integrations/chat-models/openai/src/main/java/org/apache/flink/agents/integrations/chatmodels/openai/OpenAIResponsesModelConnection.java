@@ -140,10 +140,10 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
                     modelName = this.defaultModel;
                 }
                 if (modelName != null && !modelName.isBlank()) {
-                    recordTokenMetrics(
-                            modelName,
-                            response.usage().get().inputTokens(),
-                            response.usage().get().outputTokens());
+                    result.getExtraArgs().put("model_name", modelName);
+                    result.getExtraArgs().put("promptTokens", response.usage().get().inputTokens());
+                    result.getExtraArgs()
+                            .put("completionTokens", response.usage().get().outputTokens());
                 }
             }
 

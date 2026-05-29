@@ -224,13 +224,14 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
                 chatMessage.setToolCalls(toolCalls);
             }
 
-            // Record token metrics if model name is available
+            // Stash token usage if model name is available
             if (modelName != null && !modelName.isBlank()) {
                 Integer promptTokens = ollamaChatResponse.getPromptEvalCount();
                 Integer completionTokens = ollamaChatResponse.getEvalCount();
                 if (promptTokens != null && completionTokens != null) {
-                    recordTokenMetrics(
-                            modelName, promptTokens.longValue(), completionTokens.longValue());
+                    extraArgs.put("model_name", modelName);
+                    extraArgs.put("promptTokens", promptTokens.longValue());
+                    extraArgs.put("completionTokens", completionTokens.longValue());
                 }
             }
 

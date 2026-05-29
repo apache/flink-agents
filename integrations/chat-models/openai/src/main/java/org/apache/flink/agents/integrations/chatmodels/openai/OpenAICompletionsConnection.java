@@ -129,17 +129,18 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
                     OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
                             completion.choices().get(0).message());
 
-            // Record token metrics
+            // Stash token usage
             if (completion.usage().isPresent()) {
                 String modelName = arguments != null ? (String) arguments.get("model") : null;
                 if (modelName == null || modelName.isBlank()) {
                     modelName = this.defaultModel;
                 }
                 if (modelName != null && !modelName.isBlank()) {
-                    recordTokenMetrics(
-                            modelName,
-                            completion.usage().get().promptTokens(),
-                            completion.usage().get().completionTokens());
+                    response.getExtraArgs().put("model_name", modelName);
+                    response.getExtraArgs()
+                            .put("promptTokens", completion.usage().get().promptTokens());
+                    response.getExtraArgs()
+                            .put("completionTokens", completion.usage().get().completionTokens());
                 }
             }
 

@@ -133,7 +133,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             Message response = client.messages().create(params);
             ChatMessage result = convertResponse(response, jsonPrefillApplied);
 
-            // Record token metrics
+            // Stash token usage
             String modelName = null;
             if (arguments != null && arguments.get("model") != null) {
                 modelName = arguments.get("model").toString();
@@ -142,8 +142,9 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
                 modelName = this.defaultModel;
             }
             if (modelName != null && !modelName.isBlank()) {
-                recordTokenMetrics(
-                        modelName, response.usage().inputTokens(), response.usage().outputTokens());
+                result.getExtraArgs().put("model_name", modelName);
+                result.getExtraArgs().put("promptTokens", response.usage().inputTokens());
+                result.getExtraArgs().put("completionTokens", response.usage().outputTokens());
             }
 
             return result;

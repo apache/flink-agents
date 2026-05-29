@@ -216,10 +216,11 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
             if (modelOfAzureDeployment != null
                     && !modelOfAzureDeployment.isBlank()
                     && completion.usage().isPresent()) {
-                recordTokenMetrics(
-                        modelOfAzureDeployment,
-                        completion.usage().get().promptTokens(),
-                        completion.usage().get().completionTokens());
+                response.getExtraArgs().put("model_name", modelOfAzureDeployment);
+                response.getExtraArgs()
+                        .put("promptTokens", completion.usage().get().promptTokens());
+                response.getExtraArgs()
+                        .put("completionTokens", completion.usage().get().completionTokens());
             }
 
             return response;
