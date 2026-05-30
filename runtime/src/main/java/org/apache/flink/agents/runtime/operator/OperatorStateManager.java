@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ShortTermMemoryTtlUpdate;
 import org.apache.flink.agents.api.agents.ShortTermMemoryTtlVisibility;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.api.common.state.ListState;
@@ -96,7 +97,7 @@ class OperatorStateManager {
      */
     void initializeKeyedStates(
             org.apache.flink.api.common.functions.RuntimeContext runtimeContext,
-            AgentPlan agentPlan)
+            AgentConfiguration agentConfiguration)
             throws Exception {
         // init sensoryMemState
         MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> sensoryMemStateDescriptor =
@@ -112,7 +113,7 @@ class OperatorStateManager {
                         "shortTermMemory",
                         TypeInformation.of(String.class),
                         TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
-        maybeEnableShortTermMemoryTTL(shortTermMemStateDescriptor, agentPlan);
+        maybeEnableShortTermMemoryTTL(shortTermMemStateDescriptor, agentConfiguration);
         shortTermMemState = runtimeContext.getMapState(shortTermMemStateDescriptor);
 
         // init sequence number state for per key message ordering
@@ -138,22 +139,19 @@ class OperatorStateManager {
      */
     private void maybeEnableShortTermMemoryTTL(
             MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> descriptor,
-            AgentPlan agentPlan) {
-        Long ttlMs =
-                agentPlan.getConfig().get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS);
+            AgentConfiguration agentConfiguration) {
+        Long ttlMs = agentConfiguration.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS);
         if (ttlMs == null || ttlMs <= 0) {
             return;
         }
 
         ShortTermMemoryTtlUpdate updateType =
-                agentPlan
-                        .getConfig()
-                        .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE);
+                agentConfiguration.get(
+                        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE);
 
         ShortTermMemoryTtlVisibility stateVisibility =
-                agentPlan
-                        .getConfig()
-                        .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY);
+                agentConfiguration.get(
+                        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY);
 
         StateTtlConfig ttlConfig =
                 StateTtlConfig.newBuilder(Duration.ofMillis(ttlMs))

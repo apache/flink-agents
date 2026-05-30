@@ -93,28 +93,28 @@ class ShortTermMemoryTTLIntegrationTest {
 
     @Test
     void testTTLConfigurationDisabledWithZeroTtl() throws Exception {
-        List<String> results = runScenario(0L, 2000L, true, true);
+        List<String> results = runScenario(0L, 50L, true, true);
 
         assertEquals(List.of("event1|NEW", "event2|NEW", "event1|EXISTING"), results);
     }
 
     @Test
     void testTTLConfigurationDisabledByDefault() throws Exception {
-        List<String> results = runScenario(0L, 2000L, false, true);
+        List<String> results = runScenario(0L, 50L, false, true);
 
         assertEquals(List.of("event1|NEW", "event2|NEW", "event1|EXISTING"), results);
     }
 
     @Test
     void testValueExpiresAfterTTL() throws Exception {
-        List<String> results = runScenario(1000L, 2000L, true, true);
+        List<String> results = runScenario(50L, 200L, true, true);
 
         assertEquals(List.of("event1|NEW", "event2|NEW", "event1|NEW"), results);
     }
 
     @Test
     void testTTLConfigurationAppliedWithDefaultUpdateTypeAndVisibility() throws Exception {
-        List<String> results = runScenario(1000L, 2000L, true, false);
+        List<String> results = runScenario(50L, 200L, true, false);
 
         assertEquals(List.of("event1|NEW", "event2|NEW", "event1|NEW"), results);
     }

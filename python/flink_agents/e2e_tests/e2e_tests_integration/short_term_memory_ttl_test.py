@@ -137,7 +137,7 @@ def test_value_still_visible_before_ttl_expiry() -> None:
 def test_ttl_configuration_disabled_with_zero_ttl() -> None:
     results = run_scenario(
         0,
-        2000,
+        50,
         configure_ttl_ms=True,
         configure_ttl_options=True,
     )
@@ -148,7 +148,7 @@ def test_ttl_configuration_disabled_with_zero_ttl() -> None:
 def test_ttl_configuration_disabled_by_default() -> None:
     results = run_scenario(
         0,
-        2000,
+        50,
         configure_ttl_ms=False,
         configure_ttl_options=True,
     )
@@ -158,8 +158,8 @@ def test_ttl_configuration_disabled_by_default() -> None:
 
 def test_value_expires_after_ttl() -> None:
     results = run_scenario(
-        1000,
-        2000,
+        50,
+        200,
         configure_ttl_ms=True,
         configure_ttl_options=True,
     )
@@ -169,8 +169,8 @@ def test_value_expires_after_ttl() -> None:
 
 def test_ttl_configuration_applied_with_default_update_type_and_visibility() -> None:
     results = run_scenario(
-        1000,
-        2000,
+        50,
+        200,
         configure_ttl_ms=True,
         configure_ttl_options=False,
     )
