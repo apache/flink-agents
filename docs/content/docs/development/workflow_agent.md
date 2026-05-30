@@ -535,6 +535,13 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+{{< hint warning >}}
+**Limitations:**
+
+- Cross-language actions are currently supported only when [running in Flink]({{< ref "docs/operations/deployment#run-in-flink" >}}), not in local development mode
+- Complex object serialization between languages may have limitations
+{{< /hint >}}
+
 ## Event
 
 Events are JSON-serializable messages passed between actions. Every event has a `type` string used for routing and an `attributes` map that carries the payload. A single event may trigger multiple actions if they are all listening to its type.
