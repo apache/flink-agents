@@ -125,7 +125,7 @@ class MyMCPAgent(Agent):
                 ChatRequestEvent(
                     model="math_chat_model",
                     messages=[msg],
-                    arguments={"a": str(input_data.a), "b": str(input_data.b)},
+                    prompt_args={"a": str(input_data.a), "b": str(input_data.b)},
                 )
             )
         else:

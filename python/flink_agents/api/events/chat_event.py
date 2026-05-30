@@ -37,7 +37,7 @@ class ChatRequestEvent(Event):
         The name of the chat model to be chatted with.
     messages : List[ChatMessage]
         The input to the chat model.
-    arguments : Dict[str, Any]
+    prompt_args : Dict[str, Any]
         Variables used to fill the chat model's prompt template, if a prompt
         resource is configured on the chat model setup. Empty by default.
     output_schema: OutputSchema | None
@@ -50,7 +50,7 @@ class ChatRequestEvent(Event):
         self,
         model: str,
         messages: List[ChatMessage],
-        arguments: Dict[str, Any] | None = None,
+        prompt_args: Dict[str, Any] | None = None,
         output_schema: OutputSchema | None = None,
     ) -> None:
         """Create a ChatRequestEvent."""
@@ -59,7 +59,7 @@ class ChatRequestEvent(Event):
             attributes={
                 "model": model,
                 "messages": messages,
-                "arguments": arguments if arguments is not None else {},
+                "prompt_args": prompt_args if prompt_args is not None else {},
                 "output_schema": output_schema,
             },
         )
@@ -80,7 +80,7 @@ class ChatRequestEvent(Event):
         return ChatRequestEvent(
             model=event.attributes["model"],
             messages=messages,
-            arguments=event.attributes.get("arguments"),
+            prompt_args=event.attributes.get("prompt_args"),
             output_schema=output_schema_raw,
         )
 
@@ -95,9 +95,9 @@ class ChatRequestEvent(Event):
         return self.get_attr("messages")
 
     @property
-    def arguments(self) -> Dict[str, Any]:
+    def prompt_args(self) -> Dict[str, Any]:
         """Return the prompt-template arguments, empty if not set."""
-        args = self.get_attr("arguments")
+        args = self.get_attr("prompt_args")
         return args if args is not None else {}
 
     @property

@@ -42,12 +42,12 @@ public class ChatRequestEvent extends Event {
     public ChatRequestEvent(
             String model,
             List<ChatMessage> messages,
-            @Nullable Map<String, Object> arguments,
+            @Nullable Map<String, Object> promptArgs,
             @Nullable Object outputSchema) {
         super(EVENT_TYPE);
         setAttr("model", model);
         setAttr("messages", new ArrayList<>(messages));
-        setAttr("arguments", arguments != null ? arguments : Collections.emptyMap());
+        setAttr("prompt_args", promptArgs != null ? promptArgs : Collections.emptyMap());
         if (outputSchema != null) {
             setAttr("output_schema", outputSchema);
         }
@@ -113,8 +113,8 @@ public class ChatRequestEvent extends Event {
 
     @JsonIgnore
     @SuppressWarnings("unchecked")
-    public Map<String, Object> getArguments() {
-        Map<String, Object> args = (Map<String, Object>) getAttr("arguments");
+    public Map<String, Object> getPromptArgs() {
+        Map<String, Object> args = (Map<String, Object>) getAttr("prompt_args");
         return args != null ? args : Collections.emptyMap();
     }
 }

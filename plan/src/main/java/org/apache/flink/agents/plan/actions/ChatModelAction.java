@@ -60,7 +60,7 @@ public class ChatModelAction {
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
     private static final String MODEL = "model";
     private static final String OUTPUT_SCHEMA = "outputSchema";
-    private static final String ARGUMENTS = "arguments";
+    private static final String PROMPT_ARGS = "prompt_args";
     private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
     private static final String TOTAL_RETRY_COUNT = "totalRetryCount";
     private static final String TOTAL_RETRY_WAIT_SEC = "totalRetryWaitSec";
@@ -109,7 +109,7 @@ public class ChatModelAction {
             UUID toolRequestEventId,
             UUID initialRequestId,
             String model,
-            Map<String, Object> arguments,
+            Map<String, Object> promptArgs,
             Object outputSchema)
             throws Exception {
         Map<UUID, Object> toolRequestEventContext;
@@ -122,7 +122,7 @@ public class ChatModelAction {
         Map<String, Object> context = new HashMap<>();
         context.put(INITIAL_REQUEST_ID, initialRequestId);
         context.put(MODEL, model);
-        context.put(ARGUMENTS, arguments != null ? arguments : Collections.emptyMap());
+        context.put(PROMPT_ARGS, promptArgs != null ? promptArgs : Collections.emptyMap());
         if (outputSchema != null) {
             context.put(OUTPUT_SCHEMA, outputSchema);
         }
@@ -188,7 +188,7 @@ public class ChatModelAction {
             String model,
             BaseChatModelSetup chatModel,
             List<ChatMessage> messages,
-            Map<String, Object> arguments,
+            Map<String, Object> promptArgs,
             Object outputSchema,
             RunnerContext ctx)
             throws Exception {
@@ -207,7 +207,7 @@ public class ChatModelAction {
                 toolRequestEvent.getId(),
                 initialRequestId,
                 model,
-                arguments,
+                promptArgs,
                 outputSchema);
 
         ctx.sendEvent(toolRequestEvent);
@@ -299,7 +299,7 @@ public class ChatModelAction {
             UUID initialRequestId,
             String model,
             List<ChatMessage> messages,
-            Map<String, Object> arguments,
+            Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             RunnerContext ctx)
             throws Exception {
@@ -345,7 +345,7 @@ public class ChatModelAction {
 
                     @Override
                     public ChatMessage call() throws Exception {
-                        return chatModel.chat(messages, arguments, Map.of());
+                        return chatModel.chat(messages, promptArgs, Map.of());
                     }
                 };
 
@@ -404,7 +404,7 @@ public class ChatModelAction {
                     model,
                     chatModel,
                     messages,
-                    arguments,
+                    promptArgs,
                     outputSchema,
                     ctx);
         } else {
@@ -427,7 +427,7 @@ public class ChatModelAction {
                 event.getId(),
                 event.getModel(),
                 event.getMessages(),
-                event.getArguments(),
+                event.getPromptArgs(),
                 event.getOutputSchema(),
                 ctx);
     }
@@ -442,8 +442,8 @@ public class ChatModelAction {
 
         UUID initialRequestId = (UUID) context.get(INITIAL_REQUEST_ID);
         String model = (String) context.get(MODEL);
-        Map<String, Object> arguments =
-                (Map<String, Object>) context.getOrDefault(ARGUMENTS, Map.of());
+        Map<String, Object> promptArgs =
+                (Map<String, Object>) context.getOrDefault(PROMPT_ARGS, Map.of());
         Object outputSchema = context.get(OUTPUT_SCHEMA);
 
         Map<String, ToolResponse> responses = event.getResponses();
@@ -477,7 +477,7 @@ public class ChatModelAction {
                         Collections.emptyList(),
                         toolResponseMessages);
 
-        chat(initialRequestId, model, messages, arguments, outputSchema, ctx);
+        chat(initialRequestId, model, messages, promptArgs, outputSchema, ctx);
     }
 
     /**

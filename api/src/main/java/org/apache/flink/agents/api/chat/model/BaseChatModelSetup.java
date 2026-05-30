@@ -113,8 +113,8 @@ public abstract class BaseChatModelSetup extends Resource {
 
     public ChatMessage chat(
             List<ChatMessage> messages,
-            Map<String, Object> arguments,
-            Map<String, Object> parameters) {
+            Map<String, Object> promptArgs,
+            Map<String, Object> modelParams) {
         Preconditions.checkNotNull(
                 connection,
                 "Connection is not initialized. Ensure open() is called before chat().");
@@ -128,8 +128,8 @@ public abstract class BaseChatModelSetup extends Resource {
                     "Prompt is not initialized. Ensure open() is called before chat().");
             Prompt prompt = (Prompt) this.prompt;
             Map<String, String> stringified = new HashMap<>();
-            if (arguments != null) {
-                for (Map.Entry<String, Object> entry : arguments.entrySet()) {
+            if (promptArgs != null) {
+                for (Map.Entry<String, Object> entry : promptArgs.entrySet()) {
                     stringified.put(
                             entry.getKey(),
                             entry.getValue() != null ? entry.getValue().toString() : "");
@@ -155,8 +155,8 @@ public abstract class BaseChatModelSetup extends Resource {
         }
 
         Map<String, Object> params = this.getParameters();
-        if (parameters != null) {
-            params.putAll(parameters);
+        if (modelParams != null) {
+            params.putAll(modelParams);
         }
         return connection.chat(messages, tools, params);
     }

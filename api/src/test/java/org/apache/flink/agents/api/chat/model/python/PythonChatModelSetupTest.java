@@ -93,11 +93,11 @@ public class PythonChatModelSetupTest {
         ChatMessage inputMessage = mock(ChatMessage.class);
         ChatMessage outputMessage = mock(ChatMessage.class);
         List<ChatMessage> messages = Collections.singletonList(inputMessage);
-        Map<String, Object> arguments = new HashMap<>();
-        arguments.put("input", "value");
-        Map<String, Object> parameters = new HashMap<>();
-        parameters.put("temperature", 0.7);
-        parameters.put("max_tokens", 100);
+        Map<String, Object> promptArgs = new HashMap<>();
+        promptArgs.put("input", "value");
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("temperature", 0.7);
+        modelParams.put("max_tokens", 100);
 
         Object pythonInputMessage = new Object();
         Object pythonOutputMessage = new Object();
@@ -107,7 +107,7 @@ public class PythonChatModelSetupTest {
                 .thenReturn(pythonOutputMessage);
         when(mockAdapter.fromPythonChatMessage(pythonOutputMessage)).thenReturn(outputMessage);
 
-        ChatMessage result = pythonChatModelSetup.chat(messages, arguments, parameters);
+        ChatMessage result = pythonChatModelSetup.chat(messages, promptArgs, modelParams);
 
         assertThat(result).isEqualTo(outputMessage);
 
@@ -119,10 +119,10 @@ public class PythonChatModelSetupTest {
                         argThat(
                                 kwargs -> {
                                     assertThat(kwargs).containsKey("messages");
-                                    assertThat(kwargs).containsKey("arguments");
+                                    assertThat(kwargs).containsKey("prompt_args");
                                     assertThat(kwargs).containsKey("temperature");
                                     assertThat(kwargs).containsKey("max_tokens");
-                                    assertThat(kwargs.get("arguments")).isEqualTo(arguments);
+                                    assertThat(kwargs.get("prompt_args")).isEqualTo(promptArgs);
                                     assertThat(kwargs.get("temperature")).isEqualTo(0.7);
                                     assertThat(kwargs.get("max_tokens")).isEqualTo(100);
                                     List<?> pythonMessages = (List<?>) kwargs.get("messages");
@@ -140,10 +140,10 @@ public class PythonChatModelSetupTest {
 
         ChatMessage inputMessage = mock(ChatMessage.class);
         List<ChatMessage> messages = Collections.singletonList(inputMessage);
-        Map<String, Object> arguments = new HashMap<>();
-        Map<String, Object> parameters = new HashMap<>();
+        Map<String, Object> promptArgs = new HashMap<>();
+        Map<String, Object> modelParams = new HashMap<>();
 
-        assertThatThrownBy(() -> setupWithNullModel.chat(messages, arguments, parameters))
+        assertThatThrownBy(() -> setupWithNullModel.chat(messages, promptArgs, modelParams))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ChatModelSetup is not initialized")
                 .hasMessageContaining("Cannot perform chat operation");

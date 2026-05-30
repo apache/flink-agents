@@ -92,7 +92,7 @@ class AsyncTestAgent(Agent):
             ChatRequestEvent(
                 model="slow_chat_model",
                 messages=[ChatMessage(role=MessageRole.USER, content=input)],
-                arguments={"task": input},
+                prompt_args={"task": input},
             )
         )
 

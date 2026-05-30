@@ -225,7 +225,7 @@ class ChatModelActionRetryTest {
         UUID initialRequestId = UUID.randomUUID();
         UUID toolRequestEventId = UUID.randomUUID();
         String toolCallId = "call-1";
-        Map<String, Object> savedArguments = Map.of("k", "v");
+        Map<String, Object> savedPromptArgs = Map.of("k", "v");
 
         // Pre-seed sensory memory with the tool-request-event context that
         // processToolResponse will look up. This simulates a prior chat round
@@ -234,7 +234,7 @@ class ChatModelActionRetryTest {
         Map<String, Object> contextEntry = new HashMap<>();
         contextEntry.put("initialRequestId", initialRequestId);
         contextEntry.put("model", "test-model");
-        contextEntry.put("arguments", savedArguments);
+        contextEntry.put("prompt_args", savedPromptArgs);
         toolRequestEventContext.put(toolRequestEventId, contextEntry);
         sensoryMemory.set("_TOOL_REQUEST_EVENT_CONTEXT", toolRequestEventContext);
 
@@ -259,9 +259,9 @@ class ChatModelActionRetryTest {
         ChatModelAction.processChatRequestOrToolResponse(toolResponseEvent, mockCtx);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<Map<String, Object>> argumentsCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(mockChatModel).chat(any(), argumentsCaptor.capture(), any());
-        assertThat(argumentsCaptor.getValue()).isEqualTo(savedArguments);
+        ArgumentCaptor<Map<String, Object>> promptArgsCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(mockChatModel).chat(any(), promptArgsCaptor.capture(), any());
+        assertThat(promptArgsCaptor.getValue()).isEqualTo(savedPromptArgs);
     }
 
     // --- Helper methods ---

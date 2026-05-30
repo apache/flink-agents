@@ -84,7 +84,7 @@ class MockChatModel(BaseChatModelSetup):
     def chat(
         self,
         messages: Sequence[ChatMessage],
-        arguments: Dict[str, Any] | None = None,
+        prompt_args: Dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
         """Execute chat conversation."""
@@ -104,10 +104,10 @@ class MockChatModel(BaseChatModelSetup):
                 prompt = self.prompt
 
             if "sum" in messages[-1].content:
-                str_arguments = (
-                    {k: str(v) for k, v in arguments.items()} if arguments else {}
+                str_prompt_args = (
+                    {k: str(v) for k, v in prompt_args.items()} if prompt_args else {}
                 )
-                messages = prompt.format_messages(**str_arguments)
+                messages = prompt.format_messages(**str_prompt_args)
 
         # Bind tools
         tools = None
@@ -183,7 +183,7 @@ class MyAgent(Agent):
             ChatRequestEvent(
                 model="mock_chat_model",
                 messages=[ChatMessage(role=MessageRole.USER, content=input)],
-                arguments={"task": input},
+                prompt_args={"task": input},
             )
         )
 

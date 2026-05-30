@@ -200,12 +200,12 @@ class BaseChatModelSetup(Resource):
     def chat(
         self,
         messages: Sequence[ChatMessage],
-        arguments: Mapping[str, Any] | None = None,
+        prompt_args: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
         """Execute chat conversation.
 
-        1. Apply prompt template (if any), filled from ``arguments``
+        1. Apply prompt template (if any), filled from ``prompt_args``
         2. Bind tools (if any)
         3. Call ChatModelConnection to perform actual communication
         4. Process response
@@ -214,7 +214,7 @@ class BaseChatModelSetup(Resource):
         ----------
         messages : Sequence[ChatMessage]
             Input message sequence
-        arguments : Mapping[str, Any] | None
+        prompt_args : Mapping[str, Any] | None
             Variables used to fill the prompt template, if a prompt resource is
             configured. Values are stringified via ``str()`` to match the
             ``Prompt.format_messages`` contract.
@@ -228,10 +228,10 @@ class BaseChatModelSetup(Resource):
         """
         # Apply prompt template
         if self.prompt is not None:
-            str_arguments: Dict[str, str] = (
-                {k: str(v) for k, v in arguments.items()} if arguments else {}
+            str_prompt_args: Dict[str, str] = (
+                {k: str(v) for k, v in prompt_args.items()} if prompt_args else {}
             )
-            prompt_messages = self._get_prompt().format_messages(**str_arguments)
+            prompt_messages = self._get_prompt().format_messages(**str_prompt_args)
 
             # append meaningful messages
             for msg in messages:

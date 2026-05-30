@@ -64,8 +64,8 @@ class BaseChatModelTest {
         @Override
         public ChatMessage chat(
                 List<ChatMessage> messages,
-                Map<String, Object> arguments,
-                Map<String, Object> parameters) {
+                Map<String, Object> promptArgs,
+                Map<String, Object> modelParams) {
             // Simple test implementation that echoes the last user message
 
             String lastUserContent = "";
@@ -271,8 +271,8 @@ class BaseChatModelTest {
     }
 
     @Test
-    @DisplayName("chat() fills prompt template from arguments parameter")
-    void testChatFillsTemplateFromArgumentsParameter() {
+    @DisplayName("chat() fills prompt template from promptArgs parameter")
+    void testChatFillsTemplateFromPromptArgsParameter() {
         RecordingConnection connection = new RecordingConnection();
         Prompt prompt = Prompt.fromText("Task: {key}");
         RecordingChatModelSetup setup = new RecordingChatModelSetup(connection, prompt);

@@ -279,22 +279,22 @@ class TestRetryWaitIntervalConfig:
         assert AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_default_value() == 1
 
 
-class TestProcessToolResponseArgumentsForwarding:
+class TestProcessToolResponsePromptArgsForwarding:
     """Locks the contract that `_process_tool_response` forwards the saved
-    `arguments` from the tool-request-event context into the round-2 call
+    `prompt_args` from the tool-request-event context into the round-2 call
     to `chat_model.chat(...)`.
     """
 
-    def test_forwards_saved_arguments_to_chat(self) -> None:
+    def test_forwards_saved_prompt_args_to_chat(self) -> None:
         initial_request_id = uuid4()
         tool_request_event_id = uuid4()
         tool_call_id = "call-1"
-        saved_arguments = {"k": "v"}
+        saved_prompt_args = {"k": "v"}
 
-        captured_arguments: list[dict] = []
+        captured_prompt_args: list[dict] = []
 
         def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
-            captured_arguments.append(kwargs.get("arguments"))
+            captured_prompt_args.append(kwargs.get("prompt_args"))
             return ChatMessage(role=MessageRole.ASSISTANT, content="done")
 
         chat_model = MagicMock()
@@ -304,7 +304,7 @@ class TestProcessToolResponseArgumentsForwarding:
             chat_model, max_retries=0, retry_wait_interval_sec=0
         )
 
-        # Pre-seed the tool-request-event context with saved arguments so
+        # Pre-seed the tool-request-event context with saved prompt args so
         # _process_tool_response can look them up.
         sensory_memory.set(
             "_TOOL_REQUEST_EVENT_CONTEXT",
@@ -312,7 +312,7 @@ class TestProcessToolResponseArgumentsForwarding:
                 str(tool_request_event_id): {
                     "initial_request_id": initial_request_id,
                     "model": "test-model",
-                    "arguments": saved_arguments,
+                    "prompt_args": saved_prompt_args,
                     "output_schema": None,
                 }
             },
@@ -337,7 +337,7 @@ class TestProcessToolResponseArgumentsForwarding:
 
         asyncio.run(process_chat_request_or_tool_response(tool_response_event, ctx))
 
-        assert len(captured_arguments) == 1
-        assert captured_arguments[0] == saved_arguments
+        assert len(captured_prompt_args) == 1
+        assert captured_prompt_args[0] == saved_prompt_args
         assert len(sent_events) == 1
         assert isinstance(sent_events[0], ChatResponseEvent)

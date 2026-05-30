@@ -85,12 +85,12 @@ def test_missing_model_raises_validation_error() -> None:
         _MinimalChatModelSetup(connection="c")
 
 
-def test_chat_fills_template_from_arguments_parameter() -> None:
-    """chat() fills the prompt template from the `arguments` parameter."""
+def test_chat_fills_template_from_prompt_args_parameter() -> None:
+    """chat() fills the prompt template from the `prompt_args` parameter."""
     prompt = Prompt.from_text(text="Task: {key}")
     setup, connection = _build_setup(prompt)
 
-    setup.chat([], arguments={"key": "value"})
+    setup.chat([], prompt_args={"key": "value"})
 
     assert len(connection.captured_messages) == 1
     assert connection.captured_messages[0].content == "Task: value"
@@ -104,7 +104,7 @@ def test_chat_does_not_read_template_vars_from_extra_args() -> None:
     user_message = ChatMessage(
         role=MessageRole.USER, content="hello", extra_args={"key": "value"}
     )
-    setup.chat([user_message], arguments={})
+    setup.chat([user_message], prompt_args={})
 
     assert len(connection.captured_messages) == 2
     assert connection.captured_messages[0].content == "Task: {key}"
@@ -116,12 +116,12 @@ def test_chat_refills_template_on_subsequent_invocations() -> None:
     prompt = Prompt.from_text(text="Task: {key}")
     setup, connection = _build_setup(prompt)
 
-    setup.chat([], arguments={"key": "v1"})
+    setup.chat([], prompt_args={"key": "v1"})
     assert len(connection.captured_messages) == 1
     assert connection.captured_messages[0].content == "Task: v1"
 
     tool_response = ChatMessage(role=MessageRole.TOOL, content="tool result")
-    setup.chat([tool_response], arguments={"key": "v1"})
+    setup.chat([tool_response], prompt_args={"key": "v1"})
     assert len(connection.captured_messages) == 2
     assert connection.captured_messages[0].content == "Task: v1"
     assert connection.captured_messages[1].content == "tool result"

@@ -64,13 +64,13 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages,
-            Map<String, Object> arguments,
-            Map<String, Object> parameters) {
+            Map<String, Object> promptArgs,
+            Map<String, Object> modelParams) {
         checkState(
                 chatModelSetup != null,
                 "ChatModelSetup is not initialized. Cannot perform chat operation.");
 
-        Map<String, Object> kwargs = new HashMap<>(parameters);
+        Map<String, Object> kwargs = new HashMap<>(modelParams);
 
         List<Object> pythonMessages = new ArrayList<>();
         for (ChatMessage message : messages) {
@@ -78,7 +78,7 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
         }
 
         kwargs.put("messages", pythonMessages);
-        kwargs.put("arguments", arguments != null ? arguments : Collections.emptyMap());
+        kwargs.put("prompt_args", promptArgs != null ? promptArgs : Collections.emptyMap());
 
         Object pythonMessageResponse = adapter.callMethod(chatModelSetup, "chat", kwargs);
         return adapter.fromPythonChatMessage(pythonMessageResponse);

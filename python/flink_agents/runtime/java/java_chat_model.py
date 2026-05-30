@@ -133,7 +133,7 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
     def chat(
         self,
         messages: Sequence[ChatMessage],
-        arguments: Mapping[str, Any] | None = None,
+        prompt_args: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
         """Execute chat conversation by delegating to Java implementation.
@@ -146,7 +146,7 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
         ----------
         messages : Sequence[ChatMessage]
             Input message sequence
-        arguments : Mapping[str, Any] | None
+        prompt_args : Mapping[str, Any] | None
             Prompt-template variables forwarded to the Java setup.
         **kwargs : Any
             Additional parameters passed to the model service
@@ -162,7 +162,7 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
             for message in messages
         ]
         j_response_message = self._j_resource.chat(
-            java_messages, arguments or {}, kwargs
+            java_messages, prompt_args or {}, kwargs
         )
 
         # Convert Java response back to Python format

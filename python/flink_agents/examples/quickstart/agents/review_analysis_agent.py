@@ -100,7 +100,7 @@ class ReviewAnalysisAgent(Agent):
             ChatRequestEvent(
                 model="review_analysis_model",
                 messages=[msg],
-                arguments={"input": content},
+                prompt_args={"input": content},
             )
         )
 
