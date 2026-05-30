@@ -4,6 +4,10 @@ docs
 .git
 .gitignore
 .gitmodules
+\.bats-cache
+.*\.bats$
+.*\.bash$
+\.gitkeep
 .*\.lock$
 .venv/*
 .idea/*

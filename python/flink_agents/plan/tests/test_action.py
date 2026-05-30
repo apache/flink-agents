@@ -92,3 +92,31 @@ def test_action_deserialize(action: Action) -> None:
     func = action.exec
     assert func.module == "flink_agents.plan.tests.test_action"
     assert func.qualname == "legal_signature"
+
+
+def test_action_deserialize_java_shape_config_unwraps_primitives() -> None:
+    json_str = json.dumps(
+        {
+            "name": "legal",
+            "exec": {
+                "func_type": "PythonFunction",
+                "module": "flink_agents.plan.tests.test_action",
+                "qualname": "legal_signature",
+            },
+            "listen_event_types": ["_input_event"],
+            "config": {
+                "__config_type__": "java",
+                "timeout_sec": {"@class": "java.lang.Integer", "value": 30},
+                "enabled": {"@class": "java.lang.Boolean", "value": True},
+                "rate": {"@class": "java.lang.Double", "value": 1.5},
+                "label": {"@class": "java.lang.String", "value": "fast"},
+            },
+        }
+    )
+    action = Action.model_validate_json(json_str)
+    assert action.config == {
+        "timeout_sec": 30,
+        "enabled": True,
+        "rate": 1.5,
+        "label": "fast",
+    }

@@ -42,6 +42,19 @@ import java.lang.annotation.Target;
  * @Action(listenEventTypes = {InputEvent.EVENT_TYPE, "MyCustomEvent"})
  * public void handleMultiple(Event event, RunnerContext ctx) { ... }
  * }</pre>
+ *
+ * <p>For a cross-language action, set {@link #target()} to a {@link PythonFunction} with a
+ * non-empty {@code module}. The annotated Java body is never invoked — throw {@link
+ * UnsupportedOperationException} so direct calls outside the framework fail loud:
+ *
+ * <pre>{@code
+ * @Action(
+ *     listenEventTypes = {InputEvent.EVENT_TYPE},
+ *     target = @PythonFunction(module = "my_pkg.handlers", qualname = "handle_input"))
+ * public void handleInput(Event event, RunnerContext ctx) {
+ *     throw new UnsupportedOperationException("cross-language stub");
+ * }
+ * }</pre>
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
@@ -52,4 +65,11 @@ public @interface Action {
      * @return Array of event type strings
      */
     String[] listenEventTypes();
+
+    /**
+     * Cross-language target. When {@link PythonFunction#module()} is non-empty, dispatch routes to
+     * the Python target and the annotated Java body is unused. Default (empty {@code module}) keeps
+     * the action native Java.
+     */
+    PythonFunction target() default @PythonFunction;
 }

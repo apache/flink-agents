@@ -17,8 +17,25 @@
 #################################################################################
 from typing import Callable, Type
 
+from flink_agents.api.function import Function, JavaFunction, PythonFunction
 
-def action(*listen_events: str) -> Callable:
+
+def _validate_target(target: Function, owner: str) -> None:
+    """Reject targets with empty required identifiers, attributed to ``owner``."""
+    if isinstance(target, PythonFunction):
+        if not target.module or not target.qualname:
+            msg = f"PythonFunction target on '{owner}' must set both module and qualname"
+            raise ValueError(msg)
+    elif isinstance(target, JavaFunction):
+        if not target.qualname or not target.method_name:
+            msg = f"JavaFunction target on '{owner}' must set both qualname and method_name"
+            raise ValueError(msg)
+
+
+def action(
+    *listen_events: str,
+    target: Function | None = None,
+) -> Callable:
     """Decorator for marking a function as an agent action.
 
     Each argument is a type-identifier string that this action responds to.
@@ -27,6 +44,10 @@ def action(*listen_events: str) -> Callable:
     ----------
     listen_events : str
         Type-identifier strings that this action responds to.
+    target : Function, optional
+        Cross-language function descriptor dispatched instead of the
+        decorated body. The body becomes a stub — raise
+        ``NotImplementedError`` so direct calls fail loud.
 
     Returns:
     -------
@@ -37,6 +58,8 @@ def action(*listen_events: str) -> Callable:
     ------
     AssertionError
         If no events are provided or if an argument is not a string.
+    TypeError
+        If ``target`` is provided but is not a :class:`Function` descriptor.
     """
     assert len(listen_events) > 0, (
         "action must have at least one event type to listen to"
@@ -47,7 +70,17 @@ def action(*listen_events: str) -> Callable:
             f"action must listen to string type identifiers, got {evt!r}"
         )
 
+    if target is not None and not isinstance(target, Function):
+        msg = (
+            f"action(target=...) must be an api-layer Function descriptor, "
+            f"got {type(target).__name__}"
+        )
+        raise TypeError(msg)
+
     def decorator(func: Callable) -> Callable:
+        if target is not None:
+            _validate_target(target, func.__qualname__)
+            func._target = target
         func._listen_events = listen_events
         return func
 

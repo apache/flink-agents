@@ -227,21 +227,56 @@ public class AgentPlan implements Serializable {
 
         // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
+        // getDeclaredMethods() skips inherited @Action methods; reject loudly.
+        for (Class<?> parent = agentClass.getSuperclass();
+                parent != null && parent != Agent.class;
+                parent = parent.getSuperclass()) {
+            for (Method inherited : parent.getDeclaredMethods()) {
+                if (inherited.isAnnotationPresent(
+                        org.apache.flink.agents.api.annotation.Action.class)) {
+                    throw new IllegalStateException(
+                            "Inherited @Action '"
+                                    + parent.getName()
+                                    + "#"
+                                    + inherited.getName()
+                                    + "' is not supported; declare on the concrete agent.");
+                }
+            }
+        }
         for (Method method : agentClass.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
-                org.apache.flink.agents.api.annotation.Action actionAnnotation =
-                        method.getAnnotation(org.apache.flink.agents.api.annotation.Action.class);
+            if (!method.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
+                continue;
+            }
+            org.apache.flink.agents.api.annotation.Action actionAnnotation =
+                    Objects.requireNonNull(
+                            method.getAnnotation(
+                                    org.apache.flink.agents.api.annotation.Action.class));
+            String[] listenEventTypeStrings = actionAnnotation.listenEventTypes();
+            org.apache.flink.agents.api.annotation.PythonFunction target =
+                    actionAnnotation.target();
+            String targetModule = target.module();
+            String targetQualname = target.qualname();
+            boolean moduleSet = !targetModule.isEmpty();
+            boolean qualnameSet = !targetQualname.isEmpty();
 
-                String[] listenEventTypeStrings =
-                        Objects.requireNonNull(actionAnnotation).listenEventTypes();
-
-                org.apache.flink.agents.plan.JavaFunction javaFunction =
+            org.apache.flink.agents.plan.Function execFunction;
+            if (!moduleSet && !qualnameSet) {
+                execFunction =
                         new org.apache.flink.agents.plan.JavaFunction(
                                 method.getDeclaringClass(),
                                 method.getName(),
                                 method.getParameterTypes());
-                extractActions(method.getName(), listenEventTypeStrings, javaFunction, null);
+            } else if (moduleSet && qualnameSet) {
+                execFunction =
+                        new org.apache.flink.agents.plan.PythonFunction(
+                                targetModule, targetQualname);
+            } else {
+                throw new IllegalStateException(
+                        "PythonFunction target on '"
+                                + method.getName()
+                                + "' must set both module and qualname");
             }
+            extractActions(method.getName(), listenEventTypeStrings, execFunction, null);
         }
 
         for (Map.Entry<

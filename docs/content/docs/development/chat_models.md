@@ -1,6 +1,6 @@
 ---
 title: Chat Models
-weight: 3
+weight: 4
 type: docs
 ---
 <!--
@@ -145,6 +145,103 @@ public class MyAgent extends Agent {
 
 
 ## Built-in Providers
+
+### Amazon Bedrock
+
+Amazon Bedrock provides access to a wide range of foundation models from leading AI providers through a unified API. The Flink Agents Bedrock integration uses the [Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html), which provides a consistent interface across all supported models with native tool calling support. Authentication is handled via SigV4 using the AWS default credentials chain. No API keys are required.
+
+{{< hint info >}}
+Amazon Bedrock is only supported in Java currently. To use Amazon Bedrock from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. An AWS account with [Amazon Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) enabled for the models you plan to use
+2. IAM credentials configured via any method supported by the [AWS Default Credentials Provider](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/credentials-chain.html) (environment variables, `~/.aws/credentials`, IAM role, etc.)
+
+#### BedrockChatModelConnection Parameters
+
+{{< tabs "BedrockChatModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `region` | String | `"us-east-1"` | AWS region for the Bedrock service |
+| `model` | String | None | Default model ID (can be overridden per setup) |
+| `max_retries` | int | `5` | Maximum number of API retry attempts (retries on throttling, 429, 503) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### BedrockChatModelSetup Parameters
+
+{{< tabs "BedrockChatModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | Required | Bedrock model ID (e.g. `"us.anthropic.claude-sonnet-4-20250514-v1:0"`) |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 1.0) |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Amazon Bedrock Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor bedrockConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.BEDROCK_CONNECTION)
+                .addInitialArgument("region", "us-east-1")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor bedrockChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.BEDROCK_SETUP)
+                .addInitialArgument("connection", "bedrockConnection")
+                .addInitialArgument("model", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+                .addInitialArgument("temperature", 0.1d)
+                .addInitialArgument("max_tokens", 4096)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Amazon Bedrock supports models from multiple providers through a single API. Visit the [Amazon Bedrock Model IDs documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the complete and up-to-date list of available models.
+
+Some popular options include:
+- **Claude** (Anthropic): `us.anthropic.claude-sonnet-4-6`, `us.anthropic.claude-opus-4-7`, `us.anthropic.claude-opus-4-6-v1`
+- **Llama** (Meta): `us.meta.llama4-scout-17b-16e-instruct-v1:0`
+- **Mistral**: `mistral.mistral-large-2402-v1:0`
+- **Amazon Nova**: `us.amazon.nova-pro-v1:0`, `us.amazon.nova-lite-v1:0`
+
+{{< hint warning >}}
+Model availability varies by AWS region and requires explicit model access enablement in the Bedrock console. Always check the [Amazon Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-regions.html) for regional availability before implementing in production.
+{{< /hint >}}
+
+{{< hint warning >}}
+**Current limitations:** The integration uses text content blocks only. Extended thinking / reasoning content blocks (e.g. Claude extended thinking), citation blocks, and image / document content blocks are not yet supported.
+{{< /hint >}}
 
 ### Anthropic
 
@@ -390,10 +487,6 @@ Model availability and specifications may change. Always check the official Azur
 
 Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azure's cloud infrastructure, using the same OpenAI SDK with Azure-specific authentication and endpoints. This offers enterprise security, compliance, and regional availability while using familiar OpenAI APIs.
 
-{{< hint info >}}
-Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
-{{< /hint >}}
-
 {{< hint warning >}}
 **Azure OpenAI vs Azure AI:** Azure OpenAI uses the OpenAI SDK to access OpenAI models (GPT-4, etc.) hosted on Azure. If you want to use other models like Llama, Mistral, or Phi deployed via Azure AI Studio, see [Azure AI](#azure-ai) instead.
 {{< /hint >}}
@@ -420,6 +513,19 @@ Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Jav
 
 {{< /tab >}}
 
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | Azure OpenAI API key for authentication |
+| `api_version` | String | Required | Azure OpenAI REST API version (e.g., "2024-02-01"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
+| `azure_endpoint` | String | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) — either a direct Azure resource or a proxy/gateway URL that fronts an Azure OpenAI service |
+| `timeout` | int | None | Timeout in seconds for API requests; must be greater than 0, otherwise ignored (SDK default applies) |
+| `max_retries` | int | None | Maximum number of API retry attempts; must be non-negative, otherwise ignored (SDK default applies) |
+| `azure_url_path_mode` | String | `"AUTO"` | Controls how the SDK constructs Azure OpenAI request URLs. One of `"AUTO"`, `"LEGACY"`, or `"UNIFIED"`. Custom gateways that proxy Azure OpenAI typically need `"LEGACY"` to force the `/openai/deployments/{model}` path |
+
+{{< /tab >}}
+
 {{< /tabs >}}
 
 #### AzureOpenAIChatModelSetup Parameters
@@ -439,6 +545,22 @@ Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Jav
 | `max_tokens` | int | None | Maximum number of tokens to generate |
 | `logprobs` | bool | `False` | Whether to return log probabilities of output tokens |
 | `additional_kwargs` | dict | `{}` | Additional Azure OpenAI API parameters |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | Required | Azure deployment name (not the underlying OpenAI model name) |
+| `model_of_azure_deployment` | String | None | The underlying model name (e.g., 'gpt-4', 'gpt-4o'). Used solely for token metrics tracking |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | None | Sampling temperature (0.0 to 2.0). Not supported by reasoning models |
+| `max_tokens` | int | None | Maximum number of tokens to generate (must be greater than 0) |
+| `logprobs` | boolean | `false` | Whether to return log probabilities of output tokens |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Azure OpenAI API parameters (forwarded to the OpenAI request body) |
 
 {{< /tab >}}
 
@@ -474,6 +596,34 @@ class MyAgent(Agent):
         )
 
     ...
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor azureOpenAIConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_OPENAI_CONNECTION)
+                .addInitialArgument("api_key", "<your-api-key>")
+                .addInitialArgument("api_version", "2024-02-01")
+                .addInitialArgument("azure_endpoint", "https://your-resource.openai.azure.com")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor azureOpenAIChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_OPENAI_SETUP)
+                .addInitialArgument("connection", "azureOpenAIConnection")
+                .addInitialArgument("model", "my-gpt4-deployment")          // Your Azure deployment name
+                .addInitialArgument("model_of_azure_deployment", "gpt-4")   // Underlying model for metrics
+                .addInitialArgument("temperature", 0.3d)
+                .addInitialArgument("max_tokens", 1000)
+                .build();
+    }
+
+    ...
+}
 ```
 {{< /tab >}}
 
@@ -1216,3 +1366,8 @@ public class MyChatModelSetup extends BaseChatModelSetup {
 
 {{< /tabs >}}
 
+## Built-in Events and Actions
+
+The built-in `chat_model_action` listens to `ChatRequestEvent` and `ToolResponseEvent`. To request a chat completion, send a `ChatRequestEvent`. If the model returns a final answer, the action sends a `ChatResponseEvent`.
+
+If the model asks to call tools, `chat_model_action` sends a `ToolRequestEvent` instead of a final `ChatResponseEvent`. After the tools finish, it receives the matching `ToolResponseEvent`, appends the tool results to the chat history, and calls the model again. This loop continues until the model returns a final response. For details on how tools are executed, see [Built-in Events and Actions in Tool Use]({{< ref "docs/development/tool_use#built-in-events-and-actions" >}}).

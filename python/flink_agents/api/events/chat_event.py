@@ -77,12 +77,14 @@ class ChatRequestEvent(Event):
         output_schema_raw = event.attributes.get("output_schema")
         if isinstance(output_schema_raw, dict):
             output_schema_raw = OutputSchema.model_validate(output_schema_raw)
-        return ChatRequestEvent(
+        result = ChatRequestEvent(
             model=event.attributes["model"],
             messages=messages,
             prompt_args=event.attributes.get("prompt_args"),
             output_schema=output_schema_raw,
         )
+        result.id = event.id
+        return result
 
     @property
     def model(self) -> str:
@@ -152,17 +154,20 @@ class ChatResponseEvent(Event):
             if isinstance(response_raw, dict)
             else response_raw
         )
-        return ChatResponseEvent(
+        result = ChatResponseEvent(
             request_id=event.attributes["request_id"],
             response=response,
             retry_count=event.attributes.get("retry_count", 0),
             total_retry_wait_sec=event.attributes.get("total_retry_wait_sec", 0),
         )
+        result.id = event.id
+        return result
 
     @property
     def request_id(self) -> UUID:
         """Return the request event ID."""
-        return self.get_attr("request_id")
+        val = self.get_attr("request_id")
+        return UUID(val) if isinstance(val, str) else val
 
     @property
     def response(self) -> ChatMessage:

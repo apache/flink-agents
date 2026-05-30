@@ -199,7 +199,9 @@ class InputEvent(Event):
     @override
     def from_event(cls, event: Event) -> "InputEvent":
         assert "input" in event.attributes
-        return InputEvent(input=event.attributes["input"])
+        result = InputEvent(input=event.attributes["input"])
+        result.id = event.id
+        return result
 
     @property
     def input(self) -> Any:
@@ -230,7 +232,9 @@ class OutputEvent(Event):
     @override
     def from_event(cls, event: Event) -> "OutputEvent":
         assert "output" in event.attributes
-        return OutputEvent(output=event.attributes["output"])
+        result = OutputEvent(output=event.attributes["output"])
+        result.id = event.id
+        return result
 
     @property
     def output(self) -> Any:

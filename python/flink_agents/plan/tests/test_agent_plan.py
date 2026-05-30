@@ -36,6 +36,7 @@ from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelSetup,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.function import JavaFunction
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.vector_stores.vector_store import (
@@ -82,6 +83,95 @@ def test_to_agent_invalid_signature() -> None:
     agent = InvalidAgent()
     with pytest.raises(TypeError):
         AgentPlan.from_agent(agent, AgentConfiguration())
+
+
+def test_builtin_actions_are_python_native_after_compile() -> None:
+    agent_plan = AgentPlan.from_agent(AgentForTest(), AgentConfiguration())
+
+    for name in ("chat_model_action", "tool_call_action", "context_retrieval_action"):
+        action = agent_plan.actions[name]
+        assert isinstance(action.exec, PythonFunction)
+
+
+class AgentWithConventionalDecoratorOrder(Agent):
+    """`@staticmethod` outer, `@action` inner — the conventional Python order.
+
+    The decorator stack puts ``_listen_events`` on the inner function (i.e.
+    ``staticmethod.__func__``) rather than on the staticmethod wrapper, so
+    ``_get_actions`` must unwrap before inspecting attributes.
+    """
+
+    @staticmethod
+    @action(InputEvent.EVENT_TYPE)
+    def handle(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(OutputEvent(output=InputEvent.from_event(event).input))
+
+
+def test_conventional_staticmethod_outer_decorator_order_is_registered() -> None:
+    plan = AgentPlan.from_agent(
+        AgentWithConventionalDecoratorOrder(), AgentConfiguration()
+    )
+    actions = plan.get_actions(InputEvent.EVENT_TYPE)
+    assert len(actions) == 1, (
+        "Action defined with `@staticmethod` outer / `@action` inner was silently "
+        "dropped — `_get_actions` should unwrap the staticmethod before checking "
+        "for `_listen_events`."
+    )
+    assert actions[0].name == "handle"
+
+
+class _BaseAgentWithInheritedAction(Agent):
+    """Base class with an @action — used to verify the inheritance guard."""
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def shared_action(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(OutputEvent(output="shared"))
+
+
+class _ConcreteAgentInheritingAction(_BaseAgentWithInheritedAction):
+    """Concrete agent that inherits ``shared_action`` from the base class."""
+
+
+def test_action_inherited_from_parent_agent_class_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match="Inherited @action") as exc:
+        AgentPlan.from_agent(_ConcreteAgentInheritingAction(), AgentConfiguration())
+    assert "shared_action" in str(exc.value)
+    assert "_BaseAgentWithInheritedAction" in str(exc.value)
+
+
+_JAVA_HANDLER_QUALNAME = (
+    "org.apache.flink.agents.runtime.operator."
+    "CrossLanguageActionRuntimeTest$Handlers"
+)
+
+
+class AgentWithCrossLanguageDecoratedAction(Agent):
+    @action(
+        InputEvent.EVENT_TYPE,
+        target=JavaFunction(
+            qualname=_JAVA_HANDLER_QUALNAME,
+            method_name="handleInput",
+            parameter_types=[
+                "org.apache.flink.agents.api.Event",
+                "org.apache.flink.agents.api.context.RunnerContext",
+            ],
+        ),
+    )
+    @staticmethod
+    def handle(event: Event, ctx: RunnerContext) -> None:
+        msg = "cross-language stub"
+        raise NotImplementedError(msg)
+
+
+def test_decorated_action_with_target_compiles_to_plan_java_function() -> None:
+    plan = AgentPlan.from_agent(
+        AgentWithCrossLanguageDecoratedAction(), AgentConfiguration()
+    )
+    action = plan.actions["handle"]
+    assert action.exec.qualname == _JAVA_HANDLER_QUALNAME
+    assert action.exec.method_name == "handleInput"
+    assert action.listen_event_types == [InputEvent.EVENT_TYPE]
 
 
 class MyEvent(Event):

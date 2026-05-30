@@ -21,7 +21,11 @@ from pathlib import Path
 import pytest
 
 from flink_agents.api.resource import Resource, ResourceDescriptor, ResourceType
-from flink_agents.plan.resource_provider import PythonResourceProvider, ResourceProvider
+from flink_agents.plan.resource_provider import (
+    JavaResourceProvider,
+    PythonResourceProvider,
+    ResourceProvider,
+)
 
 current_dir = Path(__file__).parent
 
@@ -68,3 +72,32 @@ def test_python_resource_provider_deserialize(
         expected_json
     )
     assert resource_provider == expected_resource_provider
+
+
+def test_python_can_deserialize_java_resource_provider_wire_shape() -> None:
+    json_str = json.dumps(
+        {
+            "name": "bedrock_chat",
+            "type": "chat_model",
+            "descriptor": {
+                "target_module": "",
+                "target_clazz": "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup",
+                "arguments": {
+                    "java_clazz": "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup",
+                    "model": "anthropic.claude-3-haiku",
+                    "max_tokens": 1024,
+                },
+            },
+            "__resource_provider_type__": "JavaResourceProvider",
+        }
+    )
+    provider = JavaResourceProvider.model_validate_json(json_str)
+
+    assert provider.name == "bedrock_chat"
+    assert provider.type == ResourceType.CHAT_MODEL
+    assert provider.descriptor.target_module == ""
+    assert provider.descriptor.target_clazz == (
+        "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup"
+    )
+    assert provider.descriptor.arguments["model"] == "anthropic.claude-3-haiku"
+    assert provider.descriptor.arguments["max_tokens"] == 1024

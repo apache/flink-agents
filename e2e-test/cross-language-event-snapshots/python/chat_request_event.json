@@ -1,0 +1,16 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "type": "_chat_request_event",
+  "attributes": {
+    "model": "test-model",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello world",
+        "tool_calls": [],
+        "extra_args": {}
+      }
+    ],
+    "output_schema": null
+  }
+}

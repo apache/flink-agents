@@ -18,6 +18,9 @@
 
 package org.apache.flink.agents.api.vectorstores;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import javax.annotation.Nullable;
 
 import java.util.Arrays;
@@ -61,12 +64,13 @@ public class Document {
         this(content, metadata, id, embedding, null);
     }
 
+    @JsonCreator
     public Document(
-            String content,
-            Map<String, Object> metadata,
-            String id,
-            @Nullable float[] embedding,
-            @Nullable Float score) {
+            @JsonProperty("content") String content,
+            @JsonProperty("metadata") Map<String, Object> metadata,
+            @JsonProperty("id") String id,
+            @JsonProperty("embedding") @Nullable float[] embedding,
+            @JsonProperty("score") @Nullable Float score) {
         this.content = content;
         this.metadata = metadata;
         this.id = id;

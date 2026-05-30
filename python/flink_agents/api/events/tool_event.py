@@ -54,10 +54,12 @@ class ToolRequestEvent(Event):
     def from_event(cls, event: Event) -> "ToolRequestEvent":
         assert "model" in event.attributes
         assert "tool_calls" in event.attributes
-        return ToolRequestEvent(
+        result = ToolRequestEvent(
             model=event.attributes["model"],
             tool_calls=event.attributes["tool_calls"],
         )
+        result.id = event.id
+        return result
 
     @property
     def model(self) -> str:
@@ -108,16 +110,19 @@ class ToolResponseEvent(Event):
         assert "request_id" in event.attributes
         assert "responses" in event.attributes
         assert "external_ids" in event.attributes
-        return ToolResponseEvent(
+        result = ToolResponseEvent(
             request_id=event.attributes["request_id"],
             responses=event.attributes["responses"],
             external_ids=event.attributes["external_ids"],
         )
+        result.id = event.id
+        return result
 
     @property
     def request_id(self) -> UUID:
         """Return the request event ID."""
-        return self.get_attr("request_id")
+        val = self.get_attr("request_id")
+        return UUID(val) if isinstance(val, str) else val
 
     @property
     def responses(self) -> Dict[UUID, Any]:

@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -27,6 +28,7 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -42,8 +44,10 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** Contract tests for {@link EventRouter}. */
 class EventRouterTest {
@@ -197,6 +201,55 @@ class EventRouterTest {
         queue.removeKey("k1");
         router.processEligibleWatermarks(emitted::add);
         assertThat(emitted).containsExactly(wm1);
+    }
+
+    /** Java pipeline + typed OutputEvent — raw payload, no PythonActionExecutor. */
+    @Test
+    void getOutputFromOutputEventReturnsRawPayloadForTypedOutputEventOnJavaPipeline() {
+        AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
+        EventRouter<Long, Object> router = new EventRouter<>(plan, /* inputIsJava */ true);
+        PythonActionExecutor mockPython = mock(PythonActionExecutor.class);
+
+        Object output = router.getOutputFromOutputEvent(new OutputEvent(42L), mockPython);
+
+        assertThat(output).isEqualTo(42L);
+        verify(mockPython, never()).getOutputFromOutputEvent(any());
+    }
+
+    /**
+     * Java pipeline + unified Event with {@code _output_event} type (e.g. a Python action body
+     * emitted it on a Java pipeline) — reconstruct via {@link OutputEvent#fromEvent(Event)}, never
+     * round-trip through {@link PythonActionExecutor}.
+     */
+    @Test
+    void getOutputFromOutputEventReturnsRawPayloadForUnifiedEventOnJavaPipeline() {
+        AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
+        EventRouter<Long, Object> router = new EventRouter<>(plan, /* inputIsJava */ true);
+        PythonActionExecutor mockPython = mock(PythonActionExecutor.class);
+
+        Map<String, Object> attrs = new HashMap<>();
+        attrs.put("output", 84L);
+        Event unified = new Event(OutputEvent.EVENT_TYPE, attrs);
+
+        Object output = router.getOutputFromOutputEvent(unified, mockPython);
+
+        assertThat(output).isEqualTo(84L);
+        verify(mockPython, never()).getOutputFromOutputEvent(any());
+    }
+
+    /** Python pipeline — re-encode through PythonActionExecutor for the cloudpickle bytes. */
+    @Test
+    void getOutputFromOutputEventRoundsTripsThroughPythonOnPythonPipeline() {
+        AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
+        EventRouter<Long, Object> router = new EventRouter<>(plan, /* inputIsJava */ false);
+        PythonActionExecutor mockPython = mock(PythonActionExecutor.class);
+        byte[] pickled = new byte[] {1, 2, 3};
+        when(mockPython.getOutputFromOutputEvent(any())).thenReturn(pickled);
+
+        Object output = router.getOutputFromOutputEvent(new OutputEvent(42L), mockPython);
+
+        assertThat(output).isEqualTo(pickled);
+        verify(mockPython).getOutputFromOutputEvent(any());
     }
 
     private static BuiltInMetrics makeMetrics() {

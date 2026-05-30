@@ -58,11 +58,13 @@ class ContextRetrievalRequestEvent(Event):
     def from_event(cls, event: Event) -> "ContextRetrievalRequestEvent":
         assert "query" in event.attributes
         assert "vector_store" in event.attributes
-        return ContextRetrievalRequestEvent(
+        result = ContextRetrievalRequestEvent(
             query=event.attributes["query"],
             vector_store=event.attributes["vector_store"],
             max_results=event.attributes.get("max_results", 3),
         )
+        result.id = event.id
+        return result
 
     @property
     def query(self) -> str:
@@ -117,16 +119,19 @@ class ContextRetrievalResponseEvent(Event):
             Document.model_validate(d) if isinstance(d, dict) else d
             for d in documents_raw
         ]
-        return ContextRetrievalResponseEvent(
+        result = ContextRetrievalResponseEvent(
             request_id=event.attributes["request_id"],
             query=event.attributes["query"],
             documents=documents,
         )
+        result.id = event.id
+        return result
 
     @property
     def request_id(self) -> UUID:
         """Return the request event ID."""
-        return self.get_attr("request_id")
+        val = self.get_attr("request_id")
+        return UUID(val) if isinstance(val, str) else val
 
     @property
     def query(self) -> str:

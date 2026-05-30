@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.chat.messages;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -34,7 +35,11 @@ public class ChatMessage {
 
     private MessageRole role;
     private String content;
+
+    @JsonProperty("tool_calls")
     private List<Map<String, Object>> toolCalls;
+
+    @JsonProperty("extra_args")
     private Map<String, Object> extraArgs;
 
     /** Default constructor with SYSTEM role */
@@ -83,18 +88,22 @@ public class ChatMessage {
         this.content = content;
     }
 
+    @JsonProperty("tool_calls")
     public List<Map<String, Object>> getToolCalls() {
         return toolCalls;
     }
 
+    @JsonProperty("tool_calls")
     public void setToolCalls(List<Map<String, Object>> toolCalls) {
         this.toolCalls = toolCalls;
     }
 
+    @JsonProperty("extra_args")
     public Map<String, Object> getExtraArgs() {
         return extraArgs;
     }
 
+    @JsonProperty("extra_args")
     public void setExtraArgs(Map<String, Object> extraArgs) {
         this.extraArgs = extraArgs != null ? extraArgs : new HashMap<>();
     }
@@ -104,6 +113,7 @@ public class ChatMessage {
         return this.content;
     }
 
+    @JsonIgnore
     public Map<String, Object> getMetadata() {
         return this.extraArgs;
     }
