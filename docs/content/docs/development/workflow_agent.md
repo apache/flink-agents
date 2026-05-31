@@ -498,6 +498,58 @@ To use async execution on JDK 21+, user should append jvm option `--add-exports=
 {{< /tab >}}
 {{< /tabs >}}
 
+### Cross-language Actions
+
+An action declared in one language can dispatch its body to the other language by setting a `target` on the decorator/annotation. The decorated function or annotated method then acts as a stub — it should raise so direct calls outside the framework fail loud.
+
+{{< tabs "Cross-language Actions" >}}
+
+{{< tab "Python" >}}
+```python
+from flink_agents.api.function import JavaFunction
+
+class MyAgent(Agent):
+    @action(
+        InputEvent.EVENT_TYPE,
+        target=JavaFunction(
+            qualname="com.example.MyHandlers",
+            method_name="handleInput",
+            parameter_types=[
+                "org.apache.flink.agents.api.Event",
+                "org.apache.flink.agents.api.context.RunnerContext",
+            ],
+        ),
+    )
+    @staticmethod
+    def handle_input(event: Event, ctx: RunnerContext) -> None:
+        raise NotImplementedError("cross-language stub")
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @Action(
+            listenEventTypes = {InputEvent.EVENT_TYPE},
+            target = @PythonFunction(
+                    module = "my_pkg.handlers",
+                    qualname = "handle_input"))
+    public static void handleInput(Event event, RunnerContext ctx) {
+        throw new UnsupportedOperationException("cross-language stub");
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+{{< hint warning >}}
+**Limitations:**
+
+- Cross-language actions are currently supported only when [running in Flink]({{< ref "docs/operations/deployment#run-in-flink" >}}), not in local development mode
+- Complex object serialization between languages may have limitations
+{{< /hint >}}
+
 ## Event
 
 Events are JSON-serializable messages passed between actions. Every event has a `type` string used for routing and an `attributes` map that carries the payload. A single event may trigger multiple actions if they are all listening to its type.

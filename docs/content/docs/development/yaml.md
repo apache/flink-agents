@@ -525,7 +525,7 @@ Loaded with `agents_env.load_yaml(...)` on the Python side, this produces an age
 - `math_chat_model` is a Python Ollama setup that calls a Java function tool through the cross-language tool bridge.
 - `creative_chat_model` is a Java Ollama setup driven from the Python loader via the Java chat-model wrapper.
 
-Not every resource type is cross-language. Currently `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support `type:` on the opposite language; others (e.g. `mcp_servers`) do not.
+Not every resource type is cross-language. Currently `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support `type:` on the opposite language; others (e.g. `mcp_servers`) do not.
 
 ## YAML API Specification
 
