@@ -19,11 +19,17 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.agents.ShortTermMemoryTtlUpdate;
+import org.apache.flink.agents.api.agents.ShortTermMemoryTtlVisibility;
+import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -36,6 +42,8 @@ import org.apache.flink.runtime.state.VoidNamespace;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 
 import javax.annotation.Nullable;
+
+import java.time.Duration;
 
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 
@@ -56,9 +64,9 @@ import static org.apache.flink.agents.runtime.utils.StateUtil.*;
  *
  * <p>Lifecycle: instantiated by the operator's {@code initializeState()} (the Flink lifecycle runs
  * {@code initializeState} before {@code open}). Both {@link
- * #initializeKeyedStates(org.apache.flink.api.common.functions.RuntimeContext)} and {@link
- * #initializeOperatorStates(OperatorStateBackend)} are invoked later from the operator's {@code
- * open()}. There is no explicit close — the underlying state handles are owned by Flink.
+ * #initializeKeyedStates(org.apache.flink.api.common.functions.RuntimeContext, AgentPlan)} and
+ * {@link #initializeOperatorStates(OperatorStateBackend)} are invoked later from the operator's
+ * {@code open()}. There is no explicit close — the underlying state handles are owned by Flink.
  *
  * <p>Design constraint: package-private; no manager-to-manager held references. Cross-cutting data
  * flows via method parameters (see for example {@link ActionTaskContextManager#transferContexts}
@@ -87,7 +95,9 @@ class OperatorStateManager {
      *
      * @param runtimeContext the operator's runtime context, used to obtain keyed state handles.
      */
-    void initializeKeyedStates(org.apache.flink.api.common.functions.RuntimeContext runtimeContext)
+    void initializeKeyedStates(
+            org.apache.flink.api.common.functions.RuntimeContext runtimeContext,
+            AgentConfiguration agentConfiguration)
             throws Exception {
         // init sensoryMemState
         MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> sensoryMemStateDescriptor =
@@ -103,6 +113,7 @@ class OperatorStateManager {
                         "shortTermMemory",
                         TypeInformation.of(String.class),
                         TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
+        maybeEnableShortTermMemoryTTL(shortTermMemStateDescriptor, agentConfiguration);
         shortTermMemState = runtimeContext.getMapState(shortTermMemStateDescriptor);
 
         // init sequence number state for per key message ordering
@@ -119,6 +130,60 @@ class OperatorStateManager {
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
                                 PENDING_INPUT_EVENT_STATE_NAME, TypeInformation.of(Event.class)));
+    }
+
+    /**
+     * When {@link AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL_MS} is positive, attaches Flink
+     * {@link StateTtlConfig} to the short-term memory {@link MapStateDescriptor}. Unset, null, or
+     * non-positive values disable TTL (Flink does not allow zero/negative TTL).
+     */
+    private void maybeEnableShortTermMemoryTTL(
+            MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> descriptor,
+            AgentConfiguration agentConfiguration) {
+        Long ttlMs = agentConfiguration.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS);
+        if (ttlMs == null || ttlMs <= 0) {
+            return;
+        }
+
+        ShortTermMemoryTtlUpdate updateType =
+                agentConfiguration.get(
+                        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE);
+
+        ShortTermMemoryTtlVisibility stateVisibility =
+                agentConfiguration.get(
+                        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY);
+
+        StateTtlConfig ttlConfig =
+                StateTtlConfig.newBuilder(Duration.ofMillis(ttlMs))
+                        .setUpdateType(toFlinkUpdateType(updateType))
+                        .setStateVisibility(toFlinkStateVisibility(stateVisibility))
+                        .cleanupFullSnapshot()
+                        .build();
+        descriptor.enableTimeToLive(ttlConfig);
+    }
+
+    private StateTtlConfig.UpdateType toFlinkUpdateType(ShortTermMemoryTtlUpdate updateType) {
+        switch (updateType) {
+            case ON_CREATE_AND_WRITE:
+                return StateTtlConfig.UpdateType.OnCreateAndWrite;
+            case ON_READ_AND_WRITE:
+                return StateTtlConfig.UpdateType.OnReadAndWrite;
+            default:
+                throw new IllegalArgumentException("Unsupported TTL update type: " + updateType);
+        }
+    }
+
+    private StateTtlConfig.StateVisibility toFlinkStateVisibility(
+            ShortTermMemoryTtlVisibility stateVisibility) {
+        switch (stateVisibility) {
+            case NEVER_RETURN_EXPIRED:
+                return StateTtlConfig.StateVisibility.NeverReturnExpired;
+            case RETURN_EXPIRED_IF_NOT_CLEANED_UP:
+                return StateTtlConfig.StateVisibility.ReturnExpiredIfNotCleanedUp;
+            default:
+                throw new IllegalArgumentException(
+                        "Unsupported TTL state visibility: " + stateVisibility);
+        }
     }
 
     /**

@@ -47,4 +47,26 @@ public class AgentExecutionOptions {
 
     public static final ConfigOption<Boolean> RAG_ASYNC =
             new ConfigOption<>("rag.async", Boolean.class, true);
+
+    /** Set to a positive value in milliseconds to enable short-term memory TTL; 0 disables it. */
+    public static final ConfigOption<Long> SHORT_TERM_MEMORY_STATE_TTL_MS =
+            new ConfigOption<>("short-term-memory.state-ttl.ms", Long.class, 0L);
+
+    /** Update policy for short-term memory TTL, consulted only when TTL is enabled. */
+    public static final ConfigOption<ShortTermMemoryTtlUpdate>
+            SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE =
+                    new ConfigOption<>(
+                            "short-term-memory.state-ttl.update-type",
+                            ShortTermMemoryTtlUpdate.class,
+                            ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE);
+
+    /**
+     * Visibility policy for expired short-term memory state, consulted only when TTL is enabled.
+     */
+    public static final ConfigOption<ShortTermMemoryTtlVisibility>
+            SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY =
+                    new ConfigOption<>(
+                            "short-term-memory.state-ttl.visibility",
+                            ShortTermMemoryTtlVisibility.class,
+                            ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED);
 }
