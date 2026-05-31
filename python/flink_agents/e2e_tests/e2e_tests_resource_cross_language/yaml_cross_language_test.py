@@ -154,8 +154,10 @@ def test_yaml_cross_language_agent(
 
     # Math path went through the Java ``calculateBMI`` tool:
     # 70 / (1.75 * 1.75) ≈ 22.86, so the final answer should mention 22.
-    assert "22" in actual_result[0], f"math answer missing '22': {actual_result[0]!r}"
     # Creative path doesn't use any tool.
-    assert "cat" in actual_result[1].lower(), (
-        f"creative answer missing 'cat': {actual_result[1]!r}"
-    )
+    # NOTE: We join all results and search without relying on order, because
+    # StreamingFileSink may produce multiple part files and iterdir() does not
+    # guarantee a deterministic traversal order across platforms.
+    joined = "\n".join(actual_result).lower()
+    assert "22" in joined, f"math answer missing '22': {actual_result!r}"
+    assert "cat" in joined, f"creative answer missing 'cat': {actual_result!r}"

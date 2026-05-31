@@ -106,5 +106,6 @@ def test_java_chat_model_integration(
             with file.open() as f:
                 actual_result.extend(f.readlines())
 
-    assert "3" in actual_result[0]
-    assert "cat" in actual_result[1]
+    joined = "\n".join(actual_result).lower()
+    assert "3" in joined, f"math answer missing '3': {actual_result!r}"
+    assert "cat" in joined, f"creative answer missing 'cat': {actual_result!r}"
