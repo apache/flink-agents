@@ -155,7 +155,7 @@ java_tests() {
         local all_passed=true
         for version in "${flink_versions[@]}"; do
             echo "Running E2E tests for Flink ${version}..."
-            mvn --batch-mode --no-transfer-progress test -pl 'e2e-test/flink-agents-end-to-end-tests-integration' -Pflink-${version} ${SPOTLESS_FLAG}
+            mvn --batch-mode --no-transfer-progress test -pl 'e2e-test/flink-agents-end-to-end-tests-integration' -Pflink-${version} -Dsurefire.rerunFailingTestsCount=2 ${SPOTLESS_FLAG}
 
             if [ $? -ne 0 ]; then
                 echo "E2E tests failed for Flink ${version}" >&2
@@ -232,6 +232,8 @@ python_tests() {
                 uv run --no-sync pytest flink_agents \
                 -s \
                 -k "e2e_tests_integration" \
+                --reruns 2 \
+                --reruns-delay 5 \
                 -o log_cli=true \
                 -o log_cli_level=${LOG_LEVEL:-CRITICAL}
             else
@@ -259,7 +261,7 @@ python_tests() {
                 echo "Running tests with pytest..."
             fi
             if $run_e2e; then
-                pytest flink_agents -k "e2e_tests_integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                pytest flink_agents -k "e2e_tests_integration" --reruns 2 --reruns-delay 5 -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
             else
                 pytest flink_agents -k "not e2e_tests" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
             fi

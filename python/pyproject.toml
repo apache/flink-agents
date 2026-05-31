@@ -90,6 +90,7 @@ build = [
 # Test dependencies
 test = [
     "pytest==9.0.3",
+    "pytest-rerunfailures==16.3",
 ]
 
 # Lint dependencies
