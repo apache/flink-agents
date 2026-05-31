@@ -127,8 +127,14 @@ class TableReviewAnalysisAgent(Agent):
             "id": {product_id},
             "review": {review_text}
         """
-        msg = ChatMessage(role=MessageRole.USER, extra_args={"input": content})
-        ctx.send_event(ChatRequestEvent(model="review_analysis_model", messages=[msg]))
+        msg = ChatMessage(role=MessageRole.USER)
+        ctx.send_event(
+            ChatRequestEvent(
+                model="review_analysis_model",
+                messages=[msg],
+                prompt_args={"input": content},
+            )
+        )
 
     @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod

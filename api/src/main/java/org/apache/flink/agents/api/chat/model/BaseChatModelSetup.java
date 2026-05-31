@@ -108,10 +108,13 @@ public abstract class BaseChatModelSetup extends Resource {
     public abstract Map<String, Object> getParameters();
 
     public ChatMessage chat(List<ChatMessage> messages) {
-        return this.chat(messages, Collections.emptyMap());
+        return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
     }
 
-    public ChatMessage chat(List<ChatMessage> messages, Map<String, Object> parameters) {
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            Map<String, Object> modelParams) {
         Preconditions.checkNotNull(
                 connection,
                 "Connection is not initialized. Ensure open() is called before chat().");
@@ -124,15 +127,17 @@ public abstract class BaseChatModelSetup extends Resource {
                     prompt instanceof Prompt,
                     "Prompt is not initialized. Ensure open() is called before chat().");
             Prompt prompt = (Prompt) this.prompt;
-            Map<String, String> arguments = new HashMap<>();
-            for (ChatMessage message : messages) {
-                for (Map.Entry<String, Object> entry : message.getExtraArgs().entrySet()) {
-                    arguments.put(entry.getKey(), entry.getValue().toString());
+            Map<String, String> stringified = new HashMap<>();
+            if (promptArgs != null) {
+                for (Map.Entry<String, Object> entry : promptArgs.entrySet()) {
+                    stringified.put(
+                            entry.getKey(),
+                            entry.getValue() != null ? entry.getValue().toString() : "");
                 }
             }
 
             // append meaningful messages
-            List<ChatMessage> promptMessages = prompt.formatMessages(MessageRole.USER, arguments);
+            List<ChatMessage> promptMessages = prompt.formatMessages(MessageRole.USER, stringified);
             for (ChatMessage message : messages) {
                 if ((message.getContent() != null && !message.getContent().isEmpty())
                         || message.getRole() == MessageRole.ASSISTANT) {
@@ -150,7 +155,9 @@ public abstract class BaseChatModelSetup extends Resource {
         }
 
         Map<String, Object> params = this.getParameters();
-        params.putAll(parameters);
+        if (modelParams != null) {
+            params.putAll(modelParams);
+        }
         return connection.chat(messages, tools, params);
     }
 

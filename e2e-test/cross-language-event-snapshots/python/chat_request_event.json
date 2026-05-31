@@ -11,6 +11,7 @@
         "extra_args": {}
       }
     ],
+    "prompt_args": {},
     "output_schema": null
   }
 }

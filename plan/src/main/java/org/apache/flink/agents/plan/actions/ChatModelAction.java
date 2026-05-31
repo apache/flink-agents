@@ -60,6 +60,7 @@ public class ChatModelAction {
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
     private static final String MODEL = "model";
     private static final String OUTPUT_SCHEMA = "outputSchema";
+    private static final String PROMPT_ARGS = "prompt_args";
     private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
     private static final String TOTAL_RETRY_COUNT = "totalRetryCount";
     private static final String TOTAL_RETRY_WAIT_SEC = "totalRetryWaitSec";
@@ -108,6 +109,7 @@ public class ChatModelAction {
             UUID toolRequestEventId,
             UUID initialRequestId,
             String model,
+            Map<String, Object> promptArgs,
             Object outputSchema)
             throws Exception {
         Map<UUID, Object> toolRequestEventContext;
@@ -120,6 +122,7 @@ public class ChatModelAction {
         Map<String, Object> context = new HashMap<>();
         context.put(INITIAL_REQUEST_ID, initialRequestId);
         context.put(MODEL, model);
+        context.put(PROMPT_ARGS, promptArgs != null ? promptArgs : Collections.emptyMap());
         if (outputSchema != null) {
             context.put(OUTPUT_SCHEMA, outputSchema);
         }
@@ -185,6 +188,7 @@ public class ChatModelAction {
             String model,
             BaseChatModelSetup chatModel,
             List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
             Object outputSchema,
             RunnerContext ctx)
             throws Exception {
@@ -203,6 +207,7 @@ public class ChatModelAction {
                 toolRequestEvent.getId(),
                 initialRequestId,
                 model,
+                promptArgs,
                 outputSchema);
 
         ctx.sendEvent(toolRequestEvent);
@@ -294,6 +299,7 @@ public class ChatModelAction {
             UUID initialRequestId,
             String model,
             List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             RunnerContext ctx)
             throws Exception {
@@ -339,7 +345,7 @@ public class ChatModelAction {
 
                     @Override
                     public ChatMessage call() throws Exception {
-                        return chatModel.chat(messages, Map.of());
+                        return chatModel.chat(messages, promptArgs, Map.of());
                     }
                 };
 
@@ -393,7 +399,14 @@ public class ChatModelAction {
 
         if (!Objects.requireNonNull(response).getToolCalls().isEmpty()) {
             handleToolCalls(
-                    response, initialRequestId, model, chatModel, messages, outputSchema, ctx);
+                    response,
+                    initialRequestId,
+                    model,
+                    chatModel,
+                    messages,
+                    promptArgs,
+                    outputSchema,
+                    ctx);
         } else {
             Map<String, Long> retryStats = getRetryStats(ctx.getSensoryMemory(), initialRequestId);
             int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
@@ -410,9 +423,16 @@ public class ChatModelAction {
 
     private static void processChatRequest(ChatRequestEvent event, RunnerContext ctx)
             throws Exception {
-        chat(event.getId(), event.getModel(), event.getMessages(), event.getOutputSchema(), ctx);
+        chat(
+                event.getId(),
+                event.getModel(),
+                event.getMessages(),
+                event.getPromptArgs(),
+                event.getOutputSchema(),
+                ctx);
     }
 
+    @SuppressWarnings("unchecked")
     private static void processToolResponse(ToolResponseEvent event, RunnerContext ctx)
             throws Exception {
         MemoryObject sensoryMem = ctx.getSensoryMemory();
@@ -422,6 +442,8 @@ public class ChatModelAction {
 
         UUID initialRequestId = (UUID) context.get(INITIAL_REQUEST_ID);
         String model = (String) context.get(MODEL);
+        Map<String, Object> promptArgs =
+                (Map<String, Object>) context.getOrDefault(PROMPT_ARGS, Map.of());
         Object outputSchema = context.get(OUTPUT_SCHEMA);
 
         Map<String, ToolResponse> responses = event.getResponses();
@@ -455,7 +477,7 @@ public class ChatModelAction {
                         Collections.emptyList(),
                         toolResponseMessages);
 
-        chat(initialRequestId, model, messages, outputSchema, ctx);
+        chat(initialRequestId, model, messages, promptArgs, outputSchema, ctx);
     }
 
     /**

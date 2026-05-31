@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from typing_extensions import override
 
@@ -130,17 +130,24 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
         self._j_resource.open()
 
     @override
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
         """Execute chat conversation by delegating to Java implementation.
 
         1. Convert Python messages to Java format
-        2. Call Java chat method
+        2. Call Java chat method with prompt-template arguments
         3. Convert Java response back to Python format
 
         Parameters
         ----------
         messages : Sequence[ChatMessage]
             Input message sequence
+        prompt_args : Mapping[str, Any] | None
+            Prompt-template variables forwarded to the Java setup.
         **kwargs : Any
             Additional parameters passed to the model service
 
@@ -154,7 +161,9 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
             self._j_resource_adapter.fromPythonChatMessage(message)
             for message in messages
         ]
-        j_response_message = self._j_resource.chat(java_messages, kwargs)
+        j_response_message = self._j_resource.chat(
+            java_messages, prompt_args or {}, kwargs
+        )
 
         # Convert Java response back to Python format
         from flink_agents.runtime.python_java_utils import (

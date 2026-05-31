@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import ClassVar, List
+from typing import Any, ClassVar, Dict, List
 
 try:
     from typing import override
@@ -37,6 +37,9 @@ class ChatRequestEvent(Event):
         The name of the chat model to be chatted with.
     messages : List[ChatMessage]
         The input to the chat model.
+    prompt_args : Dict[str, Any]
+        Variables used to fill the chat model's prompt template, if a prompt
+        resource is configured on the chat model setup. Empty by default.
     output_schema: OutputSchema | None
         The expected output schema of the chat model final response. Optional.
     """
@@ -47,6 +50,7 @@ class ChatRequestEvent(Event):
         self,
         model: str,
         messages: List[ChatMessage],
+        prompt_args: Dict[str, Any] | None = None,
         output_schema: OutputSchema | None = None,
     ) -> None:
         """Create a ChatRequestEvent."""
@@ -55,6 +59,7 @@ class ChatRequestEvent(Event):
             attributes={
                 "model": model,
                 "messages": messages,
+                "prompt_args": prompt_args if prompt_args is not None else {},
                 "output_schema": output_schema,
             },
         )
@@ -75,6 +80,7 @@ class ChatRequestEvent(Event):
         result = ChatRequestEvent(
             model=event.attributes["model"],
             messages=messages,
+            prompt_args=event.attributes.get("prompt_args"),
             output_schema=output_schema_raw,
         )
         result.id = event.id
@@ -89,6 +95,12 @@ class ChatRequestEvent(Event):
     def messages(self) -> List[ChatMessage]:
         """Return the chat messages."""
         return self.get_attr("messages")
+
+    @property
+    def prompt_args(self) -> Dict[str, Any]:
+        """Return the prompt-template arguments, empty if not set."""
+        args = self.get_attr("prompt_args")
+        return args if args is not None else {}
 
     @property
     def output_schema(self) -> OutputSchema | None:

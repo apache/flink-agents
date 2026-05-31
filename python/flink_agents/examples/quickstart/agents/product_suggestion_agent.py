@@ -83,9 +83,8 @@ class ProductSuggestionAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="generate_suggestion_model",
-                messages=[
-                    ChatMessage(role=MessageRole.USER, extra_args={"input": content})
-                ],
+                messages=[ChatMessage(role=MessageRole.USER)],
+                prompt_args={"input": content},
             )
         )
 

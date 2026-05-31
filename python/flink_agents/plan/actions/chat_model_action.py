@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 _TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
 _TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT"
 _RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT"
+_PROMPT_ARGS = "prompt_args"
 
 _logger = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ def _save_tool_request_event_context(
     tool_request_event_id: UUID,
     initial_request_id: UUID,
     model: str,
+    prompt_args: Dict | None,
     output_schema: OutputSchema | None,
 ) -> None:
     """Save the context for a specific tool request event."""
@@ -100,6 +102,7 @@ def _save_tool_request_event_context(
     context[str(tool_request_event_id)] = {
         "initial_request_id": initial_request_id,
         "model": model,
+        _PROMPT_ARGS: prompt_args if prompt_args is not None else {},
         "output_schema": output_schema,
     }
     sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, context)
@@ -193,6 +196,7 @@ def _handle_tool_calls(
     model: str,
     chat_model: "BaseChatModelSetup",
     messages: List[ChatMessage],
+    prompt_args: Dict | None,
     output_schema: OutputSchema | None,
     ctx: RunnerContext,
 ) -> None:
@@ -214,6 +218,7 @@ def _handle_tool_calls(
         tool_request_event.id,
         initial_request_id,
         model,
+        prompt_args,
         output_schema,
     )
 
@@ -251,6 +256,7 @@ async def chat(
     initial_request_id: UUID,
     model: str,
     messages: List[ChatMessage],
+    prompt_args: Dict | None,
     output_schema: OutputSchema | None,
     ctx: RunnerContext,
 ) -> None:
@@ -290,9 +296,13 @@ async def chat(
     for attempt in range(num_retries + 1):
         try:
             if chat_async:
-                response = await ctx.durable_execute_async(chat_model.chat, messages)
+                response = await ctx.durable_execute_async(
+                    chat_model.chat, messages, prompt_args=prompt_args
+                )
             else:
-                response = ctx.durable_execute(chat_model.chat, messages)
+                response = ctx.durable_execute(
+                    chat_model.chat, messages, prompt_args=prompt_args
+                )
 
             if (
                 response.extra_args.get("model_name")
@@ -351,6 +361,7 @@ async def chat(
             model,
             chat_model,
             messages,
+            prompt_args,
             output_schema,
             ctx,
         )
@@ -379,6 +390,7 @@ async def _process_chat_request(event: ChatRequestEvent, ctx: RunnerContext) -> 
         initial_request_id=event.id,
         model=event.model,
         messages=event.messages,
+        prompt_args=event.prompt_args,
         output_schema=event.output_schema,
         ctx=ctx,
     )
@@ -416,6 +428,7 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         initial_request_id=initial_request_id,
         model=tool_request_event_context["model"],
         messages=messages,
+        prompt_args=tool_request_event_context.get(_PROMPT_ARGS, {}),
         output_schema=tool_request_event_context["output_schema"],
         ctx=ctx,
     )

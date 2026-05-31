@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import javax.annotation.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,17 +40,26 @@ public class ChatRequestEvent extends Event {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public ChatRequestEvent(
-            String model, List<ChatMessage> messages, @Nullable Object outputSchema) {
+            String model,
+            List<ChatMessage> messages,
+            @Nullable Map<String, Object> promptArgs,
+            @Nullable Object outputSchema) {
         super(EVENT_TYPE);
         setAttr("model", model);
         setAttr("messages", new ArrayList<>(messages));
+        setAttr("prompt_args", promptArgs != null ? promptArgs : Collections.emptyMap());
         if (outputSchema != null) {
             setAttr("output_schema", outputSchema);
         }
     }
 
+    public ChatRequestEvent(
+            String model, List<ChatMessage> messages, @Nullable Object outputSchema) {
+        this(model, messages, null, outputSchema);
+    }
+
     public ChatRequestEvent(String model, List<ChatMessage> messages) {
-        this(model, messages, null);
+        this(model, messages, null, null);
     }
 
     public ChatRequestEvent(UUID id, Map<String, Object> attributes) {
@@ -99,5 +109,12 @@ public class ChatRequestEvent extends Event {
     @Nullable
     public Object getOutputSchema() {
         return getAttr("output_schema");
+    }
+
+    @JsonIgnore
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getPromptArgs() {
+        Map<String, Object> args = (Map<String, Object>) getAttr("prompt_args");
+        return args != null ? args : Collections.emptyMap();
     }
 }

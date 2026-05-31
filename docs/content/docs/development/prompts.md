@@ -255,8 +255,14 @@ class ReviewAnalysisAgent(Agent):
             "id": {input.id},
             "review": {input.review}
         """
-        msg = ChatMessage(role=MessageRole.USER, extra_args={"input": content})
-        ctx.send_event(ChatRequestEvent(model="review_analysis_model", messages=[msg]))
+        msg = ChatMessage(role=MessageRole.USER)
+        ctx.send_event(
+            ChatRequestEvent(
+                model="review_analysis_model",
+                messages=[msg],
+                prompt_args={"input": content},
+            )
+        )
 ```
 {{< /tab >}}
 
@@ -316,9 +322,11 @@ public class ReviewAnalysisAgent extends Agent {
                 String.format(
                         "{\n" + "\"id\": %s,\n" + "\"review\": \"%s\"\n" + "}",
                         inputObj.getId(), inputObj.getReview());
-        ChatMessage msg = new ChatMessage(MessageRole.USER, "", Map.of("input", content));
+        ChatMessage msg = new ChatMessage(MessageRole.USER, "");
 
-        ctx.sendEvent(new ChatRequestEvent("reviewAnalysisModel", List.of(msg)));
+        ctx.sendEvent(
+                new ChatRequestEvent(
+                        "reviewAnalysisModel", List.of(msg), Map.of("input", content), null));
     }
 }
 
@@ -327,4 +335,4 @@ public class ReviewAnalysisAgent extends Agent {
 
 {{< /tabs >}}
 
-Prompts use `{variable_name}` syntax for template variables. Variables are filled from `ChatMessage.extra_args`. The prompt is automatically applied when the chat model is invoked.
+Prompts use `{variable_name}` syntax for template variables. Variables are filled from the `prompt_args` argument of `ChatRequestEvent` (Python) / the `promptArgs` constructor argument (Java). The prompt is automatically applied when the chat model is invoked.
