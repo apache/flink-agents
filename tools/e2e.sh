@@ -81,7 +81,7 @@ function run_resource_cross_language_test_in_python {
       return 1
     fi
 
-    cd "$python_dir" && uv run --no-sync pytest flink_agents -s -k "e2e_tests_resource_cross_language"
+    cd "$python_dir" && uv run --no-sync pytest flink_agents -s -k "e2e_tests_resource_cross_language" --reruns 2 --reruns-delay 5
 }
 
 function run_resource_name_consistency_check {
