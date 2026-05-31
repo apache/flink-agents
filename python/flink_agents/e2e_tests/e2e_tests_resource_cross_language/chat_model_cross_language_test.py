@@ -36,7 +36,11 @@ from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.e2e_tests.e2e_tests_resource_cross_language.chat_model_cross_language_agent import (
     ChatModelCrossLanguageAgent,
 )
-from flink_agents.e2e_tests.test_utils import pull_model
+from flink_agents.e2e_tests.test_utils import (
+    assert_tool_invoked,
+    collect_tool_invocations,
+    pull_model,
+)
 
 current_dir = Path(__file__).parent
 
@@ -72,6 +76,9 @@ def test_java_chat_model_integration(
     deserialize_datastream = input_datastream.map(lambda x: str(x))
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    log_dir = tmp_path / "event_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    agents_env.get_config().set_str("baseLogDir", str(log_dir))
     output_datastream = (
         agents_env.from_datastream(
             input=deserialize_datastream, key_selector=lambda x: "orderKey"
@@ -106,6 +113,8 @@ def test_java_chat_model_integration(
             with file.open() as f:
                 actual_result.extend(f.readlines())
 
+    invocations = collect_tool_invocations(log_dir)
+    assert_tool_invoked(invocations, "add", {"a": 1, "b": 2})
+
     joined = "\n".join(actual_result).lower()
-    assert "3" in joined, f"math answer missing '3': {actual_result!r}"
     assert "cat" in joined, f"creative answer missing 'cat': {actual_result!r}"
