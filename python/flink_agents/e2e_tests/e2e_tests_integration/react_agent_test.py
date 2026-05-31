@@ -44,7 +44,11 @@ from flink_agents.api.resource import (
 )
 from flink_agents.api.tools.tool import Tool
 from flink_agents.e2e_tests.e2e_tests_integration.react_agent_tools import add, multiply
-from flink_agents.e2e_tests.test_utils import pull_model
+from flink_agents.e2e_tests.test_utils import (
+    assert_tool_invoked,
+    collect_tool_invocations,
+    pull_model,
+)
 
 current_dir = Path(__file__).parent
 
@@ -169,6 +173,10 @@ def test_react_agent_on_remote_runner(
 
     env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
 
+    log_dir = tmp_path / "event_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    env.get_config().set_str("baseLogDir", str(log_dir))
+
     # register resource to execution environment
     (
         env.add_resource(
@@ -244,3 +252,10 @@ def test_react_agent_on_remote_runner(
         "This may be caused by the LLM response does not match the output schema, you can rerun this case."
     )
     assert "result" in json.loads(actual_result[0].strip())
+
+    # Input (a=1, b=2, c=3) computes (a + b) * c, so the agent must thread
+    # add(1, 2)=3 into multiply(3, 3)=9. Asserting the multiply first arg
+    # validates the reasoning chain, not just that each tool fired.
+    invocations = collect_tool_invocations(log_dir)
+    assert_tool_invoked(invocations, "add", {"a": 1, "b": 2})
+    assert_tool_invoked(invocations, "multiply", {"a": 3, "b": 3})
