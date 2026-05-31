@@ -182,6 +182,23 @@ public class ChatModelAction {
         }
     }
 
+    static void recordChatTokenMetrics(BaseChatModelSetup chatModel, ChatMessage response) {
+        Map<String, Object> extraArgs = response.getExtraArgs();
+        Object modelName = extraArgs.get("model_name");
+        Object promptTokens = extraArgs.get("promptTokens");
+        Object completionTokens = extraArgs.get("completionTokens");
+        if (modelName != null
+                && !modelName.toString().isEmpty()
+                && promptTokens instanceof Number
+                && completionTokens instanceof Number) {
+            long prompt = ((Number) promptTokens).longValue();
+            long completion = ((Number) completionTokens).longValue();
+            if (prompt > 0 && completion > 0) {
+                chatModel.recordTokenMetrics(modelName.toString(), prompt, completion);
+            }
+        }
+    }
+
     private static void handleToolCalls(
             ChatMessage response,
             UUID initialRequestId,
@@ -355,6 +372,7 @@ public class ChatModelAction {
                         chatAsync
                                 ? ctx.durableExecuteAsync(callable)
                                 : ctx.durableExecute(callable);
+                recordChatTokenMetrics(chatModel, response);
                 // only generate structured output for final response.
                 if (outputSchema != null && response.getToolCalls().isEmpty()) {
                     response = generateStructuredOutput(response, outputSchema);

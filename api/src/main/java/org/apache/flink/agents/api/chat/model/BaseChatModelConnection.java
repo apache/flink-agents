@@ -19,7 +19,6 @@
 package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -56,22 +55,4 @@ public abstract class BaseChatModelConnection extends Resource {
      */
     public abstract ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments);
-
-    /**
-     * Record token usage metrics for the given model.
-     *
-     * @param modelName the name of the model used
-     * @param promptTokens the number of prompt tokens
-     * @param completionTokens the number of completion tokens
-     */
-    protected void recordTokenMetrics(String modelName, long promptTokens, long completionTokens) {
-        FlinkAgentsMetricGroup metricGroup = getMetricGroup();
-        if (metricGroup == null) {
-            return;
-        }
-
-        FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup(modelName);
-        modelGroup.getCounter("promptTokens").inc(promptTokens);
-        modelGroup.getCounter("completionTokens").inc(completionTokens);
-    }
 }

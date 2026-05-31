@@ -178,12 +178,14 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         ConverseResponse response =
                 retryExecutor.execute(() -> client.converse(request), "BedrockConverse");
 
+        ChatMessage result = convertResponse(response);
         if (response.usage() != null) {
-            recordTokenMetrics(
-                    modelId, response.usage().inputTokens(), response.usage().outputTokens());
+            result.getExtraArgs().put("model_name", modelId);
+            result.getExtraArgs().put("promptTokens", response.usage().inputTokens().longValue());
+            result.getExtraArgs()
+                    .put("completionTokens", response.usage().outputTokens().longValue());
         }
-
-        return convertResponse(response);
+        return result;
     }
 
     private static boolean isRetryable(Exception e) {

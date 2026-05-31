@@ -20,6 +20,7 @@ package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -107,6 +108,23 @@ public abstract class BaseChatModelSetup extends Resource {
 
     public abstract Map<String, Object> getParameters();
 
+    /**
+     * Record token usage metrics for the given model on this setup's bound metric group.
+     *
+     * @param modelName the name of the model used
+     * @param promptTokens the number of prompt tokens
+     * @param completionTokens the number of completion tokens
+     */
+    public void recordTokenMetrics(String modelName, long promptTokens, long completionTokens) {
+        FlinkAgentsMetricGroup metricGroup = getMetricGroup();
+        if (metricGroup == null) {
+            return;
+        }
+        FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup(modelName);
+        modelGroup.getCounter("promptTokens").inc(promptTokens);
+        modelGroup.getCounter("completionTokens").inc(completionTokens);
+    }
+
     public ChatMessage chat(List<ChatMessage> messages) {
         return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
     }
@@ -118,8 +136,6 @@ public abstract class BaseChatModelSetup extends Resource {
         Preconditions.checkNotNull(
                 connection,
                 "Connection is not initialized. Ensure open() is called before chat().");
-        // Pass metric group to connection for token usage tracking
-        connection.setMetricGroup(getMetricGroup());
 
         // Format input messages if set prompt.
         if (this.prompt != null) {
