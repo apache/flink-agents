@@ -50,9 +50,9 @@ public abstract class BaseChatModelConnection extends Resource {
      *
      * @param messages the input chat messages
      * @param tools the tools can be called by the model
-     * @param arguments the additional arguments passed to the model
+     * @param modelParams the additional arguments passed to the model
      * @return the chat response containing model outputs
      */
     public abstract ChatMessage chat(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments);
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams);
 }

@@ -121,9 +121,9 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
 
     @Override
     public ChatMessage chat(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         try {
-            ChatCompletionCreateParams params = buildRequest(messages, tools, arguments);
+            ChatCompletionCreateParams params = buildRequest(messages, tools, modelParams);
             ChatCompletion completion = client.chat().completions().create(params);
             ChatMessage response =
                     OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
@@ -131,7 +131,7 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
 
             // Stash token usage
             if (completion.usage().isPresent()) {
-                String modelName = arguments != null ? (String) arguments.get("model") : null;
+                String modelName = modelParams != null ? (String) modelParams.get("model") : null;
                 if (modelName == null || modelName.isBlank()) {
                     modelName = this.defaultModel;
                 }
@@ -151,12 +151,12 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
     }
 
     private ChatCompletionCreateParams buildRequest(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> rawArguments) {
-        Map<String, Object> arguments =
-                rawArguments != null ? new HashMap<>(rawArguments) : new HashMap<>();
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> rawModelParams) {
+        Map<String, Object> modelParams =
+                rawModelParams != null ? new HashMap<>(rawModelParams) : new HashMap<>();
 
-        boolean strictMode = Boolean.TRUE.equals(arguments.remove("strict"));
-        String modelName = (String) arguments.remove("model");
+        boolean strictMode = Boolean.TRUE.equals(modelParams.remove("strict"));
+        String modelName = (String) modelParams.remove("model");
         if (modelName == null || modelName.isBlank()) {
             modelName = this.defaultModel;
         }
@@ -170,36 +170,36 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             builder.tools(convertTools(tools, strictMode));
         }
 
-        Object temperature = arguments.remove("temperature");
+        Object temperature = modelParams.remove("temperature");
         if (temperature instanceof Number) {
             builder.temperature(((Number) temperature).doubleValue());
         }
 
-        Object maxTokens = arguments.remove("max_tokens");
+        Object maxTokens = modelParams.remove("max_tokens");
         if (maxTokens instanceof Number) {
             builder.maxCompletionTokens(((Number) maxTokens).longValue());
         }
 
-        Object logprobs = arguments.remove("logprobs");
+        Object logprobs = modelParams.remove("logprobs");
         boolean logprobsEnabled = Boolean.TRUE.equals(logprobs);
         if (logprobsEnabled) {
             builder.logprobs(true);
-            Object topLogprobs = arguments.remove("top_logprobs");
+            Object topLogprobs = modelParams.remove("top_logprobs");
             if (topLogprobs instanceof Number) {
                 builder.topLogprobs(((Number) topLogprobs).longValue());
             }
         } else {
-            arguments.remove("top_logprobs");
+            modelParams.remove("top_logprobs");
         }
 
-        Object reasoningEffort = arguments.remove("reasoning_effort");
+        Object reasoningEffort = modelParams.remove("reasoning_effort");
         if (reasoningEffort instanceof String) {
             builder.reasoningEffort(ReasoningEffort.of((String) reasoningEffort));
         }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> additionalKwargs =
-                (Map<String, Object>) arguments.remove("additional_kwargs");
+                (Map<String, Object>) modelParams.remove("additional_kwargs");
         if (additionalKwargs != null) {
             additionalKwargs.forEach(
                     (key, value) -> builder.putAdditionalBodyProperty(key, toJsonValue(value)));

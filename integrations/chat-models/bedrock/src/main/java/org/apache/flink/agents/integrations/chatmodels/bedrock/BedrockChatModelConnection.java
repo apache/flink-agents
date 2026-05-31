@@ -119,8 +119,8 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
 
     @Override
     public ChatMessage chat(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
-        String modelId = resolveModel(arguments);
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        String modelId = resolveModel(modelParams);
 
         List<ChatMessage> systemMsgs =
                 messages.stream()
@@ -154,14 +154,14 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         }
 
         // Inference config: temperature and max_tokens
-        if (arguments != null) {
+        if (modelParams != null) {
             InferenceConfiguration.Builder inferenceBuilder = null;
-            Object temp = arguments.get("temperature");
+            Object temp = modelParams.get("temperature");
             if (temp instanceof Number) {
                 inferenceBuilder = InferenceConfiguration.builder();
                 inferenceBuilder.temperature(((Number) temp).floatValue());
             }
-            Object maxTokens = arguments.get("max_tokens");
+            Object maxTokens = modelParams.get("max_tokens");
             if (maxTokens instanceof Number) {
                 if (inferenceBuilder == null) {
                     inferenceBuilder = InferenceConfiguration.builder();
@@ -202,8 +202,8 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         this.client.close();
     }
 
-    private String resolveModel(Map<String, Object> arguments) {
-        String model = arguments != null ? (String) arguments.get("model") : null;
+    private String resolveModel(Map<String, Object> modelParams) {
+        String model = modelParams != null ? (String) modelParams.get("model") : null;
         if (model == null || model.isBlank()) {
             model = this.defaultModel;
         }

@@ -67,8 +67,8 @@ public class PythonChatModelConnection extends BaseChatModelConnection
 
     @Override
     public ChatMessage chat(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
-        Map<String, Object> kwargs = new HashMap<>(arguments);
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        Map<String, Object> kwargs = new HashMap<>(modelParams);
 
         List<Object> pythonMessages = new ArrayList<>();
         for (ChatMessage message : messages) {
