@@ -69,4 +69,12 @@ public class AgentExecutionOptions {
                             "short-term-memory.state-ttl.visibility",
                             ShortTermMemoryTtlVisibility.class,
                             ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED);
+
+    /** Cleanup strategy for expired short-term memory state, consulted only when TTL is enabled. */
+    public static final ConfigOption<ShortTermMemoryTtlCleanupStrategy>
+            SHORT_TERM_MEMORY_STATE_TTL_CLEANUP_STRATEGY =
+                    new ConfigOption<>(
+                            "short-term-memory.state-ttl.cleanup-strategy",
+                            ShortTermMemoryTtlCleanupStrategy.class,
+                            ShortTermMemoryTtlCleanupStrategy.FULL_SNAPSHOT);
 }

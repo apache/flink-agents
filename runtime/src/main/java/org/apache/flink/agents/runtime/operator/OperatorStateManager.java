@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.agents.ShortTermMemoryTtlCleanupStrategy;
 import org.apache.flink.agents.api.agents.ShortTermMemoryTtlUpdate;
 import org.apache.flink.agents.api.agents.ShortTermMemoryTtlVisibility;
 import org.apache.flink.agents.plan.AgentConfiguration;
@@ -76,6 +77,12 @@ class OperatorStateManager {
 
     static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
     static final String PENDING_INPUT_EVENT_STATE_NAME = "pendingInputEvents";
+
+    // Flink's per-strategy default cleanup parameters are package-private and not referenceable;
+    // these literals reproduce them.
+    static final int INCREMENTAL_CLEANUP_SIZE = 5;
+    static final boolean INCREMENTAL_RUN_FOR_EVERY_RECORD = false;
+    static final long ROCKSDB_QUERY_TIME_AFTER_NUM_ENTRIES = 1000L;
 
     private ListState<ActionTask> actionTasksKState;
     private ListState<Event> pendingInputEventsKState;
@@ -153,13 +160,16 @@ class OperatorStateManager {
                 agentConfiguration.get(
                         AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY);
 
-        StateTtlConfig ttlConfig =
+        ShortTermMemoryTtlCleanupStrategy cleanupStrategy =
+                agentConfiguration.get(
+                        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_CLEANUP_STRATEGY);
+
+        StateTtlConfig.Builder builder =
                 StateTtlConfig.newBuilder(Duration.ofMillis(ttlMs))
                         .setUpdateType(toFlinkUpdateType(updateType))
-                        .setStateVisibility(toFlinkStateVisibility(stateVisibility))
-                        .cleanupFullSnapshot()
-                        .build();
-        descriptor.enableTimeToLive(ttlConfig);
+                        .setStateVisibility(toFlinkStateVisibility(stateVisibility));
+        applyCleanupStrategy(builder, cleanupStrategy);
+        descriptor.enableTimeToLive(builder.build());
     }
 
     private StateTtlConfig.UpdateType toFlinkUpdateType(ShortTermMemoryTtlUpdate updateType) {
@@ -183,6 +193,23 @@ class OperatorStateManager {
             default:
                 throw new IllegalArgumentException(
                         "Unsupported TTL state visibility: " + stateVisibility);
+        }
+    }
+
+    static StateTtlConfig.Builder applyCleanupStrategy(
+            StateTtlConfig.Builder builder, ShortTermMemoryTtlCleanupStrategy strategy) {
+        switch (strategy) {
+            case FULL_SNAPSHOT:
+                return builder.cleanupFullSnapshot();
+            case INCREMENTAL:
+                return builder.cleanupIncrementally(
+                        INCREMENTAL_CLEANUP_SIZE, INCREMENTAL_RUN_FOR_EVERY_RECORD);
+            case ROCKSDB_COMPACTION_FILTER:
+                return builder.cleanupInRocksdbCompactFilter(ROCKSDB_QUERY_TIME_AFTER_NUM_ENTRIES);
+            case LAZY:
+                return builder.disableCleanupInBackground();
+            default:
+                throw new IllegalArgumentException("Unsupported TTL cleanup strategy: " + strategy);
         }
     }
 
