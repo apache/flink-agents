@@ -96,6 +96,15 @@ class ShortTermMemoryTtlVisibility(Enum):
     RETURN_EXPIRED_IF_NOT_CLEANED_UP = "RETURN_EXPIRED_IF_NOT_CLEANED_UP"
 
 
+class ShortTermMemoryTtlCleanupStrategy(Enum):
+    """Cleanup strategy for expired short-term memory TTL state."""
+
+    FULL_SNAPSHOT = "FULL_SNAPSHOT"
+    INCREMENTAL = "INCREMENTAL"
+    ROCKSDB_COMPACTION_FILTER = "ROCKSDB_COMPACTION_FILTER"
+    LAZY = "LAZY"
+
+
 class LoggerType(Enum):
     """Built-in event logger types.
 
@@ -215,4 +224,12 @@ class AgentExecutionOptions:
         key="short-term-memory.state-ttl.visibility",
         config_type=ShortTermMemoryTtlVisibility,
         default=ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED,
+    )
+
+    # Cleanup strategy for expired short-term memory state, consulted only when TTL
+    # is enabled.
+    SHORT_TERM_MEMORY_STATE_TTL_CLEANUP_STRATEGY = ConfigOption(
+        key="short-term-memory.state-ttl.cleanup-strategy",
+        config_type=ShortTermMemoryTtlCleanupStrategy,
+        default=ShortTermMemoryTtlCleanupStrategy.FULL_SNAPSHOT,
     )

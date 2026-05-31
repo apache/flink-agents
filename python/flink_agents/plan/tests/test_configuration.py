@@ -22,6 +22,10 @@ import pytest
 import yaml
 
 from flink_agents.api.configuration import ConfigOption
+from flink_agents.api.core_options import (
+    AgentExecutionOptions,
+    ShortTermMemoryTtlCleanupStrategy,
+)
 from flink_agents.plan.configuration import AgentConfiguration
 
 
@@ -229,6 +233,17 @@ def test_get_with_default_value() -> None:
     assert config.get(default_str) == "default_value"
     assert config.get(default_int) == 100
     assert config.get(default_double) == 2.5
+
+
+def test_enum_typed_option_round_trips() -> None:
+    """An enum-typed option returns the member on set/get and the default when unset."""
+    option = AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_CLEANUP_STRATEGY
+
+    config = AgentConfiguration()
+    assert config.get(option) is ShortTermMemoryTtlCleanupStrategy.FULL_SNAPSHOT
+
+    config.set(option, ShortTermMemoryTtlCleanupStrategy.LAZY)
+    assert config.get(option) is ShortTermMemoryTtlCleanupStrategy.LAZY
 
 
 def test_get_with_null_and_default() -> None:

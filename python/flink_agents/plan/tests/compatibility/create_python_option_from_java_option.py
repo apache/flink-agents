@@ -22,6 +22,7 @@ from pyflink.util.java_utils import add_jars_to_context_class_loader
 from flink_agents.api.core_options import (
     AgentConfigOptions,
     AgentExecutionOptions,
+    ShortTermMemoryTtlCleanupStrategy,
     ShortTermMemoryTtlUpdate,
     ShortTermMemoryTtlVisibility,
 )
@@ -76,4 +77,17 @@ if __name__ == "__main__":
     assert (
         AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY.get_default_value()
         is ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED
+    )
+
+    assert (
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_CLEANUP_STRATEGY.get_key()
+        == "short-term-memory.state-ttl.cleanup-strategy"
+    )
+    assert (
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_CLEANUP_STRATEGY.get_type()
+        is ShortTermMemoryTtlCleanupStrategy
+    )
+    assert (
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_CLEANUP_STRATEGY.get_default_value()
+        is ShortTermMemoryTtlCleanupStrategy.FULL_SNAPSHOT
     )
