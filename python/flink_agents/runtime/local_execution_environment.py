@@ -22,6 +22,7 @@ from pyflink.datastream import DataStream, KeySelector, StreamExecutionEnvironme
 from pyflink.table import Schema, StreamTableEnvironment, Table
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.events.tool_event import ToolRequestEvent
 from flink_agents.api.execution_environment import (
     AgentBuilder,
     AgentsExecutionEnvironment,
@@ -140,6 +141,10 @@ class LocalExecutionEnvironment(AgentsExecutionEnvironment):
         outputs = self.__runner.get_outputs()
         for output in outputs:
             self.__output.append(output)
+
+    def get_tool_request_events(self) -> List[ToolRequestEvent]:
+        """Get the ToolRequestEvents captured by the runner during execution."""
+        return self.__runner.get_tool_request_events()
 
     def from_datastream(
         self, input: DataStream, key_selector: KeySelector | Callable | None = None

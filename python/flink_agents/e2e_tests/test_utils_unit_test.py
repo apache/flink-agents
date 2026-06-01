@@ -20,9 +20,11 @@ from pathlib import Path
 
 import pytest
 
+from flink_agents.api.events.tool_event import ToolRequestEvent
 from flink_agents.e2e_tests.test_utils import (
     assert_tool_invoked,
     collect_tool_invocations,
+    tool_invocations_from_events,
 )
 
 
@@ -127,3 +129,22 @@ def test_assert_tool_invoked_mismatch_reports_invocations() -> None:
         assert_tool_invoked(invocations, "add", {"a": 1, "b": 2})
     assert "add" in str(exc_info.value)
     assert "9" in str(exc_info.value)
+
+
+def test_tool_invocations_from_events() -> None:
+    """Live ToolRequestEvents normalize to the same {name, arguments} shape.
+
+    One event carrying two tool calls yields one invocation per call, in order.
+    """
+    event = ToolRequestEvent(
+        model="qwen3:1.7b",
+        tool_calls=[
+            _function_tool_call("add", {"a": 1, "b": 2}),
+            _function_tool_call("multiply", {"a": 4444, "b": 312}),
+        ],
+    )
+
+    assert tool_invocations_from_events([event]) == [
+        {"name": "add", "arguments": {"a": 1, "b": 2}},
+        {"name": "multiply", "arguments": {"a": 4444, "b": 312}},
+    ]
