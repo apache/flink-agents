@@ -48,6 +48,7 @@ from flink_agents.e2e_tests.test_utils import (
     assert_tool_invoked,
     collect_tool_invocations,
     pull_model,
+    tool_invocations_from_events,
 )
 
 current_dir = Path(__file__).parent
@@ -136,7 +137,13 @@ def test_react_agent_on_local_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(output_list) == 1, (
         "This may be caused by the LLM response does not match the output schema, you can rerun this case."
     )
-    assert output_list[0]["0001"].result == 1386528
+    assert int(output_list[0]["0001"].result) == 1386528
+
+    # multiply's first arg (4444 = 2123 + 2321) proves the addition was computed
+    # correctly and the multiply tool was used; the model often does the addition
+    # without the add tool, so add is not a reliable signal to assert on.
+    invocations = tool_invocations_from_events(env.get_tool_request_events())
+    assert_tool_invoked(invocations, "multiply", {"a": 4444, "b": 312})
 
 
 @pytest.mark.skipif(
