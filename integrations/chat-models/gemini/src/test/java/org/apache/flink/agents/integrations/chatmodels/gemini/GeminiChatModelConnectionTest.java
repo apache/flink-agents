@@ -315,11 +315,32 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("applyAdditionalKwargs silently ignores unknown keys")
+    @DisplayName("applyAdditionalKwargs ignores unknown keys without throwing (logs a warning)")
     void testApplyAdditionalKwargsIgnoresUnknown() {
         GenerateContentConfig.Builder builder = GenerateContentConfig.builder();
         connection().applyAdditionalKwargs(builder, Map.of("not_a_real_param", "x"));
-        // Should build without throwing.
-        assertThat(builder.build()).isNotNull();
+        GenerateContentConfig config = builder.build();
+        assertThat(config).isNotNull();
+        // Unknown key must not leak into a known field.
+        assertThat(config.topK()).isEmpty();
+        assertThat(config.topP()).isEmpty();
+    }
+
+    @Test
+    @DisplayName(
+            "applyAdditionalKwargs ignores known keys with the wrong value type without throwing "
+                    + "(e.g. top_k as a String) — must not silently set a wrong value either")
+    void testApplyAdditionalKwargsIgnoresTypeMismatch() {
+        GenerateContentConfig.Builder builder = GenerateContentConfig.builder();
+        connection()
+                .applyAdditionalKwargs(
+                        builder,
+                        Map.of(
+                                "top_k", "fast", // wrong type
+                                "stop_sequences", "STOP" // wrong type (should be List)
+                                ));
+        GenerateContentConfig config = builder.build();
+        assertThat(config.topK()).isEmpty();
+        assertThat(config.stopSequences()).isEmpty();
     }
 }

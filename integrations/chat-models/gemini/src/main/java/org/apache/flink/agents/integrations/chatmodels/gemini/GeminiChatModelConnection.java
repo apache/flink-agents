@@ -37,6 +37,8 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Base64;
@@ -44,6 +46,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -93,6 +96,8 @@ import java.util.stream.Collectors;
  * }</pre>
  */
 public class GeminiChatModelConnection extends BaseChatModelConnection {
+
+    private static final Logger LOG = LoggerFactory.getLogger(GeminiChatModelConnection.class);
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
@@ -292,31 +297,50 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
                 case "top_k":
                     // Gemini's protocol defines topK as a float, despite the OpenAI/Anthropic
                     // convention of an integer.
-                    if (value instanceof Number) {
-                        builder.topK(((Number) value).floatValue());
-                    }
+                    applyFloat(key, value, builder::topK);
                     break;
                 case "top_p":
-                    if (value instanceof Number) {
-                        builder.topP(((Number) value).floatValue());
-                    }
+                    applyFloat(key, value, builder::topP);
                     break;
                 case "stop_sequences":
                     if (value instanceof List) {
-                        List<String> stopSequences = new ArrayList<>();
-                        for (Object item : (List<?>) value) {
-                            if (item != null) {
-                                stopSequences.add(item.toString());
-                            }
-                        }
+                        List<String> stopSequences =
+                                ((List<?>) value)
+                                        .stream()
+                                                .filter(Objects::nonNull)
+                                                .map(Object::toString)
+                                                .collect(Collectors.toList());
                         builder.stopSequences(stopSequences);
+                    } else {
+                        LOG.warn(
+                                "Ignoring additional_kwargs.{}: expected List but got {}.",
+                                key,
+                                value.getClass().getSimpleName());
                     }
                     break;
                 default:
-                    // Unknown keys are ignored rather than rejected, mirroring how the sibling
-                    // connectors are lenient with forward-compatible additional parameters.
+                    // The Gemini SDK's GenerateContentConfig.Builder is AutoValue-generated and
+                    // does not accept arbitrary body fields (unlike Anthropic/OpenAI which expose
+                    // putAdditionalBodyProperty). Surface a warning so the user can see which key
+                    // was dropped instead of silently mis-configuring sampling.
+                    LOG.warn(
+                            "Ignoring additional_kwargs.{}: not recognized by the Gemini connector"
+                                    + " (supported keys: top_k, top_p, stop_sequences).",
+                            key);
                     break;
             }
+        }
+    }
+
+    private static void applyFloat(
+            String key, Object value, java.util.function.Consumer<Float> setter) {
+        if (value instanceof Number) {
+            setter.accept(((Number) value).floatValue());
+        } else {
+            LOG.warn(
+                    "Ignoring additional_kwargs.{}: expected Number but got {}.",
+                    key,
+                    value.getClass().getSimpleName());
         }
     }
 
