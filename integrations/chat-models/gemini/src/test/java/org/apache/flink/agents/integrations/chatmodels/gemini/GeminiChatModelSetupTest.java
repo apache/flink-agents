@@ -45,7 +45,7 @@ class GeminiChatModelSetupTest {
         GeminiChatModelSetup setup = new GeminiChatModelSetup(base().build(), NOOP);
 
         Map<String, Object> params = setup.getParameters();
-        assertThat(params).containsEntry("model", "gemini-3-pro-preview");
+        assertThat(params).containsEntry("model", "gemini-3.1-pro-preview");
         assertThat(params).containsEntry("temperature", 0.1);
         assertThat(params).containsEntry("max_output_tokens", 1024L);
     }

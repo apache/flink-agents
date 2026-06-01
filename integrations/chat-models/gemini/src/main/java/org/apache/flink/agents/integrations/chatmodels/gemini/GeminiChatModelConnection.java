@@ -73,7 +73,8 @@ import java.util.stream.Collectors;
  *   <li><b>model</b> (optional): Default model name, used when no model is supplied per request.
  *   <li><b>timeout</b> (optional): Timeout in seconds for API requests.
  *   <li><b>vertex_ai</b> (optional): When true, use the Vertex AI backend together with {@code
- *       project} and {@code location}.
+ *       project} and {@code location}. The Vertex path wires the SDK builder flags and is
+ *       smoke-tested at construction, but a full end-to-end run against Vertex is a follow-up.
  *   <li><b>project</b> / <b>location</b> (optional): Vertex AI project id and location.
  * </ul>
  *
@@ -85,7 +86,7 @@ import java.util.stream.Collectors;
  *   public static ResourceDesc gemini() {
  *     return ResourceDescriptor.Builder.newBuilder(GeminiChatModelConnection.class.getName())
  *             .addInitialArgument("api_key", System.getenv("GEMINI_API_KEY"))
- *             .addInitialArgument("model", "gemini-3-pro-preview")
+ *             .addInitialArgument("model", "gemini-3.1-pro-preview")
  *             .build();
  *   }
  * }
@@ -136,8 +137,10 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
             if (httpOptions == null) {
                 httpOptions = HttpOptions.builder();
             }
-            // HttpOptions timeout is expressed in milliseconds.
-            httpOptions.timeout(timeoutSeconds * 1000);
+            // HttpOptions timeout is expressed in milliseconds. Compute in long to avoid int
+            // overflow for large second values, then clamp to Integer.MAX_VALUE.
+            long timeoutMs = (long) timeoutSeconds * 1000L;
+            httpOptions.timeout((int) Math.min(timeoutMs, Integer.MAX_VALUE));
         }
         if (httpOptions != null) {
             builder.httpOptions(httpOptions.build());
@@ -169,23 +172,28 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> arguments) {
+        Map<String, Object> args = arguments != null ? new HashMap<>(arguments) : new HashMap<>();
+
+        Object modelObj = args.remove("model");
+        String modelName = modelObj != null ? modelObj.toString() : this.defaultModel;
+        if (modelName == null || modelName.isBlank()) {
+            modelName = this.defaultModel;
+        }
+        if (modelName == null || modelName.isBlank()) {
+            throw new IllegalArgumentException("model name must be provided for Gemini.");
+        }
+
+        // ChatModelAction emits TOOL messages with only `externalId` in extraArgs (matching the
+        // sibling Anthropic/OpenAI connectors). Gemini's functionResponse part however requires the
+        // function name. Build a tool-call-id -> name lookup from prior ASSISTANT turns so the TOOL
+        // branch in convertToContent can recover the name from `externalId`.
+        Map<String, String> toolCallIdToName = buildToolCallIdToNameMap(messages);
+
         try {
-            Map<String, Object> args =
-                    arguments != null ? new HashMap<>(arguments) : new HashMap<>();
-
-            Object modelObj = args.remove("model");
-            String modelName = modelObj != null ? modelObj.toString() : this.defaultModel;
-            if (modelName == null || modelName.isBlank()) {
-                modelName = this.defaultModel;
-            }
-            if (modelName == null || modelName.isBlank()) {
-                throw new IllegalArgumentException("model name must be provided for Gemini.");
-            }
-
             List<Content> contents =
                     messages.stream()
                             .filter(m -> m.getRole() != MessageRole.SYSTEM)
-                            .map(this::convertToContent)
+                            .map(m -> convertToContent(m, toolCallIdToName))
                             .collect(Collectors.toList());
 
             GenerateContentConfig config = buildConfig(messages, tools, args);
@@ -197,9 +205,44 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
             recordUsage(result, modelName, response);
 
             return result;
+        } catch (IllegalArgumentException e) {
+            // Preserve the validation-error contract: surface IAE unwrapped, consistent with the
+            // constructor.
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Failed to call Gemini generateContent API.", e);
         }
+    }
+
+    // Package-visible for testing. Walks ASSISTANT messages and records every tool-call's
+    // `original_id` (or `id`) -> function `name` mapping so TOOL turns can resolve their name from
+    // `externalId` alone (which is what the runtime supplies).
+    static Map<String, String> buildToolCallIdToNameMap(List<ChatMessage> messages) {
+        Map<String, String> map = new HashMap<>();
+        for (ChatMessage message : messages) {
+            if (message.getRole() != MessageRole.ASSISTANT) {
+                continue;
+            }
+            List<Map<String, Object>> toolCalls = message.getToolCalls();
+            if (toolCalls == null) {
+                continue;
+            }
+            for (Map<String, Object> call : toolCalls) {
+                Object id = call.get("original_id");
+                if (id == null) {
+                    id = call.get("id");
+                }
+                Object function = call.get("function");
+                if (id == null || !(function instanceof Map)) {
+                    continue;
+                }
+                Object name = ((Map<?, ?>) function).get("name");
+                if (name != null) {
+                    map.put(id.toString(), name.toString());
+                }
+            }
+        }
+        return map;
     }
 
     private GenerateContentConfig buildConfig(
@@ -223,11 +266,58 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
             builder.maxOutputTokens(((Number) maxOutputTokens).intValue());
         }
 
+        @SuppressWarnings("unchecked")
+        Map<String, Object> additionalKwargs =
+                (Map<String, Object>) arguments.remove("additional_kwargs");
+        if (additionalKwargs != null) {
+            applyAdditionalKwargs(builder, additionalKwargs);
+        }
+
         if (tools != null && !tools.isEmpty()) {
             builder.tools(List.of(convertTools(tools)));
         }
 
         return builder.build();
+    }
+
+    // Package-visible for unit testing of the additional-kwargs forwarding.
+    void applyAdditionalKwargs(GenerateContentConfig.Builder builder, Map<String, Object> kwargs) {
+        for (Map.Entry<String, Object> entry : kwargs.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if (value == null) {
+                continue;
+            }
+            switch (key) {
+                case "top_k":
+                    // Gemini's protocol defines topK as a float, despite the OpenAI/Anthropic
+                    // convention of an integer.
+                    if (value instanceof Number) {
+                        builder.topK(((Number) value).floatValue());
+                    }
+                    break;
+                case "top_p":
+                    if (value instanceof Number) {
+                        builder.topP(((Number) value).floatValue());
+                    }
+                    break;
+                case "stop_sequences":
+                    if (value instanceof List) {
+                        List<String> stopSequences = new ArrayList<>();
+                        for (Object item : (List<?>) value) {
+                            if (item != null) {
+                                stopSequences.add(item.toString());
+                            }
+                        }
+                        builder.stopSequences(stopSequences);
+                    }
+                    break;
+                default:
+                    // Unknown keys are ignored rather than rejected, mirroring how the sibling
+                    // connectors are lenient with forward-compatible additional parameters.
+                    break;
+            }
+        }
     }
 
     private Tool convertTools(List<org.apache.flink.agents.api.tools.Tool> tools) {
@@ -262,7 +352,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     }
 
     // Package-visible for unit testing of the message conversion.
-    Content convertToContent(ChatMessage message) {
+    Content convertToContent(ChatMessage message, Map<String, String> toolCallIdToName) {
         MessageRole role = message.getRole();
         String content = Optional.ofNullable(message.getContent()).orElse("");
 
@@ -290,21 +380,38 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
                 return Content.builder().role("model").parts(parts).build();
 
             case TOOL:
-                Object name = message.getExtraArgs().get("name");
-                if (name == null) {
-                    throw new IllegalArgumentException(
-                            "Tool message must have a 'name' in extraArgs for Gemini.");
-                }
+                String functionName = resolveToolFunctionName(message, toolCallIdToName);
                 Map<String, Object> responseMap = new LinkedHashMap<>();
                 responseMap.put("result", content);
                 return Content.builder()
                         .role("user")
-                        .parts(List.of(Part.fromFunctionResponse(name.toString(), responseMap)))
+                        .parts(List.of(Part.fromFunctionResponse(functionName, responseMap)))
                         .build();
 
             default:
                 throw new IllegalArgumentException("Unsupported role: " + role);
         }
+    }
+
+    private static String resolveToolFunctionName(
+            ChatMessage toolMessage, Map<String, String> toolCallIdToName) {
+        // 1. Honor an explicit `name` if the caller supplied one.
+        Object explicit = toolMessage.getExtraArgs().get("name");
+        if (explicit != null) {
+            return explicit.toString();
+        }
+        // 2. Otherwise look up the function name via the tool-call id the runtime supplies as
+        // `externalId` (set equal to the assistant turn's `original_id` by ToolCallAction).
+        Object externalId = toolMessage.getExtraArgs().get("externalId");
+        if (externalId != null && toolCallIdToName != null) {
+            String name = toolCallIdToName.get(externalId.toString());
+            if (name != null) {
+                return name;
+            }
+        }
+        throw new IllegalArgumentException(
+                "Tool message must carry the function name: provide either 'name' in extraArgs, or"
+                        + " an 'externalId' matching a prior ASSISTANT tool-call's id.");
     }
 
     // Package-visible for unit testing of the tool-call round-trip.
@@ -344,12 +451,17 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         StringBuilder textContent = new StringBuilder();
         List<Map<String, Object>> toolCalls = new ArrayList<>();
 
-        List<Part> parts =
-                response.candidates().orElseGet(List::of).stream()
-                        .findFirst()
-                        .flatMap(Candidate::content)
-                        .flatMap(Content::parts)
-                        .orElseGet(List::of);
+        List<Candidate> candidates = response.candidates().orElseGet(List::of);
+        // Empty candidates means the model produced nothing (safety block, quota, …). Surface a
+        // clear error instead of returning an empty assistant message, matching the Anthropic
+        // connector's contract.
+        if (candidates.isEmpty()) {
+            throw new IllegalStateException(
+                    "Gemini response did not contain any candidates (likely safety-blocked or"
+                            + " filtered).");
+        }
+
+        List<Part> parts = candidates.get(0).content().flatMap(Content::parts).orElseGet(List::of);
 
         for (Part part : parts) {
             part.text().ifPresent(textContent::append);

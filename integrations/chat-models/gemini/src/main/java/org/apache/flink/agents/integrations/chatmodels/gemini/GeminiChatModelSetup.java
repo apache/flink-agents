@@ -37,7 +37,7 @@ import java.util.Optional;
  *
  * <ul>
  *   <li><b>connection</b> (required): Name of the GeminiChatModelConnection resource
- *   <li><b>model</b> (optional): Model name (default: gemini-3-pro-preview)
+ *   <li><b>model</b> (optional): Model name (default: gemini-3.1-pro-preview)
  *   <li><b>temperature</b> (optional): Sampling temperature 0.0-2.0 (default: 0.1)
  *   <li><b>max_output_tokens</b> (optional): Maximum tokens in response (default: 1024)
  *   <li><b>tools</b> (optional): List of tool names available for the model to use
@@ -52,7 +52,7 @@ import java.util.Optional;
  *   public static ResourceDesc gemini() {
  *     return ResourceDescriptor.Builder.newBuilder(GeminiChatModelSetup.class.getName())
  *             .addInitialArgument("connection", "myGeminiConnection")
- *             .addInitialArgument("model", "gemini-3-pro-preview")
+ *             .addInitialArgument("model", "gemini-3.1-pro-preview")
  *             .addInitialArgument("temperature", 0.3d)
  *             .addInitialArgument("max_output_tokens", 2048)
  *             .addInitialArgument("tools", List.of("getWeather"))
@@ -63,7 +63,7 @@ import java.util.Optional;
  */
 public class GeminiChatModelSetup extends BaseChatModelSetup {
 
-    private static final String DEFAULT_MODEL = "gemini-3-pro-preview";
+    private static final String DEFAULT_MODEL = "gemini-3.1-pro-preview";
     private static final double DEFAULT_TEMPERATURE = 0.1d;
     private static final long DEFAULT_MAX_OUTPUT_TOKENS = 1024L;
 

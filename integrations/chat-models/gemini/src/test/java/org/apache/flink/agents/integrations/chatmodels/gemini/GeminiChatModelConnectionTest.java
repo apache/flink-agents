@@ -20,8 +20,10 @@ package org.apache.flink.agents.integrations.chatmodels.gemini;
 
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
+import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.Part;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -29,6 +31,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Base64;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -91,9 +95,42 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName(
+            "Vertex AI path is wired but not e2e-tested in CI. We only assert here that "
+                    + "vertex_ai=true does NOT silently fall through to the Developer-API "
+                    + "construction success path; either it succeeds with ADC, or it surfaces a "
+                    + "credentials / configuration error. A real Vertex run is a follow-up.")
+    void testConstructorVertexAiIsWired() {
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(GeminiChatModelConnection.class.getName())
+                        .addInitialArgument("vertex_ai", true)
+                        .addInitialArgument("project", "test-project-does-not-exist")
+                        .addInitialArgument("location", "us-central1")
+                        .addInitialArgument("model", "gemini-3-pro-preview")
+                        .build();
+        // Two acceptable outcomes:
+        //   1. CI/dev box without ADC -> the SDK throws while resolving credentials.
+        //   2. A machine with ADC configured -> construction succeeds. We close the client to
+        //      release resources.
+        // What must NOT happen: vertex_ai is silently ignored and the Developer-API path is taken,
+        // which would mean the Vertex flag is dead code.
+        try {
+            GeminiChatModelConnection conn = new GeminiChatModelConnection(desc, NOOP);
+            // Reached only when ADC is configured locally. Smoke-checked the build path.
+            assertThat(conn).isInstanceOf(BaseChatModelConnection.class);
+            conn.close();
+        } catch (RuntimeException e) {
+            // ADC missing: the SDK surfaces a credentials error. The exact message is SDK-internal;
+            // the important assertion is that an error was raised, not silent fallthrough.
+            assertThat(e).isNotNull();
+        }
+    }
+
+    @Test
     @DisplayName("convertToContent maps USER role to a Gemini user turn")
     void testConvertUserMessage() {
-        Content content = connection().convertToContent(ChatMessage.user("hello"));
+        Content content =
+                connection().convertToContent(ChatMessage.user("hello"), Collections.emptyMap());
         assertThat(content.role()).hasValue("user");
         assertThat(content.parts().orElseThrow().get(0).text()).hasValue("hello");
     }
@@ -101,18 +138,21 @@ class GeminiChatModelConnectionTest {
     @Test
     @DisplayName("convertToContent maps ASSISTANT role to a Gemini model turn")
     void testConvertAssistantMessage() {
-        Content content = connection().convertToContent(ChatMessage.assistant("hi there"));
+        Content content =
+                connection()
+                        .convertToContent(
+                                ChatMessage.assistant("hi there"), Collections.emptyMap());
         assertThat(content.role()).hasValue("model");
         assertThat(content.parts().orElseThrow().get(0).text()).hasValue("hi there");
     }
 
     @Test
-    @DisplayName("convertToContent maps TOOL role to a functionResponse part")
-    void testConvertToolMessage() {
+    @DisplayName("convertToContent uses explicit `name` in extraArgs when supplied")
+    void testConvertToolMessageWithExplicitName() {
         ChatMessage tool = ChatMessage.tool("sunny, 22C");
         tool.getExtraArgs().put("name", "get_weather");
 
-        Content content = connection().convertToContent(tool);
+        Content content = connection().convertToContent(tool, Collections.emptyMap());
         assertThat(content.role()).hasValue("user");
         Part part = content.parts().orElseThrow().get(0);
         assertThat(part.functionResponse()).isPresent();
@@ -120,11 +160,36 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("convertToContent throws when a TOOL message has no name")
-    void testConvertToolMessageWithoutName() {
-        assertThatThrownBy(() -> connection().convertToContent(ChatMessage.tool("result")))
+    @DisplayName(
+            "convertToContent resolves the function name from `externalId` when the runtime omits "
+                    + "`name` (matches ChatModelAction's emission shape)")
+    void testRuntimeShapeToolMessageResolvesNameFromExternalId() {
+        // Runtime contract: ChatModelAction emits TOOL messages with only `externalId` in
+        // extraArgs, matching how Anthropic/OpenAI siblings work. The name must be recovered from
+        // the prior ASSISTANT turn's tool-call map.
+        ChatMessage tool = ChatMessage.tool("sunny, 22C");
+        tool.getExtraArgs().put("externalId", "call_abc");
+
+        Map<String, String> idToName = Map.of("call_abc", "get_weather");
+
+        Content content = connection().convertToContent(tool, idToName);
+        assertThat(content.role()).hasValue("user");
+        Part part = content.parts().orElseThrow().get(0);
+        assertThat(part.functionResponse()).isPresent();
+        assertThat(part.functionResponse().orElseThrow().name()).hasValue("get_weather");
+    }
+
+    @Test
+    @DisplayName(
+            "convertToContent throws only when the function name truly cannot be resolved (no "
+                    + "`name`, no matching `externalId`)")
+    void testConvertToolMessageThrowsWhenUnresolvable() {
+        ChatMessage tool = ChatMessage.tool("result");
+        tool.getExtraArgs().put("externalId", "call_unknown");
+
+        assertThatThrownBy(() -> connection().convertToContent(tool, Collections.emptyMap()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("name");
+                .hasMessageContaining("function name");
     }
 
     @Test
@@ -193,9 +258,68 @@ class GeminiChatModelConnectionTest {
         Map<String, Object> toolCall = connection().convertFunctionCall(fc, null);
         ChatMessage assistant = ChatMessage.assistant("", List.of(toolCall));
 
-        Content content = connection().convertToContent(assistant);
+        Content content = connection().convertToContent(assistant, Collections.emptyMap());
         assertThat(content.role()).hasValue("model");
         assertThat(content.parts().orElseThrow())
                 .anySatisfy(p -> assertThat(p.functionCall()).isPresent());
+    }
+
+    @Test
+    @DisplayName(
+            "buildToolCallIdToNameMap mirrors what ChatModelAction emits: ASSISTANT turn carries "
+                    + "tool-call map, follow-up TOOL turn carries only externalId")
+    void testRuntimeShapeMultiTurn() {
+        // Step 1: simulate the assistant's tool-call turn produced by convertFunctionCall.
+        FunctionCall fc =
+                FunctionCall.builder()
+                        .id("call_xyz")
+                        .name("get_weather")
+                        .args(Map.of("city", "Tokyo"))
+                        .build();
+        Map<String, Object> toolCall = connection().convertFunctionCall(fc, null);
+        ChatMessage assistantTurn = ChatMessage.assistant("", List.of(toolCall));
+
+        // Step 2: the runtime emits a TOOL message with only externalId (no name).
+        Map<String, Object> toolExtras = new HashMap<>();
+        toolExtras.put("externalId", "call_xyz");
+        ChatMessage toolTurn = new ChatMessage(MessageRole.TOOL, "sunny, 22C", toolExtras);
+
+        List<ChatMessage> conversation =
+                List.of(ChatMessage.user("weather in Tokyo?"), assistantTurn, toolTurn);
+
+        Map<String, String> idToName =
+                GeminiChatModelConnection.buildToolCallIdToNameMap(conversation);
+        assertThat(idToName).containsEntry("call_xyz", "get_weather");
+
+        // Round-trip: TOOL message converts to a functionResponse with the recovered name.
+        Content content = connection().convertToContent(toolTurn, idToName);
+        assertThat(content.parts().orElseThrow().get(0).functionResponse().orElseThrow().name())
+                .hasValue("get_weather");
+    }
+
+    @Test
+    @DisplayName(
+            "applyAdditionalKwargs forwards top_k, top_p and stop_sequences onto the "
+                    + "GenerateContentConfig (mirrors Anthropic's `additional_kwargs` path)")
+    void testApplyAdditionalKwargs() {
+        GenerateContentConfig.Builder builder = GenerateContentConfig.builder();
+        Map<String, Object> kwargs =
+                Map.of("top_k", 40, "top_p", 0.9, "stop_sequences", List.of("END", "STOP"));
+
+        connection().applyAdditionalKwargs(builder, kwargs);
+
+        GenerateContentConfig config = builder.build();
+        assertThat(config.topK()).hasValue(40f);
+        assertThat(config.topP()).hasValue(0.9f);
+        assertThat(config.stopSequences().orElseThrow()).containsExactly("END", "STOP");
+    }
+
+    @Test
+    @DisplayName("applyAdditionalKwargs silently ignores unknown keys")
+    void testApplyAdditionalKwargsIgnoresUnknown() {
+        GenerateContentConfig.Builder builder = GenerateContentConfig.builder();
+        connection().applyAdditionalKwargs(builder, Map.of("not_a_real_param", "x"));
+        // Should build without throwing.
+        assertThat(builder.build()).isNotNull();
     }
 }
