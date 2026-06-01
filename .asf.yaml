@@ -49,6 +49,7 @@ github:
     - istavrak
     - yanand0909
     - wzhero1
+    - joeyutong
 
   rulesets:
     - name: "Default Branch Protection"
