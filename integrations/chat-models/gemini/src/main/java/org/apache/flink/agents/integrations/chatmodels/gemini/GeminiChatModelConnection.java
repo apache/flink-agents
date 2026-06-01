@@ -340,15 +340,12 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     }
 
     private Content extractSystemInstruction(List<ChatMessage> messages) {
-        List<Part> parts =
+        Part[] parts =
                 messages.stream()
                         .filter(m -> m.getRole() == MessageRole.SYSTEM)
                         .map(m -> Part.fromText(Optional.ofNullable(m.getContent()).orElse("")))
-                        .collect(Collectors.toList());
-        if (parts.isEmpty()) {
-            return null;
-        }
-        return Content.builder().parts(parts).build();
+                        .toArray(Part[]::new);
+        return parts.length == 0 ? null : Content.fromParts(parts);
     }
 
     // Package-visible for unit testing of the message conversion.
@@ -452,14 +449,16 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         List<Map<String, Object>> toolCalls = new ArrayList<>();
 
         List<Candidate> candidates = response.candidates().orElseGet(List::of);
-        // Empty candidates means the model produced nothing (safety block, quota, …). Surface a
-        // clear error instead of returning an empty assistant message, matching the Anthropic
-        // connector's contract.
         if (candidates.isEmpty()) {
             throw new IllegalStateException(
                     "Gemini response did not contain any candidates (likely safety-blocked or"
                             + " filtered).");
         }
+        // Let the SDK validate the finish reason: this raises IllegalArgumentException when the
+        // model finished for an unexpected reason (SAFETY, MAX_TOKENS, RECITATION, …) instead of
+        // silently returning a truncated or filtered message. The IAE is propagated unwrapped by
+        // chat()'s catch block, matching the constructor's error contract.
+        response.checkFinishReason();
 
         List<Part> parts = candidates.get(0).content().flatMap(Content::parts).orElseGet(List::of);
 
