@@ -18,73 +18,63 @@
 
 package org.apache.flink.agents.api.chat.model;
 
-import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.metrics.Counter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
-/** Test cases for BaseChatModelConnection token metrics functionality. */
-class BaseChatModelConnectionTokenMetricsTest {
+/** Test cases for BaseChatModelSetup token metrics functionality. */
+class BaseChatModelSetupTokenMetricsTest {
 
-    private TestChatModelConnection connection;
+    private TestChatModelSetup setup;
     private FlinkAgentsMetricGroup mockMetricGroup;
     private FlinkAgentsMetricGroup mockModelGroup;
     private Counter mockPromptTokensCounter;
     private Counter mockCompletionTokensCounter;
 
-    /** Test implementation of BaseChatModelConnection for testing purposes. */
-    private static class TestChatModelConnection extends BaseChatModelConnection {
+    /** Test implementation of BaseChatModelSetup for testing purposes. */
+    private static class TestChatModelSetup extends BaseChatModelSetup {
 
-        public TestChatModelConnection(
+        public TestChatModelSetup(
                 ResourceDescriptor descriptor,
                 BiFunction<String, ResourceType, Resource> getResource) {
             super(descriptor, getResource);
         }
 
         @Override
-        public ChatMessage chat(
-                List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
-            // Simple test implementation
-            return new ChatMessage(MessageRole.ASSISTANT, "Test response");
-        }
-
-        // Expose protected method for testing
-        public void testRecordTokenMetrics(
-                String modelName, long promptTokens, long completionTokens) {
-            recordTokenMetrics(modelName, promptTokens, completionTokens);
+        public Map<String, Object> getParameters() {
+            return Collections.emptyMap();
         }
     }
 
     @BeforeEach
     void setUp() {
-        connection =
-                new TestChatModelConnection(
+        setup =
+                new TestChatModelSetup(
                         new ResourceDescriptor(
-                                TestChatModelConnection.class.getName(), Collections.emptyMap()),
+                                TestChatModelSetup.class.getName(), Collections.emptyMap()),
                         null);
 
-        // Create mock objects
         mockMetricGroup = mock(FlinkAgentsMetricGroup.class);
         mockModelGroup = mock(FlinkAgentsMetricGroup.class);
         mockPromptTokensCounter = mock(Counter.class);
         mockCompletionTokensCounter = mock(Counter.class);
 
-        // Set up mock behavior
         when(mockMetricGroup.getSubGroup("gpt-4")).thenReturn(mockModelGroup);
         when(mockModelGroup.getCounter("promptTokens")).thenReturn(mockPromptTokensCounter);
         when(mockModelGroup.getCounter("completionTokens")).thenReturn(mockCompletionTokensCounter);
@@ -93,13 +83,10 @@ class BaseChatModelConnectionTokenMetricsTest {
     @Test
     @DisplayName("Test token metrics are recorded when metric group is set")
     void testRecordTokenMetricsWithMetricGroup() {
-        // Set the metric group
-        connection.setMetricGroup(mockMetricGroup);
+        setup.setMetricGroup(mockMetricGroup);
 
-        // Record token metrics
-        connection.testRecordTokenMetrics("gpt-4", 100, 50);
+        setup.recordTokenMetrics("gpt-4", 100, 50);
 
-        // Verify the metrics were recorded
         verify(mockMetricGroup).getSubGroup("gpt-4");
         verify(mockModelGroup).getCounter("promptTokens");
         verify(mockModelGroup).getCounter("completionTokens");
@@ -110,22 +97,16 @@ class BaseChatModelConnectionTokenMetricsTest {
     @Test
     @DisplayName("Test token metrics are not recorded when metric group is null")
     void testRecordTokenMetricsWithoutMetricGroup() {
-        // Do not set metric group (should be null by default)
+        assertDoesNotThrow(() -> setup.recordTokenMetrics("gpt-4", 100, 50));
 
-        // Record token metrics - should not throw
-        assertDoesNotThrow(() -> connection.testRecordTokenMetrics("gpt-4", 100, 50));
-
-        // No metrics should be recorded
         verifyNoInteractions(mockMetricGroup);
     }
 
     @Test
-    @DisplayName("Test token metrics hierarchy: actionMetricGroup -> modelName -> counters")
+    @DisplayName("Test token metrics hierarchy: metricGroup -> modelName -> counters")
     void testTokenMetricsHierarchy() {
-        // Set the metric group
-        connection.setMetricGroup(mockMetricGroup);
+        setup.setMetricGroup(mockMetricGroup);
 
-        // Record token metrics for different models
         FlinkAgentsMetricGroup mockGpt35Group = mock(FlinkAgentsMetricGroup.class);
         Counter mockGpt35PromptCounter = mock(Counter.class);
         Counter mockGpt35CompletionCounter = mock(Counter.class);
@@ -134,13 +115,9 @@ class BaseChatModelConnectionTokenMetricsTest {
         when(mockGpt35Group.getCounter("promptTokens")).thenReturn(mockGpt35PromptCounter);
         when(mockGpt35Group.getCounter("completionTokens")).thenReturn(mockGpt35CompletionCounter);
 
-        // Record for gpt-4
-        connection.testRecordTokenMetrics("gpt-4", 100, 50);
+        setup.recordTokenMetrics("gpt-4", 100, 50);
+        setup.recordTokenMetrics("gpt-3.5-turbo", 200, 100);
 
-        // Record for gpt-3.5-turbo
-        connection.testRecordTokenMetrics("gpt-3.5-turbo", 200, 100);
-
-        // Verify each model has its own counters
         verify(mockMetricGroup).getSubGroup("gpt-4");
         verify(mockMetricGroup).getSubGroup("gpt-3.5-turbo");
         verify(mockPromptTokensCounter).inc(100);
@@ -150,8 +127,8 @@ class BaseChatModelConnectionTokenMetricsTest {
     }
 
     @Test
-    @DisplayName("Test resource type is CHAT_MODEL_CONNECTION")
+    @DisplayName("Test resource type is CHAT_MODEL")
     void testResourceType() {
-        assertEquals(ResourceType.CHAT_MODEL_CONNECTION, connection.getResourceType());
+        assertEquals(ResourceType.CHAT_MODEL, setup.getResourceType());
     }
 }

@@ -189,12 +189,15 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
                 chatMessage.setToolCalls(convertedToolCalls);
             }
 
-            // Record token metrics if model name is available
+            // Stash token usage if model name is available
             if (modelName != null && !modelName.isBlank()) {
                 CompletionsUsage usage = completions.getUsage();
                 if (usage != null) {
-                    recordTokenMetrics(
-                            modelName, usage.getPromptTokens(), usage.getCompletionTokens());
+                    chatMessage.getExtraArgs().put("model_name", modelName);
+                    chatMessage.getExtraArgs().put("promptTokens", (long) usage.getPromptTokens());
+                    chatMessage
+                            .getExtraArgs()
+                            .put("completionTokens", (long) usage.getCompletionTokens());
                 }
             }
 
