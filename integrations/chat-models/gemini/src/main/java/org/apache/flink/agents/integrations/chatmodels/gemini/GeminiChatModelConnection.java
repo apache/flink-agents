@@ -297,10 +297,14 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
                 case "top_k":
                     // Gemini's protocol defines topK as a float, despite the OpenAI/Anthropic
                     // convention of an integer.
-                    applyFloat(key, value, builder::topK);
+                    if (value instanceof Number) {
+                        builder.topK(((Number) value).floatValue());
+                    }
                     break;
                 case "top_p":
-                    applyFloat(key, value, builder::topP);
+                    if (value instanceof Number) {
+                        builder.topP(((Number) value).floatValue());
+                    }
                     break;
                 case "stop_sequences":
                     if (value instanceof List) {
@@ -311,11 +315,6 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
                                                 .map(Object::toString)
                                                 .collect(Collectors.toList());
                         builder.stopSequences(stopSequences);
-                    } else {
-                        LOG.warn(
-                                "Ignoring additional_kwargs.{}: expected List but got {}.",
-                                key,
-                                value.getClass().getSimpleName());
                     }
                     break;
                 default:
@@ -329,18 +328,6 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
                             key);
                     break;
             }
-        }
-    }
-
-    private static void applyFloat(
-            String key, Object value, java.util.function.Consumer<Float> setter) {
-        if (value instanceof Number) {
-            setter.accept(((Number) value).floatValue());
-        } else {
-            LOG.warn(
-                    "Ignoring additional_kwargs.{}: expected Number but got {}.",
-                    key,
-                    value.getClass().getSimpleName());
         }
     }
 
