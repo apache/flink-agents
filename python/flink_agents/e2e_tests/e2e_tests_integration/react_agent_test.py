@@ -160,7 +160,7 @@ def test_react_agent_on_remote_runner(
     t_env = StreamTableEnvironment.create(stream_execution_environment=stream_env)
 
     table = t_env.from_elements(
-        elements=[(1, 2, 3)],
+        elements=[(2123, 2321, 312)],
         schema=DataTypes.ROW(
             [
                 DataTypes.FIELD("a", DataTypes.INT()),
@@ -258,11 +258,12 @@ def test_react_agent_on_remote_runner(
     assert len(actual_result) == 1, (
         "This may be caused by the LLM response does not match the output schema, you can rerun this case."
     )
-    assert "result" in json.loads(actual_result[0].strip())
+    assert json.loads(actual_result[0].strip())["result"] == 1386528
 
-    # Input (a=1, b=2, c=3) computes (a + b) * c, so the agent must thread
-    # add(1, 2)=3 into multiply(3, 3)=9. Asserting the multiply first arg
-    # validates the reasoning chain, not just that each tool fired.
+    # multiply's first arg (4444 = 2123 + 2321) proves the addition was computed
+    # correctly and threaded into multiply; the model often does the addition
+    # without the add tool, so add is not a reliable signal to assert on. This
+    # exercises the same reasoning chain as the local-runner test, but read back
+    # through the event-log capture path.
     invocations = collect_tool_invocations(log_dir)
-    assert_tool_invoked(invocations, "add", {"a": 1, "b": 2})
-    assert_tool_invoked(invocations, "multiply", {"a": 3, "b": 3})
+    assert_tool_invoked(invocations, "multiply", {"a": 4444, "b": 312})
