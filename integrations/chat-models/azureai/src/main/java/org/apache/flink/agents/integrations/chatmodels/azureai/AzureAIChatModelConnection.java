@@ -161,7 +161,7 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
 
     @Override
     public ChatMessage chat(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         try {
             final List<ChatCompletionsToolDefinition> azureTools = convertToAzureAITools(tools);
             final List<ChatRequestMessage> chatMessages =
@@ -169,7 +169,7 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
                             .map(this::convertToChatRequestMessage)
                             .collect(Collectors.toList());
 
-            final String modelName = (String) arguments.get("model");
+            final String modelName = (String) modelParams.get("model");
             ChatCompletionsOptions options =
                     new ChatCompletionsOptions(chatMessages)
                             .setModel(modelName)

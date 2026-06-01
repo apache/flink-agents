@@ -89,9 +89,9 @@ public class PythonChatModelConnectionTest {
         Tool mockTool = mock(Tool.class);
         List<ChatMessage> messages = Collections.singletonList(inputMessage);
         List<Tool> tools = Collections.singletonList(mockTool);
-        Map<String, Object> arguments = new HashMap<>();
-        arguments.put("temperature", 0.7);
-        arguments.put("max_tokens", 100);
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("temperature", 0.7);
+        modelParams.put("max_tokens", 100);
 
         Object pythonInputMessage = new Object();
         Object pythonOutputMessage = new Object();
@@ -103,7 +103,7 @@ public class PythonChatModelConnectionTest {
                 .thenReturn(pythonOutputMessage);
         when(mockAdapter.fromPythonChatMessage(pythonOutputMessage)).thenReturn(outputMessage);
 
-        ChatMessage result = pythonChatModelConnection.chat(messages, tools, arguments);
+        ChatMessage result = pythonChatModelConnection.chat(messages, tools, modelParams);
 
         assertThat(result).isEqualTo(outputMessage);
 

@@ -153,10 +153,10 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
 
     @Override
     public ChatMessage chat(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         try {
             Map<String, Object> mutableArgs =
-                    arguments != null ? new HashMap<>(arguments) : new HashMap<>();
+                    modelParams != null ? new HashMap<>(modelParams) : new HashMap<>();
 
             String azureDeployment = (String) mutableArgs.remove("model");
             if (azureDeployment == null || azureDeployment.isBlank()) {

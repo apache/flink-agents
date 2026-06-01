@@ -128,14 +128,14 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
     public ChatMessage chat(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
-            Map<String, Object> arguments) {
+            Map<String, Object> modelParams) {
         try {
-            ResponseCreateParams params = buildRequest(messages, tools, arguments);
+            ResponseCreateParams params = buildRequest(messages, tools, modelParams);
             Response response = client.responses().create(params);
             ChatMessage result = convertResponse(response);
 
             if (response.usage().isPresent()) {
-                String modelName = arguments != null ? (String) arguments.get("model") : null;
+                String modelName = modelParams != null ? (String) modelParams.get("model") : null;
                 if (modelName == null || modelName.isBlank()) {
                     modelName = this.defaultModel;
                 }
@@ -156,12 +156,12 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
     private ResponseCreateParams buildRequest(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
-            Map<String, Object> rawArguments) {
-        Map<String, Object> arguments =
-                rawArguments != null ? new HashMap<>(rawArguments) : new HashMap<>();
+            Map<String, Object> rawModelParams) {
+        Map<String, Object> modelParams =
+                rawModelParams != null ? new HashMap<>(rawModelParams) : new HashMap<>();
 
-        boolean strictMode = Boolean.TRUE.equals(arguments.remove("strict"));
-        String modelName = (String) arguments.remove("model");
+        boolean strictMode = Boolean.TRUE.equals(modelParams.remove("strict"));
+        String modelName = (String) modelParams.remove("model");
         if (modelName == null || modelName.isBlank()) {
             modelName = this.defaultModel;
         }
@@ -177,17 +177,17 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
             builder.tools(convertTools(tools, strictMode));
         }
 
-        Object temperature = arguments.remove("temperature");
+        Object temperature = modelParams.remove("temperature");
         if (temperature instanceof Number) {
             builder.temperature(((Number) temperature).doubleValue());
         }
 
-        Object maxTokens = arguments.remove("max_tokens");
+        Object maxTokens = modelParams.remove("max_tokens");
         if (maxTokens instanceof Number) {
             builder.maxOutputTokens(((Number) maxTokens).longValue());
         }
 
-        Object reasoningEffort = arguments.remove("reasoning_effort");
+        Object reasoningEffort = modelParams.remove("reasoning_effort");
         if (reasoningEffort instanceof String) {
             builder.reasoning(
                     Reasoning.builder()
@@ -195,19 +195,19 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
                             .build());
         }
 
-        Object store = arguments.remove("store");
+        Object store = modelParams.remove("store");
         if (Boolean.TRUE.equals(store)) {
             builder.store(true);
         }
 
-        Object instructions = arguments.remove("instructions");
+        Object instructions = modelParams.remove("instructions");
         if (instructions instanceof String) {
             builder.instructions((String) instructions);
         }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> additionalKwargs =
-                (Map<String, Object>) arguments.remove("additional_kwargs");
+                (Map<String, Object>) modelParams.remove("additional_kwargs");
         if (additionalKwargs != null) {
             additionalKwargs.forEach(
                     (key, value) -> builder.putAdditionalBodyProperty(key, toJsonValue(value)));

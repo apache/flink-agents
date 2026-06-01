@@ -118,25 +118,25 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     public ChatMessage chat(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
-            Map<String, Object> arguments) {
+            Map<String, Object> modelParams) {
         try {
-            // Check if JSON prefill is requested before building request (arguments may be
+            // Check if JSON prefill is requested before building request (modelParams may be
             // modified).
             boolean jsonPrefillRequested =
-                    arguments != null && Boolean.TRUE.equals(arguments.get("json_prefill"));
+                    modelParams != null && Boolean.TRUE.equals(modelParams.get("json_prefill"));
             // JSON prefill is automatically disabled when tools are passed in the request,
             // because it interferes with native tool calling.
             boolean hasToolsInRequest = tools != null && !tools.isEmpty();
             boolean jsonPrefillApplied = jsonPrefillRequested && !hasToolsInRequest;
 
-            MessageCreateParams params = buildRequest(messages, tools, arguments);
+            MessageCreateParams params = buildRequest(messages, tools, modelParams);
             Message response = client.messages().create(params);
             ChatMessage result = convertResponse(response, jsonPrefillApplied);
 
             // Stash token usage
             String modelName = null;
-            if (arguments != null && arguments.get("model") != null) {
-                modelName = arguments.get("model").toString();
+            if (modelParams != null && modelParams.get("model") != null) {
+                modelName = modelParams.get("model").toString();
             }
             if (modelName == null || modelName.isBlank()) {
                 modelName = this.defaultModel;
@@ -156,11 +156,11 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     private MessageCreateParams buildRequest(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
-            Map<String, Object> rawArguments) {
-        Map<String, Object> arguments =
-                rawArguments != null ? new HashMap<>(rawArguments) : new HashMap<>();
+            Map<String, Object> rawModelParams) {
+        Map<String, Object> modelParams =
+                rawModelParams != null ? new HashMap<>(rawModelParams) : new HashMap<>();
 
-        Object modelObj = arguments.remove("model");
+        Object modelObj = modelParams.remove("model");
         String modelName = modelObj != null ? modelObj.toString() : this.defaultModel;
         if (modelName == null || modelName.isBlank()) {
             modelName = this.defaultModel;
@@ -184,7 +184,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         }
 
         // Handle strict tools - enables structured outputs for tool use
-        Object strictTools = arguments.remove("strict_tools");
+        Object strictTools = modelParams.remove("strict_tools");
         boolean strictToolsEnabled = Boolean.TRUE.equals(strictTools);
 
         if (tools != null && !tools.isEmpty()) {
@@ -199,19 +199,19 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             builder.putAdditionalHeader("anthropic-beta", "structured-outputs-2025-11-13");
         }
 
-        Object maxTokens = arguments.remove("max_tokens");
+        Object maxTokens = modelParams.remove("max_tokens");
         if (maxTokens instanceof Number) {
             builder.maxTokens(((Number) maxTokens).longValue());
         }
 
-        Object temperature = arguments.remove("temperature");
+        Object temperature = modelParams.remove("temperature");
         if (temperature instanceof Number) {
             builder.temperature(((Number) temperature).doubleValue());
         }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> additionalKwargs =
-                (Map<String, Object>) arguments.remove("additional_kwargs");
+                (Map<String, Object>) modelParams.remove("additional_kwargs");
         if (additionalKwargs != null) {
             applyAdditionalKwargs(builder, additionalKwargs);
         }
@@ -220,7 +220,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         // output. Note: JSON prefill is incompatible with tool use as it forces the model to output
         // JSON text instead of using native tool_use content blocks. Automatically disable
         // json_prefill when tools are actually passed in the request.
-        Object jsonPrefill = arguments.remove("json_prefill");
+        Object jsonPrefill = modelParams.remove("json_prefill");
         boolean hasToolsInRequest = tools != null && !tools.isEmpty();
         if (Boolean.TRUE.equals(jsonPrefill) && !hasToolsInRequest) {
             anthropicMessages.add(

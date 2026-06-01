@@ -247,7 +247,7 @@ class BaseChatModelTest {
 
         @Override
         public ChatMessage chat(
-                List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
+                List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             this.capturedMessages = new ArrayList<>(messages);
             return new ChatMessage(MessageRole.ASSISTANT, "ok");
         }
