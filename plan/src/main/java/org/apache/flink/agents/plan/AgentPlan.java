@@ -223,12 +223,17 @@ public class AgentPlan implements Serializable {
     /**
      * Get resource from agent plan.
      *
+     * <p>Synchronized so the check-create-cache sequence is atomic: concurrent first accesses to
+     * the same uncached resource invoke the provider once and share a single instance. The
+     * intrinsic lock is reentrant, so the nested resolution callback below can call back into this
+     * method on the same thread.
+     *
      * @param name the resource name
      * @param type the resource type
      * @return the resource instance
      * @throws Exception if the resource cannot be found or created
      */
-    public Resource getResource(String name, ResourceType type) throws Exception {
+    public synchronized Resource getResource(String name, ResourceType type) throws Exception {
         // Check cache first
         if (resourceCache.containsKey(type) && resourceCache.get(type).containsKey(name)) {
             return resourceCache.get(type).get(name);
