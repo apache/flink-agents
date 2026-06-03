@@ -33,17 +33,17 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Representation of an agent action with event listening and function execution.
+ * Representation of an agent action with unified trigger conditions.
  *
- * <p>This class encapsulates a named agent action that listens for specific event types and
- * executes an associated function when those events occur.
+ * <p>Each entry of {@code triggerConditions} is an event type name string. Multiple entries combine
+ * with OR.
  */
 @JsonSerialize(using = ActionJsonSerializer.class)
 @JsonDeserialize(using = ActionJsonDeserializer.class)
 public class Action {
     private final String name;
     private final Function exec;
-    private final List<String> listenEventTypes;
+    private final List<String> triggerConditions;
 
     // TODO: support nested map/list with non primitive type value.
     @Nullable private final Map<String, Object> config;
@@ -51,18 +51,18 @@ public class Action {
     public Action(
             String name,
             Function exec,
-            List<String> listenEventTypes,
+            List<String> triggerConditions,
             @Nullable Map<String, Object> config)
             throws Exception {
         this.name = name;
         this.exec = exec;
-        this.listenEventTypes = listenEventTypes;
+        this.triggerConditions = triggerConditions;
         this.config = config;
         exec.checkSignature(new Class[] {Event.class, RunnerContext.class});
     }
 
-    public Action(String name, Function exec, List<String> listenEventTypes) throws Exception {
-        this(name, exec, listenEventTypes, null);
+    public Action(String name, Function exec, List<String> triggerConditions) throws Exception {
+        this(name, exec, triggerConditions, null);
     }
 
     public String getName() {
@@ -73,8 +73,19 @@ public class Action {
         return exec;
     }
 
+    /** Returns the full trigger conditions list. */
+    public List<String> getTriggerConditions() {
+        return triggerConditions;
+    }
+
+    /**
+     * Returns event-type names. Kept for callers that still consume the old naming; in this PR all
+     * trigger entries are plain event-type names so the list is identical to {@link
+     * #getTriggerConditions()}. A follow-up PR introduces CEL expressions and overrides this to
+     * filter out non-type entries.
+     */
     public List<String> getListenEventTypes() {
-        return listenEventTypes;
+        return triggerConditions;
     }
 
     @Nullable
@@ -89,11 +100,11 @@ public class Action {
         Action other = (Action) o;
         return name.equals(other.name)
                 && exec.equals(other.exec)
-                && listenEventTypes.equals(other.listenEventTypes);
+                && Objects.equals(triggerConditions, other.triggerConditions);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, exec, listenEventTypes);
+        return Objects.hash(name, exec, triggerConditions);
     }
 }

@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.lang3.ClassUtils;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Action;
@@ -169,7 +170,7 @@ public class ReActAgent extends Agent {
         ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages, outputSchema));
     }
 
-    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    @Action(EventType.ChatResponseEvent)
     public static void stopAction(Event event, RunnerContext ctx) {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
         ChatMessage response = chatResponse.getResponse();

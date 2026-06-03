@@ -165,7 +165,7 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void processText(Event event, RunnerContext ctx)
             throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
@@ -657,7 +657,7 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         // Use the Python embedding model from Java

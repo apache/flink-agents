@@ -66,10 +66,15 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
             throw new IOException("Unsupported function type: " + funcType);
         }
 
-        // Deserialize listenEventTypes
-        List<String> listenEventTypes = new ArrayList<>();
-        node.get("listen_event_types")
-                .forEach(eventTypeNode -> listenEventTypes.add(eventTypeNode.asText()));
+        // Deserialize trigger_conditions (fall back to legacy listen_event_types for older JSONs)
+        List<String> triggerConditions = new ArrayList<>();
+        JsonNode triggerNode = node.get("trigger_conditions");
+        if (triggerNode == null) {
+            triggerNode = node.get("listen_event_types");
+        }
+        if (triggerNode != null) {
+            triggerNode.forEach(entryNode -> triggerConditions.add(entryNode.asText()));
+        }
 
         // Deserialize params
         Map<String, Object> config = null;
@@ -88,7 +93,7 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
         }
 
         try {
-            return new Action(name, func, listenEventTypes, config);
+            return new Action(name, func, triggerConditions, config);
         } catch (Exception e) {
             throw new RuntimeException(
                     String.format("Failed to create Action with name \"%s\"", name), e);

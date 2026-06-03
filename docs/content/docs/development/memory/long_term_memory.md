@@ -162,7 +162,7 @@ def process_event(event: Event, ctx: RunnerContext) -> None:
 {{< tab "Java" >}}
 
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void processEvent(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     BaseLongTermMemory ltm = ctx.getLongTermMemory();
@@ -501,7 +501,7 @@ agents_config.set(LongTermMemoryOptions.Mem0.VECTOR_STORE, "my_vector_store")
 {{< tab "Java" >}}
 
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void processEvent(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     BaseLongTermMemory ltm = ctx.getLongTermMemory();

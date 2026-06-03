@@ -218,7 +218,7 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         String input = (String) inputEvent.getInput();
@@ -239,7 +239,7 @@ public class ReviewAnalysisAgent extends Agent {
                         "reviewAnalysisModel", List.of(msg), Map.of("input", content), null));
     }
 
-    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(Event event, RunnerContext ctx)
             throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);

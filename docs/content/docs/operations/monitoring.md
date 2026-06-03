@@ -88,7 +88,7 @@ class MyAgent(Agent):
 ```java
 public class MyAgent extends Agent {
 
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void firstAction(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         long startTime = System.currentTimeMillis();
