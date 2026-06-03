@@ -26,7 +26,7 @@ under the License.
 
 A workflow style agent in Flink-Agents is an agent whose reasoning and behavior are organized as a directed workflow of modular steps, called actions, connected by events. This design is inspired by the need to orchestrate complex, multi-stage tasks in a transparent, extensible, and data-centric way, leveraging Apache Flink's streaming architecture.
 
-In Flink-Agents, a workflow agent is defined as a class that inherits from the `Agent` base class. The agent's logic is expressed as a set of actions, each of which is a function decorated with `@action(EventType)` in python (or a method annotated with `@Action(listenEventTypes = {})` in java). Actions consume events, perform reasoning or tool calls, and emit new events, which may trigger downstream actions. This event-driven workflow forms a directed cyclic graph of computation, where each node is an action and each edge is an event type.
+In Flink-Agents, a workflow agent is defined as a class that inherits from the `Agent` base class. The agent's logic is expressed as a set of actions, each of which is a function decorated with `@action(EventType.X)` in python (or a method annotated with `@Action(EventType.X)` in java). Actions consume events, perform reasoning or tool calls, and emit new events, which may trigger downstream actions. This event-driven workflow forms a directed cyclic graph of computation, where each node is an action and each edge is an event type.
 
 A workflow agent is well-suited for scenarios where the solution requires explicit orchestration, branching, or multi-step reasoning, such as data enrichment, multi-tool pipelines, or complex business logic.
 
@@ -176,7 +176,7 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         String input = (String) inputEvent.getInput();
@@ -197,7 +197,7 @@ public class ReviewAnalysisAgent extends Agent {
                         "reviewAnalysisModel", List.of(msg), Map.of("input", content), null));
     }
 
-    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(Event event, RunnerContext ctx)
             throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
@@ -253,7 +253,7 @@ class ReviewAnalysisAgent(Agent):
 ```java
 public class ReviewAnalysisAgent extends Agent {
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         // the action logic
@@ -282,7 +282,7 @@ def process_input(event: Event, ctx: RunnerContext) -> None:
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void processInput(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     // send ChatRequestEvent
@@ -368,7 +368,7 @@ def process_input(event: Event, ctx: RunnerContext) -> None:
 {{< tab "Java" >}}
 Java actions use `DurableCallable<T>` with `ctx.durableExecute(...)`, where `getId()` must be stable and `getResultClass()` supports recovery deserialization.
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void processInput(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     DurableCallable<String> call = new DurableCallable<>() {
@@ -396,7 +396,7 @@ public static void processInput(Event event, RunnerContext ctx) throws Exception
 
 Java actions can also override `reconciler()` to recover an execution outcome during recovery.
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void processInput(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     DurableCallable<String> call = new DurableCallable<>() {
@@ -466,7 +466,7 @@ functions like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and
 Use `ctx.durableExecuteAsync(DurableCallable)`; on **JDK 21+** it yields using Continuation,
 and on **JDK < 21** it falls back to synchronous execution. The same optional `reconciler()` hook can be used for recovery.
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void processInput(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     DurableCallable<String> call = new DurableCallable<>() {
@@ -530,7 +530,7 @@ class MyAgent(Agent):
 ```java
 public class MyAgent extends Agent {
     @Action(
-            listenEventTypes = {InputEvent.EVENT_TYPE},
+            value = EventType.InputEvent,
             target = @PythonFunction(
                     module = "my_pkg.handlers",
                     qualname = "handle_input"))
@@ -587,13 +587,13 @@ def handle_my_event(event: Event, ctx: RunnerContext) -> None:
 {{< tab "Java" >}}
 ```java
 // Send a unified event from one action
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void createMyEvent(Event event, RunnerContext ctx) {
     ctx.sendEvent(new Event("my_event", Map.of("field1", "test", "field2", 42)));
 }
 
 // Consume it in another action
-@Action(listenEventTypes = {"my_event"})
+@Action("my_event")
 public static void handleMyEvent(Event event, RunnerContext ctx) {
     String field1 = (String) event.getAttr("field1");
     int field2 = (int) event.getAttr("field2");

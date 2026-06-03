@@ -167,7 +167,7 @@ public class MathAgent extends Agent {
     }
 
     /** Process input event and send a chat request to evaluate the question. */
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void processInput(InputEvent event, RunnerContext ctx) {
         ctx.sendEvent(
                 new ChatRequestEvent(
@@ -177,7 +177,7 @@ public class MathAgent extends Agent {
     }
 
     /** Process chat response event and send the answer as output. */
-    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
         ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
     }

@@ -19,6 +19,7 @@
 package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -504,14 +505,14 @@ public class RescalingTest extends TestLogger {
 
         public static final AtomicInteger numProcessedEvent = new AtomicInteger(0);
 
-        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @Action(EventType.InputEvent)
         public static void handleInputEvent(Event event, RunnerContext context) {
             InputEvent inputEvent = InputEvent.fromEvent(event);
             numProcessedEvent.incrementAndGet();
             context.sendEvent(new TestEvent((Integer) inputEvent.getInput()));
         }
 
-        @Action(listenEventTypes = {TestEvent.EVENT_TYPE})
+        @Action(TestEvent.EVENT_TYPE)
         public static void handleTestEvent(Event event, RunnerContext context) {
             TestEvent testEvent = (TestEvent) event;
             numProcessedEvent.incrementAndGet();

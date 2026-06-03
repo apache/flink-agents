@@ -7,7 +7,7 @@
         "module": "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent",
         "qualname": "PythonAgentPlanCompatibilityTestAgent.first_action"
       },
-      "listen_event_types": [
+      "trigger_conditions": [
         "_input_event"
       ]
     },
@@ -18,7 +18,7 @@
         "module": "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent",
         "qualname": "PythonAgentPlanCompatibilityTestAgent.second_action"
       },
-      "listen_event_types": [
+      "trigger_conditions": [
         "_input_event",
         "_my_event"
       ]
@@ -30,7 +30,7 @@
         "module": "flink_agents.plan.actions.chat_model_action",
         "qualname": "process_chat_request_or_tool_response"
       },
-      "listen_event_types": [
+      "trigger_conditions": [
         "_chat_request_event",
         "_tool_response_event"
       ]
@@ -42,7 +42,7 @@
         "module": "flink_agents.plan.actions.tool_call_action",
         "qualname": "process_tool_request"
       },
-      "listen_event_types": [
+      "trigger_conditions": [
         "_tool_request_event"
       ]
     }

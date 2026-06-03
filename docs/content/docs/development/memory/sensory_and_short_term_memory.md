@@ -103,7 +103,7 @@ def process_event(event: Event, ctx: RunnerContext) -> None:
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void processEvent(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     MemoryObject memory = ctx.getSensoryMemory(); // ctx.getShortTermMemory();
@@ -225,7 +225,7 @@ def second_action(event: Event, ctx: RunnerContext):
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void firstAction(Event event, RunnerContext ctx) throws Exception {
     ...
     MemoryObject sensoryMemory = ctx.getSensoryMemory();
@@ -235,7 +235,7 @@ public static void firstAction(Event event, RunnerContext ctx) throws Exception 
     ...
 }
 
-@Action(listenEventTypes = {MyEvent.EVENT_TYPE})
+@Action("MyEvent")
 public static void secondAction(Event event, RunnerContext ctx) throws Exception {
     MyEvent myEvent = MyEvent.fromEvent(event);
     ...

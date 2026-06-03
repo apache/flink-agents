@@ -62,11 +62,11 @@ public class ActionJsonSerializer extends StdSerializer<Action> {
                     "Unsupported function type: " + action.getExec().getClass().getName());
         }
 
-        // Write listenEventTypes field
-        jsonGenerator.writeFieldName("listen_event_types");
+        // Write trigger_conditions field
+        jsonGenerator.writeFieldName("trigger_conditions");
         jsonGenerator.writeStartArray();
-        for (String eventType : action.getListenEventTypes()) {
-            jsonGenerator.writeString(eventType);
+        for (String entry : action.getTriggerConditions()) {
+            jsonGenerator.writeString(entry);
         }
         jsonGenerator.writeEndArray();
 

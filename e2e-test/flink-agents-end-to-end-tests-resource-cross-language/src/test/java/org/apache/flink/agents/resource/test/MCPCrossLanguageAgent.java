@@ -18,6 +18,7 @@
 package org.apache.flink.agents.resource.test;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -47,7 +48,7 @@ public class MCPCrossLanguageAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void process(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         Map<String, Object> testResult = new HashMap<>();

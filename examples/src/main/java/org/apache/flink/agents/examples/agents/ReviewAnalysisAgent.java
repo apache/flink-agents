@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -87,7 +88,7 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         String input = (String) inputEvent.getInput();
@@ -108,7 +109,7 @@ public class ReviewAnalysisAgent extends Agent {
                         "reviewAnalysisModel", List.of(msg), Map.of("input", content), null));
     }
 
-    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(Event event, RunnerContext ctx) throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
         JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getContent());

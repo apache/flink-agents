@@ -19,6 +19,7 @@
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -217,7 +218,7 @@ public class ChatModelIntegrationAgent extends Agent {
         return Math.random();
     }
 
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void process(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         ctx.sendEvent(
@@ -228,7 +229,7 @@ public class ChatModelIntegrationAgent extends Agent {
                                         MessageRole.USER, (String) inputEvent.getInput()))));
     }
 
-    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(Event event, RunnerContext ctx) {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
         ctx.sendEvent(new OutputEvent(chatResponse.getResponse().getContent()));

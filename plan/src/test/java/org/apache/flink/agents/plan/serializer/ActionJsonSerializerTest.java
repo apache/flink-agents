@@ -68,8 +68,8 @@ public class ActionJsonSerializerTest {
         assertTrue(
                 json.contains("\"method_name\":\"legal\""), "JSON should contain the method name");
         assertTrue(
-                json.contains("\"listen_event_types\":["),
-                "JSON should contain the listen event types");
+                json.contains("\"trigger_conditions\":["),
+                "JSON should contain the trigger conditions");
         assertTrue(
                 json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
                 "JSON should contain the event type string");
@@ -103,8 +103,8 @@ public class ActionJsonSerializerTest {
                 json.contains("\"qualname\":\"test_function\""),
                 "JSON should contain the qualified name");
         assertTrue(
-                json.contains("\"listen_event_types\":["),
-                "JSON should contain the listen event types");
+                json.contains("\"trigger_conditions\":["),
+                "JSON should contain the trigger conditions");
         assertTrue(
                 json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
                 "JSON should contain the event type string");
@@ -133,8 +133,8 @@ public class ActionJsonSerializerTest {
                 json.contains("\"name\":\"multiEventAction\""),
                 "JSON should contain the action name");
         assertTrue(
-                json.contains("\"listen_event_types\":["),
-                "JSON should contain the listen event types");
+                json.contains("\"trigger_conditions\":["),
+                "JSON should contain the trigger conditions");
         assertTrue(
                 json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
                 "JSON should contain the InputEvent type string");
@@ -166,8 +166,8 @@ public class ActionJsonSerializerTest {
                 json.contains("\"name\":\"emptyEventsAction\""),
                 "JSON should contain the action name");
         assertTrue(
-                json.contains("\"listen_event_types\":[]"),
-                "JSON should contain an empty listen event types array");
+                json.contains("\"trigger_conditions\":[]"),
+                "JSON should contain an empty trigger conditions array");
     }
 
     @Test

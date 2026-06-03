@@ -22,7 +22,7 @@ package org.apache.flink.agents.plan;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
@@ -85,7 +85,7 @@ class AgentPlanDeclareChatModelTest {
                     .build();
         }
 
-        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @Action(EventType.InputEvent)
         public void onInput(Event e, RunnerContext ctx) {
             // no-op for this test; validates action registration signature
         }
