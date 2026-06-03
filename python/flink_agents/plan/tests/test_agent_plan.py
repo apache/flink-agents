@@ -16,6 +16,8 @@
 # limitations under the License.
 #################################################################################
 import json
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
@@ -36,7 +38,7 @@ from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelSetup,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
-from flink_agents.api.resource import ResourceDescriptor, ResourceType
+from flink_agents.api.resource import Resource, ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.vector_stores.vector_store import (
     BaseVectorStore,
@@ -45,6 +47,7 @@ from flink_agents.api.vector_stores.vector_store import (
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.resource_provider import ResourceProvider
 
 
 class AgentForTest(Agent):  # noqa D101
@@ -260,6 +263,47 @@ def test_get_resource() -> None:  # noqa: D103
         mock.chat(ChatMessage(role=MessageRole.USER, content="")).content
         == "8.8.8.8 mock resource just for testing."
     )
+
+
+def test_get_resource_single_instance_under_concurrent_access() -> None:
+    """Concurrent first access to an uncached resource must create one instance."""
+    created: List[int] = []
+
+    class _DummyResource(Resource):
+        @classmethod
+        def resource_type(cls) -> ResourceType:
+            return ResourceType.TOOL
+
+    class _SlowCountingProvider(ResourceProvider):
+        def provide(self, get_resource: Any, config: Any) -> Resource:
+            # Widen the race window so both callers enter provide() before
+            # either caches the result.
+            time.sleep(0.2)
+            created.append(1)
+            return _DummyResource()
+
+    provider = _SlowCountingProvider(name="shared-tool", type=ResourceType.TOOL)
+    agent_plan = AgentPlan(
+        actions={},
+        actions_by_event={},
+        resource_providers={ResourceType.TOOL: {"shared-tool": provider}},
+    )
+
+    barrier = threading.Barrier(2)
+    results: List[Resource] = []
+
+    def task() -> None:
+        barrier.wait()
+        results.append(agent_plan.get_resource("shared-tool", ResourceType.TOOL))
+
+    threads = [threading.Thread(target=task) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert len(created) == 1
+    assert results[0] is results[1]
 
 
 def test_add_action_and_resource_to_agent() -> None:  # noqa: D103

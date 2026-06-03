@@ -15,6 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import threading
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Dict, List, cast
 
 from pydantic import BaseModel, field_serializer, model_validator
@@ -61,6 +63,14 @@ class AgentPlan(BaseModel):
     config: AgentConfiguration | None = None
     __resources: Dict[ResourceType, Dict[str, Resource]] = {}
     __j_resource_adapter: Any = None
+
+    @cached_property
+    def _resource_lock(self) -> threading.RLock:
+        # Guards the lazy check-create-cache in get_resource so concurrent first
+        # accesses to the same uncached resource create a single instance.
+        # Reentrant because resource resolution can call back into get_resource
+        # on the same thread (e.g. a chat model setup resolving its connection).
+        return threading.RLock()
 
     @field_serializer("resource_providers")
     def __serialize_resource_providers(
@@ -209,17 +219,20 @@ class AgentPlan(BaseModel):
         type : ResourceType
             The type of the resource.
         """
-        if type not in self.__resources:
-            self.__resources[type] = {}
-        if name not in self.__resources[type]:
-            resource_provider = self.resource_providers[type][name]
-            if isinstance(resource_provider, JavaResourceProvider):
-                resource_provider.set_java_resource_adapter(self.__j_resource_adapter)
-            resource = resource_provider.provide(
-                get_resource=self.get_resource, config=self.config
-            )
-            self.__resources[type][name] = resource
-        return self.__resources[type][name]
+        with self._resource_lock:
+            if type not in self.__resources:
+                self.__resources[type] = {}
+            if name not in self.__resources[type]:
+                resource_provider = self.resource_providers[type][name]
+                if isinstance(resource_provider, JavaResourceProvider):
+                    resource_provider.set_java_resource_adapter(
+                        self.__j_resource_adapter
+                    )
+                resource = resource_provider.provide(
+                    get_resource=self.get_resource, config=self.config
+                )
+                self.__resources[type][name] = resource
+            return self.__resources[type][name]
 
     def set_java_resource_adapter(self, j_resource_adapter: Any) -> None:
         """Set java resource adapter for java resource provider."""

@@ -46,8 +46,16 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import pemja.core.object.PyObject;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -478,6 +486,53 @@ public class AgentPlanTest {
         // Test that resources are cached (should be the same instance)
         Resource myToolAgain = agentPlan.getResource("myTool", ResourceType.TOOL);
         assertThat(myTool).isSameAs(myToolAgain);
+    }
+
+    @Test
+    void getResourceShouldCreateOnlyOneInstanceUnderConcurrentAccess() throws Exception {
+        AtomicInteger created = new AtomicInteger();
+
+        ResourceProvider provider =
+                new ResourceProvider("shared-tool", ResourceType.TOOL) {
+                    @Override
+                    public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
+                            throws Exception {
+                        // Sleep so both callers enter getResource before either caches.
+                        Thread.sleep(200);
+                        created.incrementAndGet();
+                        return new Resource() {
+                            @Override
+                            public ResourceType getResourceType() {
+                                return ResourceType.TOOL;
+                            }
+                        };
+                    }
+                };
+
+        Map<ResourceType, Map<String, ResourceProvider>> providers = new HashMap<>();
+        providers.put(ResourceType.TOOL, Map.of("shared-tool", provider));
+        AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>(), providers);
+
+        CyclicBarrier start = new CyclicBarrier(2);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Callable<Resource> task =
+                    () -> {
+                        start.await();
+                        return plan.getResource("shared-tool", ResourceType.TOOL);
+                    };
+
+            Future<Resource> first = pool.submit(task);
+            Future<Resource> second = pool.submit(task);
+
+            Resource firstResource = first.get(10, TimeUnit.SECONDS);
+            Resource secondResource = second.get(10, TimeUnit.SECONDS);
+
+            assertThat(firstResource).isSameAs(secondResource);
+            assertThat(created.get()).isEqualTo(1);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test
