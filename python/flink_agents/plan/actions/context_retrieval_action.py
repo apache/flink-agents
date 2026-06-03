@@ -64,5 +64,5 @@ async def process_context_retrieval_request(event: Event, ctx: RunnerContext) ->
 CONTEXT_RETRIEVAL_ACTION = Action(
     name="context_retrieval_action",
     exec=PythonFunction.from_callable(process_context_retrieval_request),
-    listen_event_types=[ContextRetrievalRequestEvent.EVENT_TYPE],
+    trigger_conditions=[ContextRetrievalRequestEvent.EVENT_TYPE],
 )

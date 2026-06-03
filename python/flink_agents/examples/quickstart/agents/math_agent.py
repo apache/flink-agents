@@ -20,6 +20,7 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.decorators import action, chat_model_setup, prompt, skills
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceName
 from flink_agents.api.runner_context import RunnerContext
@@ -79,7 +80,7 @@ class MathAgent(Agent):
             allowed_commands=["echo", "bc"],
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send a chat request to evaluate the question."""
@@ -91,7 +92,7 @@ class MathAgent(Agent):
             )
         )
 
-    @action(ChatResponseEvent.EVENT_TYPE)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send the answer as output."""

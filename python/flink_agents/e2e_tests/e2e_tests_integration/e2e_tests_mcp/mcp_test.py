@@ -46,6 +46,7 @@ from flink_agents.api.decorators import (
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import (
     ResourceDescriptor,
@@ -106,7 +107,7 @@ class MyMCPAgent(Agent):
             )
         return ResourceDescriptor(**descriptor_kwargs)
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input and send chat request.
@@ -136,7 +137,7 @@ class MyMCPAgent(Agent):
             )
             ctx.send_event(ChatRequestEvent(model="math_chat_model", messages=[msg]))
 
-    @action(ChatResponseEvent.EVENT_TYPE)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response and output result."""

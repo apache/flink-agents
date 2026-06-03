@@ -39,7 +39,7 @@ class Agent(ABC):
         ::
 
             class MyAgent(Agent):
-                @action(InputEvent.EVENT_TYPE)
+                @action(EventType.InputEvent)
                 @staticmethod
                 def my_action(event: Event, ctx: RunnerContext) -> None:
                     action logic

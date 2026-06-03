@@ -23,6 +23,7 @@ from pyflink.datastream import KeySelector
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.runner_context import RunnerContext
 
 
@@ -97,7 +98,7 @@ def raise_exception(message: str) -> None:
 class ExecuteTestAgent(Agent):
     """Agent that uses synchronous durable_execute() method for testing."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event using durable_execute()."""
@@ -112,7 +113,7 @@ class ExecuteTestAgent(Agent):
 class ExecuteMultipleTestAgent(Agent):
     """Agent that makes multiple durable_execute() calls."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event with multiple durable_execute() calls."""
@@ -127,7 +128,7 @@ class ExecuteMultipleTestAgent(Agent):
 class ExecuteWithAsyncTestAgent(Agent):
     """Agent that uses both durable_execute() and durable_execute_async()."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     async def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event using both durable_execute() and durable_execute_async()."""
@@ -144,7 +145,7 @@ class ExecuteWithAsyncTestAgent(Agent):
 class ExecuteWithAsyncExceptionTestAgent(Agent):
     """Agent that tests exception handling in durable_execute_async()."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     async def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event and capture durable_execute_async() exceptions."""

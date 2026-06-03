@@ -24,6 +24,7 @@ from flink_agents.api.decorators import (
     embedding_model_setup,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceName,
@@ -56,7 +57,7 @@ class EmbeddingModelCrossLanguageAgent(Agent):
             model=os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"),
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing input.

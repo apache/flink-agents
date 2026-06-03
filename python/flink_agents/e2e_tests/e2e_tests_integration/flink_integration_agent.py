@@ -27,6 +27,7 @@ from pyflink.datastream import KeySelector
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action, tool
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 
@@ -105,7 +106,7 @@ class DataStreamAgent(Agent):
         """
         return input + " call my tool"
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     async def first_action(event: Event, ctx: RunnerContext) -> None:
         def log_to_stdout(input: Any, total: int) -> bool:
@@ -152,7 +153,7 @@ class TableAgent(Agent):
     to __main__.
     """
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def first_action(event: Event, ctx: RunnerContext) -> None:
         content = InputEvent.from_event(event).input
@@ -175,7 +176,7 @@ class DataStreamToTableAgent(Agent):
     to __main__.
     """
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def first_action(event: Event, ctx: RunnerContext) -> None:
         content = ItemData.model_validate(InputEvent.from_event(event).input)

@@ -79,7 +79,7 @@ The key of the pairs store in `MemoryObject` must be string, and the value can b
 
 {{< tab "Python" >}}
 ```python
-@action(InputEvent.EVENT_TYPE)
+@action(EventType.InputEvent)
 def process_event(event: Event, ctx: RunnerContext) -> None:
     memory: MemoryObject = ctx.sensory_memory # or ctx.short_term_memory
     # store primitive
@@ -211,7 +211,7 @@ def first_action(event: Event, ctx: RunnerContext):
     ctx.send_event(MyEvent(value=data_ref))
     ...
 
-@action(MyEvent.EVENT_TYPE)
+@action("MyEvent")
 @staticmethod
 def second_action(event: Event, ctx: RunnerContext):
     my_event = MyEvent.from_event(event)

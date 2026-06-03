@@ -23,12 +23,13 @@ import pytest
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 
 
 class Agent1(Agent):
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def increment(event: Event, ctx: RunnerContext):  # noqa D102
         input = InputEvent.from_event(event).input
@@ -37,7 +38,7 @@ class Agent1(Agent):
 
 
 class Agent1WithAsync(Agent):
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     async def increment(event: Event, ctx: RunnerContext):  # noqa D102
         def my_func(value: int) -> int:
@@ -50,7 +51,7 @@ class Agent1WithAsync(Agent):
 
 
 class Agent2(Agent):
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def decrease(event: Event, ctx: RunnerContext):  # noqa D102
         input = InputEvent.from_event(event).input
@@ -131,7 +132,7 @@ def test_local_execution_environment_call_from_list_twice() -> None:
 
 
 class UnifiedEventAgent(Agent):
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def on_input(event: Event, ctx: RunnerContext) -> None:
         ctx.send_event(
@@ -185,7 +186,7 @@ class Step1Event(Event):
 class MixedEventAgent(Agent):
     """Agent mixing subclassed and string-based event routing."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def start(event: Event, ctx: RunnerContext) -> None:
         ctx.send_event(Step1Event(data=str(InputEvent.from_event(event).input)))

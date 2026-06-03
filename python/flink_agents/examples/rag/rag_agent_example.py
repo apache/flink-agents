@@ -32,6 +32,7 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalResponseEvent,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import (
@@ -103,7 +104,7 @@ Please provide a helpful answer based on the context provided."""
             model=OLLAMA_CHAT_MODEL,
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process user input and retrieve relevant context."""
@@ -116,7 +117,7 @@ Please provide a helpful answer based on the context provided."""
             )
         )
 
-    @action(ContextRetrievalResponseEvent.EVENT_TYPE)
+    @action(EventType.ContextRetrievalResponseEvent)
     @staticmethod
     def process_retrieved_context(
         event: Event, ctx: RunnerContext
@@ -147,7 +148,7 @@ Please provide a helpful answer based on the context provided."""
             )
         )
 
-    @action(ChatResponseEvent.EVENT_TYPE)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat model response and generate output."""
