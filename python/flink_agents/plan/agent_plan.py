@@ -145,7 +145,7 @@ class AgentPlan(BaseModel):
         for action in _get_actions(agent) + BUILT_IN_ACTIONS:
             assert action.name not in actions, f"Duplicate action name: {action.name}"
             actions[action.name] = action
-            for event_type in action.listen_event_types:
+            for event_type in action.trigger_conditions:
                 if event_type not in actions_by_event:
                     actions_by_event[event_type] = []
                 actions_by_event[event_type].append(action.name)
@@ -227,9 +227,9 @@ def _resolve_event_type(evt: Any) -> str:
 
 
 def _action_marker(value: Any) -> tuple | None:
-    """Return ``(inner_callable, listen_events, target)`` if ``value`` is an @action.
+    """Return ``(inner_callable, trigger_conditions, target)`` if ``value`` is @action.
 
-    ``@action`` may set ``_listen_events`` on the outer wrapper (when ``@action``
+    ``@action`` may set ``_trigger_conditions`` on the outer wrapper (when ``@action``
     is the outer decorator) or on ``__func__`` (when ``@staticmethod`` is outer
     and ``@action`` inner). Accept either by checking both candidates.
     """
@@ -238,14 +238,14 @@ def _action_marker(value: Any) -> tuple | None:
         return None
     marker = (
         value
-        if hasattr(value, "_listen_events")
+        if hasattr(value, "_trigger_conditions")
         else inner
-        if hasattr(inner, "_listen_events")
+        if hasattr(inner, "_trigger_conditions")
         else None
     )
     if marker is None:
         return None
-    return inner, marker._listen_events, getattr(marker, "_target", None)
+    return inner, marker._trigger_conditions, getattr(marker, "_target", None)
 
 
 def _get_actions(agent: Agent) -> List[Action]:
@@ -279,7 +279,7 @@ def _get_actions(agent: Agent) -> List[Action]:
         marker = _action_marker(value)
         if marker is None:
             continue
-        inner, listen_events, target = marker
+        inner, trigger_conditions, target = marker
         exec_ = (
             _to_plan_function(target)
             if target is not None
@@ -289,7 +289,9 @@ def _get_actions(agent: Agent) -> List[Action]:
             Action(
                 name=name,
                 exec=exec_,
-                listen_event_types=[_resolve_event_type(et) for et in listen_events],
+                trigger_conditions=[
+                    _resolve_event_type(et) for et in trigger_conditions
+                ],
             )
         )
     for name, action_tuple in agent.actions.items():
@@ -297,7 +299,7 @@ def _get_actions(agent: Agent) -> List[Action]:
             Action(
                 name=name,
                 exec=_to_plan_function(action_tuple[1]),
-                listen_event_types=[
+                trigger_conditions=[
                     _resolve_event_type(et)
                     for et in action_tuple[0]
                 ],

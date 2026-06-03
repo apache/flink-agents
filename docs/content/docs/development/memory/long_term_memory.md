@@ -148,7 +148,7 @@ from flink_agents.api.decorators import action
 from flink_agents.api.events.event import InputEvent, Event
 from flink_agents.api.runner_context import RunnerContext
 
-@action(InputEvent.EVENT_TYPE)
+@action(EventType.InputEvent)
 @staticmethod
 def process_event(event: Event, ctx: RunnerContext) -> None:
     ltm = ctx.long_term_memory
@@ -464,7 +464,7 @@ from flink_agents.api.runner_context import RunnerContext
 
 class PersonalizedAssistant:
     
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_event(event: Event, ctx: RunnerContext) -> None:
         """Respond to user using long-term memory."""

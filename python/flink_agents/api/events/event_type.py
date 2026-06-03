@@ -32,8 +32,7 @@ declare ``EVENT_TYPE: ClassVar[str]`` and are registered via
 from __future__ import annotations
 
 import threading
-from typing import Dict, Optional, Type
-
+from typing import Dict, Type
 
 # Hard-coded to avoid an event_type -> event -> event_type circular import.
 # A consistency test asserts each value matches XxxEvent.EVENT_TYPE.
@@ -91,7 +90,7 @@ def register(event_class: Type) -> None:
             raise RuntimeError(msg)
 
 
-def lookup(name: Optional[str]) -> Optional[str]:
+def lookup(name: str | None) -> str | None:
     """Return the ``EVENT_TYPE`` string for a registered short name, else ``None``.
 
     Built-in names take precedence over user-registered ones.
@@ -110,7 +109,7 @@ def lookup_or_self(name: str) -> str:
     return v if v is not None else name
 
 
-def is_known(name: Optional[str]) -> bool:
+def is_known(name: str | None) -> bool:
     """Return ``True`` if ``name`` is a registered short name."""
     return lookup(name) is not None
 
@@ -129,8 +128,10 @@ def _clear_user_registered_for_testing() -> None:
 
 
 class EventType:
-    """Namespace of built-in event-type constants, byte-equal to each
-    ``XxxEvent.EVENT_TYPE``. Use inside ``trigger_conditions``::
+    """Namespace of built-in event-type constants.
+
+    Each constant is byte-equal to the corresponding ``XxxEvent.EVENT_TYPE``
+    and is meant to be used inside ``trigger_conditions``::
 
         @action(EventType.InputEvent)
 
@@ -153,5 +154,6 @@ class EventType:
     all_registered = staticmethod(all_registered)
 
     def __init__(self) -> None:
+        """Reject instantiation; ``EventType`` is a namespace, not a class."""
         msg = "EventType is a namespace; do not instantiate"
         raise TypeError(msg)

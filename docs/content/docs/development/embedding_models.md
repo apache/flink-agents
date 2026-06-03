@@ -129,7 +129,7 @@ class MyAgent(Agent):
             model="your-embedding-model-here"
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_text(event: Event, ctx: RunnerContext) -> None:
         # Get the embedding model from the runtime context
@@ -612,7 +612,7 @@ class MyAgent(Agent):
             model="nomic-embed-text"
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         # Use the Java embedding model from Python

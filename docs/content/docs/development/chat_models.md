@@ -80,7 +80,7 @@ class MyAgent(Agent):
             temperature=0.7
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         input_event = InputEvent.from_event(event)
@@ -93,7 +93,7 @@ class MyAgent(Agent):
             ChatRequestEvent(model="ollama_chat_model", messages=[user_message])
         )
 
-    @action(ChatResponseEvent.EVENT_TYPE)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
     def process_response(event: Event, ctx: RunnerContext) -> None:
         chat_response = ChatResponseEvent.from_event(event)
@@ -1178,7 +1178,7 @@ class MyAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         input_event = InputEvent.from_event(event)
@@ -1191,7 +1191,7 @@ class MyAgent(Agent):
             ChatRequestEvent(model="java_chat_model", messages=[user_message])
         )
 
-    @action(ChatResponseEvent.EVENT_TYPE)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
     def process_response(event: Event, ctx: RunnerContext) -> None:
         chat_response = ChatResponseEvent.from_event(event)

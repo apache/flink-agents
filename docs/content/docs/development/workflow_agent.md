@@ -85,7 +85,7 @@ class ReviewAnalysisAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
@@ -106,7 +106,7 @@ class ReviewAnalysisAgent(Agent):
             )
         )
 
-    @action(ChatResponseEvent.EVENT_TYPE)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
@@ -242,7 +242,7 @@ The decorated/annotated function signature should be `(Event, RunnerContext) -> 
 {{< tab "Python" >}}
 ```python
 class ReviewAnalysisAgent(Agent):
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         # the action logic
@@ -272,7 +272,7 @@ In the function, user can also send new events, to trigger other actions, or out
 
 {{< tab "Python" >}}
 ```python
-@action(InputEvent.EVENT_TYPE)
+@action(EventType.InputEvent)
 @staticmethod
 def process_input(event: Event, ctx: RunnerContext) -> None:
     # send a ChatRequestEvent to trigger the built-in chat-model action
@@ -360,7 +360,7 @@ Use a reconciler for durable calls when the original call may already have compl
 {{< tab "Python" >}}
 Python actions can call `ctx.durable_execute(...)` to run a synchronous durable code block.
 ```python
-@action(InputEvent.EVENT_TYPE)
+@action(EventType.InputEvent)
 @staticmethod
 def process_input(event: Event, ctx: RunnerContext) -> None:
     input_event = InputEvent.from_event(event)
@@ -375,7 +375,7 @@ def process_input(event: Event, ctx: RunnerContext) -> None:
 
 You can also pass an optional `reconciler` callable to recover an execution outcome during recovery.
 ```python
-@action(InputEvent.EVENT_TYPE)
+@action(EventType.InputEvent)
 @staticmethod
 def process_input(event: Event, ctx: RunnerContext) -> None:
     input_event = InputEvent.from_event(event)
@@ -477,7 +477,7 @@ Async execution uses the same durable semantics but yields while waiting for a t
 {{< tab "Python" >}}
 Define an `async def` action and `await ctx.durable_execute_async(...)`. The same optional `reconciler=...` argument is available for recovery.
 ```python
-@action(InputEvent.EVENT_TYPE)
+@action(EventType.InputEvent)
 @staticmethod
 async def process_with_async(event: Event, ctx: RunnerContext) -> None:
     input_event = InputEvent.from_event(event)
@@ -596,7 +596,7 @@ For simple cases, users can pass data between actions directly using `Event` wit
 {{< tab "Python" >}}
 ```python
 # Send a unified event from one action
-@action(InputEvent.EVENT_TYPE)
+@action(EventType.InputEvent)
 @staticmethod
 def create_my_event(event: Event, ctx: RunnerContext) -> None:
     ctx.send_event(

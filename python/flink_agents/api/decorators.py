@@ -33,17 +33,19 @@ def _validate_target(target: Function, owner: str) -> None:
 
 
 def action(
-    *listen_events: str,
+    *trigger_conditions: str,
     target: Function | None = None,
 ) -> Callable:
     """Decorator for marking a function as an agent action.
 
-    Each argument is a type-identifier string that this action responds to.
+    Each argument is an event-type name string that this action responds to.
+    Multiple entries combine with OR semantics — the action triggers if any
+    one matches.
 
     Parameters
     ----------
-    listen_events : str
-        Type-identifier strings that this action responds to.
+    trigger_conditions : str
+        Event-type name strings that this action responds to.
     target : Function, optional
         Cross-language function descriptor dispatched instead of the
         decorated body. The body becomes a stub — raise
@@ -52,22 +54,25 @@ def action(
     Returns:
     -------
     Callable
-        Decorator function that marks the target function with event listeners.
+        Decorator function that marks the target function with trigger conditions.
 
     Raises:
     ------
     AssertionError
-        If no events are provided or if an argument is not a string.
+        If no conditions are given or any entry is not a non-empty string.
     TypeError
         If ``target`` is provided but is not a :class:`Function` descriptor.
     """
-    assert len(listen_events) > 0, (
-        "action must have at least one event type to listen to"
+    assert len(trigger_conditions) > 0, (
+        "action must have at least one trigger condition (event-type name)"
     )
 
-    for evt in listen_events:
-        assert isinstance(evt, str), (
-            f"action must listen to string type identifiers, got {evt!r}"
+    for entry in trigger_conditions:
+        assert isinstance(entry, str), (
+            f"action trigger condition must be a string, got {entry!r}"
+        )
+        assert entry != "", (
+            f"action trigger condition must be non-empty, got {entry!r}"
         )
 
     if target is not None and not isinstance(target, Function):
@@ -81,7 +86,7 @@ def action(
         if target is not None:
             _validate_target(target, func.__qualname__)
             func._target = target
-        func._listen_events = listen_events
+        func._trigger_conditions = trigger_conditions
         return func
 
     return decorator
