@@ -81,7 +81,13 @@ class Action(BaseModel):
 
     @model_validator(mode="before")
     def __custom_deserialize(self) -> "Action":
-        config = self["config"]
+        # Legacy fallback: listen_event_types → trigger_conditions
+        if "trigger_conditions" not in self or self.get("trigger_conditions") is None:
+            if self.get("listen_event_types"):
+                self["trigger_conditions"] = list(self["listen_event_types"])
+            self.pop("listen_event_types", None)
+
+        config = self.get("config")
         if config is None or _CONFIG_TYPE not in config:
             return self
         config_type = self["config"].pop(_CONFIG_TYPE)
