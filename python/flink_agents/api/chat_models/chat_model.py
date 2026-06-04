@@ -278,7 +278,7 @@ class BaseChatModelSetup(Resource):
         if metric_group is None:
             return
 
-        model_group = metric_group.get_sub_group(model_name)
+        model_group = metric_group.get_sub_group("model", model_name)
         model_group.get_counter("promptTokens").inc(prompt_tokens)
         model_group.get_counter("completionTokens").inc(completion_tokens)
 

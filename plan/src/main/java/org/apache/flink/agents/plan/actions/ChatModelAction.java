@@ -176,7 +176,7 @@ public class ChatModelAction {
         }
         FlinkAgentsMetricGroup metricGroup = ctx.getActionMetricGroup();
         if (metricGroup != null) {
-            FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup(model);
+            FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", model);
             modelGroup.getCounter("retryCount").inc(retryCount);
             modelGroup.getCounter("retryWaitSec").inc(totalRetryWaitSec);
         }
