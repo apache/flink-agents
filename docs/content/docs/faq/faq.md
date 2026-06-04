@@ -87,6 +87,8 @@ This is important because:
 - **For Java users on JDK 21+**: Async execution is available.
 - **For Java users on JDK < 21**: Async execution is not available and falls back to synchronous execution.
 
+> **Cross-language async note**: Async execution for cross-language resources requires the pemja 0.5.7 fix, available in Flink 1.20.5+ / 2.0.2+ / 2.1.3+ / 2.2.1+. Current builds target Flink 2.2.0, so cross-language calls still run synchronously for now; this is resolved automatically once running on a Flink version that includes the fix.
+
 ### Native Integration Support Matrix
 
 Flink Agents provides built-in integrations for many ecosystem providers. Some integrations are only available in one language. For those marked as ❌, you can still use them from the other language via cross-language support.
