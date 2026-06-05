@@ -19,15 +19,20 @@
 package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.metrics.UpdatableGauge;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.Histogram;
+import org.apache.flink.metrics.Meter;
+import org.apache.flink.metrics.SimpleCounter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.function.BiFunction;
 
@@ -75,7 +80,7 @@ class BaseChatModelSetupTokenMetricsTest {
         mockPromptTokensCounter = mock(Counter.class);
         mockCompletionTokensCounter = mock(Counter.class);
 
-        when(mockMetricGroup.getSubGroup("gpt-4")).thenReturn(mockModelGroup);
+        when(mockMetricGroup.getSubGroup("model", "gpt-4")).thenReturn(mockModelGroup);
         when(mockModelGroup.getCounter("promptTokens")).thenReturn(mockPromptTokensCounter);
         when(mockModelGroup.getCounter("completionTokens")).thenReturn(mockCompletionTokensCounter);
     }
@@ -87,7 +92,7 @@ class BaseChatModelSetupTokenMetricsTest {
 
         setup.recordTokenMetrics("gpt-4", 100, 50);
 
-        verify(mockMetricGroup).getSubGroup("gpt-4");
+        verify(mockMetricGroup).getSubGroup("model", "gpt-4");
         verify(mockModelGroup).getCounter("promptTokens");
         verify(mockModelGroup).getCounter("completionTokens");
         verify(mockPromptTokensCounter).inc(100);
@@ -111,15 +116,15 @@ class BaseChatModelSetupTokenMetricsTest {
         Counter mockGpt35PromptCounter = mock(Counter.class);
         Counter mockGpt35CompletionCounter = mock(Counter.class);
 
-        when(mockMetricGroup.getSubGroup("gpt-3.5-turbo")).thenReturn(mockGpt35Group);
+        when(mockMetricGroup.getSubGroup("model", "gpt-3.5-turbo")).thenReturn(mockGpt35Group);
         when(mockGpt35Group.getCounter("promptTokens")).thenReturn(mockGpt35PromptCounter);
         when(mockGpt35Group.getCounter("completionTokens")).thenReturn(mockGpt35CompletionCounter);
 
         setup.recordTokenMetrics("gpt-4", 100, 50);
         setup.recordTokenMetrics("gpt-3.5-turbo", 200, 100);
 
-        verify(mockMetricGroup).getSubGroup("gpt-4");
-        verify(mockMetricGroup).getSubGroup("gpt-3.5-turbo");
+        verify(mockMetricGroup).getSubGroup("model", "gpt-4");
+        verify(mockMetricGroup).getSubGroup("model", "gpt-3.5-turbo");
         verify(mockPromptTokensCounter).inc(100);
         verify(mockCompletionTokensCounter).inc(50);
         verify(mockGpt35PromptCounter).inc(200);
@@ -130,5 +135,99 @@ class BaseChatModelSetupTokenMetricsTest {
     @DisplayName("Test resource type is CHAT_MODEL")
     void testResourceType() {
         assertEquals(ResourceType.CHAT_MODEL, setup.getResourceType());
+    }
+
+    // ========================================================================
+    // Value-based tests using TestMetricGroup (non-Mockito)
+    // ========================================================================
+
+    private static class TestMetricGroup implements FlinkAgentsMetricGroup {
+        final Map<String, TestMetricGroup> subGroups = new HashMap<>();
+        final Map<String, SimpleCounter> counters = new HashMap<>();
+
+        @Override
+        public FlinkAgentsMetricGroup getSubGroup(String name) {
+            return subGroups.computeIfAbsent(name, k -> new TestMetricGroup());
+        }
+
+        @Override
+        public FlinkAgentsMetricGroup getSubGroup(String key, String value) {
+            return subGroups.computeIfAbsent(key + "=" + value, k -> new TestMetricGroup());
+        }
+
+        @Override
+        public Counter getCounter(String name) {
+            return counters.computeIfAbsent(name, k -> new SimpleCounter());
+        }
+
+        @Override
+        public UpdatableGauge getGauge(String name) {
+            return null;
+        }
+
+        @Override
+        public Meter getMeter(String name) {
+            return null;
+        }
+
+        @Override
+        public Meter getMeter(String name, Counter counter) {
+            return null;
+        }
+
+        @Override
+        public Histogram getHistogram(String name) {
+            return null;
+        }
+
+        @Override
+        public Histogram getHistogram(String name, int windowSize) {
+            return null;
+        }
+    }
+
+    @Test
+    @DisplayName("Value-based: token counters are accessible under model key-value group")
+    void testTokenMetricsUnderModelKeyValueGroup() {
+        TestMetricGroup root = new TestMetricGroup();
+        setup.setMetricGroup(root);
+
+        setup.recordTokenMetrics("gpt-4", 100, 50);
+
+        TestMetricGroup modelGroup = (TestMetricGroup) root.getSubGroup("model", "gpt-4");
+        assertEquals(100, modelGroup.counters.get("promptTokens").getCount());
+        assertEquals(50, modelGroup.counters.get("completionTokens").getCount());
+    }
+
+    @Test
+    @DisplayName("Value-based: different models have independent counters")
+    void testDifferentModelsHaveIndependentCounters() {
+        TestMetricGroup root = new TestMetricGroup();
+        setup.setMetricGroup(root);
+
+        setup.recordTokenMetrics("gpt-4", 100, 50);
+        setup.recordTokenMetrics("gpt-3.5-turbo", 200, 80);
+
+        TestMetricGroup gpt4 = (TestMetricGroup) root.getSubGroup("model", "gpt-4");
+        TestMetricGroup gpt35 = (TestMetricGroup) root.getSubGroup("model", "gpt-3.5-turbo");
+
+        assertEquals(100, gpt4.counters.get("promptTokens").getCount());
+        assertEquals(50, gpt4.counters.get("completionTokens").getCount());
+        assertEquals(200, gpt35.counters.get("promptTokens").getCount());
+        assertEquals(80, gpt35.counters.get("completionTokens").getCount());
+    }
+
+    @Test
+    @DisplayName("Value-based: counters accumulate across multiple calls")
+    void testCountersAccumulate() {
+        TestMetricGroup root = new TestMetricGroup();
+        setup.setMetricGroup(root);
+
+        setup.recordTokenMetrics("gpt-4", 100, 50);
+        setup.recordTokenMetrics("gpt-4", 150, 75);
+
+        TestMetricGroup modelGroup = (TestMetricGroup) root.getSubGroup("model", "gpt-4");
+        assertEquals(250, modelGroup.counters.get("promptTokens").getCount());
+        assertEquals(125, modelGroup.counters.get("completionTokens").getCount());
     }
 }

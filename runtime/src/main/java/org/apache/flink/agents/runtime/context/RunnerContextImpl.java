@@ -143,7 +143,7 @@ public class RunnerContextImpl implements RunnerContext {
 
     @Override
     public FlinkAgentsMetricGroupImpl getActionMetricGroup() {
-        return agentMetricGroup.getSubGroup(actionName);
+        return agentMetricGroup.getSubGroup("action", actionName);
     }
 
     @Override
