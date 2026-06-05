@@ -113,10 +113,13 @@ class Action(BaseModel):
         self,
         name: str,
         exec: Function,
-        trigger_conditions: List[str],
+        trigger_conditions: List[str] | None = None,
         config: Dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Action will check function signature when init."""
+        if trigger_conditions is None:
+            trigger_conditions = kwargs.pop("listen_event_types", [])
         super().__init__(
             name=name, exec=exec, trigger_conditions=trigger_conditions, config=config
         )

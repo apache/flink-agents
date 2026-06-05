@@ -37,6 +37,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Test for {@link ActionJsonSerializer}. */
@@ -233,5 +234,28 @@ public class ActionJsonSerializerTest {
         Assertions.assertEquals("123", ((InputEvent) deserializeConfig.get("arg0")).getInput());
         Assertions.assertEquals(arg1, deserializeConfig.get("arg1"));
         Assertions.assertEquals(arg2, deserializeConfig.get("arg2"));
+    }
+
+    @Test
+    public void testDeserializeLegacyListenEventTypesKey() throws Exception {
+        String legacyJson =
+                "{"
+                        + "\"name\":\"legacyAction\","
+                        + "\"exec\":{"
+                        + "\"func_type\":\"PythonFunction\","
+                        + "\"module\":\"test_module\","
+                        + "\"qualname\":\"test_function\""
+                        + "},"
+                        + "\"listen_event_types\":[\"_input_event\",\"_output_event\"]"
+                        + "}";
+
+        ObjectMapper mapper = new ObjectMapper();
+        Action action = mapper.readValue(legacyJson, Action.class);
+
+        assertEquals("legacyAction", action.getName());
+        assertNotNull(action.getTriggerConditions());
+        assertEquals(
+                List.of(InputEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE),
+                action.getTriggerConditions());
     }
 }
