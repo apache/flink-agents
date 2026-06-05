@@ -285,7 +285,8 @@ Create the input DataStream by reading the product reviews from a text file as a
 # Each line in the file should be a JSON string representing a ProductReview.
 product_review_stream = env.from_source(
     source=FileSource.for_record_stream_format(
-        StreamFormat.text_line_format(), f"file:///{current_dir}/resources"
+        StreamFormat.text_line_format(),
+        f"file:///{current_dir}/resources/product_review.txt",
     )
     .monitor_continuously(Duration.of_minutes(1))
     .build(),
