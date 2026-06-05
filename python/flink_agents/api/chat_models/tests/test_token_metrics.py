@@ -75,7 +75,7 @@ class _MockMetricGroup(MetricGroup):
         self._sub_groups: dict[str, _MockMetricGroup] = {}
         self._counters: dict[str, _MockCounter] = {}
 
-    def get_sub_group(self, name: str, value: str = None) -> "_MockMetricGroup":
+    def get_sub_group(self, name: str, value: str | None = None) -> "_MockMetricGroup":
         key = f"{name}={value}" if value is not None else name
         if key not in self._sub_groups:
             self._sub_groups[key] = _MockMetricGroup()

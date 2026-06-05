@@ -16,7 +16,6 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import Optional
 
 
 class MetricGroup(ABC):
@@ -26,7 +25,7 @@ class MetricGroup(ABC):
     """
 
     @abstractmethod
-    def get_sub_group(self, name: str, value: Optional[str] = None) -> "MetricGroup":
+    def get_sub_group(self, name: str, value: str | None = None) -> "MetricGroup":
         """Create or retrieve a sub-metric group.
 
         When *value* is ``None`` a plain named sub-group is returned.

@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Optional
+from typing import Any
 
 from typing_extensions import override
 
@@ -36,14 +36,15 @@ class FlinkMetricGroup(MetricGroup):
         self._j_metric_group = j_metric_group
 
     @override
-    def get_sub_group(self, name: str, value: Optional[str] = None) -> "FlinkMetricGroup":
+    def get_sub_group(self, name: str, value: str | None = None) -> "FlinkMetricGroup":
         if value is not None:
             return FlinkMetricGroup(self._j_metric_group.getSubGroup(name, value))
         if "=" in name:
-            raise ValueError(
+            msg = (
                 f"Sub-group name must not contain '=' (got '{name}'). "
                 "Use get_sub_group(name, value) for key-value groups."
             )
+            raise ValueError(msg)
         return FlinkMetricGroup(self._j_metric_group.getSubGroup(name))
 
     @override
