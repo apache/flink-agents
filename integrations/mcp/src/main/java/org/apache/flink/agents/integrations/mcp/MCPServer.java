@@ -81,7 +81,7 @@ public class MCPServer extends Resource {
 
     private static final String FIELD_ENDPOINT = "endpoint";
     private static final String FIELD_HEADERS = "headers";
-    private static final String FIELD_TIMEOUT_SECONDS = "timeoutSeconds";
+    private static final String FIELD_TIMEOUT = "timeout";
     private static final String FIELD_AUTH = "auth";
     private static final String FIELD_MAX_RETRIES = "maxRetries";
     private static final String FIELD_INITIAL_BACKOFF_MS = "initialBackoffMs";
@@ -95,7 +95,7 @@ public class MCPServer extends Resource {
     @JsonProperty(FIELD_HEADERS)
     private final Map<String, String> headers;
 
-    @JsonProperty(FIELD_TIMEOUT_SECONDS)
+    @JsonProperty(FIELD_TIMEOUT)
     private final long timeoutSeconds;
 
     @JsonProperty(FIELD_AUTH)
@@ -180,7 +180,7 @@ public class MCPServer extends Resource {
                         descriptor.getArgument(FIELD_ENDPOINT), "endpoint cannot be null");
         Map<String, String> headers = descriptor.getArgument(FIELD_HEADERS);
         this.headers = headers != null ? new HashMap<>(headers) : new HashMap<>();
-        Object timeoutArg = descriptor.getArgument(FIELD_TIMEOUT_SECONDS);
+        Object timeoutArg = descriptor.getArgument(FIELD_TIMEOUT);
         this.timeoutSeconds =
                 timeoutArg instanceof Number
                         ? ((Number) timeoutArg).longValue()
@@ -215,7 +215,7 @@ public class MCPServer extends Resource {
     public MCPServer(
             @JsonProperty(FIELD_ENDPOINT) String endpoint,
             @JsonProperty(FIELD_HEADERS) Map<String, String> headers,
-            @JsonProperty(FIELD_TIMEOUT_SECONDS) Long timeoutSeconds,
+            @JsonProperty(FIELD_TIMEOUT) Long timeoutSeconds,
             @JsonProperty(FIELD_AUTH) Auth auth,
             @JsonProperty(FIELD_MAX_RETRIES) Integer maxRetries,
             @JsonProperty(FIELD_INITIAL_BACKOFF_MS) Long initialBackoffMs,
