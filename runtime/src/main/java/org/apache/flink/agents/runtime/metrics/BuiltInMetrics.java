@@ -56,7 +56,7 @@ public class BuiltInMetrics {
         for (String actionName : agentPlan.getActions().keySet()) {
             actionMetricGroups.put(
                     actionName,
-                    new BuiltInActionMetrics(parentMetricGroup.getSubGroup(actionName)));
+                    new BuiltInActionMetrics(parentMetricGroup.getSubGroup("action", actionName)));
         }
     }
 

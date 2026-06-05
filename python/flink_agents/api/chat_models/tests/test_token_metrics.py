@@ -75,10 +75,11 @@ class _MockMetricGroup(MetricGroup):
         self._sub_groups: dict[str, _MockMetricGroup] = {}
         self._counters: dict[str, _MockCounter] = {}
 
-    def get_sub_group(self, name: str) -> "_MockMetricGroup":
-        if name not in self._sub_groups:
-            self._sub_groups[name] = _MockMetricGroup()
-        return self._sub_groups[name]
+    def get_sub_group(self, name: str, value: str | None = None) -> "_MockMetricGroup":
+        key = f"{name}={value}" if value is not None else name
+        if key not in self._sub_groups:
+            self._sub_groups[key] = _MockMetricGroup()
+        return self._sub_groups[key]
 
     def get_counter(self, name: str) -> _MockCounter:
         if name not in self._counters:
@@ -110,7 +111,7 @@ class TestBaseChatModelTokenMetrics:
         chat_model.test_record_token_metrics("gpt-4", 100, 50)
 
         # Verify the metrics were recorded
-        model_group = mock_metric_group.get_sub_group("gpt-4")
+        model_group = mock_metric_group.get_sub_group("model", "gpt-4")
         assert model_group.get_counter("promptTokens").get_count() == 100
         assert model_group.get_counter("completionTokens").get_count() == 50
 
@@ -138,8 +139,8 @@ class TestBaseChatModelTokenMetrics:
         chat_model.test_record_token_metrics("gpt-3.5-turbo", 200, 100)
 
         # Verify each model has its own counters
-        gpt4_group = mock_metric_group.get_sub_group("gpt-4")
-        gpt35_group = mock_metric_group.get_sub_group("gpt-3.5-turbo")
+        gpt4_group = mock_metric_group.get_sub_group("model", "gpt-4")
+        gpt35_group = mock_metric_group.get_sub_group("model", "gpt-3.5-turbo")
 
         assert gpt4_group.get_counter("promptTokens").get_count() == 100
         assert gpt4_group.get_counter("completionTokens").get_count() == 50
@@ -159,7 +160,7 @@ class TestBaseChatModelTokenMetrics:
         chat_model.test_record_token_metrics("gpt-4", 150, 75)
 
         # Verify the metrics accumulated
-        model_group = mock_metric_group.get_sub_group("gpt-4")
+        model_group = mock_metric_group.get_sub_group("model", "gpt-4")
         assert model_group.get_counter("promptTokens").get_count() == 250
         assert model_group.get_counter("completionTokens").get_count() == 125
 

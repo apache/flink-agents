@@ -162,7 +162,7 @@ def _record_retry_metrics(
         return
     metric_group = ctx.action_metric_group
     if metric_group is not None:
-        model_group = metric_group.get_sub_group(model)
+        model_group = metric_group.get_sub_group("model", model)
         model_group.get_counter("retryCount").inc(retry_count)
         model_group.get_counter("retryWaitSec").inc(total_retry_wait_sec)
 

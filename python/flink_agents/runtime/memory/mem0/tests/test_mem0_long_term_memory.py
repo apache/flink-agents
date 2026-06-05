@@ -400,10 +400,11 @@ class MockMetricGroup:
         self._sub_groups: dict[str, MockMetricGroup] = {}
         self._counters: dict[str, int] = {}
 
-    def get_sub_group(self, name: str) -> "MockMetricGroup":
-        if name not in self._sub_groups:
-            self._sub_groups[name] = MockMetricGroup()
-        return self._sub_groups[name]
+    def get_sub_group(self, name: str, value: str | None = None) -> "MockMetricGroup":
+        key = f"{name}={value}" if value is not None else name
+        if key not in self._sub_groups:
+            self._sub_groups[key] = MockMetricGroup()
+        return self._sub_groups[key]
 
     def get_counter(self, name: str) -> "MockCounter":
         return MockCounter(self, name)
@@ -468,7 +469,7 @@ def test_token_usage_reported_on_switch_context() -> None:
 
     # Metrics are still in the queue — not reported until switch_context.
     ltm_group = metric_group.get_sub_group("long-term-memory")
-    model_group = ltm_group.get_sub_group("mock-model")
+    model_group = ltm_group.get_sub_group("model", "mock-model")
     assert model_group._counters.get("promptTokens", 0) == 0
 
     # switch_context drains the queue on the mailbox thread.
@@ -530,7 +531,7 @@ def test_token_usage_flushed_on_close() -> None:
     ltm.close()
 
     ltm_group = metric_group.get_sub_group("long-term-memory")
-    model_group = ltm_group.get_sub_group("mock-model")
+    model_group = ltm_group.get_sub_group("model", "mock-model")
     # 2 adds x 2 LLM calls each x 10 prompt tokens = 40
     assert model_group._counters.get("promptTokens", 0) == 40
     # 2 adds x 2 LLM calls each x 5 completion tokens = 20

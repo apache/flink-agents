@@ -66,10 +66,11 @@ class _MockMetricGroup(MetricGroup):
         self._sub_groups: dict[str, _MockMetricGroup] = {}
         self._counters: dict[str, _MockCounter] = {}
 
-    def get_sub_group(self, name: str) -> "_MockMetricGroup":
-        if name not in self._sub_groups:
-            self._sub_groups[name] = _MockMetricGroup()
-        return self._sub_groups[name]
+    def get_sub_group(self, name: str, value: str | None = None) -> "_MockMetricGroup":
+        key = f"{name}={value}" if value is not None else name
+        if key not in self._sub_groups:
+            self._sub_groups[key] = _MockMetricGroup()
+        return self._sub_groups[key]
 
     def get_counter(self, name: str) -> _MockCounter:
         if name not in self._counters:
@@ -218,7 +219,7 @@ class TestChatModelActionRetry:
         assert elapsed >= 1.0
 
         # Verify metrics recorded under connection name
-        model_group = metric_group.get_sub_group(chat_model.connection)
+        model_group = metric_group.get_sub_group("model", chat_model.connection)
         assert model_group.get_counter("retryCount").get_count() == 1
         assert model_group.get_counter("retryWaitSec").get_count() == 1
 

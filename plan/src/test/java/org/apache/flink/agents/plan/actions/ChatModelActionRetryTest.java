@@ -90,7 +90,8 @@ class ChatModelActionRetryTest {
                 .thenAnswer(inv -> inv.<DurableCallable<ChatMessage>>getArgument(0).call());
 
         // Wire up metric group chain
-        when(mockActionMetricGroup.getSubGroup(anyString())).thenReturn(mockModelMetricGroup);
+        when(mockActionMetricGroup.getSubGroup(anyString(), anyString()))
+                .thenReturn(mockModelMetricGroup);
         when(mockModelMetricGroup.getCounter("retryCount")).thenReturn(mockRetryCountCounter);
         when(mockModelMetricGroup.getCounter("retryWaitSec")).thenReturn(mockRetryWaitSecCounter);
     }
@@ -123,7 +124,7 @@ class ChatModelActionRetryTest {
         assertThat(responseEvent.getTotalRetryWaitSec()).isEqualTo(0);
 
         // No retry metrics should be recorded
-        verify(mockActionMetricGroup, never()).getSubGroup(anyString());
+        verify(mockActionMetricGroup, never()).getSubGroup(anyString(), anyString());
     }
 
     @Test
@@ -163,7 +164,7 @@ class ChatModelActionRetryTest {
         assertThat(elapsed).isGreaterThanOrEqualTo(1000L);
 
         // Verify metrics recorded under connection name
-        verify(mockActionMetricGroup).getSubGroup(mockChatModel.getConnectionName());
+        verify(mockActionMetricGroup).getSubGroup("model", mockChatModel.getConnectionName());
         verify(mockRetryCountCounter).inc(1);
         verify(mockRetryWaitSecCounter).inc(1);
     }
