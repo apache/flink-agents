@@ -120,3 +120,20 @@ def test_action_deserialize_java_shape_config_unwraps_primitives() -> None:
         "rate": 1.5,
         "label": "fast",
     }
+
+
+def test_action_deserialize_legacy_listen_event_types_key() -> None:
+    legacy_json = json.dumps(
+        {
+            "name": "legacy",
+            "exec": {
+                "func_type": "PythonFunction",
+                "module": "flink_agents.plan.tests.test_action",
+                "qualname": "legal_signature",
+            },
+            "listen_event_types": [InputEvent.EVENT_TYPE],
+        }
+    )
+    action = Action.model_validate_json(legacy_json)
+    assert action.name == "legacy"
+    assert action.trigger_conditions == [InputEvent.EVENT_TYPE]

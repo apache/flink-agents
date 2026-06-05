@@ -18,22 +18,30 @@
 
 package org.apache.flink.agents.api;
 
+import org.apache.flink.agents.api.event.ChatRequestEvent;
+import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
+import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.ToolRequestEvent;
+import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /** Tests for {@link EventType}. */
 class EventTypeTest {
 
     @Test
-    void builtInConstantsAreNonNull() {
-        assertNotNull(EventType.InputEvent);
-        assertNotNull(EventType.OutputEvent);
-        assertNotNull(EventType.ChatRequestEvent);
-        assertNotNull(EventType.ChatResponseEvent);
-        assertNotNull(EventType.ToolRequestEvent);
-        assertNotNull(EventType.ToolResponseEvent);
-        assertNotNull(EventType.ContextRetrievalRequestEvent);
-        assertNotNull(EventType.ContextRetrievalResponseEvent);
+    void builtInConstantsMatchEventClassConstants() {
+        assertEquals(InputEvent.EVENT_TYPE, EventType.InputEvent);
+        assertEquals(OutputEvent.EVENT_TYPE, EventType.OutputEvent);
+        assertEquals(ChatRequestEvent.EVENT_TYPE, EventType.ChatRequestEvent);
+        assertEquals(ChatResponseEvent.EVENT_TYPE, EventType.ChatResponseEvent);
+        assertEquals(ToolRequestEvent.EVENT_TYPE, EventType.ToolRequestEvent);
+        assertEquals(ToolResponseEvent.EVENT_TYPE, EventType.ToolResponseEvent);
+        assertEquals(
+                ContextRetrievalRequestEvent.EVENT_TYPE, EventType.ContextRetrievalRequestEvent);
+        assertEquals(
+                ContextRetrievalResponseEvent.EVENT_TYPE, EventType.ContextRetrievalResponseEvent);
     }
 }
