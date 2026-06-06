@@ -19,6 +19,9 @@
 package org.apache.flink.agents.integrations.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.integrations.mcp.auth.ApiKeyAuth;
 import org.apache.flink.agents.integrations.mcp.auth.BasicAuth;
@@ -69,6 +72,28 @@ class MCPServerTest {
         assertThat(server.getHeaders()).isEmpty();
         assertThat(server.getTimeoutSeconds()).isEqualTo(30);
         assertThat(server.getAuth()).isNull();
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("Read timeout from ResourceDescriptor")
+    void testTimeoutFromResourceDescriptor() {
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
+                        .addInitialArgument("endpoint", DEFAULT_ENDPOINT)
+                        .addInitialArgument("timeout", 60)
+                        .build();
+
+        MCPServer server =
+                new MCPServer(
+                        descriptor,
+                        ResourceContext.fromGetResource(
+                                (name, type) -> {
+                                    throw new UnsupportedOperationException(
+                                            "No dependencies expected");
+                                }));
+
+        assertThat(server.getTimeoutSeconds()).isEqualTo(60);
     }
 
     @Test
