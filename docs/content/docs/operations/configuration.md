@@ -146,7 +146,9 @@ Here is the list of all built-in core configuration options.
 | `event-log.standard.max-string-length` | 2000              | int                   | At `STANDARD` level, strings in the event payload longer than this are truncated. Has no effect at `VERBOSE`.                                                                                                                                                  |
 | `event-log.standard.max-array-elements` | 20               | int                   | At `STANDARD` level, arrays in the event payload with more than this many elements are truncated. Has no effect at `VERBOSE`.                                                                                                                                  |
 | `event-log.standard.max-depth` | 5                     | int                   | At `STANDARD` level, objects nested deeper than this are summarized. Has no effect at `VERBOSE`.                                                                                                                                                               |
-
+| `short-term-memory.state-ttl.ms` | 0                    | long                  | Time-to-live for short-term memory state in milliseconds. Set to a value greater than 0 to enable TTL; 0 disables it.                                                                                                                                           |
+| `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | Update policy for short-term memory TTL. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `ON_CREATE_AND_WRITE`, `ON_READ_AND_WRITE`.                                                                                       |
+| `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | Visibility policy for expired short-term memory state. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `NEVER_RETURN_EXPIRED`, `RETURN_EXPIRED_IF_NOT_CLEANED_UP`.                                                        |
 
 ### Action State Store
 
