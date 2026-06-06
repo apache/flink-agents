@@ -252,7 +252,10 @@ public static void secondAction(Event event, RunnerContext ctx) throws Exception
 {{< /tab >}}
 
 {{< /tabs >}}
+
 ## Auto-Cleanup Behavior
+
+### Sensory Memory
 
 Sensory Memory is automatically cleared by the framework after each agent run completes. This cleanup happens:
 
@@ -264,3 +267,55 @@ Sensory Memory is automatically cleared by the framework after each agent run co
 {{< hint info >}}
 During execution, sensory memory data is checkpointed by Flink for fault tolerance. However, once the run completes, all sensory memory is cleared and will not be available in subsequent runs.
 {{< /hint >}}
+
+### Short-Term Memory
+
+Short-term memory can be configured with a time-to-live (TTL) so that older state expires automatically. This is useful for agents that may run for a long time: if the agent only needs recent memories, expiring historical data directly keeps the stored state focused on the latest context and avoids retaining stale information.
+
+Set `short-term-memory.state-ttl.ms` to a value greater than 0 in milliseconds to enable TTL. You can also configure how the TTL is refreshed and whether expired state can be returned before Flink cleans it up:
+
+- `short-term-memory.state-ttl.update-type`: controls whether TTL is refreshed on create/write or on read/write.
+- `short-term-memory.state-ttl.visibility`: controls whether expired memory is never returned or may be returned if it has not been cleaned up yet.
+
+{{< tabs "Short-Term Memory TTL Configuration" >}}
+
+{{< tab "Python" >}}
+```python
+from flink_agents.api.core_options import (
+    AgentExecutionOptions,
+    ShortTermMemoryTtlUpdate,
+    ShortTermMemoryTtlVisibility,
+)
+from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+agents_config = agents_env.get_config()
+
+agents_config.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, 60_000)
+agents_config.set(
+    AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,
+    ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE,
+)
+agents_config.set(
+    AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY,
+    ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED,
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+AgentsExecutionEnvironment agentsEnv = AgentsExecutionEnvironment.getExecutionEnvironment(env);
+AgentConfiguration agentsConfig = (AgentConfiguration) agentsEnv.getConfig();
+
+agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, 60_000L);
+agentsConfig.set(
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,
+        ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE);
+agentsConfig.set(
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY,
+        ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED);
+```
+{{< /tab >}}
+
+{{< /tabs >}}
