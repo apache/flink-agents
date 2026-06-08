@@ -264,7 +264,7 @@ class VectorStoreLongTermMemory(InternalBaseLongTermMemory):
                     and metric.get("promptTokens")
                     and metric.get("completionTokens")
                 ):
-                    model_group = self.metric_group.get_sub_group(metric["model_name"])
+                    model_group = self.metric_group.get_sub_group("model", metric["model_name"])
                     model_group.get_counter("promptTokens").inc(metric["promptTokens"])
                     model_group.get_counter("completionTokens").inc(
                         metric["completionTokens"]

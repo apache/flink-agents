@@ -64,7 +64,7 @@ public abstract class BaseChatModelSetup extends Resource {
         if (metricGroup == null) {
             return;
         }
-        FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup(modelName);
+        FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", modelName);
         modelGroup.getCounter("promptTokens").inc(promptTokens);
         modelGroup.getCounter("completionTokens").inc(completionTokens);
     }

@@ -27,6 +27,7 @@ import org.apache.flink.metrics.MeterView;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.metrics.DescriptiveStatisticsHistogram;
 import org.apache.flink.runtime.metrics.groups.ProxyMetricGroup;
+import org.apache.flink.util.Preconditions;
 
 import java.util.HashMap;
 
@@ -53,10 +54,24 @@ public class FlinkAgentsMetricGroupImpl extends ProxyMetricGroup<MetricGroup>
     }
 
     public FlinkAgentsMetricGroupImpl getSubGroup(String name) {
+        Preconditions.checkArgument(
+                !name.contains("="),
+                "Sub-group name must not contain '=' (got '%s'). "
+                        + "Use getSubGroup(key, value) for key-value groups.",
+                name);
         if (!subMetricGroups.containsKey(name)) {
             subMetricGroups.put(name, new FlinkAgentsMetricGroupImpl(super.addGroup(name)));
         }
         return subMetricGroups.get(name);
+    }
+
+    public FlinkAgentsMetricGroupImpl getSubGroup(String key, String value) {
+        String cacheKey = key + "=" + value;
+        if (!subMetricGroups.containsKey(cacheKey)) {
+            subMetricGroups.put(
+                    cacheKey, new FlinkAgentsMetricGroupImpl(super.addGroup(key, value)));
+        }
+        return subMetricGroups.get(cacheKey);
     }
 
     public UpdatableGaugeImpl getGauge(String name) {
