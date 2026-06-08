@@ -28,6 +28,8 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
 import java.io.File;
 
+import static org.apache.flink.agents.examples.WorkflowSingleAgentExample.copyResource;
+
 /**
  * Java example demonstrating a YAML-declared workflow agent.
  *
@@ -59,13 +61,12 @@ public class YamlWorkflowAgentExample {
         // Load the YAML — the declared agent and its chat-model connection,
         // chat-model setup, prompt, tool, and actions are all registered on
         // the environment in this single call.
-        File yamlFile =
-                WorkflowSingleAgentExample.copyResource("yaml/yaml_review_analysis_agent.yaml");
+        File yamlFile = copyResource("yaml/yaml_review_analysis_agent.yaml");
         agentsEnv.loadYaml(yamlFile.toPath());
 
         // Read product reviews from input_data.txt file as a streaming source.
         // Each element represents a ProductReview.
-        File inputDataFile = WorkflowSingleAgentExample.copyResource("input_data.txt");
+        File inputDataFile = copyResource("input_data.txt");
         DataStream<String> productReviewStream =
                 env.fromSource(
                         FileSource.forRecordStreamFormat(
