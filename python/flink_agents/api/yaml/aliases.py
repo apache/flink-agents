@@ -73,6 +73,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "openai_responses": ResourceName.ChatModel.Java.OPENAI_RESPONSES_CONNECTION,
             "anthropic": ResourceName.ChatModel.Java.ANTHROPIC_CONNECTION,
             "azure": ResourceName.ChatModel.Java.AZURE_CONNECTION,
+            "bedrock": ResourceName.ChatModel.Java.BEDROCK_CONNECTION,
         },
     },
     ResourceType.CHAT_MODEL: {
@@ -89,6 +90,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "openai_responses": ResourceName.ChatModel.Java.OPENAI_RESPONSES_SETUP,
             "anthropic": ResourceName.ChatModel.Java.ANTHROPIC_SETUP,
             "azure": ResourceName.ChatModel.Java.AZURE_SETUP,
+            "bedrock": ResourceName.ChatModel.Java.BEDROCK_SETUP,
         },
     },
     ResourceType.EMBEDDING_MODEL_CONNECTION: {
@@ -99,6 +101,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
         },
         "java": {
             "ollama": ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
+            "bedrock": ResourceName.EmbeddingModel.Java.BEDROCK_CONNECTION,
         },
     },
     ResourceType.EMBEDDING_MODEL: {
@@ -109,6 +112,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
         },
         "java": {
             "ollama": ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,
+            "bedrock": ResourceName.EmbeddingModel.Java.BEDROCK_SETUP,
         },
     },
     ResourceType.VECTOR_STORE: {
