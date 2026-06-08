@@ -172,7 +172,13 @@ Table outputTable =
 {{< /tabs >}}
 
 
-User should provide `KeySelector` in `from_table()` to tell how to convert the input `Table` to `KeyedStream` internally. And provide `Schema` and `TypeInformation` in `to_table()` to tell the output `Table` schema.
+User should provide `KeySelector` in `from_table()` to tell how to convert the input `Table` to `KeyedStream` internally.
+
+The arguments required by `to_table()` differ by language:
+
+- **Python**: provide both `Schema` and `TypeInformation` to define the output `Table` schema.
+- **Java**: provide only `Schema` (`toTable(Schema)`); `TypeInformation` is not required.
+
 {{< hint info >}}
-Currently, user should provide both `Schema` and `TypeInformation` when call `to_table()`, we will support only provide one of them in the future.
+In Python, `to_table()` currently requires both `Schema` and `TypeInformation`; we plan to support providing only one of them in the future.
 {{< /hint >}}
