@@ -45,4 +45,5 @@ To get started with Apache Flink Agents, you can checkout the following quicksta
 
 - [Workflow Agent Quickstart]({{< ref "docs/get-started/quickstart/workflow_agent" >}})
 - [ReAct Agent Quickstart]({{< ref "docs/get-started/quickstart/react_agent" >}})
+- [Skills Agent Quickstart]({{< ref "docs/get-started/quickstart/skills_agent" >}})
 - [YAML Agent Quickstart]({{< ref "docs/get-started/quickstart/yaml_agent" >}})
