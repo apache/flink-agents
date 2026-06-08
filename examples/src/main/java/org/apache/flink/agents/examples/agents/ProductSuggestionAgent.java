@@ -98,6 +98,11 @@ public class ProductSuggestionAgent extends Agent {
     @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void processChatResponse(Event event, RunnerContext ctx) throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        // Fail fast on a malformed LLM response: a parse error here propagates and fails the
+        // agent, so a dropped input is surfaced instead of silently lost. In production, choose
+        // the handling that fits your pipeline: raise to fail the input (as below), emit an
+        // OutputEvent carrying an error sentinel, or send a custom error event so downstream
+        // operators can detect the failure.
         JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getContent());
         JsonNode suggestionsNode = jsonNode.findValue("suggestion_list");
         List<String> suggestions = new ArrayList<>();
