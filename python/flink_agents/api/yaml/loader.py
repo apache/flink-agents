@@ -179,6 +179,9 @@ def _build_tool(spec: ToolSpec) -> FunctionTool:
     if spec.type == "java" and spec.parameter_types is None:
         msg = f"Tool {spec.name!r}: java tools must declare 'parameter_types' in YAML."
         raise ValueError(msg)
+    if spec.type != "java" and spec.parameter_types is not None:
+        msg = f"Tool {spec.name!r}: 'parameter_types' is only valid for Java tools."
+        raise ValueError(msg)
     func = resolve_function(
         name=spec.name,
         function=spec.function,
