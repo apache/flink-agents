@@ -220,15 +220,18 @@ class AgentSpec(BaseModel):
 class YamlAgentsDocument(BaseModel):
     """Top-level YAML document.
 
-    Always wraps one or more agents under ``agents:``. Resources and
-    actions declared at the same level as ``agents:`` are shared:
+    Agents are declared under ``agents:``. The block is optional, so a
+    file may carry only shared infrastructure (chat-model connections,
+    vector stores, ...) — useful for splitting a topology file from an
+    infrastructure file that can be swapped per environment. Resources
+    and actions declared at the same level as ``agents:`` are shared:
     resources are registered on the environment; actions can be
     referenced from any agent by name string.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    agents: List[AgentSpec]
+    agents: List[AgentSpec] = Field(default_factory=list)
 
     prompts: List[PromptSpec] = Field(default_factory=list)
     tools: List[ToolSpec] = Field(default_factory=list)

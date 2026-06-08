@@ -400,7 +400,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Top-level YAML document.\n\nAlways wraps one or more agents under ``agents:``. Resources and\nactions declared at the same level as ``agents:`` are shared:\nresources are registered on the environment; actions can be\nreferenced from any agent by name string.",
+  "description": "Top-level YAML document.\n\nAgents are declared under ``agents:``. The block is optional, so a\nfile may carry only shared infrastructure (chat-model connections,\nvector stores, ...) \u2014 useful for splitting a topology file from an\ninfrastructure file that can be swapped per environment. Resources\nand actions declared at the same level as ``agents:`` are shared:\nresources are registered on the environment; actions can be\nreferenced from any agent by name string.",
   "properties": {
     "actions": {
       "items": {
@@ -480,9 +480,6 @@
       "type": "array"
     }
   },
-  "required": [
-    "agents"
-  ],
   "title": "YamlAgentsDocument",
   "type": "object"
 }
