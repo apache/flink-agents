@@ -132,6 +132,8 @@ Produce a source DataStream by reading a product review text file, and use the R
 # Read product reviews from a text file as a streaming source.
 # Each line in the file should be a JSON string representing a ProductReview.
 product_review_stream = env.from_source(
+    # Target the single file, not the resources/ dir: Flink's enumerator
+    # recurses, so files like skills/SKILL.md would be parsed as reviews.
     source=FileSource.for_record_stream_format(
         StreamFormat.text_line_format(),
         f"file:///{current_dir}/resources/product_review.txt",
