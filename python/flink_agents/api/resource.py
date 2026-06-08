@@ -331,7 +331,8 @@ class ResourceName:
         # Chroma
         CHROMA_VECTOR_STORE = "flink_agents.integrations.vector_stores.chroma.chroma_vector_store.ChromaVectorStore"
 
-        # Mem0 (gateway to Mem0's native vector stores: pgvector, milvus, qdrant, redis, ...)
+        # Mem0 (gateway to Mem0's native vector stores: pgvector, milvus, qdrant,
+        # redis, ...)
         MEM0_VECTOR_STORE = "flink_agents.integrations.vector_stores.mem0.mem0_vector_store.Mem0VectorStore"
 
         # Java Wrapper
