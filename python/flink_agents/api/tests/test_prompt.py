@@ -128,3 +128,12 @@ def test_prompt_contain_json_schema() -> None:
         text=f"The json schema is {LocalPrompt.model_json_schema(mode='serialization')}",
     )
     prompt.format_string()
+
+
+def test_prompt_variable_collides_with_internal_param() -> None:
+    # `text` and `template` are natural template variables that must not collide
+    # with the internal positional parameter of format_string.
+    prompt = Prompt.from_text(text="Summarize this {text}, using {template}")
+    assert prompt.format_string(text="article", template="bullets") == (
+        "Summarize this article, using bullets"
+    )
