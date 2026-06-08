@@ -42,7 +42,7 @@ public final class YamlAgentsDocument {
 
     @JsonCreator
     public YamlAgentsDocument(
-            @JsonProperty(value = "agents", required = true) List<AgentSpec> agents,
+            @JsonProperty("agents") List<AgentSpec> agents,
             @JsonProperty("prompts") List<PromptSpec> prompts,
             @JsonProperty("tools") List<ToolSpec> tools,
             @JsonProperty("skills") List<SkillsSpec> skills,
@@ -54,7 +54,7 @@ public final class YamlAgentsDocument {
             @JsonProperty("embedding_model_setups") List<DescriptorSpec> embeddingModelSetups,
             @JsonProperty("vector_stores") List<DescriptorSpec> vectorStores,
             @JsonProperty("mcp_servers") List<DescriptorSpec> mcpServers) {
-        this.agents = agents;
+        this.agents = orEmpty(agents);
         this.prompts = orEmpty(prompts);
         this.tools = orEmpty(tools);
         this.skills = orEmpty(skills);

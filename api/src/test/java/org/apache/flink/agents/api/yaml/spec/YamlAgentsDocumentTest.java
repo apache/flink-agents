@@ -46,4 +46,14 @@ class YamlAgentsDocumentTest {
         assertThat(doc.getActions()).hasSize(1);
         assertThat(doc.getActions().get(0).getName()).isEqualTo("shared_a");
     }
+
+    @Test
+    void infraOnlyFile() throws Exception {
+        YamlAgentsDocument doc =
+                M.readValue(
+                        "chat_model_connections:\n  - name: x\n    clazz: ollama\n",
+                        YamlAgentsDocument.class);
+        assertThat(doc.getAgents()).isEmpty();
+        assertThat(doc.getChatModelConnections()).hasSize(1);
+    }
 }

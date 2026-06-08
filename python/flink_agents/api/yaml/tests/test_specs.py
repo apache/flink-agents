@@ -224,9 +224,12 @@ def test_agent_spec_action_can_be_string_reference() -> None:
     assert isinstance(spec.actions[1], ActionSpec)
 
 
-def test_yaml_document_requires_agents() -> None:
-    with pytest.raises(ValidationError):
-        YamlAgentsDocument.model_validate({})
+def test_yaml_document_allows_infra_only_file() -> None:
+    doc = YamlAgentsDocument.model_validate(
+        {"chat_model_connections": [{"name": "x", "clazz": "ollama"}]}
+    )
+    assert doc.agents == []
+    assert doc.chat_model_connections[0].name == "x"
 
 
 def test_yaml_document_minimal() -> None:

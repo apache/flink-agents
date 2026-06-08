@@ -382,7 +382,7 @@ agentsEnv.loadYaml(Paths.get("./shared.yaml"));
 
 {{< /tabs >}}
 
-A common pattern is to split a topology file (the agents themselves) from an infrastructure file (chat-model connections, vector stores, ...). The infrastructure file can be swapped per environment (dev / staging / prod) without touching the agent definitions.
+A common pattern is to split a topology file (the agents themselves) from an infrastructure file (chat-model connections, vector stores, ...). The infrastructure file can be swapped per environment (dev / staging / prod) without touching the agent definitions. The `agents:` block is optional, so an infrastructure-only file (no `agents:` block) is loaded as shared resources.
 
 For an end-to-end runnable walkthrough that loads a YAML-declared agent and runs it on Flink, see [YAML Agent Quickstart]({{< ref "docs/get-started/quickstart/yaml_agent" >}}).
 
