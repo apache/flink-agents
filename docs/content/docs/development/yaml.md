@@ -127,6 +127,8 @@ prompts:
     text: "this is the {value}"
 ```
 
+`{variable_name}` is the only substitution syntax, and there is no `{{` / `}}` escape — write JSON examples in prompt `content` with single braces. See [Brace Handling]({{< ref "docs/development/prompts#brace-handling" >}}).
+
 **Tool** — points at a callable that the chat model can invoke.
 
 | Field | Required | Description |
