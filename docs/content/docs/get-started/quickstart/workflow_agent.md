@@ -347,6 +347,95 @@ agentsEnv.execute();
 
 {{< /tabs >}}
 
+### Read Input via the Table API
+
+The multiple-agent example reads product reviews through the Flink Table API instead of a DataStream. Because Table rows arrive as `Row` (Java) / `dict` (Python) instead of a `ProductReview` POJO, it uses a dedicated `TableReviewAnalysisAgent` — identical to `ReviewAnalysisAgent` except its `process_input` action reads the `id` and `review` columns out of the row, and it ships a key selector that extracts the key from that row.
+
+{{< tabs "Create the Table Agent" >}}
+
+{{< tab "Python" >}}
+```python
+class TableKeySelector(KeySelector):
+    """Extract the partition key from a Table row (dict)."""
+
+    def get_key(self, value: Any) -> str:
+        return str(value["id"])
+
+
+class TableReviewAnalysisAgent(Agent):
+    # prompt / tool / chat_model_setup are identical to ReviewAnalysisAgent.
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        # Table input arrives as a dict keyed by column name, not a POJO.
+        input_dict = InputEvent.from_event(event).input
+        product_id = str(input_dict["id"])
+        review_text = str(input_dict["review"])
+        ...
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class TableReviewAnalysisAgent extends Agent {
+
+    /** Extract the partition key from a Table Row. */
+    public static class RowKeySelector implements KeySelector<Object, String> {
+        @Override
+        public String getKey(Object value) {
+            return (String) ((Row) value).getField("id");
+        }
+    }
+
+    // prompt / tool / chat model setup are identical to ReviewAnalysisAgent.
+
+    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    public static void processInput(Event event, RunnerContext ctx) {
+        // Table input arrives as a Row keyed by column name, not a POJO.
+        Row row = (Row) InputEvent.fromEvent(event).getInput();
+        String productId = (String) row.getField("id");
+        String reviewText = (String) row.getField("review");
+        ...
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+Register the input file as a table and feed it to the agent with `from_table` / `fromTable`, providing the key selector:
+
+{{< tabs "Integrate via Table API" >}}
+
+{{< tab "Python" >}}
+```python
+input_table = t_env.from_path("product_reviews")
+
+review_analysis_res_stream = (
+    agents_env.from_table(input=input_table, key_selector=TableKeySelector())
+    .apply(TableReviewAnalysisAgent())
+    .to_datastream()
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+Table inputTable = tableEnv.from("product_reviews");
+
+DataStream<Object> reviewAnalysisResStream =
+        agentsEnv
+                .fromTable(inputTable, new TableReviewAnalysisAgent.RowKeySelector())
+                .apply(new TableReviewAnalysisAgent())
+                .toDataStream();
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}#fromto-flink-table-api) for the full Table API integration reference.
+
 ## Run the Example
 
 ### Prerequisites

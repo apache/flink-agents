@@ -285,6 +285,10 @@ The key difference from the code-defined workflow agent quickstart is the pair o
 
 Everything else — the Flink source, the key selector, the sink — is identical.
 
+{{< hint info >}}
+See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) for details on integrating agents with the Flink DataStream and Table API.
+{{< /hint >}}
+
 ## Run the Example
 
 ### Prerequisites
