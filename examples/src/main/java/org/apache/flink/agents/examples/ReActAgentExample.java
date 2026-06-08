@@ -141,8 +141,8 @@ public class ReActAgentExample {
         // Print the analysis results to stdout.
         reviewAnalysisResStream.print();
 
-        // Execute the Flink pipeline.
-        agentsEnv.execute();
+        // Execute the Flink pipeline with the Flink job name.
+        agentsEnv.execute("ReAct Agent Example Job");
     }
 
     // Create ReAct agent.

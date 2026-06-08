@@ -69,8 +69,8 @@ def main() -> None:
     # Print the answers to stdout.
     answer_stream.print()
 
-    # Execute the Flink pipeline.
-    agents_env.execute()
+    # Execute the Flink pipeline with the Flink job name.
+    agents_env.execute("Skills Agent Example Job")
 
 
 if __name__ == "__main__":

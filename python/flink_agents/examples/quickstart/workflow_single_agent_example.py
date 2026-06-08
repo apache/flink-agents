@@ -89,8 +89,8 @@ def main() -> None:
     # Print the analysis results to stdout.
     review_analysis_res_stream.print()
 
-    # Execute the Flink pipeline.
-    agents_env.execute()
+    # Execute the Flink pipeline with the Flink job name.
+    agents_env.execute("Workflow Agent Example Job")
 
 
 if __name__ == "__main__":

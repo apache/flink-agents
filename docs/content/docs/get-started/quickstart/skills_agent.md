@@ -221,9 +221,10 @@ answer_stream = (
     .to_datastream()
 )
 
-# Print the answers to stdout, then execute the Flink pipeline.
+# Print the answers to stdout.
 answer_stream.print()
-agents_env.execute()
+# Execute the Flink pipeline with the Flink job name.
+agents_env.execute("Skills Agent Example Job")
 ```
 {{< /tab >}}
 
@@ -249,9 +250,10 @@ DataStream<String> questionStream =
 DataStream<Object> answerStream =
         agentsEnv.fromDataStream(questionStream).apply(new MathAgent()).toDataStream();
 
-// Print the answers to stdout, then execute the Flink pipeline.
+// Print the answers to stdout.
 answerStream.print();
-agentsEnv.execute();
+// Execute the Flink pipeline with the Flink job name.
+agentsEnv.execute("Skills Agent Example Job");
 ```
 {{< /tab >}}
 
