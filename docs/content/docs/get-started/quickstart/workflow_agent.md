@@ -48,7 +48,8 @@ Create the agents execution environment, and register the available chat model c
 env = StreamExecutionEnvironment.get_execution_environment()
 agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
-# Add Ollama chat model connection to be used by the ReviewAnalysisAgent.
+# Add Ollama chat model connection to be used by the ReviewAnalysisAgent
+# and ProductSuggestionAgent.
 agents_env.add_resource(
     "ollama_server",
     ResourceType.CHAT_MODEL_CONNECTION,
