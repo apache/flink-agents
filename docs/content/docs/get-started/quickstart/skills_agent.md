@@ -99,7 +99,7 @@ class MathAgent(Agent):
         return ResourceDescriptor(
             clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_server",
-            model="qwen3:8b",
+            model="qwen3.5:9b",
             prompt="system_prompt",
             # Expose the declared skill to this model by name.
             skills=["math-calculator"],
@@ -157,7 +157,7 @@ public class MathAgent extends Agent {
     public static ResourceDescriptor mathModel() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
-                .addInitialArgument("model", "qwen3:8b")
+                .addInitialArgument("model", "qwen3.5:9b")
                 .addInitialArgument("prompt", "systemPrompt")
                 // Expose the declared skill to this model by name.
                 .addInitialArgument("skills", List.of("math-calculator"))
@@ -324,10 +324,11 @@ Download and install Ollama from the official [website](https://ollama.com/downl
 Ollama server **0.9.0** or higher is required.
 {{< /hint >}}
 
-Then pull the qwen3:8b model, which is required by the quickstart examples.
+Then pull the qwen3:8b and qwen3.5:9b models, which are required by the quickstart examples.
 
 ```bash
 ollama pull qwen3:8b
+ollama pull qwen3.5:9b
 ```
 
 ### Submit Flink Agents Job to Standalone Flink Cluster
