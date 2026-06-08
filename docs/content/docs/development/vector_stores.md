@@ -172,7 +172,7 @@ For vector stores that implement `CollectionManageableVectorStore`, you can crea
 * `delete_collection` / `deleteCollection`: Delete a collection by name.
 
 {{< hint info >}}
-Collection-level operations are only supported for vector stores that implement `CollectionManageableVectorStore`. Among the built-in providers, Chroma (Python), Elasticsearch (Java), OpenSearch (Java), and Milvus (Java) implement this interface.
+Collection-level operations are only supported for vector stores that implement `CollectionManageableVectorStore`. Among the built-in providers, Chroma (Python), Mem0 (Python), Elasticsearch (Java), OpenSearch (Java), and Milvus (Java) implement this interface.
 {{< /hint >}}
 
 {{< tabs "Collection level operations" >}}
@@ -834,6 +834,78 @@ public static ResourceDescriptor vectorStore() {
             // .addInitialArgument("password", "secret")
             .build();
 }
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+### Mem0
+
+[Mem0](https://docs.mem0.ai/) ships its own ecosystem of vector-store backends (pgvector, Milvus, Qdrant, Redis, Weaviate, ...). `Mem0VectorStore` is a gateway that exposes any of them through Flink Agents' resource system, so you can reach Mem0-supported backends without a dedicated integration for each.
+
+{{< hint info >}}
+Mem0 is currently supported in the Python API only. To use it from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+{{< hint info >}}
+`Mem0VectorStore` implements `CollectionManageableVectorStore`, enabling [Long-Term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) support. Filters use the unified equality-only [Filter DSL](#filter-dsl) and are forwarded to the underlying Mem0 backend unchanged.
+{{< /hint >}}
+
+#### Prerequisites
+
+1. Install Mem0: `pip install mem0ai`
+2. Any extra dependency required by the chosen backend (e.g. `pip install qdrant-client` for Qdrant, `pip install pymilvus` for Milvus). See the [Mem0 vector store docs](https://docs.mem0.ai/components/vectordbs/overview) for per-provider requirements.
+
+#### Mem0VectorStore Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `embedding_model` | str | Required | Reference to embedding model resource name |
+| `provider` | str | Required | Mem0 vector store provider name (e.g. `"chroma"`, `"qdrant"`, `"pgvector"`, `"milvus"`) |
+| `provider_config` | dict | `{}` | Provider-specific config dict passed to Mem0's `VectorStoreFactory` (e.g. host, port, credentials). `collection_name` is injected automatically and need not be set |
+| `collection` | str | `"flink_agents_mem0_vs"` | Default collection used when a caller does not specify one |
+
+#### Usage Example
+
+{{< tabs "Mem0 Usage Example" >}}
+
+{{< tab "Python" >}}
+
+```python
+class MyAgent(Agent):
+
+    # Embedding model setup (required for vector store)
+    @embedding_model_connection
+    @staticmethod
+    def openai_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.EmbeddingModel.OPENAI_CONNECTION,
+            api_key="your-api-key-here"
+        )
+
+    @embedding_model_setup
+    @staticmethod
+    def openai_embedding() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.EmbeddingModel.OPENAI_SETUP,
+            connection="openai_connection",
+            model="your-embedding-model-here"
+        )
+
+    # Mem0 vector store backed by Qdrant
+    @vector_store
+    @staticmethod
+    def mem0_store() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.VectorStore.MEM0_VECTOR_STORE,
+            embedding_model="openai_embedding",
+            provider="qdrant",
+            provider_config={"host": "localhost", "port": 6333, "embedding_model_dims": 1536},
+            collection="my_documents"
+        )
+
+    ...
 ```
 
 {{< /tab >}}
