@@ -324,10 +324,9 @@ Download and install Ollama from the official [website](https://ollama.com/downl
 Ollama server **0.9.0** or higher is required.
 {{< /hint >}}
 
-Then pull the qwen3:8b and qwen3.5:9b models, which are required by the quickstart examples.
+Then pull the qwen3.5:9b model, which is required by the quickstart examples.
 
 ```bash
-ollama pull qwen3:8b
 ollama pull qwen3.5:9b
 ```
 
