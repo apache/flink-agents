@@ -234,7 +234,8 @@ review_analysis_res_stream = (
 )
 
 review_analysis_res_stream.print()
-agents_env.execute()
+# Execute the Flink pipeline with the Flink job name.
+agents_env.execute("YAML Agent Example Job")
 ```
 {{< /tab >}}
 
@@ -272,7 +273,8 @@ DataStream<Object> reviewAnalysisResStream =
                 .toDataStream();
 
 reviewAnalysisResStream.print();
-agentsEnv.execute();
+// Execute the Flink pipeline with the Flink job name.
+agentsEnv.execute("YAML Agent Example Job");
 ```
 {{< /tab >}}
 

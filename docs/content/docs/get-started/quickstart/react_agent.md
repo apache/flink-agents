@@ -160,6 +160,9 @@ review_analysis_res_stream = (
 
 # Print the analysis results to stdout.
 review_analysis_res_stream.print()
+
+# Execute the Flink pipeline with the Flink job name.
+agents_env.execute("ReAct Agent Example Job")
 ```
 {{< /tab >}}
 
@@ -199,6 +202,9 @@ DataStream<Object> reviewAnalysisResStream =
 
 // Print the analysis results to stdout.
 reviewAnalysisResStream.print();
+
+// Execute the Flink pipeline with the Flink job name.
+agentsEnv.execute("ReAct Agent Example Job");
 ```
 {{< /tab >}}
 

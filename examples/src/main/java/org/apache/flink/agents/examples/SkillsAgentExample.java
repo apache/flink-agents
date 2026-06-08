@@ -65,7 +65,7 @@ public class SkillsAgentExample {
         // Print the answers to stdout.
         answerStream.print();
 
-        // Execute the Flink pipeline.
-        agentsEnv.execute();
+        // Execute the Flink pipeline with the Flink job name.
+        agentsEnv.execute("Skills Agent Example Job");
     }
 }

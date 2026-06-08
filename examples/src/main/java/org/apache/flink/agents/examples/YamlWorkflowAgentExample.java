@@ -86,7 +86,7 @@ public class YamlWorkflowAgentExample {
         // Print the analysis results to stdout.
         reviewAnalysisResStream.print();
 
-        // Execute the Flink pipeline.
-        agentsEnv.execute();
+        // Execute the Flink pipeline with the Flink job name.
+        agentsEnv.execute("YAML Agent Example Job");
     }
 }
