@@ -80,7 +80,7 @@ DataStream<YourPojo> inputStream = env.fromSource(...);
 // integrate agent with input datastream, and return output datastream
 DataStream<Object> outputStream =
         agentsEnv
-                .fromDataStream(inputStream, (KeySelector<YourPojo, String>) x::getId)
+                .fromDataStream(inputStream, (KeySelector<YourPojo, String>) YourPojo::getId)
                 .apply(yourAgent)
                 .toDataStream();
 
