@@ -132,8 +132,7 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
-        input_event = InputEvent.from_event(event)
-        input: ProductReview = input_event.input
+        input = ProductReview.model_validate(InputEvent.from_event(event).input)
         ctx.short_term_memory.set("id", input.id)
 
         content = f"""
