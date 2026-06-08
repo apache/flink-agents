@@ -477,15 +477,17 @@ Common chat-model aliases:
 | `anthropic`          | Anthropic                   | Anthropic                   |
 | `azure_openai`       | Azure OpenAI (Python)       | —                           |
 | `azure`              | —                           | Azure OpenAI (Java)         |
+| `bedrock`            | —                           | Bedrock (Java)              |
 | `tongyi`             | Tongyi (Python)             | —                           |
 
 Embedding-model aliases (apply to both `embedding_model_connections` and `embedding_model_setups`):
 
-| Alias    | `type: python` | `type: java`   |
-| -------- | -------------- | -------------- |
-| `ollama` | Ollama         | Ollama         |
-| `openai` | OpenAI         | —              |
-| `tongyi` | Tongyi         | —              |
+| Alias     | `type: python` | `type: java`   |
+| --------- | -------------- | -------------- |
+| `ollama`  | Ollama         | Ollama         |
+| `openai`  | OpenAI         | —              |
+| `tongyi`  | Tongyi         | —              |
+| `bedrock` | —              | Bedrock (Java) |
 
 Vector-store aliases:
 
@@ -495,8 +497,6 @@ Vector-store aliases:
 | `elasticsearch` | —              | Elasticsearch  |
 
 The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
-
-Some providers ship a Java implementation but no alias yet — Bedrock chat-model and embedding-model are Java-only and have no alias, so reference them by their fully-qualified class path: `org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelConnection` / `BedrockChatModelSetup` and `org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelConnection` / `BedrockEmbeddingModelSetup`.
 
 If `clazz:` is not a known alias, the loader passes it through as-is — write a fully-qualified class path (e.g. `flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup`) for providers you've added yourself.
 

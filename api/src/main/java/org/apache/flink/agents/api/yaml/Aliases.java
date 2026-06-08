@@ -87,6 +87,7 @@ public final class Aliases {
         chatConnJava.put("openai_responses", ResourceName.ChatModel.OPENAI_RESPONSES_CONNECTION);
         chatConnJava.put("anthropic", ResourceName.ChatModel.ANTHROPIC_CONNECTION);
         chatConnJava.put("azure", ResourceName.ChatModel.AZURE_CONNECTION);
+        chatConnJava.put("bedrock", ResourceName.ChatModel.BEDROCK_CONNECTION);
         Map<String, String> chatConnPython = new HashMap<>();
         chatConnPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_CONNECTION);
         chatConnPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_CONNECTION);
@@ -102,6 +103,7 @@ public final class Aliases {
         chatJava.put("openai_responses", ResourceName.ChatModel.OPENAI_RESPONSES_SETUP);
         chatJava.put("anthropic", ResourceName.ChatModel.ANTHROPIC_SETUP);
         chatJava.put("azure", ResourceName.ChatModel.AZURE_SETUP);
+        chatJava.put("bedrock", ResourceName.ChatModel.BEDROCK_SETUP);
         Map<String, String> chatPython = new HashMap<>();
         chatPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_SETUP);
         chatPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_SETUP);
@@ -113,6 +115,7 @@ public final class Aliases {
         // EMBEDDING_MODEL_CONNECTION
         Map<String, String> embConnJava = new HashMap<>();
         embConnJava.put("ollama", ResourceName.EmbeddingModel.OLLAMA_CONNECTION);
+        embConnJava.put("bedrock", ResourceName.EmbeddingModel.BEDROCK_CONNECTION);
         Map<String, String> embConnPython = new HashMap<>();
         embConnPython.put("ollama", ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION);
         embConnPython.put("openai", ResourceName.EmbeddingModel.Python.OPENAI_CONNECTION);
@@ -124,6 +127,7 @@ public final class Aliases {
         // EMBEDDING_MODEL
         Map<String, String> embJava = new HashMap<>();
         embJava.put("ollama", ResourceName.EmbeddingModel.OLLAMA_SETUP);
+        embJava.put("bedrock", ResourceName.EmbeddingModel.BEDROCK_SETUP);
         Map<String, String> embPython = new HashMap<>();
         embPython.put("ollama", ResourceName.EmbeddingModel.Python.OLLAMA_SETUP);
         embPython.put("openai", ResourceName.EmbeddingModel.Python.OPENAI_SETUP);
