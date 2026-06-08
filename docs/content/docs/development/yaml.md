@@ -204,6 +204,17 @@ mcp_servers:
     endpoint: http://127.0.0.1:8000/mcp
 ```
 
+**Inter-resource references.** Several fields are not values but *name lookups* into another section, resolved within the agent first and then against shared resources. In the [single-agent example](#declaring-a-single-agent):
+
+| Field | Refers to | Example |
+|-------|-----------|---------|
+| `chat_model_setups[].connection` | a `chat_model_connections[]` name | `connection: ollama_server` |
+| `chat_model_setups[].prompt` | a `prompts[]` name | `prompt: review_analysis_prompt` |
+| `chat_model_setups[].tools` | a list of `tools[]` names | `tools: [notify_shipping_manager]` |
+| `embedding_model_setups[].connection` | an `embedding_model_connections[]` name | `connection: my_embedding_server` |
+
+The referenced name must exist in the same agent or be a shared resource at the file level; otherwise loading fails.
+
 #### Actions
 
 `actions:` is a list. Each entry is either an inline action **map** or, when reusing a shared action, a bare **string** referring to the shared action's name.
@@ -468,7 +479,24 @@ Common chat-model aliases:
 | `azure`              | —                           | Azure OpenAI (Java)         |
 | `tongyi`             | Tongyi (Python)             | —                           |
 
-Embedding-model and vector-store aliases follow the same scheme. The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
+Embedding-model aliases (apply to both `embedding_model_connections` and `embedding_model_setups`):
+
+| Alias    | `type: python` | `type: java`   |
+| -------- | -------------- | -------------- |
+| `ollama` | Ollama         | Ollama         |
+| `openai` | OpenAI         | —              |
+| `tongyi` | Tongyi         | —              |
+
+Vector-store aliases:
+
+| Alias           | `type: python` | `type: java`   |
+| --------------- | -------------- | -------------- |
+| `chroma`        | Chroma         | —              |
+| `elasticsearch` | —              | Elasticsearch  |
+
+The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
+
+Some providers ship a Java implementation but no alias yet — Bedrock chat-model and embedding-model are Java-only and have no alias, so reference them by their fully-qualified class path: `org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelConnection` / `BedrockChatModelSetup` and `org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelConnection` / `BedrockEmbeddingModelSetup`.
 
 If `clazz:` is not a known alias, the loader passes it through as-is — write a fully-qualified class path (e.g. `flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup`) for providers you've added yourself.
 
@@ -527,6 +555,8 @@ Loaded with `agents_env.load_yaml(...)` on the Python side, this produces an age
 - `math_chat_model` is a Python Ollama setup that calls a Java function tool through the cross-language tool bridge.
 - `creative_chat_model` is a Java Ollama setup driven from the Python loader via the Java chat-model wrapper.
 
+The bridge is symmetric: the same file loaded by the **Java loader** can declare `type: python` resources, and the Java loader wraps each Python implementation through its Python wrapper. So a Java-side agent can drive a Python chat model or call a Python tool, just as the example above drives Java pieces from the Python loader.
+
 Not every resource type is cross-language. Currently `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support `type:` on the opposite language; others (e.g. `mcp_servers`) do not.
 
 ## YAML API Specification
@@ -547,7 +577,13 @@ When loading a YAML file, both runtimes parse it into typed in-memory representa
 
 ### Consistency guarantees
 
-Because Pydantic models are easier to author and evolve than raw JSON Schema, the **ground truth** is the Pydantic spec — the checked-in `docs/yaml-schema.json` is exported from it. Continuous tests then verify cross-runtime consistency:
+Because Pydantic models are easier to author and evolve than raw JSON Schema, the **ground truth** is the Pydantic spec — the checked-in `docs/yaml-schema.json` is exported from it. After changing the specs, regenerate the schema with:
+
+```bash
+python -m flink_agents.api.yaml.specs > docs/yaml-schema.json
+```
+
+Continuous tests then verify cross-runtime consistency:
 
 - the JSON Schema exported by the Pydantic specs matches the checked-in `docs/yaml-schema.json`;
 - the JSON Schema exported by the Java POJOs matches the checked-in `docs/yaml-schema.json`;
