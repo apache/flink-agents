@@ -55,20 +55,20 @@ product_suggestion_prompt_str = """
 Based on the rating distribution and user dissatisfaction reasons, generate three actionable suggestions for product improvement.
 
 Input format:
-{{
+{
     "id": "1",
     "score_histogram": ["10%", "20%", "10%", "15%", "45%"],
     "unsatisfied_reasons": ["reason1", "reason2", "reason3"]
-}}
+}
 
 Ensure that your response can be parsed by Python json, use the following format as an example:
-{{
+{
     "suggestion_list": [
         "suggestion1",
         "suggestion2",
         "suggestion3"
     ]
-}}
+}
 
 input:
 {input}
@@ -109,7 +109,7 @@ Prompt productSuggestionPrompt = Prompt.fromText(PRODUCT_SUGGESTION_PROMPT_STR);
 
 **Key points:**
 - Use `{variable_name}` for template variables that will be substituted at runtime
-- Escape literal braces by doubling them: `{{` and `}}`
+- `{variable_name}` is the only substitution syntax. Any `{` or `}` that is not part of a known placeholder passes through verbatim, so JSON examples inside a prompt should use single braces. There is no `{{` / `}}` escape — doubled braces are emitted to the LLM as literal `{{` and `}}`, which the model may copy into its reply and break downstream `json.loads`
 
 ### Creating from Messages
 
@@ -128,17 +128,17 @@ review_analysis_prompt = Prompt.from_messages(
             satisfaction score (1-5) and potential reasons for dissatisfaction.
 
             Example input format:
-            {{
+            {
                 "id": "12345",
                 "review": "The headphones broke after one week of use."
-            }}
+            }
 
             Ensure your response can be parsed by Python JSON:
-            {{
+            {
                 "id": "12345",
                 "score": 1,
                 "reasons": ["poor quality"]
-            }}
+            }
             """,
         ),
         ChatMessage(
@@ -208,17 +208,17 @@ class ReviewAnalysisAgent(Agent):
             satisfaction score (1-5) and potential reasons for dissatisfaction.
 
             Example input format:
-            {{
+            {
                 "id": "12345",
                 "review": "The headphones broke after one week of use."
-            }}
+            }
 
             Ensure your response can be parsed by Python JSON:
-            {{
+            {
                 "id": "12345",
                 "score": 1,
                 "reasons": ["poor quality"]
-            }}
+            }
             """,
                 ),
                 ChatMessage(
@@ -336,3 +336,13 @@ public class ReviewAnalysisAgent extends Agent {
 {{< /tabs >}}
 
 Prompts use `{variable_name}` syntax for template variables. Variables are filled from the `prompt_args` argument of `ChatRequestEvent` (Python) / the `promptArgs` constructor argument (Java). The prompt is automatically applied when the chat model is invoked.
+
+## Brace Handling
+
+`{variable_name}` is the only template syntax. When a prompt is rendered:
+
+- `{name}` is replaced with the matching argument; if no argument is supplied, the placeholder is left unchanged.
+- Any other `{` or `}` (including JSON braces in examples) passes through verbatim.
+- There is **no** `{{` / `}}` escape. Unlike Python f-strings and `str.format`, doubled braces are *not* collapsed to single braces — they reach the LLM as literal `{{` and `}}`.
+
+Write literal JSON examples with single braces. Doubling them sends `{{` / `}}` to the model, which may copy that form into its reply and break downstream `json.loads`.

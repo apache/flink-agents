@@ -29,19 +29,19 @@ review_analysis_system_prompt_str = """
     satisfaction score (1-5) and potential reasons for dissatisfaction.
 
     Example input format:
-    {{
+    {
         "id": "12345",
         "review": "The headphones broke after one week of use. Very poor quality."
-    }}
+    }
 
     Ensure your response can be parsed by Python JSON, using this format as an example:
-    {{
+    {
      "id": "12345",
      "score": 1,
      "reasons": [
        "poor quality"
        ]
-    }}
+    }
 
     Please note that if a product review includes dissatisfaction with the shipping process,
     you should first notify the shipping manager using the appropriate tools. After executing
@@ -92,20 +92,20 @@ product_suggestion_prompt_str = """
         Based on the rating distribution and user dissatisfaction reasons, generate three actionable suggestions for product improvement.
 
         Input format:
-        {{
+        {
             "id": "1",
             "score_histogram": ["10%", "20%", "10%", "15%", "45%"],
             "unsatisfied_reasons": ["reason1", "reason2", "reason3"]
-        }}
+        }
 
         Ensure that your response can be parsed by Python json,use the following format as an example:
-        {{
+        {
             "suggestion_list": [
                 "suggestion1",
                 "suggestion2",
                 "suggestion3"
             ]
-        }}
+        }
 
         input:
         {input}
