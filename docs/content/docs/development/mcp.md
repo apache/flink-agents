@@ -119,6 +119,29 @@ public static ResourceDescriptor authenticatedMcpServer() {
 - `BasicAuth` - For username/password authentication
 - `ApiKeyAuth` - For API key authentication via custom headers
 
+### Retries
+
+Remote calls to an MCP server (listing/calling tools and prompts) are retried with exponential backoff on transient failures. You can tune the retry behavior per server with the following descriptor arguments. {{< hint info >}}Note: retry is currently only supported by the [Java SDK](#mcp-sdk).{{< /hint >}}
+
+| Argument           | Default | Description                                          |
+|--------------------|---------|------------------------------------------------------|
+| `maxRetries`       | 3       | Maximum number of retries for a failed remote call.  |
+| `initialBackoffMs` | 100     | Initial backoff before the first retry, in milliseconds. |
+| `maxBackoffMs`     | 10000   | Upper bound for the backoff between retries, in milliseconds. |
+
+```java
+@MCPServer
+public static ResourceDescriptor myMcp() {
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
+                .addInitialArgument("endpoint", MCP_ENDPOINT)
+                .addInitialArgument("timeout", 30)
+                .addInitialArgument("maxRetries", 5)
+                .addInitialArgument("initialBackoffMs", 200)
+                .addInitialArgument("maxBackoffMs", 10000)
+                .build();
+}
+```
+
 ## Use MCP prompts and tools in Agent
 
 
