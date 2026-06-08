@@ -148,6 +148,12 @@ class AgentConfigOptions(metaclass=AgentConfigOptionsMeta):
         default=5,
     )
 
+    EVENT_LISTENERS = ConfigOption(
+        key="event-listeners",
+        config_type=list[str],
+        default=None
+    )
+
 
 class AgentExecutionOptions:
     """Execution options for Flink Agents."""

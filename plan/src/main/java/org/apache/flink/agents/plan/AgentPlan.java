@@ -168,6 +168,27 @@ public class AgentPlan implements Serializable {
         return config.getConfData();
     }
 
+    public boolean containsPythonAction() {
+        return this.actions.values().stream()
+                .anyMatch(action -> action.getExec() instanceof PythonFunction);
+    }
+
+    public boolean containsJavaAction() {
+        return this.actions.values().stream()
+                .anyMatch(action -> action.getExec() instanceof JavaFunction);
+    }
+
+    public boolean containsPythonResource() {
+        return this.resourceProviders.values().stream()
+                .anyMatch(
+                        resourceProviderMap ->
+                                resourceProviderMap.values().stream()
+                                        .anyMatch(
+                                                resourceProvider ->
+                                                        resourceProvider
+                                                                instanceof PythonResourceProvider));
+    }
+
     private void writeObject(ObjectOutputStream out) throws IOException {
         String serializedStr = new ObjectMapper().writeValueAsString(this);
         out.writeUTF(serializedStr);

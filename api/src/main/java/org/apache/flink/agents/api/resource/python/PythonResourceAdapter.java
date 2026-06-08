@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.resource.python;
 
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -160,4 +161,20 @@ public interface PythonResourceAdapter {
      * @return the raw return value from the Python callable
      */
     Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs);
+
+    /**
+     * Converts a Java {@link EventContext} object to its Python equivalent.
+     *
+     * @param context the Java event context to convert
+     * @return the Python representation of the event context
+     */
+    Object toPythonEventContext(EventContext context);
+
+    /**
+     * Initializes a Python event listener instance from the specified descriptor.
+     *
+     * @param target the listener descriptor in "module:class" format
+     * @return the initialized Python listener object
+     */
+    Object initPythonEventListener(String target);
 }

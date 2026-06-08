@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.python.utils;
 
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
@@ -76,6 +77,11 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
             PYTHON_MODULE_PREFIX + "get_python_tool_metadata";
 
     static final String INVOKE_PYTHON_TOOL = PYTHON_MODULE_PREFIX + "invoke_python_tool";
+
+    static final String FROM_JAVA_EVENT_CONTEXT = PYTHON_MODULE_PREFIX + "from_java_event_context";
+
+    static final String INSTANTIATE_PYTHON_EVENT_LISTER =
+            PYTHON_MODULE_PREFIX + "instantiate_python_event_listener";
 
     private final ResourceContext resourceContext;
     private final PythonInterpreter interpreter;
@@ -157,6 +163,18 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
             pythonDocuments.add(interpreter.invoke(FROM_JAVA_DOCUMENT, document));
         }
         return pythonDocuments;
+    }
+
+    @Override
+    public Object toPythonEventContext(EventContext context) {
+        final String eventType = context.getEventType();
+        final String timestamp = context.getTimestamp();
+        return interpreter.invoke(FROM_JAVA_EVENT_CONTEXT, eventType, timestamp);
+    }
+
+    @Override
+    public Object initPythonEventListener(String target) {
+        return interpreter.invoke(INSTANTIATE_PYTHON_EVENT_LISTER, target);
     }
 
     @Override
