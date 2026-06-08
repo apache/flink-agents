@@ -74,9 +74,11 @@ def main() -> None:
     # Read product reviews from a text file as a streaming source.
     # Each line in the file should be a JSON string representing a ProductReview.
     product_review_stream = env.from_source(
+        # Target the single file, not the resources/ dir: Flink's enumerator
+        # recurses, so files like skills/SKILL.md would be parsed as reviews.
         source=FileSource.for_record_stream_format(
             StreamFormat.text_line_format(),
-            f"file:///{current_dir}/resources/",
+            f"file:///{current_dir}/resources/product_review.txt",
         )
         .monitor_continuously(Duration.of_minutes(1))
         .build(),
