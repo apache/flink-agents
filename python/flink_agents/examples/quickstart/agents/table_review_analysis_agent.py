@@ -17,7 +17,6 @@
 #################################################################################
 
 import json
-import logging
 from typing import Any
 
 from pyflink.datastream import KeySelector
@@ -141,19 +140,19 @@ class TableReviewAnalysisAgent(Agent):
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
         chat_response = ChatResponseEvent.from_event(event)
-        try:
-            json_content = json.loads(chat_response.response.content)
-            ctx.send_event(
-                OutputEvent(
-                    output=ProductReviewAnalysisRes(
-                        id=ctx.short_term_memory.get("id"),
-                        score=json_content["score"],
-                        reasons=json_content["reasons"],
-                    )
+        # Fail fast on a malformed LLM response: a parse error here propagates
+        # and fails the agent, so a dropped input is surfaced instead of
+        # silently lost. In production, choose the handling that fits your
+        # pipeline: raise to fail the input (as below), emit an OutputEvent
+        # carrying an error sentinel, or send a custom error event so
+        # downstream operators can detect the failure.
+        json_content = json.loads(chat_response.response.content)
+        ctx.send_event(
+            OutputEvent(
+                output=ProductReviewAnalysisRes(
+                    id=ctx.short_term_memory.get("id"),
+                    score=json_content["score"],
+                    reasons=json_content["reasons"],
                 )
             )
-        except Exception:
-            logging.exception(
-                f"Error processing chat response {chat_response.response.content}"
-            )
-            # To fail the agent, you can raise an exception here.
+        )
