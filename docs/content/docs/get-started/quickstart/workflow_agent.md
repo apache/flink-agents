@@ -48,8 +48,7 @@ Create the agents execution environment, and register the available chat model c
 env = StreamExecutionEnvironment.get_execution_environment()
 agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
-# Add Ollama chat model connection to be used by the ReviewAnalysisAgent
-# and ProductSuggestionAgent.
+# Add Ollama chat model connection to be used by the ReviewAnalysisAgent.
 agents_env.add_resource(
     "ollama_server",
     ResourceType.CHAT_MODEL_CONNECTION,
@@ -132,8 +131,7 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
-        input_event = InputEvent.from_event(event)
-        input: ProductReview = input_event.input
+        input = ProductReview.model_validate(InputEvent.from_event(event).input)
         ctx.short_term_memory.set("id", input.id)
 
         content = f"""
