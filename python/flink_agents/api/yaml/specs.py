@@ -98,7 +98,7 @@ class ToolSpec(BaseModel):
     attribute path inside it. For Python, the right side may be a
     nested ``Class.method``.
 
-    ``parameter_types`` is required when ``type: java`` and is ignored
+    ``parameter_types`` is required when ``type: java`` and is forbidden
     otherwise (Python tools are reflected from the callable signature).
     The list contains one string per declared parameter of the Java
     method, in declaration order — the loader uses it to disambiguate

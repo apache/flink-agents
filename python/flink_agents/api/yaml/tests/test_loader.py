@@ -562,6 +562,30 @@ def test_build_agents_rejects_java_tool_missing_parameter_types(
         build_agents(p)
 
 
+def test_build_agents_rejects_python_tool_with_parameter_types(
+    tmp_path: Path,
+) -> None:
+    # Python tool signatures are reflected from the callable, so
+    # parameter_types is Java-only and silently dropped otherwise.
+    yaml_text = (
+        "agents:\n"
+        "  - name: a\n"
+        "    tools:\n"
+        "      - name: t1\n"
+        "        type: python\n"
+        f"        function: {_TARGETS_MODULE}:increment\n"
+        "        parameter_types: [java.lang.Integer]\n"
+        "    actions:\n"
+        "      - name: noop\n"
+        f"        function: {_TARGETS_MODULE}:increment\n"
+        "        listen_to: [input]\n"
+    )
+    p = tmp_path / "python_tool_params.yaml"
+    p.write_text(yaml_text)
+    with pytest.raises(ValueError, match="parameter_types"):
+        build_agents(p)
+
+
 def test_build_agents_builds_java_tool_descriptor(tmp_path: Path) -> None:
     """YAML parsing of a Java tool yields an api ``FunctionTool`` wrapping
     a ``JavaFunction`` descriptor — no JVM needed at parse time.
