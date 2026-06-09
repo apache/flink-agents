@@ -36,6 +36,7 @@ from pyflink.datastream.connectors.file_system import (
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 
@@ -53,7 +54,7 @@ class InputKeySelector(KeySelector):
 class PythonEventLoggingAgent(Agent):
     """Agent for testing Python event logging."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send an output event."""

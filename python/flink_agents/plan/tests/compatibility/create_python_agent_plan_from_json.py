@@ -51,7 +51,7 @@ if __name__ == "__main__":
         event,
         runner_context,
     ]
-    listen_event_types1 = action1.listen_event_types
+    listen_event_types1 = action1.trigger_conditions
     assert listen_event_types1 == [input_event]
 
     # check the second action
@@ -65,7 +65,7 @@ if __name__ == "__main__":
         event,
         runner_context,
     ]
-    listen_event_types2 = action2.listen_event_types
+    listen_event_types2 = action2.trigger_conditions
     assert sorted(listen_event_types2) == [
         my_event,
         input_event,

@@ -20,6 +20,7 @@ package org.apache.flink.agents.examples.agents;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -108,7 +109,7 @@ public class TableReviewAnalysisAgent extends Agent {
      * <p>When using {@code fromTable()}, the input is a {@link Row} with fields matching the table
      * column names.
      */
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         Row row = (Row) inputEvent.getInput();
@@ -128,7 +129,7 @@ public class TableReviewAnalysisAgent extends Agent {
                         "reviewAnalysisModel", List.of(msg), Map.of("input", content), null));
     }
 
-    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(Event event, RunnerContext ctx) throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
         // Fail fast on a malformed LLM response: a parse error here propagates and fails the

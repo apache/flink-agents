@@ -29,10 +29,10 @@ _CONFIG_TYPE = "__config_type__"
 
 
 class Action(BaseModel):
-    """Representation of an agent action with event listening and function execution.
+    """Representation of an agent action with unified trigger conditions.
 
-    This class encapsulates a named agent action that listens for specific event
-    types and executes an associated function when those events occur.
+    This class encapsulates a named agent action that triggers on matching
+    events and executes an associated function.
 
     Attributes:
     ----------
@@ -40,8 +40,9 @@ class Action(BaseModel):
         Name/identifier of the agent Action.
     exec : Function
         To be executed when the Action is triggered.
-    listen_event_types : List[str]
-        List of event types that will trigger this Action's execution.
+    trigger_conditions : List[str]
+        Event-type name strings that will trigger this Action. Multiple
+        entries combine with OR semantics.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -49,8 +50,17 @@ class Action(BaseModel):
     name: str
     # TODO: Raise a warning when the action has a return value, as it will be ignored.
     exec: PythonFunction | JavaFunction
-    listen_event_types: List[str]
+    trigger_conditions: List[str]
     config: Dict[str, Any] | None = None
+
+    @property
+    def listen_event_types(self) -> List[str]:
+        """Event-type names. Kept for callers that still consume the old naming;
+        in this PR all entries are plain event-type names so the list is
+        identical to ``trigger_conditions``. A follow-up PR introduces CEL
+        expressions and overrides this to filter out non-type entries.
+        """
+        return self.trigger_conditions
 
     @field_serializer("config")
     def __serialize_config(self, config: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -71,7 +81,13 @@ class Action(BaseModel):
 
     @model_validator(mode="before")
     def __custom_deserialize(self) -> "Action":
-        config = self["config"]
+        # Legacy fallback: listen_event_types → trigger_conditions
+        if "trigger_conditions" not in self or self.get("trigger_conditions") is None:
+            if self.get("listen_event_types"):
+                self["trigger_conditions"] = list(self["listen_event_types"])
+            self.pop("listen_event_types", None)
+
+        config = self.get("config")
         if config is None or _CONFIG_TYPE not in config:
             return self
         config_type = self["config"].pop(_CONFIG_TYPE)
@@ -97,12 +113,15 @@ class Action(BaseModel):
         self,
         name: str,
         exec: Function,
-        listen_event_types: List[str],
+        trigger_conditions: List[str] | None = None,
         config: Dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Action will check function signature when init."""
+        if trigger_conditions is None:
+            trigger_conditions = kwargs.pop("listen_event_types", [])
         super().__init__(
-            name=name, exec=exec, listen_event_types=listen_event_types, config=config
+            name=name, exec=exec, trigger_conditions=trigger_conditions, config=config
         )
         # TODO: Update expected signature after import State and Context.
         self.exec.check_signature(Event, RunnerContext)

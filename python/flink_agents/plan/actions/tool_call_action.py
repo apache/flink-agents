@@ -63,5 +63,5 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
 TOOL_CALL_ACTION = Action(
     name="tool_call_action",
     exec=PythonFunction.from_callable(process_tool_request),
-    listen_event_types=[ToolRequestEvent.EVENT_TYPE],
+    trigger_conditions=[ToolRequestEvent.EVENT_TYPE],
 )

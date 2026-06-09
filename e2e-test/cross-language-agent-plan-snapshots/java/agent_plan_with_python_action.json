@@ -8,7 +8,7 @@
         "method_name" : "processChatRequestOrToolResponse",
         "parameter_types" : [ "org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext" ]
       },
-      "listen_event_types" : [ "_chat_request_event", "_tool_response_event" ],
+      "trigger_conditions" : [ "_chat_request_event", "_tool_response_event" ],
       "config" : null
     },
     "context_retrieval_action" : {
@@ -19,7 +19,7 @@
         "method_name" : "processContextRetrievalRequest",
         "parameter_types" : [ "org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext" ]
       },
-      "listen_event_types" : [ "_context_retrieval_request_event" ],
+      "trigger_conditions" : [ "_context_retrieval_request_event" ],
       "config" : null
     },
     "handle" : {
@@ -29,7 +29,7 @@
         "module" : "flink_agents.plan.tests.test_agent_plan_cross_language",
         "qualname" : "_dummy_action"
       },
-      "listen_event_types" : [ "_input_event" ],
+      "trigger_conditions" : [ "_input_event" ],
       "config" : null
     },
     "tool_call_action" : {
@@ -40,7 +40,7 @@
         "method_name" : "processToolRequest",
         "parameter_types" : [ "org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext" ]
       },
-      "listen_event_types" : [ "_tool_request_event" ],
+      "trigger_conditions" : [ "_tool_request_event" ],
       "config" : null
     }
   },

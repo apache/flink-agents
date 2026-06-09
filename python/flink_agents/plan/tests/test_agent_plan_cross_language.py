@@ -94,7 +94,7 @@ def test_compile_agent_with_python_function_descriptor() -> None:
     )
     assert action.exec.module == pf.module
     assert action.exec.qualname == pf.qualname
-    assert action.listen_event_types == [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions== [InputEvent.EVENT_TYPE]
 
 
 def test_compile_agent_with_java_function_descriptor() -> None:
@@ -117,7 +117,7 @@ def test_compile_agent_with_java_function_descriptor() -> None:
     assert action.exec.qualname == jf.qualname
     assert action.exec.method_name == jf.method_name
     assert list(action.exec.parameter_types) == list(jf.parameter_types)
-    assert action.listen_event_types == [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions== [InputEvent.EVENT_TYPE]
 
 
 def test_python_plan_compile_does_not_validate_java_class_exists() -> None:
@@ -325,7 +325,7 @@ def test_python_plan_with_java_action_matches_runtime_operator_wire_shape() -> N
 
     handle_block = emitted["actions"]["handle"]
     assert handle_block["name"] == "handle"
-    assert handle_block["listen_event_types"] == [InputEvent.EVENT_TYPE]
+    assert handle_block["trigger_conditions"] == [InputEvent.EVENT_TYPE]
     assert handle_block["config"] is None
     assert handle_block["exec"] == {
         "func_type": "JavaFunction",
@@ -347,7 +347,7 @@ def test_python_preserves_conf_data_types_and_event_ordering() -> None:
                         "module": _dummy_action.__module__,
                         "qualname": _dummy_action.__qualname__,
                     },
-                    "listen_event_types": [InputEvent.EVENT_TYPE],
+                    "trigger_conditions": [InputEvent.EVENT_TYPE],
                     "config": None,
                 },
                 "second": {
@@ -357,7 +357,7 @@ def test_python_preserves_conf_data_types_and_event_ordering() -> None:
                         "module": _dummy_action.__module__,
                         "qualname": _dummy_action.__qualname__,
                     },
-                    "listen_event_types": [InputEvent.EVENT_TYPE],
+                    "trigger_conditions": [InputEvent.EVENT_TYPE],
                     "config": None,
                 },
             },

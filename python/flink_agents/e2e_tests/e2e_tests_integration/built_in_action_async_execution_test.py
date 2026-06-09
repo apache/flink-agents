@@ -28,6 +28,7 @@ from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import action, chat_model_setup, tool
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
@@ -83,7 +84,7 @@ class AsyncTestAgent(Agent):
         time.sleep(5)  # Simulate slow tool execution
         return a + b
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         input_event = InputEvent.from_event(event)
@@ -96,7 +97,7 @@ class AsyncTestAgent(Agent):
             )
         )
 
-    @action(ChatResponseEvent.EVENT_TYPE)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         input = ChatResponseEvent.from_event(event).response

@@ -33,6 +33,7 @@ from flink_agents.api.core_options import (
 )
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 
@@ -53,7 +54,7 @@ class TtlTestKeySelector(KeySelector):
 
 
 class ShortTermMemoryTtlTestAgent(Agent):
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def input(event: Event, ctx: RunnerContext) -> None:
         input_data = TtlTestInput.model_validate(InputEvent.from_event(event).input)
