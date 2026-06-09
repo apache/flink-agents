@@ -29,6 +29,8 @@ from flink_agents.integrations.embedding_models.tongyi_embedding_model import (
     TongyiEmbeddingModelSetup,
 )
 
+pytestmark = pytest.mark.integration
+
 test_model = os.environ.get("TONGYI_EMBEDDING_MODEL", "text-embedding-v4")
 api_key_available = "DASHSCOPE_API_KEY" in os.environ
 

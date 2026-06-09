@@ -34,6 +34,8 @@ from flink_agents.integrations.chat_models.ollama_chat_model import (
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
+pytestmark = pytest.mark.integration
+
 test_model = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
 current_dir = Path(__file__).parent
 

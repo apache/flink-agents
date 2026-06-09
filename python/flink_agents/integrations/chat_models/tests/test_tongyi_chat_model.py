@@ -32,6 +32,8 @@ from flink_agents.integrations.chat_models.tongyi_chat_model import (
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
+pytestmark = pytest.mark.integration
+
 test_model = os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus")
 api_key_available = "DASHSCOPE_API_KEY" in os.environ
 

@@ -202,3 +202,9 @@ strict = true
 
 [tool.ruff.format]
 docstring-code-format = true
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that require live external services (Ollama, DashScope, OpenAI, Azure, Anthropic, Chroma, mem0). Deselect with -m 'not integration'.",
+]
+strict_markers = true
