@@ -200,28 +200,46 @@ export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["pu
 **Note:** You can add the `export PYTHONPATH=...` line to your shell profile (`~/.bash_profile`, `~/.bashrc`, `~/.zprofile`, or `~/.zshrc`) to set it permanently. This way, it will be automatically configured in all future terminal sessions.
 {{< /hint >}}
 
-### Install Flink Agents Java Library
+### Install Flink Agents Java Library (Java jobs only)
 
-Copy the Flink Agents distribution JAR to your Flink installation's `lib` directory:
+{{< hint info >}}
+**Skip this section if you only use the Python API.** When you call
+`AgentsExecutionEnvironment.get_execution_environment(env=...)`, the framework
+automatically registers the required JARs via `pipeline.jars` so Flink loads
+them into the user-code classloader. No manual JAR copy into
+`$FLINK_HOME/lib/` is needed.
+{{< /hint >}}
+
+This step is for Java jobs (or other deployments that don't go through the
+Python entry point). Copy the Flink Agents distribution JAR to your Flink
+installation's `lib` directory:
 
 {{< tabs "Install Flink Agents Java Library" >}}
 
 {{< tab "From Official Release" >}}
-The Flink Agents JAR is bundled inside the Python package. Use the PYTHONPATH you configured above to locate and copy it:
+Download the published JAR from Maven Central into Flink's `lib` directory.
+Set `FLINK_AGENTS_VERSION` to the release you want (e.g. `0.2.1`):
 
 ```shell
-# Copy the JAR from the Python package to Flink's lib directory
-cp $PYTHONPATH/flink_agents/lib/flink-${FLINK_VERSION%.*}/flink-agents-dist-*.jar $FLINK_HOME/lib/
+export FLINK_AGENTS_VERSION=<version>
+export FLINK_MAJOR_MINOR=${FLINK_VERSION%.*}
+
+curl -fL \
+  "https://repo1.maven.org/maven2/org/apache/flink/flink-agents-dist-flink-${FLINK_MAJOR_MINOR}/${FLINK_AGENTS_VERSION}/flink-agents-dist-flink-${FLINK_MAJOR_MINOR}-${FLINK_AGENTS_VERSION}.jar" \
+  -o "$FLINK_HOME/lib/flink-agents-dist-flink-${FLINK_MAJOR_MINOR}-${FLINK_AGENTS_VERSION}.jar"
 ```
 
 {{< /tab >}}
 
 {{< tab "From Source" >}}
-After building from source, the distribution JAR is located in the `dist/target/` directory:
+After building from source, copy the self-contained distribution JAR
+(without the `-thin` suffix) to Flink's `lib` directory:
 
 ```shell
-# Copy the JAR to Flink's lib directory
-cp dist/flink-${FLINK_VERSION%.*}/target/flink-agents-dist-*.jar $FLINK_HOME/lib/
+# Set the Flink Agents version (from the version you built, e.g. 0.3-SNAPSHOT)
+export FLINK_AGENTS_VERSION=<version>
+
+cp dist/flink-${FLINK_VERSION%.*}/target/flink-agents-dist-flink-${FLINK_VERSION%.*}-${FLINK_AGENTS_VERSION}.jar $FLINK_HOME/lib/
 ```
 {{< /tab >}}
 
