@@ -26,22 +26,28 @@ import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /** Tests for {@link EventType}. */
 class EventTypeTest {
 
     @Test
-    void builtInConstantsMatchEventClassConstants() {
-        assertEquals(InputEvent.EVENT_TYPE, EventType.InputEvent);
-        assertEquals(OutputEvent.EVENT_TYPE, EventType.OutputEvent);
-        assertEquals(ChatRequestEvent.EVENT_TYPE, EventType.ChatRequestEvent);
-        assertEquals(ChatResponseEvent.EVENT_TYPE, EventType.ChatResponseEvent);
-        assertEquals(ToolRequestEvent.EVENT_TYPE, EventType.ToolRequestEvent);
-        assertEquals(ToolResponseEvent.EVENT_TYPE, EventType.ToolResponseEvent);
+    void allConstantsEnumeratesEveryBuiltInConstant() {
+        Map<String, String> constants = EventType.allConstants();
+        assertEquals(8, constants.size());
+        assertEquals(InputEvent.EVENT_TYPE, constants.get("InputEvent"));
+        assertEquals(OutputEvent.EVENT_TYPE, constants.get("OutputEvent"));
+        assertEquals(ChatRequestEvent.EVENT_TYPE, constants.get("ChatRequestEvent"));
+        assertEquals(ChatResponseEvent.EVENT_TYPE, constants.get("ChatResponseEvent"));
+        assertEquals(ToolRequestEvent.EVENT_TYPE, constants.get("ToolRequestEvent"));
+        assertEquals(ToolResponseEvent.EVENT_TYPE, constants.get("ToolResponseEvent"));
         assertEquals(
-                ContextRetrievalRequestEvent.EVENT_TYPE, EventType.ContextRetrievalRequestEvent);
+                ContextRetrievalRequestEvent.EVENT_TYPE,
+                constants.get("ContextRetrievalRequestEvent"));
         assertEquals(
-                ContextRetrievalResponseEvent.EVENT_TYPE, EventType.ContextRetrievalResponseEvent);
+                ContextRetrievalResponseEvent.EVENT_TYPE,
+                constants.get("ContextRetrievalResponseEvent"));
     }
 }
