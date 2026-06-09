@@ -35,6 +35,8 @@ Declare the following resources in your agent plan:
 - An [EmbeddingModel]({{< ref "docs/development/embedding_models" >}}) for vector generation
 - A [VectorStore]({{< ref "docs/development/vector_stores" >}}) for persistent storage
 
+> **Java prerequisite:** Mem0 invokes the chat and embedding models on its own thread executor, which relies on the async-friendly pemja fix. When Mem0 Long-Term Memory is configured together with Java actions, the runtime requires a Flink version of `1.20.4`, `2.0.1`, `2.1.2`, `2.2.0` or higher; otherwise it throws at startup. Either upgrade Flink or use the Python API.
+
 ## Configuration
 
 Mem0 Long-Term Memory is enabled by setting three configuration options:
@@ -444,9 +446,11 @@ results = memorySet.search(
 
 ## Usage in Agent
 
-### Complete Example
+### Usage Snippet
 
-{{< tabs "Complete Example" >}}
+The snippets below show how to read from and write to Long-Term Memory inside an action.
+
+{{< tabs "Usage Snippet" >}}
 
 {{< tab "Python" >}}
 
@@ -501,7 +505,7 @@ agents_config.set(LongTermMemoryOptions.Mem0.VECTOR_STORE, "my_vector_store")
 public static void processEvent(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     BaseLongTermMemory ltm = ctx.getLongTermMemory();
-    String userQuery = inputEvent.getInput();
+    String userQuery = String.valueOf(inputEvent.getInput());
 
     // Get memory set
     MemorySet memorySet = ltm.getMemorySet("assistant_memories");
@@ -536,4 +540,6 @@ The isolation hierarchy works as follows:
 - **Partition-level** (keyed partition key): Separates memories between different keys within the same job
 - **Set-level** (memory set name): Separates memories between different logical categories within the same partition
 
-This means you can safely use the same memory set name across different partitions — each partition will only access its own memories.
+This means you can reuse the same memory set name across different partitions, and each partition will normally access only its own memories.
+
+> **Note:** Partition-level isolation is currently derived from the hash of the partition key (`String.valueOf(key.hashCode())`) rather than the full original key. Distinct keys whose hashes collide may therefore share the same memory context. Avoid relying on isolation as a strict security boundary; if collision-free isolation is required, encode a unique identifier into the memory set name.
