@@ -259,6 +259,10 @@ agentsEnv.execute("Skills Agent Example Job");
 
 {{< /tabs >}}
 
+{{< hint info >}}
+See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) for details on integrating agents with the Flink DataStream and Table API.
+{{< /hint >}}
+
 ## Run the Example
 
 ### Prerequisites
