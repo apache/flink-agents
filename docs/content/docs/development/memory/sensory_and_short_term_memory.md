@@ -245,7 +245,7 @@ public static void secondAction(Event event, RunnerContext ctx) throws Exception
                                                      .get(myEvent.getValue())
                                                      .getValue();
     // or
-    processedData = (ProcessedData) myEvent.getValue().resolve(ctx);
+    processedData = (ProcessedData) myEvent.getValue().resolve(ctx).getValue();
     ...
 }
 ```
