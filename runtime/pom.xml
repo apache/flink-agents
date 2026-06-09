@@ -193,9 +193,22 @@ under the License.
             <artifactId>jackson-datatype-jsr310</artifactId>
             <version>${jackson.version}</version>
         </dependency>
+        <dependency>
+            <groupId>dev.cel</groupId>
+            <artifactId>cel</artifactId>
+            <version>${cel.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <directory>${project.basedir}/../e2e-test/cel-fixtures</directory>
+            </testResource>
+        </testResources>
         <plugins>
             <!-- Configure jar plugin for Multi-Release JAR -->
             <plugin>

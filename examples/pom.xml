@@ -65,6 +65,13 @@ under the License.
             <version>${project.version}</version>
             <scope>provided</scope>
         </dependency>
+
+        <!-- CEL API -->
+        <dependency>
+            <groupId>dev.cel</groupId>
+            <artifactId>cel</artifactId>
+            <version>${cel.version}</version>
+        </dependency>
     </dependencies>
 
 </project>
