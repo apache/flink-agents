@@ -38,6 +38,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Test for {@link ActionJsonSerializer}. */
@@ -148,27 +149,19 @@ public class ActionJsonSerializerTest {
     }
 
     @Test
-    public void testSerializeEmptyEventTypes() throws Exception {
-        // Create a JavaFunction
-        JavaFunction function =
-                new JavaFunction(
-                        "org.apache.flink.agents.plan.TestAction",
-                        "legal",
-                        new Class[] {Event.class, RunnerContext.class});
-
-        // Create an Action with an empty event types list
-        Action action = new Action("emptyEventsAction", function, Collections.emptyList());
-
-        // Serialize the action to JSON
-        String json = new ObjectMapper().writeValueAsString(action);
-
-        // Verify the JSON contains the expected fields
-        assertTrue(
-                json.contains("\"name\":\"emptyEventsAction\""),
-                "JSON should contain the action name");
-        assertTrue(
-                json.contains("\"trigger_conditions\":[]"),
-                "JSON should contain an empty trigger conditions array");
+    public void testSerializeEmptyEventTypes() {
+        // Empty trigger conditions are now rejected at Action construction time
+        // (the CEL feature requires at least one entry to evaluate against).
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> {
+                    JavaFunction function =
+                            new JavaFunction(
+                                    "org.apache.flink.agents.plan.TestAction",
+                                    "legal",
+                                    new Class[] {Event.class, RunnerContext.class});
+                    new Action("emptyEventsAction", function, Collections.emptyList());
+                });
     }
 
     @Test

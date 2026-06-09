@@ -1,0 +1,137 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: CEL Cross-Language Conformance
+
+on:
+  push:
+    branches: [ main, 'release-*' ]
+    paths:
+      - 'runtime/src/main/java/org/apache/flink/agents/runtime/condition/**'
+      - 'runtime/src/test/java/org/apache/flink/agents/runtime/condition/**'
+      - 'e2e-test/cel-fixtures/**'
+      - 'plan/src/main/java/org/apache/flink/agents/plan/condition/**'
+      - 'python/flink_agents/runtime/condition/**'
+      - 'python/flink_agents/plan/condition/**'
+      - 'python/flink_agents/runtime/tests/test_local_runner_condition.py'
+      - 'python/flink_agents/runtime/tests/test_local_runner_mixed_or_dedup.py'
+      - '.github/workflows/cel-conformance.yml'
+  pull_request:
+    branches: [ main, 'release-*' ]
+    paths:
+      - 'runtime/src/main/java/org/apache/flink/agents/runtime/condition/**'
+      - 'runtime/src/test/java/org/apache/flink/agents/runtime/condition/**'
+      - 'e2e-test/cel-fixtures/**'
+      - 'plan/src/main/java/org/apache/flink/agents/plan/condition/**'
+      - 'python/flink_agents/runtime/condition/**'
+      - 'python/flink_agents/plan/condition/**'
+      - 'python/flink_agents/runtime/tests/test_local_runner_condition.py'
+      - 'python/flink_agents/runtime/tests/test_local_runner_mixed_or_dedup.py'
+      - '.github/workflows/cel-conformance.yml'
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    name: cel-conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fixtures live in e2e-test/cel-fixtures/ (single source of truth).
+      # Java reads them via pom.xml <testResource>; Python via symlink.
+      # No diff step needed — both sides reference the same physical files.
+
+      # Cross-language check: CEL reserved keyword sets must be identical.
+      # Skipped automatically if the Python side hasn't landed yet (PR2 alone).
+      - name: Ensure CEL reserved keywords are identical across languages
+        run: |
+          set -euo pipefail
+          if [ ! -f python/flink_agents/plan/condition/cel_reserved.py ]; then
+            echo "Python cel_reserved.py not present yet; skipping cross-language check."
+            exit 0
+          fi
+          python3 << 'PY'
+          import re, sys
+
+          java_file = 'plan/src/main/java/org/apache/flink/agents/plan/condition/CelReserved.java'
+          macro_file = 'plan/src/main/java/org/apache/flink/agents/plan/condition/CelMacroPolicy.java'
+          py_file = 'python/flink_agents/plan/condition/cel_reserved.py'
+
+          java_src = open(java_file).read()
+          java_names = set(re.findall(r'set\.add\("([^"]+)"\)', java_src))
+          if 'CelMacroPolicy.DISALLOWED_MACROS' in java_src:
+              macro_src = open(macro_file).read()
+              m = re.search(r'DISALLOWED_MACROS\s*=\s*Set\.of\(([^)]+)\)', macro_src)
+              if m:
+                  java_names |= set(re.findall(r'"([^"]+)"', m.group(1)))
+
+          py_src = open(py_file).read()
+          fs = re.search(r'frozenset\s*\(\s*\{([^}]+)\}', py_src)
+          py_names = set(re.findall(r'"([^"]+)"', fs.group(1))) if fs else set()
+
+          if java_names != py_names:
+              print('::error::CEL RESERVED_IDENTIFIERS differ between Java and Python.', file=sys.stderr)
+              print(f'Java only:   {sorted(java_names - py_names)}', file=sys.stderr)
+              print(f'Python only: {sorted(py_names - java_names)}', file=sys.stderr)
+              sys.exit(1)
+          print(f'OK: {len(java_names)} reserved identifiers aligned across languages.')
+          PY
+
+      # Java evaluator tests.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Maven repo
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2-
+
+      - name: Run Java CEL tests
+        run: |
+          mvn -pl runtime -am -DskipTests=false \
+              -Dtest='CelConditionEvaluatorTest,CelExpressionFacadeTest,AstRewriterTest,ActionRouterTest,CelResourceLimitsTest' \
+              -Dsurefire.failIfNoSpecifiedTests=false \
+              test
+
+      # Python evaluator tests.
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e 'python' pytest
+
+      - name: Run Python CEL tests
+        run: |
+          set -euo pipefail
+          if [ ! -d python/flink_agents/runtime/condition/tests ]; then
+            echo "Python CEL test suite not present yet; skipping."
+            exit 0
+          fi
+          pytest -q \
+            python/flink_agents/plan/condition/tests \
+            python/flink_agents/runtime/condition/tests \
+            python/flink_agents/runtime/tests/test_local_runner_condition.py \
+            python/flink_agents/runtime/tests/test_local_runner_mixed_or_dedup.py
