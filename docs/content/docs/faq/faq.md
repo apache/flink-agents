@@ -97,9 +97,10 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 
 | Provider | Python | Java |
 |---|---|---|
-| [Anthropic]({{< ref "docs/development/chat_models#anthropic" >}}) | ✅ | ❌ |
+| [Amazon Bedrock]({{< ref "docs/development/chat_models#amazon-bedrock" >}}) | ❌ | ✅ |
+| [Anthropic]({{< ref "docs/development/chat_models#anthropic" >}}) | ✅ | ✅ |
 | [Azure AI]({{< ref "docs/development/chat_models#azure-ai" >}}) | ❌ | ✅ |
-| [Azure OpenAI]({{< ref "docs/development/chat_models#azure-openai" >}}) | ✅ | ❌ |
+| [Azure OpenAI]({{< ref "docs/development/chat_models#azure-openai" >}}) | ✅ | ✅ |
 | [Ollama]({{< ref "docs/development/chat_models#ollama" >}}) | ✅ | ✅ |
 | [OpenAI]({{< ref "docs/development/chat_models#openai" >}}) | ✅ | ✅ |
 | [Tongyi (DashScope)]({{< ref "docs/development/chat_models#tongyi-dashscope" >}}) | ✅ | ❌ |
@@ -108,13 +109,17 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 
 | Provider | Python | Java |
 |---|---|---|
+| [Amazon Bedrock]({{< ref "docs/development/embedding_models#amazon-bedrock" >}}) | ❌ | ✅ |
 | [Ollama]({{< ref "docs/development/embedding_models#ollama" >}}) | ✅ | ✅ |
 | [OpenAI]({{< ref "docs/development/embedding_models#openai" >}}) | ✅ | ❌ |
+| [Tongyi (DashScope)]({{< ref "docs/development/embedding_models#tongyi-dashscope" >}}) | ✅ | ❌ |
 
 **Vector Stores**
 
 | Provider | Python | Java |
 |---|---|---|
+| [Amazon OpenSearch]({{< ref "docs/development/vector_stores#amazon-opensearch" >}}) | ❌ | ✅ |
+| [Amazon S3 Vectors]({{< ref "docs/development/vector_stores#amazon-s3-vectors" >}}) | ❌ | ✅ |
 | [Chroma]({{< ref "docs/development/vector_stores#chroma" >}}) | ✅ | ❌ |
 | [Elasticsearch]({{< ref "docs/development/vector_stores#elasticsearch" >}}) | ❌ | ✅ |
 | [Mem0]({{< ref "docs/development/vector_stores#mem0" >}}) | ✅ | ❌ |
