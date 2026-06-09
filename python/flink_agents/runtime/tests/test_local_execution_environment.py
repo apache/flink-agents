@@ -16,15 +16,29 @@
 # limitations under the License.
 #################################################################################
 import time
-from typing import ClassVar
+import uuid
+from typing import Any, ClassVar, Dict, List, Sequence
 
 import pytest
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.decorators import action
+from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.chat_model import (
+    BaseChatModelConnection,
+    BaseChatModelSetup,
+)
+from flink_agents.api.decorators import (
+    action,
+    chat_model_connection,
+    chat_model_setup,
+    tool,
+)
+from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.tools.tool import ToolType
 
 
 class Agent1(Agent):
@@ -218,3 +232,148 @@ def test_mixed_event_workflow() -> None:
     env.execute()
 
     assert output_list == [{"bob": "done:42"}]
+
+
+# ── Tool-request capture hook (Track B) ──────────────────────────────────
+
+
+class _ToolConnection(BaseChatModelConnection):
+    """Mock connection emitting a single ``add`` tool call."""
+
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        """Emit an ``add`` tool call, then echo the tool result as content."""
+        last = messages[-1]
+        if last.role == MessageRole.TOOL:
+            return ChatMessage(role=MessageRole.ASSISTANT, content=str(last.content))
+        tool_call = {
+            "id": str(uuid.uuid4()),
+            "type": ToolType.FUNCTION,
+            "function": {"name": "add", "arguments": {"a": 1, "b": 2}},
+        }
+        return ChatMessage(
+            role=MessageRole.ASSISTANT, content="", tool_calls=[tool_call]
+        )
+
+
+class _ToolChatModel(BaseChatModelSetup):
+    """Mock setup binding the ``add`` tool to the connection."""
+
+    def open(self) -> None:
+        """Do nothing."""
+
+    @property
+    def model_kwargs(self) -> Dict[str, Any]:
+        """Return model kwargs."""
+        return {}
+
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        """Bind tools and delegate to the connection."""
+        server = self.resource_context.get_resource(
+            self.connection, ResourceType.CHAT_MODEL_CONNECTION
+        )
+        tools = [
+            self.resource_context.get_resource(name, ResourceType.TOOL)
+            for name in (self.tools or [])
+        ]
+        return server.chat(messages, tools=tools, **kwargs)
+
+
+class ToolRequestAgent(Agent):
+    """Agent whose chat model emits a ToolRequestEvent dispatched to ``add``.
+
+    The InputEvent action sends a ChatRequestEvent; the mock chat model returns
+    an ``add`` tool call, which the built-in chat/tool actions turn into a real
+    ToolRequestEvent flowing through the runner. The ToolRequestEvent is captured
+    by the runner AND still dispatched to ``tool_call_action`` — the final output
+    (the tool result) proves capture did not swallow the event.
+    """
+
+    @chat_model_connection
+    @staticmethod
+    def conn() -> ResourceDescriptor:
+        """Mock chat model connection."""
+        return ResourceDescriptor(
+            clazz=f"{_ToolConnection.__module__}.{_ToolConnection.__name__}"
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def model() -> ResourceDescriptor:
+        """Mock chat model bound to the ``add`` tool."""
+        return ResourceDescriptor(
+            clazz=f"{_ToolChatModel.__module__}.{_ToolChatModel.__name__}",
+            connection="conn",
+            model="mock-model",
+            tools=["add"],
+        )
+
+    @tool
+    @staticmethod
+    def add(a: int, b: int) -> int:
+        """Return the sum of a and b.
+
+        Parameters
+        ----------
+        a : int
+            The first operand.
+        b : int
+            The second operand.
+
+        Returns:
+        -------
+        int:
+            The sum of a and b.
+        """
+        return a + b
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        """Send a ChatRequestEvent to drive the tool-calling flow."""
+        input = InputEvent.from_event(event).input
+        ctx.send_event(
+            ChatRequestEvent(
+                model="model",
+                messages=[ChatMessage(role=MessageRole.USER, content=input)],
+            )
+        )
+
+    @action(ChatResponseEvent.EVENT_TYPE)
+    @staticmethod
+    def process_response(event: Event, ctx: RunnerContext) -> None:
+        """Emit the final assistant content as output."""
+        response = ChatResponseEvent.from_event(event).response
+        ctx.send_event(OutputEvent(output=response.content))
+
+
+def test_local_runner_captures_tool_request_events() -> None:
+    """A ToolRequestEvent is captured AND still dispatched to its action."""
+    env = AgentsExecutionEnvironment.get_execution_environment()
+
+    input_list = []
+    agent = ToolRequestAgent()
+
+    output_list = env.from_list(input_list).apply(agent).to_list()
+
+    input_list.append({"key": "0001", "value": "add 1 and 2"})
+    env.execute()
+
+    captured = env.get_tool_request_events()
+    assert len(captured) == 1
+    assert captured[0].tool_calls[0]["function"] == {
+        "name": "add",
+        "arguments": {"a": 1, "b": 2},
+    }
+    # Dispatch was not swallowed: tool_call_action ran, producing the tool result
+    # that the model echoed back as the final output.
+    assert output_list == [{"0001": "3"}]

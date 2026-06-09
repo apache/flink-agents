@@ -15,12 +15,127 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import subprocess
 from pathlib import Path
 
 from ollama import Client
 
+from flink_agents.api.events.tool_event import ToolRequestEvent
+
 current_dir = Path(__file__).parent
+
+
+def _normalize_arguments(arguments: object) -> dict:
+    """Return tool-call arguments as a dict, parsing a JSON string if needed.
+
+    Args:
+        arguments: Tool-call arguments, either a mapping (Ollama path), a
+            JSON-encoded string (some providers ``json.dumps`` the arguments),
+            or ``None`` for a no-argument tool call.
+
+    Returns:
+        The arguments as a dict; an empty dict when ``arguments`` is ``None``.
+    """
+    if arguments is None:
+        return {}
+    if isinstance(arguments, str):
+        return json.loads(arguments)
+    return dict(arguments)
+
+
+def collect_tool_invocations(log_dir: str | Path) -> list[dict]:
+    """Read ``events-*.log`` under ``log_dir`` and return tool invocations in order.
+
+    Globs the per-subtask event-log files the ``FileEventLogger`` writes, parses
+    each JSONL record, and extracts every ``_tool_request_event`` tool call. The
+    tool-call dict is nested under ``function`` in the wire format.
+
+    Args:
+        log_dir: Directory containing the ``events-*.log`` files (the configured
+            ``baseLogDir``).
+
+    Returns:
+        Ordered list of ``{"name": str, "arguments": dict | str}``. Empty when the
+        model invoked no tool (a legitimate, assertable outcome).
+    """
+    invocations = []
+    for log_file in sorted(Path(log_dir).glob("events-*.log")):
+        with log_file.open() as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                if record.get("eventType") != "_tool_request_event":
+                    continue
+                tool_calls = record["event"]["attributes"].get("tool_calls", [])
+                for tool_call in tool_calls:
+                    function = tool_call["function"]
+                    invocations.append(
+                        {
+                            "name": function["name"],
+                            "arguments": function["arguments"],
+                        }
+                    )
+    return invocations
+
+
+def tool_invocations_from_events(events: list[ToolRequestEvent]) -> list[dict]:
+    """Normalize live ``ToolRequestEvent`` objects to the same invocation shape.
+
+    Adapts the in-memory capture (the ``LocalRunner`` hook) to the same
+    ``{name, arguments}`` shape :func:`collect_tool_invocations` returns from the
+    event log, so both sources feed :func:`assert_tool_invoked` identically. Each
+    event's ``tool_calls`` is a list of nested ``{id, type, function:{name,
+    arguments}}`` dicts; order is preserved.
+
+    Args:
+        events: ``ToolRequestEvent`` objects captured during a local run.
+
+    Returns:
+        Ordered list of ``{"name": str, "arguments": dict | str}``, one per tool
+        call across all events.
+    """
+    invocations = []
+    for event in events:
+        for tool_call in event.tool_calls:
+            function = tool_call["function"]
+            invocations.append(
+                {
+                    "name": function["name"],
+                    "arguments": function["arguments"],
+                }
+            )
+    return invocations
+
+
+def assert_tool_invoked(invocations: list[dict], name: str, arguments: dict) -> None:
+    """Assert some invocation called tool ``name`` with arguments equal to ``arguments``.
+
+    Argument values are compared after normalizing both sides to a dict (a
+    JSON-string ``arguments`` is parsed first), so the comparison is
+    order-independent and tolerant of providers that encode arguments as a string.
+
+    Args:
+        invocations: Tool invocations as returned by :func:`collect_tool_invocations`.
+        name: Expected tool name.
+        arguments: Expected tool arguments.
+
+    Raises:
+        AssertionError: If no invocation matches both ``name`` and ``arguments``;
+            the message dumps the actual invocations.
+    """
+    expected_args = _normalize_arguments(arguments)
+    for invocation in invocations:
+        if invocation["name"] != name:
+            continue
+        if _normalize_arguments(invocation["arguments"]) == expected_args:
+            return
+    message = (
+        f"No invocation of tool {name!r} with arguments {expected_args!r}; "
+        f"actual invocations: {invocations!r}"
+    )
+    raise AssertionError(message)
 
 
 def pull_model(ollama_model: str) -> Client:

@@ -46,7 +46,11 @@ from pyflink.datastream.connectors.file_system import (
 )
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from flink_agents.e2e_tests.test_utils import pull_model
+from flink_agents.e2e_tests.test_utils import (
+    assert_tool_invoked,
+    collect_tool_invocations,
+    pull_model,
+)
 
 current_dir = Path(__file__).parent
 _RESOURCES = current_dir.parent / "resources"
@@ -116,6 +120,9 @@ def test_yaml_cross_language_agent(
     deserialize_datastream = input_datastream.map(lambda x: str(x))
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    log_dir = tmp_path / "event_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    agents_env.get_config().set_str("baseLogDir", str(log_dir))
     agents_env.load_yaml(_RESOURCES / "yaml_cross_language_agent.yaml")
 
     output_datastream = (
@@ -152,12 +159,16 @@ def test_yaml_cross_language_agent(
             with file.open() as f:
                 actual_result.extend(f.readlines())
 
-    # Math path went through the Java ``calculateBMI`` tool:
-    # 70 / (1.75 * 1.75) ≈ 22.86, so the final answer should mention 22.
-    # Creative path doesn't use any tool.
+    # Math path went through the Java ``calculateBMI`` tool, called with the
+    # weight/height parsed from the input ("1.75 meters tall and weighs 70 kg").
+    assert_tool_invoked(
+        collect_tool_invocations(log_dir),
+        "calculateBMI",
+        {"weightKg": 70, "heightM": 1.75},
+    )
+    # Creative path doesn't use any tool; its answer mentions a cat.
     # NOTE: We join all results and search without relying on order, because
     # StreamingFileSink may produce multiple part files and iterdir() does not
     # guarantee a deterministic traversal order across platforms.
     joined = "\n".join(actual_result).lower()
-    assert "22" in joined, f"math answer missing '22': {actual_result!r}"
     assert "cat" in joined, f"creative answer missing 'cat': {actual_result!r}"
