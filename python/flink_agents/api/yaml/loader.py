@@ -29,7 +29,12 @@ import yaml
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.function import Function, JavaFunction, PythonFunction
+from flink_agents.api.function import (
+    ACTION_PARAMETER_TYPES,
+    Function,
+    JavaFunction,
+    PythonFunction,
+)
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.skills import Skills, SkillSourceSpec
@@ -49,13 +54,6 @@ from flink_agents.api.yaml.specs import (
     ToolSpec,
     YamlAgentsDocument,
 )
-
-# Default Java parameter types for an action. Action methods in
-# flink-agents always have signature (Event, RunnerContext).
-_JAVA_ACTION_PARAMETER_TYPES: list[str] = [
-    "org.apache.flink.agents.api.Event",
-    "org.apache.flink.agents.api.context.RunnerContext",
-]
 
 _DESCRIPTOR_TYPES: Dict[str, ResourceType] = {
     "chat_model_connections": ResourceType.CHAT_MODEL_CONNECTION,
@@ -159,7 +157,7 @@ def _add_descriptors_to_agent(
 
 
 def _resolve_action_function(action: ActionSpec) -> Function:
-    parameter_types = _JAVA_ACTION_PARAMETER_TYPES if action.type == "java" else None
+    parameter_types = ACTION_PARAMETER_TYPES if action.type == "java" else None
     return resolve_function(
         name=action.name,
         function=action.function,

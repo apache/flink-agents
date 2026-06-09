@@ -149,14 +149,7 @@ _JAVA_HANDLER_QUALNAME = (
 class AgentWithCrossLanguageDecoratedAction(Agent):
     @action(
         InputEvent.EVENT_TYPE,
-        target=JavaFunction(
-            qualname=_JAVA_HANDLER_QUALNAME,
-            method_name="handleInput",
-            parameter_types=[
-                "org.apache.flink.agents.api.Event",
-                "org.apache.flink.agents.api.context.RunnerContext",
-            ],
-        ),
+        target=JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput"),
     )
     @staticmethod
     def handle(event: Event, ctx: RunnerContext) -> None:

@@ -30,14 +30,16 @@ def _dummy_action(event: Event, ctx: RunnerContext) -> None:
 
 
 def _make_java_function() -> JavaFunction:
-    return JavaFunction(
-        qualname="com.example.Handlers",
-        method_name="handle",
-        parameter_types=[
-            "org.apache.flink.agents.api.Event",
-            "org.apache.flink.agents.api.context.RunnerContext",
-        ],
-    )
+    return JavaFunction.for_action("com.example.Handlers", "handle")
+
+
+def test_java_function_for_action_fills_fixed_action_signature() -> None:
+    """``for_action`` omits parameter_types boilerplate; YAML already does this."""
+    jf = JavaFunction.for_action("com.example.Handlers", "handle")
+    assert jf.parameter_types == [
+        "org.apache.flink.agents.api.Event",
+        "org.apache.flink.agents.api.context.RunnerContext",
+    ]
 
 
 # ── Descriptor pass-through ─────────────────────────────────────────────

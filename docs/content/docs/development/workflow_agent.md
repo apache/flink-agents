@@ -543,14 +543,9 @@ from flink_agents.api.function import JavaFunction
 class MyAgent(Agent):
     @action(
         InputEvent.EVENT_TYPE,
-        target=JavaFunction(
-            qualname="com.example.MyHandlers",
-            method_name="handleInput",
-            parameter_types=[
-                "org.apache.flink.agents.api.Event",
-                "org.apache.flink.agents.api.context.RunnerContext",
-            ],
-        ),
+        # Action signatures are fixed (Event, RunnerContext), so for_action
+        # fills the Java parameter types for you — only the class and method.
+        target=JavaFunction.for_action("com.example.MyHandlers", "handleInput"),
     )
     @staticmethod
     def handle_input(event: Event, ctx: RunnerContext) -> None:

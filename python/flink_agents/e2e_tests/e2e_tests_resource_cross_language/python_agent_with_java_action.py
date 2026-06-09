@@ -25,10 +25,6 @@ from flink_agents.api.function import JavaFunction
 
 JAVA_HANDLER_QUALNAME = "org.apache.flink.agents.resource.test.JavaActionHandler"
 JAVA_HANDLER_METHOD = "multiplyByTwo"
-JAVA_HANDLER_PARAMETER_TYPES = [
-    "org.apache.flink.agents.api.Event",
-    "org.apache.flink.agents.api.context.RunnerContext",
-]
 
 
 class PythonAgentWithJavaActionAgent(Agent):
@@ -40,11 +36,7 @@ class PythonAgentWithJavaActionAgent(Agent):
         self.add_action(
             name="multiply_by_two",
             events=[InputEvent.EVENT_TYPE],
-            func=JavaFunction(
-                qualname=JAVA_HANDLER_QUALNAME,
-                method_name=JAVA_HANDLER_METHOD,
-                parameter_types=JAVA_HANDLER_PARAMETER_TYPES,
-            ),
+            func=JavaFunction.for_action(JAVA_HANDLER_QUALNAME, JAVA_HANDLER_METHOD),
         )
 
 
