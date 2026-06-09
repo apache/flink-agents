@@ -191,6 +191,12 @@ public class ParallelChatAgent extends Agent {
 
 {{< /tabs >}}
 
+{{< hint warning >}}
+**Constraints when using multi-action fan-out:**
+- **Fan-out action must exit immediately after sending events.** The action that emits multiple `ChatRequestEvent` events (e.g. `request_aspect_judgments`) should return right after calling `ctx.send_event(...)`. Do not `await`, block, or perform further business logic in the same action — the framework needs control back to schedule the parallel chat actions.
+- **Response handlers on the same key execute sequentially.** Multiple `ChatResponseEvent` triggers for the same key are processed one at a time, not concurrently. This means the read-modify-write pattern on sensory memory (e.g. `load_row → update → save_row`) is safe and will not suffer from concurrent overwrites.
+  {{< /hint >}}
+
 ### Integrate the Agent with Flink
 
 Create the input data, use the `ParallelChatAgent` to analyze the review with parallel LLM calls, and print the results.
