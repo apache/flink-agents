@@ -96,9 +96,11 @@ import pemja.core.PythonInterpreter;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
@@ -935,14 +937,19 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
             KeyGroupRange currentSubtaskKeyGroupRange =
                     getCurrentSubtaskKeyGroupRange(maxParallelism);
+            Set<Object> ownedKeys = new LinkedHashSet<>();
             for (Object key : keys) {
                 if (!isKeyOwnedByCurrentSubtask(key, maxParallelism, currentSubtaskKeyGroupRange)) {
+                    continue;
+                }
+                if (!ownedKeys.add(key)) {
                     continue;
                 }
                 keySegmentQueue.addKeyToLastSegment(key);
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key), "process action task");
             }
+            currentProcessingKeysOpState.update(new ArrayList<>(ownedKeys));
         }
 
         getKeyedStateBackend()
