@@ -1,0 +1,15 @@
+agents:
+  - name: yaml_cross_language_java_action_agent
+    description: |
+      YAML-driven cross-language e2e agent whose action body is a Java
+      static method. Exercises the Python→Java action bridge: the agent
+      declares a single ``type: java`` action that dispatches into
+      ``JavaActionHandler.multiplyByTwo``. No ``parameter_types`` is
+      written — action signatures are fixed (Event, RunnerContext), so the
+      loader fills them in.
+
+    actions:
+      - name: multiply_by_two
+        type: java
+        function: org.apache.flink.agents.resource.test.JavaActionHandler:multiplyByTwo
+        listen_to: [input]

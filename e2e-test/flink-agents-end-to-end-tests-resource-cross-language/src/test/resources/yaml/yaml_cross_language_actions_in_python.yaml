@@ -1,0 +1,47 @@
+agents:
+  - name: yaml_actions_in_python_agent
+    description: |
+      Java-host cross-language YAML e2e agent whose orchestration actions are
+      Python. Complements yaml_cross_language_agent (Java actions + Python tool):
+      here ``process_input`` / ``process_chat_response`` are ``type: python`` and
+      dispatch to ``yaml_cross_language_actions``, while the Java-native built-in
+      chat loop bridges ChatRequest→Response. The math path still exercises a
+      cross-language Python tool (calculate_bmi).
+
+    chat_model_connections:
+      - name: ollama_connection_java
+        clazz: ollama
+        type: java
+        endpoint: http://localhost:11434
+        requestTimeout: 240
+      - name: ollama_connection_python
+        clazz: ollama
+        request_timeout: 240
+
+    chat_model_setups:
+      - name: math_chat_model
+        clazz: ollama
+        type: java
+        connection: ollama_connection_java
+        model: qwen3:1.7b
+        tools: [calculate_bmi]
+        extract_reasoning: true
+      - name: creative_chat_model
+        clazz: ollama
+        connection: ollama_connection_python
+        model: qwen3:1.7b
+        extract_reasoning: true
+
+    tools:
+      - name: calculate_bmi
+        function: flink_agents.e2e_tests.e2e_tests_resource_cross_language.yaml_cross_language_actions:calculate_bmi
+
+    actions:
+      - name: process_input
+        type: python
+        function: flink_agents.e2e_tests.e2e_tests_resource_cross_language.yaml_cross_language_actions:process_input
+        listen_to: [input]
+      - name: process_chat_response
+        type: python
+        function: flink_agents.e2e_tests.e2e_tests_resource_cross_language.yaml_cross_language_actions:process_chat_response
+        listen_to: [chat_response]

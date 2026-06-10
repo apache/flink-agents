@@ -1,0 +1,49 @@
+agents:
+  - name: yaml_actions_in_java_agent
+    description: |
+      Python-host cross-language e2e agent whose orchestration actions are
+      Java. Complements yaml_cross_language_agent (Python actions + Java tool):
+      here the user actions ``process_input`` / ``process_chat_response`` are
+      ``type: java`` and dispatch to ``YamlCrossLanguageActions``, while the
+      Python-native built-in ``chat_model_action`` bridges ChatRequest→Response.
+      The math path also exercises a cross-language Java tool (calculateBMI).
+
+    chat_model_connections:
+      - name: ollama_connection
+        clazz: ollama
+        request_timeout: 240.0
+      - name: ollama_connection_java
+        clazz: ollama
+        type: java
+        endpoint: http://localhost:11434
+        requestTimeout: 240
+
+    chat_model_setups:
+      - name: math_chat_model
+        clazz: ollama
+        connection: ollama_connection
+        model: qwen3:1.7b
+        tools: [calculateBMI]
+        extract_reasoning: true
+      - name: creative_chat_model
+        clazz: ollama
+        type: java
+        connection: ollama_connection_java
+        model: qwen3:1.7b
+        extract_reasoning: true
+
+    tools:
+      - name: calculateBMI
+        type: java
+        function: org.apache.flink.agents.resource.test.ChatModelCrossLanguageAgent:calculateBMI
+        parameter_types: [java.lang.Double, java.lang.Double]
+
+    actions:
+      - name: process_input
+        type: java
+        function: org.apache.flink.agents.resource.test.YamlCrossLanguageActions:processInput
+        listen_to: [input]
+      - name: process_chat_response
+        type: java
+        function: org.apache.flink.agents.resource.test.YamlCrossLanguageActions:processChatResponse
+        listen_to: [chat_response]
