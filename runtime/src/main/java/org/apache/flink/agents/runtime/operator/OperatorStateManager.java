@@ -44,6 +44,7 @@ import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import javax.annotation.Nullable;
 
 import java.time.Duration;
+import java.util.List;
 
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 
@@ -263,6 +264,10 @@ class OperatorStateManager {
 
     void addProcessingKey(Object key) throws Exception {
         currentProcessingKeysOpState.add(key);
+    }
+
+    void replaceProcessingKeys(List<Object> keys) throws Exception {
+        currentProcessingKeysOpState.update(keys);
     }
 
     int removeProcessingKey(Object key) throws Exception {

@@ -55,8 +55,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -557,15 +560,20 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             KeyGroupRange currentSubtaskKeyGroupRange =
                     stateManager.getCurrentSubtaskKeyGroupRange(
                             maxParallelism, getRuntimeContext());
+            Set<Object> ownedKeys = new LinkedHashSet<>();
             for (Object key : keys) {
                 if (!stateManager.isKeyOwnedByCurrentSubtask(
                         key, maxParallelism, currentSubtaskKeyGroupRange)) {
+                    continue;
+                }
+                if (!ownedKeys.add(key)) {
                     continue;
                 }
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key), "process action task");
             }
+            stateManager.replaceProcessingKeys(new ArrayList<>(ownedKeys));
         }
 
         stateManager.forEachPendingInputEventKey(
