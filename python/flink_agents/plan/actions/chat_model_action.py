@@ -15,7 +15,6 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import copy
 import json
 import logging
 import re
@@ -59,6 +58,16 @@ _logger = logging.getLogger(__name__)
 # ============================================================================
 # Helper Functions for Tool Call Context Management
 # ============================================================================
+def _serialize_messages(messages: List[ChatMessage]) -> List[Dict]:
+    """Materialize chat messages into JSON-safe dicts for checkpoint-stable memory."""
+    return [message.model_dump(mode="json") for message in messages]
+
+
+def _deserialize_messages(messages: List[Dict]) -> List[ChatMessage]:
+    """Reconstruct chat messages from their stored JSON-safe dict form."""
+    return [ChatMessage.model_validate(message) for message in messages]
+
+
 def _update_tool_call_context(
     sensory_memory: MemoryObject,
     initial_request_id: UUID,
@@ -81,12 +90,12 @@ def _update_tool_call_context(
     key = str(initial_request_id)
     tool_call_context = sensory_memory.get(_TOOL_CALL_CONTEXT) or {}
     if key not in tool_call_context and initial_messages is not None:
-        tool_call_context[key] = copy.deepcopy(initial_messages)
+        tool_call_context[key] = _serialize_messages(initial_messages)
 
-    tool_call_context[key].extend(added_messages)
+    tool_call_context[key].extend(_serialize_messages(added_messages))
 
     sensory_memory.set(_TOOL_CALL_CONTEXT, tool_call_context)
-    return tool_call_context[key]
+    return _deserialize_messages(tool_call_context[key])
 
 
 def _save_tool_request_event_context(
@@ -100,10 +109,12 @@ def _save_tool_request_event_context(
     """Save the context for a specific tool request event."""
     context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
     context[str(tool_request_event_id)] = {
-        "initial_request_id": initial_request_id,
+        "initial_request_id": str(initial_request_id),
         "model": model,
         _PROMPT_ARGS: prompt_args if prompt_args is not None else {},
-        "output_schema": output_schema,
+        "output_schema": output_schema.model_dump()
+        if output_schema is not None
+        else None,
     }
     sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, context)
 
@@ -114,6 +125,16 @@ def _get_tool_request_event_context(
     """Get and remove the context for a specific tool request event."""
     context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
     removed_context = context.pop(str(request_id), {})
+    if removed_context:
+        removed_context["initial_request_id"] = UUID(
+            removed_context["initial_request_id"]
+        )
+        output_schema = removed_context["output_schema"]
+        removed_context["output_schema"] = (
+            OutputSchema.model_validate(output_schema)
+            if output_schema is not None
+            else None
+        )
     return removed_context
 
 

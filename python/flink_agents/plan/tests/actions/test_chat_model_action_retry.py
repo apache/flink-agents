@@ -311,7 +311,7 @@ class TestProcessToolResponsePromptArgsForwarding:
             "_TOOL_REQUEST_EVENT_CONTEXT",
             {
                 str(tool_request_event_id): {
-                    "initial_request_id": initial_request_id,
+                    "initial_request_id": str(initial_request_id),
                     "model": "test-model",
                     "prompt_args": saved_prompt_args,
                     "output_schema": None,
@@ -325,7 +325,9 @@ class TestProcessToolResponsePromptArgsForwarding:
             "_TOOL_CALL_CONTEXT",
             {
                 str(initial_request_id): [
-                    ChatMessage(role=MessageRole.USER, content="hi")
+                    ChatMessage(
+                        role=MessageRole.USER, content="hi"
+                    ).model_dump(mode="json")
                 ]
             },
         )
