@@ -25,16 +25,17 @@ method name, and parameter types for Java.
 import importlib
 import inspect
 from abc import ABC
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Tuple
 
 from pydantic import BaseModel, model_serializer
 
 #: Java parameter types of an action method. Action signatures are fixed
-#: ``(Event, RunnerContext)``, so callers never have to spell them out.
-ACTION_PARAMETER_TYPES: List[str] = [
+#: ``(Event, RunnerContext)``, so callers never have to spell them out. A tuple
+#: keeps the shared constant immutable; callers copy it into their own list.
+ACTION_PARAMETER_TYPES: Tuple[str, ...] = (
     "org.apache.flink.agents.api.Event",
     "org.apache.flink.agents.api.context.RunnerContext",
-]
+)
 
 
 class Function(BaseModel, ABC):
