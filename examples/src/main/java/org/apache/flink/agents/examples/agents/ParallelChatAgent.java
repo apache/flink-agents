@@ -30,10 +30,7 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
-import org.apache.flink.api.java.functions.KeySelector;
-import org.apache.flink.types.Row;
 
-import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -78,58 +75,6 @@ public class ParallelChatAgent extends Agent {
                     + "service:<positive/negative/not_mentioned>, "
                     + "price:<positive/negative/not_mentioned>\"} — return only this JSON.";
 
-    /** LLM response for a single aspect judgment. */
-    public static class AspectResponse implements Serializable {
-        private static final long serialVersionUID = 1L;
-        public String aspect;
-        public String result;
-
-        public AspectResponse() {}
-
-        @Override
-        public String toString() {
-            return String.format("AspectResponse{aspect='%s', result='%s'}", aspect, result);
-        }
-    }
-
-    /** LLM response for the aggregation phase. */
-    public static class SummaryResponse implements Serializable {
-        private static final long serialVersionUID = 1L;
-        public String summary;
-
-        public SummaryResponse() {}
-
-        @Override
-        public String toString() {
-            return String.format("SummaryResponse{summary='%s'}", summary);
-        }
-    }
-
-    /** Single input record carrying an id and text. */
-    public static class SentimentRequest implements Serializable {
-        private static final long serialVersionUID = 1L;
-        public final int id;
-        public final String text;
-
-        public SentimentRequest(int id, String text) {
-            this.id = id;
-            this.text = text;
-        }
-
-        @Override
-        public String toString() {
-            return String.format("SentimentRequest{id=%d, text='%s'}", id, text);
-        }
-    }
-
-    /** Key selector that extracts the id field from a {@link SentimentRequest}. */
-    public static class SentimentKeySelector implements KeySelector<SentimentRequest, Integer> {
-        @Override
-        public Integer getKey(SentimentRequest request) {
-            return request.id;
-        }
-    }
-
     @ChatModelSetup
     public static ResourceDescriptor sentimentModel() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
@@ -141,10 +86,10 @@ public class ParallelChatAgent extends Agent {
 
     private static Map<String, Object> initRow(Event event) {
         InputEvent inputEvent = InputEvent.fromEvent(event);
-        SentimentRequest request = (SentimentRequest) inputEvent.getInput();
+        CustomTypesAndResources.SentimentRequest request = (CustomTypesAndResources.SentimentRequest) inputEvent.getInput();
         Map<String, Object> row = new HashMap<>();
-        row.put("id", request.id);
-        row.put("text", request.text);
+        row.put("id", request.getId());
+        row.put("text", request.getText());
         row.put("sentiments", new HashMap<String, String>());
         return row;
     }
@@ -165,7 +110,7 @@ public class ParallelChatAgent extends Agent {
                         new ChatMessage(
                                 MessageRole.USER,
                                 "Judge the \"" + aspect + "\" dimension: " + text));
-        return new ChatRequestEvent("sentimentModel", messages, AspectResponse.class);
+        return new ChatRequestEvent("sentimentModel", messages, CustomTypesAndResources.AspectResponse.class);
     }
 
     @SuppressWarnings("unchecked")
@@ -180,14 +125,14 @@ public class ParallelChatAgent extends Agent {
                 List.of(
                         new ChatMessage(MessageRole.SYSTEM, AGGREGATE_SYSTEM_PROMPT),
                         new ChatMessage(MessageRole.USER, body));
-        return new ChatRequestEvent("sentimentModel", messages, SummaryResponse.class);
+        return new ChatRequestEvent("sentimentModel", messages, CustomTypesAndResources.SummaryResponse.class);
     }
 
-    private static OutputEvent buildOutputEvent(Map<String, Object> row, SummaryResponse parsed) {
-        Row output = Row.withNames();
-        output.setField("id", row.get("id"));
-        output.setField("text", row.get("text"));
-        output.setField("summary", parsed.summary);
+    private static OutputEvent buildOutputEvent(Map<String, Object> row, CustomTypesAndResources.SummaryResponse parsed) {
+        Map<String, Object> output = new HashMap<>();
+        output.put("id", row.get("id"));
+        output.put("text", row.get("text"));
+        output.put("summary", parsed.summary);
         return new OutputEvent(output);
     }
 
@@ -220,27 +165,13 @@ public class ParallelChatAgent extends Agent {
         Object parsed = parseResponse(event);
         Map<String, Object> row = loadRow(ctx);
 
-        if (parsed instanceof SummaryResponse) {
-            SummaryResponse summary = (SummaryResponse) parsed;
-            System.out.println(
-                    "FINAL summary="
-                            + summary.summary
-                            + " (t="
-                            + System.nanoTime() / 1_000_000_000.0
-                            + ")");
+        if (parsed instanceof CustomTypesAndResources.SummaryResponse) {
+            CustomTypesAndResources.SummaryResponse summary = (CustomTypesAndResources.SummaryResponse) parsed;
             ctx.sendEvent(buildOutputEvent(row, summary));
             return;
         }
 
-        AspectResponse aspect = (AspectResponse) parsed;
-        System.out.println(
-                "ASPECT "
-                        + aspect.aspect
-                        + "="
-                        + aspect.result
-                        + " (t="
-                        + System.nanoTime() / 1_000_000_000.0
-                        + ")");
+        CustomTypesAndResources.AspectResponse aspect = (CustomTypesAndResources.AspectResponse) parsed;
         Map<String, String> sentiments = (Map<String, String>) row.get("sentiments");
         sentiments.put(aspect.aspect, aspect.result);
         saveRow(ctx, row);

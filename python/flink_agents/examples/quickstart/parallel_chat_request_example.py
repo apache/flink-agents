@@ -15,24 +15,13 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import json
-import os
-import sysconfig
-import time
-from pathlib import Path
-
-from pyflink.common.typeinfo import BasicTypeInfo, ExternalTypeInfo, RowTypeInfo
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.table import DataTypes, Schema, StreamTableEnvironment, TableDescriptor
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
 from flink_agents.examples.quickstart.agents.parallel_chat_agent import (
     INPUT_TEXT,
-    N_ASPECTS,
-    OLLAMA_MODEL,
     ParallelChatAgent,
-    ParallelChatKeySelector,
 )
 
 
@@ -46,12 +35,9 @@ def main() -> None:
     with Flink streaming jobs.
     """
     # Set up the Flink streaming environment and the Agents execution environment.
-    stream_env = StreamExecutionEnvironment.get_execution_environment()
-    stream_env.set_parallelism(1)
-    t_env = StreamTableEnvironment.create(stream_execution_environment=stream_env)
-    agents_env = AgentsExecutionEnvironment.get_execution_environment(
-        env=stream_env, t_env=t_env
-    )
+    env = StreamExecutionEnvironment.get_execution_environment()
+    env.set_parallelism(1)
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
     # Add Ollama chat model connection to be used by the ParallelChatAgent.
     agents_env.add_resource(
@@ -63,73 +49,25 @@ def main() -> None:
         ),
     )
 
-    # Create input table with a single restaurant review.
-    input_table = t_env.from_elements(
-        elements=[(1, INPUT_TEXT)],
-        schema=DataTypes.ROW(
-            [
-                DataTypes.FIELD("id", DataTypes.INT()),
-                DataTypes.FIELD("text", DataTypes.STRING()),
-            ]
-        ),
-    )
-
-    # Define output schema and type info.
-    output_type_info = RowTypeInfo(
-        [
-            BasicTypeInfo.INT_TYPE_INFO(),
-            BasicTypeInfo.STRING_TYPE_INFO(),
-            BasicTypeInfo.STRING_TYPE_INFO(),
-        ],
-        ["id", "text", "summary"],
-    )
-    output_type = ExternalTypeInfo(output_type_info)
-    output_schema = (
-        Schema.new_builder()
-        .column("id", DataTypes.INT())
-        .column("text", DataTypes.STRING())
-        .column("summary", DataTypes.STRING())
-        .build()
-    )
-
-    # Register a filesystem sink for collecting results.
-    result_dir = Path("/tmp/parallel_chat_results")
-    result_dir.mkdir(parents=True, exist_ok=True)
-
-    t_env.create_temporary_table(
-        "sink",
-        TableDescriptor.for_connector("filesystem")
-        .option("path", str(result_dir.absolute()))
-        .format("json")
-        .schema(output_schema)
-        .build(),
+    # Create input stream with a single restaurant review.
+    input_stream = env.from_collection(
+        collection=[{"id": 1, "text": INPUT_TEXT}],
     )
 
     # Use the ParallelChatAgent to analyze the review with parallel LLM calls.
-    output_table = (
-        agents_env.from_table(input=input_table, key_selector=ParallelChatKeySelector())
+    output_stream = (
+        agents_env.from_datastream(
+            input=input_stream, key_selector=lambda x: x["id"]
+        )
         .apply(ParallelChatAgent())
-        .to_table(schema=output_schema, output_type=output_type)
+        .to_datastream()
     )
 
-    # Execute the Flink pipeline.
-    wall_start = time.monotonic()
-    output_table.execute_insert("sink").wait()
-    wall_elapsed = time.monotonic() - wall_start
-
     # Print the analysis results to stdout.
-    rows = []
-    for file in result_dir.iterdir():
-        if file.is_file():
-            with file.open() as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        rows.append(json.loads(line))
+    output_stream.print()
 
-    print(f"OUTPUT rows: {rows}")
-    print(f"End-to-end wall time: {wall_elapsed:.2f}s")
-    print("=== Done ===")
+    # Execute the Flink pipeline.
+    agents_env.execute()
 
 
 if __name__ == "__main__":

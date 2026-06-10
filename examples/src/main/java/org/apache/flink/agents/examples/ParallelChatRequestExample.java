@@ -21,9 +21,10 @@ import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.examples.agents.CustomTypesAndResources;
+import org.apache.flink.agents.examples.agents.CustomTypesAndResources.SentimentKeySelector;
+import org.apache.flink.agents.examples.agents.CustomTypesAndResources.SentimentRequest;
 import org.apache.flink.agents.examples.agents.ParallelChatAgent;
-import org.apache.flink.agents.examples.agents.ParallelChatAgent.SentimentKeySelector;
-import org.apache.flink.agents.examples.agents.ParallelChatAgent.SentimentRequest;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
@@ -39,10 +40,6 @@ public class ParallelChatRequestExample {
 
     /** Runs the example pipeline. */
     public static void main(String[] args) throws Exception {
-        System.out.println("=== Parallel ChatRequest Example ===");
-        System.out.println("Model: " + ParallelChatAgent.OLLAMA_MODEL);
-        System.out.println("Input: " + ParallelChatAgent.INPUT_TEXT);
-
         // Set up the Flink streaming environment and the Agents execution environment.
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
@@ -73,11 +70,6 @@ public class ParallelChatRequestExample {
         outputStream.print();
 
         // Execute the Flink pipeline.
-        long wallStart = System.currentTimeMillis();
         agentsEnv.execute();
-        long wallElapsed = System.currentTimeMillis() - wallStart;
-
-        System.out.println("End-to-end wall time: " + wallElapsed + "ms");
-        System.out.println("=== Done ===");
     }
 }

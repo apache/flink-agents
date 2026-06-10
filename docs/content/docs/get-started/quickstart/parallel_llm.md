@@ -45,12 +45,9 @@ Create the agents execution environment, and register the available chat model c
 {{< tab "Python" >}}
 ```python
 # Set up the Flink streaming environment and the Agents execution environment.
-stream_env = StreamExecutionEnvironment.get_execution_environment()
-stream_env.set_parallelism(1)
-t_env = StreamTableEnvironment.create(stream_execution_environment=stream_env)
-agents_env = AgentsExecutionEnvironment.get_execution_environment(
-    env=stream_env, t_env=t_env
-)
+env = StreamExecutionEnvironment.get_execution_environment()
+env.set_parallelism(1)
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
 # Add Ollama chat model connection to be used by the ParallelChatAgent.
 agents_env.add_resource(
@@ -205,26 +202,25 @@ Create the input data, use the `ParallelChatAgent` to analyze the review with pa
 
 {{< tab "Python" >}}
 ```python
-# Create input table with a single restaurant review.
-input_table = t_env.from_elements(
-    elements=[(1, INPUT_TEXT)],
-    schema=DataTypes.ROW(
-        [
-            DataTypes.FIELD("id", DataTypes.INT()),
-            DataTypes.FIELD("text", DataTypes.STRING()),
-        ]
-    ),
+# Create input stream with a single restaurant review.
+input_stream = env.from_collection(
+    collection=[{"id": 1, "text": INPUT_TEXT}],
 )
 
 # Use the ParallelChatAgent to analyze the review with parallel LLM calls.
-output_table = (
-    agents_env.from_table(input=input_table, key_selector=ParallelChatKeySelector())
+output_stream = (
+    agents_env.from_datastream(
+        input=input_stream, key_selector=lambda x: x["id"]
+    )
     .apply(ParallelChatAgent())
-    .to_table(schema=output_schema, output_type=output_type)
+    .to_datastream()
 )
 
+# Print the analysis results to stdout.
+output_stream.print()
+
 # Execute the Flink pipeline.
-output_table.execute_insert("sink").wait()
+agents_env.execute()
 ```
 {{< /tab >}}
 

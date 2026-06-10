@@ -17,12 +17,9 @@
 #################################################################################
 import json
 import os
-import time
 from typing import Any, Dict, Tuple
 
 from pydantic import BaseModel
-from pyflink.common import Row
-from pyflink.datastream import KeySelector
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
 from flink_agents.api.agents.types import OutputSchema
@@ -32,6 +29,10 @@ from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEve
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import ResourceDescriptor, ResourceName
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
+    AspectResponse,
+    SummaryResponse,
+)
 
 OLLAMA_MODEL = os.environ.get("PARALLEL_CHAT_OLLAMA_MODEL", "qwen3:1.7b")
 
@@ -49,27 +50,6 @@ AGGREGATE_SYSTEM_PROMPT = (
     "dimensions, compose a brief one-line evaluation. Return JSON: "
     '{"summary":"taste: service: price:"} — return only this JSON.'
 )
-
-
-class AspectResponse(BaseModel):
-    """LLM response for a single aspect judgment."""
-
-    aspect: str
-    result: str
-
-
-class SummaryResponse(BaseModel):
-    """LLM response for the aggregation phase."""
-
-    summary: str
-
-
-class ParallelChatKeySelector(KeySelector):
-    """Key selector that extracts the id field from the input row."""
-
-    def get_key(self, value: Row) -> int:
-        """Extract key from row."""
-        return value[0]
 
 
 def _init_row(event: Event) -> Dict[str, Any]:
@@ -124,7 +104,7 @@ def _build_summarize_request(row: Dict[str, Any]) -> ChatRequestEvent:
 def _build_output_event(row: Dict[str, Any], parsed: SummaryResponse) -> OutputEvent:
     """Pack row fields and summary into the final OutputEvent."""
     return OutputEvent(
-        output=Row(id=row["id"], text=row["text"], summary=parsed.summary)
+        output={"id": row["id"], "text": row["text"], "summary": parsed.summary}
     )
 
 
@@ -186,10 +166,8 @@ class ParallelChatAgent(Agent):
         parsed = _parse_response(event)
         row = _load_row(ctx)
         if _is_final(parsed):
-            print(f"FINAL summary={parsed.summary} (t={time.monotonic():.3f})")
             ctx.send_event(_build_output_event(row, parsed))
             return
-        print(f"ASPECT {parsed.aspect}={parsed.result} (t={time.monotonic():.3f})")
         row["sentiments"][parsed.aspect] = parsed.result
         _save_row(ctx, row)
         if _all_aspects_received(row):
