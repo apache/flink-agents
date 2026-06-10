@@ -25,9 +25,17 @@ method name, and parameter types for Java.
 import importlib
 import inspect
 from abc import ABC
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Tuple
 
 from pydantic import BaseModel, model_serializer
+
+#: Java parameter types of an action method. Action signatures are fixed
+#: ``(Event, RunnerContext)``, so callers never have to spell them out. A tuple
+#: keeps the shared constant immutable; callers copy it into their own list.
+ACTION_PARAMETER_TYPES: Tuple[str, ...] = (
+    "org.apache.flink.agents.api.Event",
+    "org.apache.flink.agents.api.context.RunnerContext",
+)
 
 
 class Function(BaseModel, ABC):
@@ -98,6 +106,20 @@ class JavaFunction(Function):
     qualname: str
     method_name: str
     parameter_types: List[str]
+
+    @classmethod
+    def for_action(cls, qualname: str, method_name: str) -> "JavaFunction":
+        """Build a descriptor for a Java action, filling the fixed signature.
+
+        Actions always take ``(Event, RunnerContext)``, so ``parameter_types``
+        is implied — mirrors the YAML API, which omits it for ``type: java``
+        actions. Tools must still pass ``parameter_types`` to the constructor.
+        """
+        return cls(
+            qualname=qualname,
+            method_name=method_name,
+            parameter_types=list(ACTION_PARAMETER_TYPES),
+        )
 
     @model_serializer
     def __serialize(self) -> dict[str, Any]:

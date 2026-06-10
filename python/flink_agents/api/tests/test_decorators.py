@@ -94,14 +94,7 @@ def test_action_decorator_rejects_invalid_types() -> None:
 
 
 def _java_target() -> JavaFunction:
-    return JavaFunction(
-        qualname="com.example.Handlers",
-        method_name="handle",
-        parameter_types=[
-            "org.apache.flink.agents.api.Event",
-            "org.apache.flink.agents.api.context.RunnerContext",
-        ],
-    )
+    return JavaFunction.for_action("com.example.Handlers", "handle")
 
 
 def test_action_decorator_with_cross_language_target() -> None:

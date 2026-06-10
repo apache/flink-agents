@@ -36,14 +36,7 @@ def echo_action(event: Event, ctx: RunnerContext) -> None:
 
 
 def _make_java_function_descriptor() -> ApiJavaFunction:
-    return ApiJavaFunction(
-        qualname="com.example.Handlers",
-        method_name="handle",
-        parameter_types=[
-            "org.apache.flink.agents.api.Event",
-            "org.apache.flink.agents.api.context.RunnerContext",
-        ],
-    )
+    return ApiJavaFunction.for_action("com.example.Handlers", "handle")
 
 
 def test_local_runner_dispatches_python_function_action() -> None:
