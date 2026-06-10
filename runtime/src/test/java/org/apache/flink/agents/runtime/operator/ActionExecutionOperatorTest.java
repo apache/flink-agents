@@ -232,6 +232,41 @@ public class ActionExecutionOperatorTest {
 
             assertThat(ownerHarness.getTaskMailbox().size()).isEqualTo(1);
             assertThat(nonOwnerHarness.getTaskMailbox().size()).isZero();
+            assertThat(
+                            ((ActionExecutionOperator<Long, Object>) ownerHarness.getOperator())
+                                    .getOperatorStateManager()
+                                    .getProcessingKeys())
+                    .containsExactly(key);
+            assertThat(
+                            ((ActionExecutionOperator<Long, Object>) nonOwnerHarness.getOperator())
+                                    .getOperatorStateManager()
+                                    .getProcessingKeys())
+                    .isEmpty();
+
+            OperatorSubtaskState secondCheckpoint =
+                    AbstractStreamOperatorTestHarness.repackageState(
+                            ownerHarness.snapshot(2L, 2L), nonOwnerHarness.snapshot(2L, 2L));
+            OperatorSubtaskState secondRestoreOwnerState =
+                    AbstractStreamOperatorTestHarness.repartitionOperatorState(
+                            secondCheckpoint,
+                            maxParallelism,
+                            newParallelism,
+                            newParallelism,
+                            ownerSubtask);
+
+            try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restoredOwnerHarness =
+                    new KeyedOneInputStreamOperatorTestHarness<>(
+                            new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                            (KeySelector<Long, Long>) value -> value,
+                            TypeInformation.of(Long.class),
+                            maxParallelism,
+                            newParallelism,
+                            ownerSubtask)) {
+                restoredOwnerHarness.initializeState(secondRestoreOwnerState);
+                restoredOwnerHarness.open();
+
+                assertThat(restoredOwnerHarness.getTaskMailbox().size()).isEqualTo(1);
+            }
         }
     }
 
