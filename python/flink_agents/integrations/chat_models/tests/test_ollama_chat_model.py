@@ -16,9 +16,6 @@
 # limitations under the License.
 #################################################################################
 import os
-import subprocess
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -37,16 +34,8 @@ from flink_agents.plan.tools.function_tool import FunctionTool
 pytestmark = pytest.mark.integration
 
 test_model = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
-current_dir = Path(__file__).parent
 
 try:
-    # only auto setup ollama in ci with python 3.10 to reduce ci cost.
-    if "3.10" in sys.version:
-        subprocess.run(
-            ["bash", f"{current_dir}/start_ollama_server.sh", test_model],
-            timeout=300,
-            check=True,
-        )
     client = Client()
     models = client.list()
 

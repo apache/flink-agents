@@ -16,9 +16,6 @@
 # limitations under the License.
 ################################################################################
 import os
-import subprocess
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,14 +31,8 @@ from flink_agents.integrations.embedding_models.local.ollama_embedding_model imp
 pytestmark = pytest.mark.integration
 
 test_model = os.environ.get("OLLAMA_EMBEDDING_MODEL", "all-minilm:22m")
-current_dir = Path(__file__).parent
 
 try:
-    # only auto setup ollama in ci with python 3.10 to reduce ci cost.
-    if "3.10" in sys.version:
-        subprocess.run(
-            ["bash", f"{current_dir}/start_ollama_server.sh"], timeout=300, check=True
-        )
     client = Client()
     models = client.list()
 
