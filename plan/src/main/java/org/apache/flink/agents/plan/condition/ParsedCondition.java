@@ -19,6 +19,7 @@
 package org.apache.flink.agents.plan.condition;
 
 import dev.cel.common.CelAbstractSyntaxTree;
+import dev.cel.common.CelOptions;
 import dev.cel.common.CelValidationException;
 import dev.cel.common.ast.CelExpr;
 import dev.cel.parser.CelParser;
@@ -35,9 +36,22 @@ public interface ParsedCondition {
     /** Original user-written entry string. */
     String source();
 
-    /** Parser with the custom {@code has()} macro; same dialect as the runtime facade parser. */
+    /** Mirrors the runtime facade caps so a too-deep / too-long expression fails at classify. */
+    CelOptions CEL_OPTIONS =
+            CelOptions.current()
+                    .maxParseRecursionDepth(32)
+                    .maxExpressionCodePointSize(8_192)
+                    .build();
+
+    /**
+     * Parser with the custom {@code has()} macro and the same resource caps as the runtime facade
+     * parser.
+     */
     CelParser CEL_PARSER =
-            CelParserFactory.standardCelParserBuilder().addMacros(CelMacroPolicy.HAS).build();
+            CelParserFactory.standardCelParserBuilder()
+                    .setOptions(CEL_OPTIONS)
+                    .addMacros(CelMacroPolicy.HAS)
+                    .build();
 
     /**
      * Parses a {@code triggerConditions} entry: a non-reserved bare-identifier root becomes a
