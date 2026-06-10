@@ -21,7 +21,6 @@ import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.examples.agents.CustomTypesAndResources;
 import org.apache.flink.agents.examples.agents.CustomTypesAndResources.SentimentKeySelector;
 import org.apache.flink.agents.examples.agents.CustomTypesAndResources.SentimentRequest;
 import org.apache.flink.agents.examples.agents.ParallelChatAgent;

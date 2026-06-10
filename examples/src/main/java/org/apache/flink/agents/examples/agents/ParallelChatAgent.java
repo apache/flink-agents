@@ -86,7 +86,8 @@ public class ParallelChatAgent extends Agent {
 
     private static Map<String, Object> initRow(Event event) {
         InputEvent inputEvent = InputEvent.fromEvent(event);
-        CustomTypesAndResources.SentimentRequest request = (CustomTypesAndResources.SentimentRequest) inputEvent.getInput();
+        CustomTypesAndResources.SentimentRequest request =
+                (CustomTypesAndResources.SentimentRequest) inputEvent.getInput();
         Map<String, Object> row = new HashMap<>();
         row.put("id", request.getId());
         row.put("text", request.getText());
@@ -110,7 +111,8 @@ public class ParallelChatAgent extends Agent {
                         new ChatMessage(
                                 MessageRole.USER,
                                 "Judge the \"" + aspect + "\" dimension: " + text));
-        return new ChatRequestEvent("sentimentModel", messages, CustomTypesAndResources.AspectResponse.class);
+        return new ChatRequestEvent(
+                "sentimentModel", messages, CustomTypesAndResources.AspectResponse.class);
     }
 
     @SuppressWarnings("unchecked")
@@ -125,10 +127,12 @@ public class ParallelChatAgent extends Agent {
                 List.of(
                         new ChatMessage(MessageRole.SYSTEM, AGGREGATE_SYSTEM_PROMPT),
                         new ChatMessage(MessageRole.USER, body));
-        return new ChatRequestEvent("sentimentModel", messages, CustomTypesAndResources.SummaryResponse.class);
+        return new ChatRequestEvent(
+                "sentimentModel", messages, CustomTypesAndResources.SummaryResponse.class);
     }
 
-    private static OutputEvent buildOutputEvent(Map<String, Object> row, CustomTypesAndResources.SummaryResponse parsed) {
+    private static OutputEvent buildOutputEvent(
+            Map<String, Object> row, CustomTypesAndResources.SummaryResponse parsed) {
         Map<String, Object> output = new HashMap<>();
         output.put("id", row.get("id"));
         output.put("text", row.get("text"));
@@ -166,12 +170,14 @@ public class ParallelChatAgent extends Agent {
         Map<String, Object> row = loadRow(ctx);
 
         if (parsed instanceof CustomTypesAndResources.SummaryResponse) {
-            CustomTypesAndResources.SummaryResponse summary = (CustomTypesAndResources.SummaryResponse) parsed;
+            CustomTypesAndResources.SummaryResponse summary =
+                    (CustomTypesAndResources.SummaryResponse) parsed;
             ctx.sendEvent(buildOutputEvent(row, summary));
             return;
         }
 
-        CustomTypesAndResources.AspectResponse aspect = (CustomTypesAndResources.AspectResponse) parsed;
+        CustomTypesAndResources.AspectResponse aspect =
+                (CustomTypesAndResources.AspectResponse) parsed;
         Map<String, String> sentiments = (Map<String, String>) row.get("sentiments");
         sentiments.put(aspect.aspect, aspect.result);
         saveRow(ctx, row);
