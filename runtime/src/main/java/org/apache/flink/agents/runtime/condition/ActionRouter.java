@@ -19,6 +19,7 @@
 package org.apache.flink.agents.runtime.condition;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.condition.ParsedCondition;
@@ -62,7 +63,11 @@ public final class ActionRouter {
         if (celExpressions.isEmpty()) {
             return;
         }
-        conditionEvaluator = new CelConditionEvaluator();
+        conditionEvaluator =
+                new CelConditionEvaluator(
+                        agentPlan
+                                .getConfig()
+                                .get(AgentConfigOptions.CEL_EVALUATION_FAILURE_POLICY));
         conditionEvaluator.initPrograms(celExpressions);
     }
 

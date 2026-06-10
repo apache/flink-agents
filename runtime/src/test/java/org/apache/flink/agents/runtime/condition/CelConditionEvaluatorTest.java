@@ -22,6 +22,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.configuration.CelEvaluationFailurePolicy;
 import org.apache.flink.agents.plan.condition.ParsedCondition.CelExpression;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -135,7 +136,7 @@ class CelConditionEvaluatorTest {
     @Test
     void testFailPolicyThrowsOnEvaluationError() {
         CelConditionEvaluator failEvaluator =
-                new CelConditionEvaluator(CelConditionEvaluator.EvaluationFailurePolicy.FAIL);
+                new CelConditionEvaluator(CelEvaluationFailurePolicy.FAIL);
         // Pre-compile a condition that will fail at runtime
         CelExpression cond = new CelExpression("attributes.nonexistent > 3");
         failEvaluator.initPrograms(List.of(cond));

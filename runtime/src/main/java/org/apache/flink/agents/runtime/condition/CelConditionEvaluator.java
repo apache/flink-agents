@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.cel.runtime.CelEvaluationException;
 import dev.cel.runtime.CelRuntime;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.configuration.CelEvaluationFailurePolicy;
 import org.apache.flink.agents.plan.condition.ParsedCondition.CelExpression;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,26 +45,16 @@ public class CelConditionEvaluator {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /**
-     * Behaviour for both runtime exceptions and non-Boolean return values — both mean "no verdict".
-     */
-    public enum EvaluationFailurePolicy {
-        /** Log WARN and treat the action as not matching. */
-        WARN_AND_SKIP,
-        /** Rethrow as {@link IllegalStateException}; triggers Flink task failover. */
-        FAIL
-    }
-
     /** Frozen after {@link #initPrograms}; cleared by {@link #close}. */
     @Nullable private Map<String, CelRuntime.Program> programCache;
 
-    private final EvaluationFailurePolicy failurePolicy;
+    private final CelEvaluationFailurePolicy failurePolicy;
 
     public CelConditionEvaluator() {
-        this(EvaluationFailurePolicy.WARN_AND_SKIP);
+        this(CelEvaluationFailurePolicy.WARN_AND_SKIP);
     }
 
-    public CelConditionEvaluator(EvaluationFailurePolicy failurePolicy) {
+    public CelConditionEvaluator(CelEvaluationFailurePolicy failurePolicy) {
         this.failurePolicy = failurePolicy;
     }
 
@@ -100,7 +91,7 @@ public class CelConditionEvaluator {
             }
             return evaluateProgram(source, program, activation);
         } catch (CelEvaluationException e) {
-            if (failurePolicy == EvaluationFailurePolicy.FAIL) {
+            if (failurePolicy == CelEvaluationFailurePolicy.FAIL) {
                 throw new IllegalStateException(
                         "CEL condition evaluation failed for '" + source + "'", e);
             }
@@ -120,7 +111,7 @@ public class CelConditionEvaluator {
                 String.format(
                         "CEL condition '%s' returned non-boolean type %s, treating as false",
                         condition, result == null ? "null" : result.getClass().getName());
-        if (failurePolicy == EvaluationFailurePolicy.FAIL) {
+        if (failurePolicy == CelEvaluationFailurePolicy.FAIL) {
             throw new IllegalStateException(msg);
         }
         LOG.warn(msg);
