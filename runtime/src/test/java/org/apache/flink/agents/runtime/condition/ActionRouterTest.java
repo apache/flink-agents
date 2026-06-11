@@ -21,6 +21,8 @@ package org.apache.flink.agents.runtime.condition;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.configuration.CelEvaluationFailurePolicy;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -198,5 +200,37 @@ class ActionRouterTest {
 
         List<Action> matched = router.route(new InputEvent("x"));
         assertThat(matched).containsExactly(pureType, pureCel);
+    }
+
+    // -- Routing: CEL failure policy from plan config --
+
+    @Test
+    void route_failPolicyFromConfig_throwsOnConditionEvaluationError() throws Exception {
+        // Compiles fine; errors at runtime because `attributes.nonexistent` is unset.
+        Action a = new Action("celFail", execStub(), List.of("attributes.nonexistent > 3"), null);
+        AgentPlan plan = planOf(a);
+        plan.getConfig()
+                .set(
+                        AgentConfigOptions.CEL_EVALUATION_FAILURE_POLICY,
+                        CelEvaluationFailurePolicy.FAIL);
+
+        router = new ActionRouter(plan);
+        router.open();
+
+        assertThatThrownBy(() -> router.route(new Event("any_type") {}))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("CEL condition evaluation failed");
+    }
+
+    @Test
+    void route_defaultWarnAndSkip_swallowsConditionEvaluationError() throws Exception {
+        // Same expression, same event — but no policy set in config. Default must remain
+        // WARN_AND_SKIP, so route() returns empty rather than throwing.
+        Action a =
+                new Action("celWarnSkip", execStub(), List.of("attributes.nonexistent > 3"), null);
+        router = new ActionRouter(planOf(a));
+        router.open();
+
+        assertThat(router.route(new Event("any_type") {})).isEmpty();
     }
 }
