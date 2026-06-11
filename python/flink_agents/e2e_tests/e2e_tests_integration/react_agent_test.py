@@ -267,3 +267,88 @@ def test_react_agent_on_remote_runner(
     # through the event-log capture path.
     invocations = collect_tool_invocations(log_dir)
     assert_tool_invoked(invocations, "multiply", {"a": 4444, "b": 312})
+
+
+@pytest.mark.skipif(
+    client is None, reason="Ollama client is not available or test model is missing"
+)
+def test_react_agent_no_output_schema_on_remote_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ReAct agent without an output_schema should emit a plain string result."""
+    monkeypatch.setenv("OLLAMA_CHAT_MODEL", OLLAMA_MODEL)
+    stream_env = StreamExecutionEnvironment.get_execution_environment()
+
+    stream_env.set_parallelism(1)
+
+    t_env = StreamTableEnvironment.create(stream_execution_environment=stream_env)
+
+    table = t_env.from_elements(
+        elements=[(2123, 2321, 312)],
+        schema=DataTypes.ROW(
+            [
+                DataTypes.FIELD("a", DataTypes.INT()),
+                DataTypes.FIELD("b", DataTypes.INT()),
+                DataTypes.FIELD("c", DataTypes.INT()),
+            ]
+        ),
+    )
+
+    env = AgentsExecutionEnvironment.get_execution_environment(
+        env=stream_env, t_env=t_env
+    )
+
+    env.get_config().set(
+        AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
+    )
+
+    env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
+
+    log_dir = tmp_path / "event_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    env.get_config().set_str("baseLogDir", str(log_dir))
+
+    # register resource to execution environment
+    (
+        env.add_resource(
+            "ollama",
+            ResourceType.CHAT_MODEL_CONNECTION,
+            ResourceDescriptor(
+                clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0
+            ),
+        )
+        .add_resource("add", ResourceType.TOOL, Tool.from_callable(add))
+        .add_resource("multiply", ResourceType.TOOL, Tool.from_callable(multiply))
+    )
+
+    # prepare prompt
+    prompt = Prompt.from_messages(
+        messages=[
+            ChatMessage(role=MessageRole.USER, content="What is ({a} + {b}) * {c}"),
+        ],
+    )
+
+    # create ReAct agent without an output schema; result is emitted as a string.
+    agent = ReActAgent(
+        chat_model=ResourceDescriptor(
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
+            connection="ollama",
+            model=OLLAMA_MODEL,
+            tools=["add", "multiply"],
+        ),
+        prompt=prompt,
+    )
+
+    output_stream = (
+        env.from_table(input=table, key_selector=MyKeySelector())
+        .apply(agent)
+        .to_datastream()
+    )
+    output_stream.print()
+
+    env.execute()
+
+    # multiply's first arg (4444 = 2123 + 2321) proves the addition was computed
+    # correctly and threaded into multiply, even without an output schema.
+    invocations = collect_tool_invocations(log_dir)
+    assert_tool_invoked(invocations, "multiply", {"a": 4444, "b": 312})
