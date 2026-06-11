@@ -34,6 +34,7 @@ import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
+import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.Schema;
@@ -46,6 +47,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.apache.flink.agents.api.agents.AgentExecutionOptions.ERROR_HANDLING_STRATEGY;
@@ -114,7 +116,7 @@ public class ReActAgentTest {
         agentsEnv.getConfig().set(MAX_RETRIES, 3);
 
         // Declare the ReAct agent.
-        Agent agent = getAgent();
+        Agent agent = getAgent(true);
 
         // Create input table from sample data
         Table inputTable =
@@ -152,8 +154,74 @@ public class ReActAgentTest {
         checkResult(results);
     }
 
-    // create ReAct agent.
-    private static Agent getAgent() {
+    @Test
+    public void testReActAgentNoOutputSchema() throws Exception {
+        Assumptions.assumeTrue(ollamaReady, String.format("%s is not ready", OLLAMA_MODEL));
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        // Create the table environment
+        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+        tableEnv.getConfig().set("table.exec.result.display.max-column-width", "100");
+
+        // Create agents execution environment
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env, tableEnv);
+
+        // register resource to agents execution environment.
+        agentsEnv
+                .addResource(
+                        "ollama",
+                        ResourceType.CHAT_MODEL_CONNECTION,
+                        ResourceDescriptor.Builder.newBuilder(
+                                        ResourceName.ChatModel.OLLAMA_CONNECTION)
+                                .addInitialArgument("endpoint", "http://localhost:11434")
+                                .addInitialArgument("requestTimeout", 240)
+                                .build())
+                .addResource(
+                        "add",
+                        ResourceType.TOOL,
+                        Tool.fromMethod(
+                                ReActAgentTest.class.getMethod("add", Double.class, Double.class)))
+                .addResource(
+                        "multiply",
+                        ResourceType.TOOL,
+                        Tool.fromMethod(
+                                ReActAgentTest.class.getMethod(
+                                        "multiply", Double.class, Double.class)));
+
+        agentsEnv.getConfig().set(ERROR_HANDLING_STRATEGY, ReActAgent.ErrorHandlingStrategy.RETRY);
+        agentsEnv.getConfig().set(MAX_RETRIES, 3);
+
+        // Declare the ReAct agent without an output schema.
+        Agent agent = getAgent(false);
+
+        // Create input table from sample data
+        Table inputTable =
+                tableEnv.fromValues(
+                        DataTypes.ROW(
+                                DataTypes.FIELD("a", DataTypes.DOUBLE()),
+                                DataTypes.FIELD("b", DataTypes.DOUBLE()),
+                                DataTypes.FIELD("c", DataTypes.DOUBLE())),
+                        Row.of(2131, 29847, 3));
+
+        // Apply agent to the Table; without an output schema the result is a string.
+        DataStream<Object> out =
+                agentsEnv
+                        .fromTable(
+                                inputTable,
+                                (KeySelector<Object, Double>)
+                                        value -> (Double) ((Row) value).getField("a"))
+                        .apply(agent)
+                        .toDataStream();
+
+        out.print();
+
+        env.execute();
+    }
+
+    // create ReAct agent; pass false to skip the output schema.
+    private static Agent getAgent(boolean withSchema) {
         ResourceDescriptor chatModelDescriptor =
                 ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                         .addInitialArgument("connection", "ollama")
@@ -162,21 +230,24 @@ public class ReActAgentTest {
                         .addInitialArgument("extract_reasoning", true)
                         .build();
 
-        Prompt prompt =
-                Prompt.fromMessages(
-                        List.of(
-                                new ChatMessage(
-                                        MessageRole.SYSTEM,
-                                        "Must call function tool to do the calculate."),
-                                new ChatMessage(
-                                        MessageRole.SYSTEM,
-                                        "An example of output is {\"result\": 30.32}"),
-                                new ChatMessage(MessageRole.USER, "What is ({a} + {b}) * {c}.")));
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(
+                new ChatMessage(
+                        MessageRole.SYSTEM, "Must call function tool to do the calculate."));
+        if (withSchema) {
+            messages.add(
+                    new ChatMessage(
+                            MessageRole.SYSTEM, "An example of output is {\"result\": 30.32}"));
+        }
+        messages.add(new ChatMessage(MessageRole.USER, "What is ({a} + {b}) * {c}."));
+
         RowTypeInfo outputTypeInfo =
-                new RowTypeInfo(
-                        new TypeInformation[] {BasicTypeInfo.DOUBLE_TYPE_INFO},
-                        new String[] {"result"});
-        return new ReActAgent(chatModelDescriptor, prompt, outputTypeInfo);
+                withSchema
+                        ? new RowTypeInfo(
+                                new TypeInformation[] {BasicTypeInfo.DOUBLE_TYPE_INFO},
+                                new String[] {"result"})
+                        : null;
+        return new ReActAgent(chatModelDescriptor, Prompt.fromMessages(messages), outputTypeInfo);
     }
 
     private void checkResult(CloseableIterator<?> results) {

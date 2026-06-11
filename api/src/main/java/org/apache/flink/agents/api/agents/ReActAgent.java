@@ -60,6 +60,7 @@ public class ReActAgent extends Agent {
     public ReActAgent(
             ResourceDescriptor descriptor, @Nullable Prompt prompt, @Nullable Object outputSchema) {
         this.addResource(DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL, descriptor);
+        Map<String, Object> actionConfig = new HashMap<>();
 
         if (outputSchema != null) {
             String jsonSchema;
@@ -82,14 +83,12 @@ public class ReActAgent extends Agent {
                                     "The final response should be json format, and match the schema %s",
                                     jsonSchema));
             this.addResource(DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT, schemaPrompt);
+            actionConfig.put("output_schema", outputSchema);
         }
 
         if (prompt != null) {
             this.addResource(DEFAULT_USER_PROMPT, ResourceType.PROMPT, prompt);
         }
-
-        Map<String, Object> actionConfig = new HashMap<>();
-        actionConfig.put("output_schema", outputSchema);
 
         try {
             Method method =
