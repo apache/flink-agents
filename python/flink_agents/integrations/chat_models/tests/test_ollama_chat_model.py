@@ -16,17 +16,14 @@
 # limitations under the License.
 #################################################################################
 import os
-import subprocess
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from ollama import Client
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
+from flink_agents.e2e_tests.test_utils import pull_model
 from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
@@ -37,29 +34,8 @@ from flink_agents.plan.tools.function_tool import FunctionTool
 pytestmark = pytest.mark.integration
 
 test_model = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
-current_dir = Path(__file__).parent
 
-try:
-    # only auto setup ollama in ci with python 3.10 to reduce ci cost.
-    if "3.10" in sys.version:
-        subprocess.run(
-            ["bash", f"{current_dir}/start_ollama_server.sh", test_model],
-            timeout=300,
-            check=True,
-        )
-    client = Client()
-    models = client.list()
-
-    model_found = False
-    for model in models["models"]:
-        if model.model == test_model:
-            model_found = True
-            break
-
-    if not model_found:
-        client = None  # type: ignore
-except Exception:
-    client = None  # type: ignore
+client = pull_model(test_model)
 
 
 @pytest.mark.skipif(
