@@ -138,7 +138,9 @@ class ReActAgent(Agent):
             name="start_action",
             events=[InputEvent],
             func=self.start_action,
-            output_schema=OutputSchema(output_schema=output_schema),
+            output_schema=OutputSchema(output_schema=output_schema)
+            if output_schema
+            else None,
         )
 
     @staticmethod
