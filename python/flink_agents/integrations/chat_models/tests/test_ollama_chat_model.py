@@ -19,11 +19,11 @@ import os
 from unittest.mock import MagicMock
 
 import pytest
-from ollama import Client
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
+from flink_agents.e2e_tests.test_utils import pull_model
 from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
@@ -35,20 +35,7 @@ pytestmark = pytest.mark.integration
 
 test_model = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
 
-try:
-    client = Client()
-    models = client.list()
-
-    model_found = False
-    for model in models["models"]:
-        if model.model == test_model:
-            model_found = True
-            break
-
-    if not model_found:
-        client = None  # type: ignore
-except Exception:
-    client = None  # type: ignore
+client = pull_model(test_model)
 
 
 @pytest.mark.skipif(
