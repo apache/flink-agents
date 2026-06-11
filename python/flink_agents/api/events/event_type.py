@@ -59,8 +59,3 @@ class EventType:
     ToolResponseEvent: str = _ToolResponseEvent.EVENT_TYPE
     ContextRetrievalRequestEvent: str = _ContextRetrievalRequestEvent.EVENT_TYPE
     ContextRetrievalResponseEvent: str = _ContextRetrievalResponseEvent.EVENT_TYPE
-
-    def __init__(self) -> None:
-        """Reject instantiation; ``EventType`` is a namespace, not a class."""
-        msg = "EventType is a namespace; do not instantiate"
-        raise TypeError(msg)
