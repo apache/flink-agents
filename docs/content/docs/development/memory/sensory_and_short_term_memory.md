@@ -65,13 +65,29 @@ The root of the sensory memory and short-term memory is `MemoryObject`. User can
 
 ### Supported Value Types
 
-The key of the pairs store in `MemoryObject` must be string, and the value can be follow types
+The key of the pairs stored in `MemoryObject` must be a string. The supported value types differ between Java and Python.
+
+**Java** supports a broad set of types:
 
 - **Primitive Types**: integer, float, boolean, string
 - **Collections**: list, map
 - **Java POJOs**: See [Flink POJOs](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/datastream/fault-tolerance/serialization/types_serialization/#pojos) for details.
-- **General Class Types**: Any objects can be serialized by kryo. See [General Class Types](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/datastream/fault-tolerance/serialization/types_serialization/#general-class-types) for details.
-- **Memory Object**: The value can also be a `MemoryObject`, which means user can store nested objects.
+- **General Class Types**: Any objects that can be serialized by kryo. See [General Class Types](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/datastream/fault-tolerance/serialization/types_serialization/#general-class-types) for details.
+- **Memory Object**: The value can also be a `MemoryObject`, which means users can store nested objects.
+
+**Python** is restricted to recursively *checkpoint-stable* values:
+
+- **Primitive Types**: `None`, `bool`, `int`, `float`, `str`
+- **Collections**: `list`, and `dict` with `str` keys (values are recursively validated)
+- **Memory Object**: A nested `MemoryObject` created via `new_object()`.
+
+Anything else — Pydantic models, `uuid.UUID`, `Enum`, custom classes, `tuple`, `set`, or a `dict` with non-`str` keys — is **rejected by `set()` with a `TypeError`**. `bytes` is not supported yet.
+
+This is because Python values are converted across the Pemja boundary into Flink state, and only the types above materialize into native, checkpoint-stable JVM values; other objects would be stored as wrappers that fail on state restore. To store a richer object, materialize it to a primitive form first (e.g. `model.model_dump(mode="json")` for a Pydantic model, or `str(value)` for a UUID) and reconstruct it on read.
+
+{{< hint warning >}}
+Python memory values must be checkpoint-stable primitives, unlike the Java contract which also supports POJOs and Kryo-serializable objects. Python values materialize across the Pemja boundary before reaching Flink state, so models and other objects must be materialized first with `model_dump(mode="json")` (or `str(...)`) and reconstructed on read.
+{{< /hint >}}
 
 ### Read & Write
 
@@ -86,8 +102,8 @@ def process_event(event: Event, ctx: RunnerContext) -> None:
     memory.set("primitive",  123)
     # store collection
     memory.set("collection", [1, 2, 3])
-    # store general class types
-    memory.set("object", Prompt.from_text("the test {content}"))
+    # store a Pydantic model by materializing it to a checkpoint-stable dict first
+    memory.set("model", my_model.model_dump(mode="json"))
     # store memory object
     obj1: MemoryObject = memory.new_object("obj1")
     obj1.set("field1", "foo")
@@ -95,7 +111,8 @@ def process_event(event: Event, ctx: RunnerContext) -> None:
     # read values from memory
     value1: int = memory.get("primitive")
     value2: List[int] = memory.get("collection")
-    value3: Prompt = memory.get("object")
+    # reconstruct the Pydantic model on read
+    model: MyModel = MyModel.model_validate(memory.get("model"))
     value4: MemoryObject = memory.get("obj1")
     value5: str = value4.get("field1")
 ```
