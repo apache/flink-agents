@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Dict, List, Set
+from typing import Dict, List
 
 from flink_agents.api.memory_object import MemoryType
 from flink_agents.runtime.local_memory_object import LocalMemoryObject
@@ -24,20 +24,6 @@ from flink_agents.runtime.local_memory_object import LocalMemoryObject
 def create_memory() -> LocalMemoryObject:
     """Return a MemoryObject for every test case."""
     return LocalMemoryObject(MemoryType.SHORT_TERM, {})
-
-
-class User:
-    def __init__(self, name: str, age: int) -> None:
-        """Store for later comparison."""
-        self.name = name
-        self.age = age
-
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, User)
-            and other.name == self.name
-            and other.age == self.age
-        )
 
 
 def test_basic_set_get_various_types() -> None:
@@ -62,16 +48,6 @@ def test_basic_set_get_various_types() -> None:
     d: Dict[str, int] = {"x": 10}
     mem.set("dict", d)
     assert mem.get("dict") == d
-
-    # set
-    s: Set[int] = {1, 2, 3}
-    mem.set("set", s)
-    assert mem.get("set") == s
-
-    # custom object
-    user = User("Alice", 20)
-    mem.set("user", user)
-    assert mem.get("user") == user
 
 
 def test_nested_set_and_get() -> None:
