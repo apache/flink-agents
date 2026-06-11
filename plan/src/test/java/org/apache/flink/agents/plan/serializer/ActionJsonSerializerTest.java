@@ -120,11 +120,11 @@ public class ActionJsonSerializerTest {
                         "legal",
                         new Class[] {Event.class, RunnerContext.class});
 
-        // Create an Action with multiple event types
-        List<String> eventTypes = new ArrayList<>();
-        eventTypes.add(InputEvent.EVENT_TYPE);
-        eventTypes.add(OutputEvent.EVENT_TYPE);
-        Action action = new Action("multiEventAction", function, eventTypes);
+        // Create an Action with multiple trigger conditions
+        List<String> triggerConditions = new ArrayList<>();
+        triggerConditions.add(InputEvent.EVENT_TYPE);
+        triggerConditions.add(OutputEvent.EVENT_TYPE);
+        Action action = new Action("multiEventAction", function, triggerConditions);
 
         // Serialize the action to JSON
         String json = new ObjectMapper().writeValueAsString(action);

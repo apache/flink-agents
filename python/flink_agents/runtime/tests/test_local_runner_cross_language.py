@@ -49,7 +49,7 @@ def _make_java_function_descriptor() -> ApiJavaFunction:
 def test_local_runner_dispatches_python_function_action() -> None:
     agent = Agent()
     agent.add_action(
-        name="echo", events=[InputEvent.EVENT_TYPE], func=echo_action
+        name="echo", trigger_conditions=[InputEvent.EVENT_TYPE], func=echo_action
     )
 
     runner = LocalRunner(agent, AgentConfiguration())
@@ -62,7 +62,7 @@ def test_local_runner_dispatch_of_java_function_action_fails_without_jvm_bridge(
     agent = Agent()
     agent.add_action(
         name="handle",
-        events=[InputEvent.EVENT_TYPE],
+        trigger_conditions=[InputEvent.EVENT_TYPE],
         func=_make_java_function_descriptor(),
     )
 

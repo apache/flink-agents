@@ -4,7 +4,7 @@ agents:
       - name: increment
         function: org.apache.flink.agents.api.yaml.LoaderTargets:increment
         type: java
-        listen_to: [input]
+        trigger_conditions: [input]
 chat_model_connections:
   - name: conn_from_a
     clazz: ollama

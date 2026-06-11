@@ -60,11 +60,11 @@ agents:
     actions:
       - name: process_input
         function: my_pkg.actions:process_input
-        listen_to: [input]
+        trigger_conditions: [input]
         type: python
       - name: process_chat_response
         function: my_pkg.actions:process_chat_response
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]
         type: python
 
     # ---- Resources ----
@@ -212,7 +212,7 @@ Inline action (map) fields:
 |-------|----------|-------------|
 | `name` | yes | Action name (unique within the agent). |
 | `function` | yes | Fully-qualified callable in the form `<module-or-class>:<qualname>`. See [Function references](#function-references). |
-| `listen_to` | yes | List of event types the action listens to. Built-in [event aliases](#event-aliases) (`input`, `chat_request`, ...) or your own event-type strings. |
+| `trigger_conditions` | yes | List of event types the action listens to. Built-in [event aliases](#event-aliases) (`input`, `chat_request`, ...) or your own event-type strings. |
 | `type` | no | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
 | `config` | no | Free-form configuration map passed to the action at runtime. |
 
@@ -220,11 +220,11 @@ Inline action (map) fields:
 actions:
   - name: action1
     function: my_pkg.actions:action1
-    listen_to: [input]
+    trigger_conditions: [input]
     type: python
   - name: action2
     function: my_pkg.actions:action2
-    listen_to: [chat_response]
+    trigger_conditions: [chat_response]
     type: python
   - action3                       # shared action reference (declared at file level)
 ```
@@ -289,7 +289,7 @@ agents:
       - action1                        # shared action
       - name: my_action
         function: my_pkg.actions:my_action
-        listen_to: [input]
+        trigger_conditions: [input]
 
   - name: agent2
     description: The second agent
@@ -300,11 +300,11 @@ agents:
 actions:
   - name: action1
     function: my_pkg.actions:action1
-    listen_to: [input]
+    trigger_conditions: [input]
     type: python
   - name: action2
     function: my_pkg.actions:action2
-    listen_to: [chat_response]
+    trigger_conditions: [chat_response]
     type: python
 ```
 
@@ -432,7 +432,7 @@ When `type:` resolves to the **opposite** language of the loader, the loader bui
 
 ### Provider aliases
 
-For `clazz:` on resource descriptors and for event names in `listen_to:`, you can use a short alias instead of a fully-qualified class path.
+For `clazz:` on resource descriptors and for event names in `trigger_conditions:`, you can use a short alias instead of a fully-qualified class path.
 
 #### Event aliases
 
@@ -482,10 +482,10 @@ agents:
     actions:
       - name: process_input
         function: my_pkg.actions:process_input
-        listen_to: [input]
+        trigger_conditions: [input]
       - name: process_chat_response
         function: my_pkg.actions:process_chat_response
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]
 
     chat_model_connections:
       # Python Ollama connection used by the math chat model

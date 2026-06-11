@@ -61,9 +61,9 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Action {
     /**
-     * Event type name strings; multiple entries have OR semantics. Named {@code value} (not
-     * {@code triggerConditions}) to enable the {@code @Action({...})} shorthand (JLS §9.7.3);
-     * corresponds to Python's {@code *trigger_conditions}.
+     * Event type name strings; multiple entries have OR semantics. Named {@code value} (not {@code
+     * triggerConditions}) to enable the {@code @Action({...})} shorthand (JLS §9.7.3); corresponds
+     * to Python's {@code *trigger_conditions}.
      */
     String[] value();
 

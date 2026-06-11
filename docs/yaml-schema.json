@@ -2,7 +2,7 @@
   "$defs": {
     "ActionSpec": {
       "additionalProperties": false,
-      "description": "An action references a user function and the event types it listens to.\n\n``function`` is written as ``<module-or-class>:<qualname>`` \u2014 the\ncolon separates the Python module (or Java class FQN) from the\nattribute path inside it.\n\nAction signatures are fixed (``(Event, RunnerContext)``), so there is\nno ``parameter_types`` knob \u2014 Python doesn't need it, and the Java\naction signature is determined by the action contract.",
+      "description": "An action references a user function and its trigger conditions.\n\n``function`` is written as ``<module-or-class>:<qualname>`` \u2014 the\ncolon separates the Python module (or Java class FQN) from the\nattribute path inside it.\n\n``trigger_conditions`` carries one or more strings. Each is either an\nevent-type name (bare identifier) or a future condition-expression\nform \u2014 the runtime classifies the string when it loads the plan.\n\nAction signatures are fixed (``(Event, RunnerContext)``), so there is\nno ``parameter_types`` knob \u2014 Python doesn't need it, and the Java\naction signature is determined by the action contract.",
       "properties": {
         "config": {
           "anyOf": [
@@ -29,17 +29,17 @@
           "default": null,
           "title": "Function"
         },
-        "listen_to": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "trigger_conditions": {
           "items": {
             "type": "string"
           },
           "minItems": 1,
-          "title": "Listen To",
+          "title": "Trigger Conditions",
           "type": "array"
-        },
-        "name": {
-          "title": "Name",
-          "type": "string"
         },
         "type": {
           "anyOf": [
@@ -60,7 +60,7 @@
       },
       "required": [
         "name",
-        "listen_to"
+        "trigger_conditions"
       ],
       "title": "ActionSpec",
       "type": "object"

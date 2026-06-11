@@ -39,7 +39,7 @@ class PythonAgentWithJavaActionAgent(Agent):
         super().__init__()
         self.add_action(
             name="multiply_by_two",
-            events=[InputEvent.EVENT_TYPE],
+            trigger_conditions=[InputEvent.EVENT_TYPE],
             func=JavaFunction(
                 qualname=JAVA_HANDLER_QUALNAME,
                 method_name=JAVA_HANDLER_METHOD,

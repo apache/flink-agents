@@ -9,10 +9,10 @@ agents:
     actions:
       - name: process_input
         function: flink_agents.examples.quickstart.agents.review_analysis_agent:ReviewAnalysisAgent.process_input
-        listen_to: [input]
+        trigger_conditions: [input]
       - name: process_chat_response
         function: flink_agents.examples.quickstart.agents.review_analysis_agent:ReviewAnalysisAgent.process_chat_response
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]
 
     chat_model_connections:
       - name: ollama_server

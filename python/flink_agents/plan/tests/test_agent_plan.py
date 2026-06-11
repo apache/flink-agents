@@ -377,10 +377,10 @@ def test_get_resource() -> None:
 def test_add_action_and_resource_to_agent() -> None:
     my_agent = Agent()
     my_agent.add_action(
-        name="first_action", events=["_input_event"], func=MyAgent.first_action
+        name="first_action", trigger_conditions=["_input_event"], func=MyAgent.first_action
     )
     my_agent.add_action(
-        name="second_action", events=["_input_event", "_my_event"], func=MyAgent.second_action
+        name="second_action", trigger_conditions=["_input_event", "_my_event"], func=MyAgent.second_action
     )
     my_agent.add_resource(
         name="mock",

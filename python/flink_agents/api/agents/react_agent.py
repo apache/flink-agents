@@ -142,7 +142,7 @@ class ReActAgent(Agent):
 
         self.add_action(
             name="start_action",
-            events=[InputEvent.EVENT_TYPE],
+            trigger_conditions=[InputEvent.EVENT_TYPE],
             func=self.start_action,
             output_schema=OutputSchema(output_schema=output_schema),
         )

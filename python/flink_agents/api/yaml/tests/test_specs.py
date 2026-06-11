@@ -139,49 +139,53 @@ def test_tool_spec_forbids_extras() -> None:
         ToolSpec.model_validate({"name": "t1", "unknown": 1})
 
 
-def test_action_spec_requires_listen_to() -> None:
+def test_action_spec_requires_trigger_conditions() -> None:
     with pytest.raises(ValidationError):
         ActionSpec.model_validate({"name": "a1"})
 
 
-def test_action_spec_rejects_empty_listen_to() -> None:
-    # An empty ``listen_to: []`` would silently register a dead action that
-    # never fires. The minimum-length constraint forces the mistake to
-    # surface at YAML validation time.
+def test_action_spec_rejects_empty_trigger_conditions() -> None:
+    # An empty ``trigger_conditions: []`` would silently register a dead
+    # action that never fires. The minimum-length constraint forces the
+    # mistake to surface at YAML validation time.
     with pytest.raises(ValidationError):
-        ActionSpec.model_validate({"name": "a1", "listen_to": []})
+        ActionSpec.model_validate({"name": "a1", "trigger_conditions": []})
 
 
 def test_action_spec_defaults() -> None:
-    spec = ActionSpec.model_validate({"name": "a1", "listen_to": ["input"]})
-    assert spec.listen_to == ["input"]
+    spec = ActionSpec.model_validate(
+        {"name": "a1", "trigger_conditions": ["input"]}
+    )
+    assert spec.trigger_conditions == ["input"]
     assert spec.function is None
     assert spec.config is None
 
 
 def test_action_spec_with_config() -> None:
     spec = ActionSpec.model_validate(
-        {"name": "a1", "listen_to": ["input"], "config": {"k": 1}}
+        {"name": "a1", "trigger_conditions": ["input"], "config": {"k": 1}}
     )
     assert spec.config == {"k": 1}
 
 
 def test_action_spec_accepts_type() -> None:
     spec = ActionSpec.model_validate(
-        {"name": "a1", "listen_to": ["input"], "type": "java"}
+        {"name": "a1", "trigger_conditions": ["input"], "type": "java"}
     )
     assert spec.type == "java"
 
 
 def test_action_spec_type_defaults_to_none() -> None:
-    spec = ActionSpec.model_validate({"name": "a1", "listen_to": ["input"]})
+    spec = ActionSpec.model_validate(
+        {"name": "a1", "trigger_conditions": ["input"]}
+    )
     assert spec.type is None
 
 
 def test_action_spec_rejects_unknown_type() -> None:
     with pytest.raises(ValidationError):
         ActionSpec.model_validate(
-            {"name": "a1", "listen_to": ["input"], "type": "rust"}
+            {"name": "a1", "trigger_conditions": ["input"], "type": "rust"}
         )
 
 
@@ -216,7 +220,7 @@ def test_agent_spec_action_can_be_string_reference() -> None:
             "name": "a",
             "actions": [
                 "shared_action1",
-                {"name": "x", "listen_to": ["input"]},
+                {"name": "x", "trigger_conditions": ["input"]},
             ],
         }
     )
@@ -242,7 +246,7 @@ def test_yaml_document_with_shared_resources_and_actions() -> None:
         {
             "agents": [{"name": "a"}],
             "chat_model_connections": [{"name": "c", "clazz": "x.Y"}],
-            "actions": [{"name": "shared", "listen_to": ["input"]}],
+            "actions": [{"name": "shared", "trigger_conditions": ["input"]}],
         }
     )
     assert doc.chat_model_connections[0].name == "c"
@@ -318,7 +322,7 @@ def test_action_spec_rejects_parameter_types() -> None:
         ActionSpec.model_validate(
             {
                 "name": "a1",
-                "listen_to": ["input"],
+                "trigger_conditions": ["input"],
                 "type": "java",
                 "parameter_types": ["x.Y"],
             }

@@ -62,7 +62,7 @@ class Agent(ABC):
 
             my_agent = Agent()
             my_agent.add_action(name="my_action",
-                                events=["_input_event"],
+                                trigger_conditions=["_input_event"],
                                 func=action_function)
                     .add_resource(name="my_connection",
                                   instance=ResourceDescriptor(
@@ -112,7 +112,7 @@ class Agent(ABC):
     def add_action(
         self,
         name: str,
-        events: List[str],
+        trigger_conditions: List[str],
         func: Callable | Function,
         **config: Any,
     ) -> "Agent":
@@ -122,8 +122,9 @@ class Agent(ABC):
         ----------
         name : str
             The name of the action, should be unique in the same Agent.
-        events : list[str]
-            Type-identifier strings listened by this action.
+        trigger_conditions : list[str]
+            Trigger condition strings — each is either an event-type name
+            or a future condition-expression form (see ``@action``).
         func : Callable | Function
             Either a raw Python callable (it will be wrapped as a
             ``PythonFunction``) or a pre-built flink-agents ``Function``
@@ -141,7 +142,7 @@ class Agent(ABC):
             raise ValueError(msg)
         if not isinstance(func, Function):
             func = PythonFunction.from_callable(func)
-        self._actions[name] = (events, func, config if config else None)
+        self._actions[name] = (trigger_conditions, func, config if config else None)
         return self
 
     def add_resource(

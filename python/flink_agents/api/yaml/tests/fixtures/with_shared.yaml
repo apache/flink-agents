@@ -4,7 +4,7 @@ agents:
       - shared_inc
       - name: own_dec
         function: flink_agents.api.yaml.tests.fixtures.loader_targets:decrement
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]
   - name: a2
     actions:
       - shared_inc
@@ -17,4 +17,4 @@ chat_model_connections:
 actions:
   - name: shared_inc
     function: flink_agents.api.yaml.tests.fixtures.loader_targets:increment
-    listen_to: [input]
+    trigger_conditions: [input]

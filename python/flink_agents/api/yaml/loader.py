@@ -170,9 +170,11 @@ def _resolve_action_function(action: ActionSpec) -> Function:
 
 def _add_action_to_agent(agent: Agent, action: ActionSpec) -> None:
     func = _resolve_action_function(action)
-    events = [resolve_event_type(e) for e in action.listen_to]
+    trigger_conditions = [
+        resolve_event_type(e) for e in action.trigger_conditions
+    ]
     config = action.config or {}
-    agent.add_action(action.name, events, func, **config)
+    agent.add_action(action.name, trigger_conditions, func, **config)
 
 
 def _build_tool(spec: ToolSpec) -> FunctionTool:
