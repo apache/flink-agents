@@ -127,7 +127,9 @@ class DataStreamAgent(Agent):
         content.review += " first action, log success=" + str(log_success) + ","
         content.memory_info = {"total_reviews": total}
 
-        data_ref = stm.set(f"processed_items.item_{content.id}", content)
+        data_ref = stm.set(
+            f"processed_items.item_{content.id}", content.model_dump(mode="json")
+        )
         ctx.send_event(MyEvent(value=data_ref))
 
     @action(MyEvent.EVENT_TYPE)
@@ -135,7 +137,7 @@ class DataStreamAgent(Agent):
     def second_action(event: Event, ctx: RunnerContext) -> None:
         input_data = MyEvent.from_event(event).value
         stm = ctx.short_term_memory
-        resolved_data: ItemData = stm.get(input_data)
+        resolved_data = ItemData.model_validate(stm.get(input_data))
 
         content = copy.deepcopy(resolved_data)
         content.review += " second action"

@@ -35,20 +35,6 @@ def create_memory() -> LocalMemoryObject:
     return LocalMemoryObject(MemoryType.SHORT_TERM, {})
 
 
-class User:
-    def __init__(self, name: str, age: int) -> None:
-        """Store for later comparison."""
-        self.name = name
-        self.age = age
-
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, User)
-            and other.name == self.name
-            and other.age == self.age
-        )
-
-
 def test_set_get_involved_ref() -> None:
     mem = create_memory()
 
@@ -59,8 +45,6 @@ def test_set_get_involved_ref() -> None:
         ("my_str", "hello", "str"),
         ("my_list", ["a", "b"], "list"),
         ("my_dict", {"x": 10}, "dict"),
-        ("my_set", {1, 2, 3}, "set"),
-        ("my_user", User("Alice", 30), "User"),
     ]
 
     for path, value, _expected_type_name in test_cases:
@@ -90,8 +74,6 @@ def test_memory_ref_resolve() -> None:
         "my_str": "hello",
         "my_list": ["a", "b"],
         "my_dict": {"x": 10},
-        "my_set": {1, 2, 3},
-        "my_user": User("Charlie", 50),
     }
 
     for path, value in test_data.items():

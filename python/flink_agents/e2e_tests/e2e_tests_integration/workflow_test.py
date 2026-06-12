@@ -76,12 +76,13 @@ class MyAgent(Agent):
         memory = ctx.short_term_memory
 
         data_path = f"user_data.{key}"
-        previous_data: ProcessedData = memory.get(data_path)
+        stored = memory.get(data_path)
+        previous_data = ProcessedData.model_validate(stored) if stored else None
         current_count = previous_data.visit_count if previous_data else 0
         new_count = current_count + 1
 
         data_to_store = ProcessedData(content=input_message, visit_count=new_count)
-        data_ref = memory.set(data_path, data_to_store)
+        data_ref = memory.set(data_path, data_to_store.model_dump(mode="json"))
 
         ctx.send_event(MyEvent(value=data_ref))
 
@@ -95,7 +96,7 @@ class MyAgent(Agent):
         content_ref: MemoryRef = MyEvent.from_event(event).value
         memory = ctx.short_term_memory
 
-        processed_data: ProcessedData = memory.get(content_ref)
+        processed_data = ProcessedData.model_validate(memory.get(content_ref))
 
         base_message = processed_data.content
         current_count = processed_data.visit_count
@@ -104,7 +105,7 @@ class MyAgent(Agent):
         updated_data_to_store = ProcessedData(
             content=base_message, visit_count=new_count
         )
-        memory.set(content_ref.path, updated_data_to_store)
+        memory.set(content_ref.path, updated_data_to_store.model_dump(mode="json"))
 
         final_content = f"{base_message} -> processed by second_action"
         key_with_count = f"(visit {new_count} times)"

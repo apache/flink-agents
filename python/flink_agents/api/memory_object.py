@@ -25,6 +25,66 @@ if TYPE_CHECKING:
     from flink_agents.api.memory_reference import MemoryRef
 
 
+# Exact builtin types Pemja materializes into native, checkpoint-stable JVM values.
+# Exact-type (not isinstance): a str/int Enum or numpy scalar is a subclass that Pemja
+# PyObject-wraps despite passing isinstance — accepting it would defeat the validator.
+_CHECKPOINT_STABLE_SCALARS = (bool, int, float, str)
+
+
+def validate_memory_value(path: str, value: Any) -> None:
+    """Reject memory values that are not recursively checkpoint-stable.
+
+    Python memory values cross the Pemja boundary into Flink state. Only values Pemja
+    materializes into native JVM types survive checkpoint and restore; anything else is
+    stored as a stale PyObject wrapper and crashes on restore. Raises TypeError with a
+    clear, actionable message naming the offending location, type, and a conversion.
+
+    Parameters
+    ----------
+    path: str
+        The memory path the value is being set at, used to build the error breadcrumb.
+    value: Any
+        The value to validate. Must be recursively composed of None, bool, int, float,
+        str, list, or dict with str keys.
+    """
+    _validate(value, f"value at memory path {path!r}")
+
+
+def _validate(value: Any, where: str) -> None:
+    if value is None or type(value) in _CHECKPOINT_STABLE_SCALARS:
+        return
+    if isinstance(value, MemoryObject):
+        msg = (
+            f"{where} is a MemoryObject; use new_object(...) to store a nested object "
+            f"instead of passing it to set()."
+        )
+        raise TypeError(msg)
+    if type(value) is list:
+        for i, item in enumerate(value):
+            _validate(item, f"{where}[{i}]")
+        return
+    if type(value) is dict:
+        for key, val in value.items():
+            if type(key) is not str:
+                msg = (
+                    f"{where} has a non-str key {key!r} ({type(key).__name__}); memory "
+                    f"dict keys must be str. Convert with "
+                    f"{{str(k): v for k, v in value.items()}}."
+                )
+                raise TypeError(msg)
+            _validate(val, f"{where}[{key!r}]")
+        return
+    msg = (
+        f"{where} has type {type(value).__name__!r}, which is not checkpoint-stable. "
+        f"Python memory values must be recursively composed of None, bool, int, float, "
+        f"str, list, or dict with str keys, because they cross the Pemja boundary into "
+        f"Flink state and non-primitive objects cannot be safely checkpointed/restored. "
+        f"Materialize it first, e.g. str(value) for a UUID, value.model_dump(mode='json')"
+        f" for a Pydantic model, or list(value) for a tuple/set."
+    )
+    raise TypeError(msg)
+
+
 class MemoryType(Enum):
     """Memory types based on MemoryObject."""
 

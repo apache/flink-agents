@@ -17,7 +17,11 @@
 #################################################################################
 from typing import Any, Dict, List
 
-from flink_agents.api.memory_object import MemoryObject, MemoryType
+from flink_agents.api.memory_object import (
+    MemoryObject,
+    MemoryType,
+    validate_memory_value,
+)
 from flink_agents.api.memory_reference import MemoryRef
 
 
@@ -66,6 +70,7 @@ class FlinkMemoryObject(MemoryObject):
 
     def set(self, path: str, value: Any) -> MemoryRef:
         """Set a value at the given path. Creates intermediate objects if needed."""
+        validate_memory_value(path, value)
         try:
             j_ref = self._j_memory_object.set(path, value)
             return MemoryRef.create(memory_type=self.__type, path=j_ref.getPath())
