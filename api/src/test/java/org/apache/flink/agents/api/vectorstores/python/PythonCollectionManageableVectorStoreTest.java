@@ -161,17 +161,19 @@ public class PythonCollectionManageableVectorStoreTest {
 
     @Test
     void testAddDocuments() throws Exception {
-        List<Document> documents =
-                Arrays.asList(
-                        new Document("content1", Map.of("key", "value1"), "doc1"),
-                        new Document("content2", Map.of("key", "value2"), "doc2"));
+        Document d1 = new Document("content1", Map.of("key", "value1"), "doc1");
+        Document d2 = new Document("content2", Map.of("key", "value2"), "doc2");
+        // Pre-computed embeddings so the Java auto-embed path is skipped (no model configured).
+        d1.setEmbedding(new float[] {0.1f, 0.2f});
+        d2.setEmbedding(new float[] {0.3f, 0.4f});
+        List<Document> documents = Arrays.asList(d1, d2);
         String collection = "test_collection";
         Map<String, Object> extraArgs = Map.of("batch_size", 10);
 
         List<String> expectedIds = Arrays.asList("doc1", "doc2");
 
         when(mockAdapter.toPythonDocuments(documents)).thenReturn(new Object());
-        when(mockAdapter.callMethod(eq(mockVectorStore), eq("add"), any(Map.class)))
+        when(mockAdapter.callMethod(eq(mockVectorStore), eq("_add_embedding"), any(Map.class)))
                 .thenReturn(expectedIds);
 
         List<String> result = vectorStore.add(documents, collection, extraArgs);
@@ -184,7 +186,7 @@ public class PythonCollectionManageableVectorStoreTest {
         verify(mockAdapter)
                 .callMethod(
                         eq(mockVectorStore),
-                        eq("add"),
+                        eq("_add_embedding"),
                         argThat(
                                 kwargs -> {
                                     assertThat(kwargs).containsKey("documents");
@@ -196,10 +198,12 @@ public class PythonCollectionManageableVectorStoreTest {
 
     @Test
     void testUpdateDocuments() throws Exception {
-        List<Document> documents =
-                Arrays.asList(
-                        new Document("c1", Map.of("k", "v1"), "doc1"),
-                        new Document("c2", Map.of("k", "v2"), "doc2"));
+        Document d1 = new Document("c1", Map.of("k", "v1"), "doc1");
+        Document d2 = new Document("c2", Map.of("k", "v2"), "doc2");
+        // Pre-computed embeddings so the Java auto-embed path is skipped (no model configured).
+        d1.setEmbedding(new float[] {0.1f, 0.2f});
+        d2.setEmbedding(new float[] {0.3f, 0.4f});
+        List<Document> documents = Arrays.asList(d1, d2);
         String collection = "test_collection";
         Map<String, Object> extraArgs = Map.of("batch_size", 5);
 
@@ -211,7 +215,7 @@ public class PythonCollectionManageableVectorStoreTest {
         verify(mockAdapter)
                 .callMethod(
                         eq(mockVectorStore),
-                        eq("update"),
+                        eq("_update_embedding"),
                         argThat(
                                 kwargs -> {
                                     assertThat(kwargs).containsKey("documents");

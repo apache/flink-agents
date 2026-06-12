@@ -21,6 +21,7 @@ from typing import Any, Dict, Generator, List
 import chromadb
 from chromadb import ClientAPI as ChromaClient
 from chromadb import CloudClient
+from chromadb.api.types import normalize_embeddings
 from chromadb.config import Settings
 from pydantic import Field
 from typing_extensions import override
@@ -306,6 +307,20 @@ class ChromaVectorStore(CollectionManageableVectorStore):
             metadatas=[doc.metadata for doc in documents],
         )
 
+    @staticmethod
+    @override
+    def _normalize_embeddings(embeddings: List[float]) -> Any:
+        """Convert the raw embedding to chroma's numpy form on the caller's thread.
+
+        chroma's query normally runs this np.array conversion internally. numpy
+        releases and re-acquires the GIL during the copy, which can stall on an
+        async pemja worker thread (pemja keeps a single PyThreadState) — seen as a
+        hang in CI, benign locally with spare cores. Running it here lets the
+        mailbox thread do the numpy step, so the async query sees a ready ndarray.
+        See https://github.com/apache/flink-agents/issues/844.
+        """
+        return normalize_embeddings([embeddings])[0]
+
     @override
     def _query_embedding(
         self,
@@ -315,6 +330,9 @@ class ChromaVectorStore(CollectionManageableVectorStore):
         filters: Dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> List[Document]:
+        # ``embedding`` may be a pre-normalized ndarray (async path) or a raw list
+        # (sync path); chroma takes the ndarray branch for the former, avoiding any
+        # numpy work on this thread.
         collection = self._resolve_collection(collection_name, kwargs)
         results = collection.query(
             query_embeddings=[embedding],

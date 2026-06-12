@@ -339,7 +339,7 @@ public abstract class BaseVectorStore extends Resource {
         }
     }
 
-    private BaseEmbeddingModelSetup getEmbeddingModel() {
+    protected BaseEmbeddingModelSetup getEmbeddingModel() {
         if (embeddingModel == null) {
             throw new IllegalStateException(
                     "No embedding model configured on this vector store. "
