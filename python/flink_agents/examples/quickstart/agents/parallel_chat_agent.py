@@ -19,8 +19,6 @@ import json
 import os
 from typing import Any, Dict, Tuple
 
-from pydantic import BaseModel
-
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -48,24 +46,21 @@ PARALLEL_SYSTEM_PROMPT = (
 AGGREGATE_SYSTEM_PROMPT = (
     "You are a summary assistant. Based on the sentiment judgments for three "
     "dimensions, compose a brief one-line evaluation. Return JSON: "
-    '{"summary":"taste: service: price:"} — return only this JSON.'
+    '{"summary":"taste:<positive/negative/not_mentioned>, '
+    "service:<positive/negative/not_mentioned>, "
+    'price:<positive/negative/not_mentioned>"} — return only this JSON.'
 )
 
 
 def _init_row(event: Event) -> Dict[str, Any]:
     """Build a row skeleton from the InputEvent."""
     payload = InputEvent.from_event(event).input
-    return {"id": payload["id"], "text": payload["text"], "sentiments": {}}
-
-
-def _save_row(ctx: RunnerContext, row: Dict[str, Any]) -> None:
-    """Write the row to sensory memory."""
-    ctx.sensory_memory.set("res", json.dumps(row, ensure_ascii=False))
-
-
-def _load_row(ctx: RunnerContext) -> Dict[str, Any]:
-    """Read the row from sensory memory."""
-    return json.loads(ctx.sensory_memory.get("res"))
+    return {
+        "id": payload["id"],
+        "text": payload["text"],
+        "sentiments": {},
+        "aspect_map": {},
+    }
 
 
 def _build_aspect_request(text: str, aspect: str) -> ChatRequestEvent:
@@ -102,30 +97,12 @@ def _build_summarize_request(row: Dict[str, Any]) -> ChatRequestEvent:
 
 
 def _build_output_event(row: Dict[str, Any], parsed: SummaryResponse) -> OutputEvent:
-    """Pack row fields and summary into the final OutputEvent."""
-    return OutputEvent(
-        output={"id": row["id"], "text": row["text"], "summary": parsed.summary}
-    )
-
-
-def _parse_response(event: Event) -> AspectResponse | SummaryResponse:
-    """Parse a ChatResponseEvent into a structured response object."""
-    response = ChatResponseEvent.from_event(event).response
-    raw = response.extra_args[STRUCTURED_OUTPUT]
-    if isinstance(raw, BaseModel):
-        return raw
-    if "summary" in raw:
-        return SummaryResponse.model_validate(raw)
-    return AspectResponse.model_validate(raw)
-
-
-def _is_final(parsed: AspectResponse | SummaryResponse) -> bool:
-    """Return True if the parsed response is from the aggregation phase."""
-    return isinstance(parsed, SummaryResponse)
+    """Build the final OutputEvent from the aggregated row."""
+    return OutputEvent(output={"id": row["id"], "text": row["text"], "summary": parsed.summary})
 
 
 def _all_aspects_received(row: Dict[str, Any]) -> bool:
-    """Return True if all aspect judgments have been collected."""
+    """Return True when all aspect judgments have been collected."""
     return len(row["sentiments"]) == N_ASPECTS
 
 
@@ -155,20 +132,31 @@ class ParallelChatAgent(Agent):
     def request_aspect_judgments(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat requests for each aspect."""
         row = _init_row(event)
-        _save_row(ctx, row)
-        for aspect in ASPECTS:
-            ctx.send_event(_build_aspect_request(row["text"], aspect))
+        requests = [_build_aspect_request(row["text"], aspect) for aspect in ASPECTS]
+        row["aspect_map"] = {
+            str(req.id): aspect for req, aspect in zip(requests, ASPECTS, strict=True)
+        }
+        # Sensory memory requires JSON serialization across the Pemja JVM boundary.
+        ctx.sensory_memory.set("res", json.dumps(row, ensure_ascii=False))
+        for req in requests:
+            ctx.send_event(req)
 
     @action(ChatResponseEvent.EVENT_TYPE)
     @staticmethod
     def handle_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
-        parsed = _parse_response(event)
-        row = _load_row(ctx)
-        if _is_final(parsed):
+        response_event = ChatResponseEvent.from_event(event)
+        parsed = response_event.response.extra_args[STRUCTURED_OUTPUT]
+        row = json.loads(ctx.sensory_memory.get("res"))
+        # Pemja JVM boundary serializes pydantic instances to dicts; restore the type.
+        if isinstance(parsed, dict):
+            parsed = SummaryResponse(**parsed) if "summary" in parsed else AspectResponse(**parsed)
+        if isinstance(parsed, SummaryResponse):
             ctx.send_event(_build_output_event(row, parsed))
             return
-        row["sentiments"][parsed.aspect] = parsed.result
-        _save_row(ctx, row)
+        aspect = row["aspect_map"][str(response_event.request_id)]
+        row["sentiments"][aspect] = parsed.result
+        # Sensory memory requires JSON serialization across the Pemja JVM boundary.
+        ctx.sensory_memory.set("res", json.dumps(row, ensure_ascii=False))
         if _all_aspects_received(row):
             ctx.send_event(_build_summarize_request(row))

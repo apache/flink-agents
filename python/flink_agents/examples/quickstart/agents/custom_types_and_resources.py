@@ -210,7 +210,6 @@ class SummaryResponse(BaseModel):
     summary: str
 
 
-
 # ollama chat model connection descriptor
 ollama_server_descriptor = ResourceDescriptor(
     clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=120
