@@ -104,6 +104,10 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         **kwargs: Any,
     ) -> ChatMessage:
         """Process a sequence of messages, and return a response."""
+        # Strip the reserved schema so it never leaks into the SDK request; this
+        # connection does not apply native structured output, so it is discarded.
+        self._pop_structured_output_schema(kwargs)
+
         tongyi_messages = self.__convert_to_tongyi_messages(messages)
 
         tongyi_tools: List[Dict[str, Any]] | None = (

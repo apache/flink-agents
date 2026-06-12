@@ -136,6 +136,10 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message
         """
+        # Strip the reserved schema so it never leaks into the SDK request; this
+        # connection does not apply native structured output, so it is discarded.
+        self._pop_structured_output_schema(kwargs)
+
         tool_specs = None
         if tools is not None:
             tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]

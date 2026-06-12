@@ -24,8 +24,12 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel
 
+from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.chat_model import STRUCTURED_OUTPUT_SCHEMA_KEY
+from flink_agents.api.chat_models.java_chat_model import JavaChatModelSetup
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
     ErrorHandlingStrategy,
@@ -344,3 +348,65 @@ class TestProcessToolResponsePromptArgsForwarding:
         assert captured_prompt_args[0] == saved_prompt_args
         assert len(sent_events) == 1
         assert isinstance(sent_events[0], ChatResponseEvent)
+
+
+class TestOutputSchemaThreadingIsSameLanguageOnly:
+    """The reserved output-schema kwarg is threaded only when the resolved setup
+    is a same-language (Python) chat model. A Java-backed setup receives no
+    reserved kwarg, because a Python schema object cannot drive native structured
+    output across the Pemja bridge.
+    """
+
+    def _run_chat_and_capture_kwargs(self, chat_model: Any) -> dict:
+        captured: dict = {}
+
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+            captured.update(kwargs)
+            # Stop after capturing; IGNORE strategy makes chat() return before any
+            # downstream structured-output parsing runs.
+            err_msg = "stop after capture"
+            raise RuntimeError(err_msg)
+
+        chat_model.chat = mock_chat
+
+        config = MagicMock()
+        option_values = {
+            id(AgentExecutionOptions.ERROR_HANDLING_STRATEGY): ErrorHandlingStrategy.IGNORE,
+            id(AgentExecutionOptions.CHAT_ASYNC): False,
+        }
+        config.get = MagicMock(
+            side_effect=lambda option: option_values.get(
+                id(option), option.get_default_value()
+            )
+        )
+        ctx = MagicMock()
+        ctx.config = config
+        ctx.get_resource = MagicMock(return_value=chat_model)
+        ctx.durable_execute = MagicMock(
+            side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)
+        )
+
+        class _Result(BaseModel):
+            result: int
+
+        asyncio.run(
+            chat(
+                uuid4(),
+                "test-model",
+                [ChatMessage(role=MessageRole.USER, content="hi")],
+                {},
+                OutputSchema(output_schema=_Result),
+                ctx,
+            )
+        )
+        return captured
+
+    def test_python_setup_receives_reserved_kwarg(self) -> None:
+        captured = self._run_chat_and_capture_kwargs(MagicMock())
+        assert STRUCTURED_OUTPUT_SCHEMA_KEY in captured
+
+    def test_java_setup_does_not_receive_reserved_kwarg(self) -> None:
+        captured = self._run_chat_and_capture_kwargs(
+            MagicMock(spec=JavaChatModelSetup)
+        )
+        assert STRUCTURED_OUTPUT_SCHEMA_KEY not in captured

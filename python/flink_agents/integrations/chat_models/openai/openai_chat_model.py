@@ -15,13 +15,20 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List, Literal, Sequence
+from typing import Any, ClassVar, Dict, List, Literal, Sequence
 
 import httpx
 from openai import NOT_GIVEN, OpenAI
-from pydantic import Field, PrivateAttr
+
+# Private SDK module (leading underscore): the openai client itself uses this helper to
+# build the strict json_schema for response_format, and there is no public re-export. It
+# has existed at this path since the structured-output support in openai 1.66.3 (the
+# pinned minimum). A future openai bump that moves it will fail loudly on import here.
+from openai.lib._pydantic import to_strict_json_schema
+from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -36,6 +43,30 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
 )
 
 DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo"
+
+
+def _native_response_format(
+    output_schema: Any, tool_specs: List[Dict[str, Any]] | None
+) -> Dict[str, Any] | None:
+    """Build the OpenAI ``response_format`` for a native structured-output request.
+
+    Returns ``None`` (leaving behavior unchanged) unless an output schema is present,
+    no tools are bound, and the schema is a ``BaseModel`` subclass. A ``RowTypeInfo``
+    schema is skipped so it keeps the prompt-engineering fallback.
+    """
+    if output_schema is None or tool_specs:
+        return None
+    model = output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": model.__name__,
+            "schema": to_strict_json_schema(model),
+            "strict": True,
+        },
+    }
 
 
 class OpenAIChatModelConnection(BaseChatModelConnection):
@@ -56,6 +87,8 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
     reuse_client : bool
         Whether to reuse the OpenAI client between requests.
     """
+
+    supports_native_structured_output: ClassVar[bool] = True
 
     api_key: str = Field(default=None, description="The OpenAI API key.")
     api_base_url: str = Field(description="The base URL for OpenAI API.")
@@ -157,6 +190,9 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message
         """
+        # Always pop the reserved schema so it never leaks into the SDK request.
+        output_schema = self._pop_structured_output_schema(kwargs)
+
         tool_specs = None
         if tools is not None:
             tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]
@@ -165,6 +201,12 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
                 if tool_spec["type"] == "function":
                     tool_spec["function"]["strict"] = strict
                     tool_spec["function"]["parameters"]["additionalProperties"] = False
+
+        # Native structured output applies only for a BaseModel schema when no tools
+        # are bound; a RowTypeInfo schema keeps the prompt-engineering fallback.
+        response_format = _native_response_format(output_schema, tool_specs)
+        if response_format is not None:
+            kwargs["response_format"] = response_format
 
         response = self.client.chat.completions.create(
             messages=convert_to_openai_messages(messages),

@@ -321,6 +321,33 @@ class BaseChatModelTest {
     }
 
     @Test
+    @DisplayName("popStructuredOutputSchema removes the reserved key and returns its value")
+    void testPopStructuredOutputSchemaRemovesAndReturns() {
+        Object schema = new Object();
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put(BaseChatModelConnection.STRUCTURED_OUTPUT_SCHEMA_KEY, schema);
+        modelParams.put("temperature", 0.5);
+
+        Object popped = BaseChatModelConnection.popStructuredOutputSchema(modelParams);
+
+        assertSame(schema, popped);
+        assertFalse(modelParams.containsKey(BaseChatModelConnection.STRUCTURED_OUTPUT_SCHEMA_KEY));
+        assertTrue(modelParams.containsKey("temperature"));
+    }
+
+    @Test
+    @DisplayName(
+            "popStructuredOutputSchema returns null when the reserved key is absent or map is null")
+    void testPopStructuredOutputSchemaNoKey() {
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("temperature", 0.5);
+
+        assertNull(BaseChatModelConnection.popStructuredOutputSchema(modelParams));
+        assertEquals(1, modelParams.size());
+        assertNull(BaseChatModelConnection.popStructuredOutputSchema(null));
+    }
+
+    @Test
     @DisplayName("Test chat with long input")
     void testChatWithLongInput() {
         StringBuilder longInput = new StringBuilder();

@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -348,6 +349,18 @@ public class ChatModelAction {
         int actualRetryCount = 0;
         int totalWaitTimeSec = 0;
 
+        // Thread the output schema to the connection via a reserved modelParams key so a
+        // native-capable connection can apply the provider's structured-output API. The
+        // connection pops the key before its SDK call (see BaseChatModelConnection). Only
+        // thread it for a same-language (Java) setup: native structured output cannot work
+        // across the Pemja bridge because a Java schema object is not consumable by a Python
+        // connection, so a Python-backed setup keeps the prior empty-map behavior.
+        final Map<String, Object> modelParams =
+                outputSchema != null && !(chatModel instanceof PythonChatModelSetup)
+                        ? Collections.singletonMap(
+                                BaseChatModelConnection.STRUCTURED_OUTPUT_SCHEMA_KEY, outputSchema)
+                        : Map.of();
+
         DurableCallable<ChatMessage> callable =
                 new DurableCallable<>() {
                     @Override
@@ -362,7 +375,7 @@ public class ChatModelAction {
 
                     @Override
                     public ChatMessage call() throws Exception {
-                        return chatModel.chat(messages, promptArgs, Map.of());
+                        return chatModel.chat(messages, promptArgs, modelParams);
                     }
                 };
 

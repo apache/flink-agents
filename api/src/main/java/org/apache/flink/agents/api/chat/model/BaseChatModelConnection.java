@@ -36,6 +36,14 @@ import java.util.Map;
  */
 public abstract class BaseChatModelConnection extends Resource {
 
+    /**
+     * Reserved {@code modelParams} key carrying the raw output schema (a POJO {@link Class} or an
+     * {@link org.apache.flink.agents.api.agents.OutputSchema}) down to the connection so it can
+     * apply the provider's native structured-output mechanism. The key is intra-language only and
+     * must be removed before the provider SDK call so it never reaches the request body.
+     */
+    public static final String STRUCTURED_OUTPUT_SCHEMA_KEY = "__structured_output_schema__";
+
     public BaseChatModelConnection(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
     }
@@ -43,6 +51,33 @@ public abstract class BaseChatModelConnection extends Resource {
     @Override
     public ResourceType getResourceType() {
         return ResourceType.CHAT_MODEL_CONNECTION;
+    }
+
+    /**
+     * Whether this connection applies the provider's native structured-output API when an output
+     * schema is supplied. Connections that translate a schema into a native provider parameter
+     * override this to return {@code true}; the default false keeps non-native connections on the
+     * prompt-engineering fallback.
+     *
+     * @return true if this connection supports native structured output
+     */
+    protected boolean supportsNativeStructuredOutput() {
+        return false;
+    }
+
+    /**
+     * Removes and returns the reserved structured-output schema from {@code modelParams}. Every
+     * connection must call this so the reserved key never leaks into the provider SDK request;
+     * native connections additionally use the returned value to build the native parameter.
+     *
+     * @param modelParams the mutable model parameters map (may be null)
+     * @return the raw output schema if present, otherwise null
+     */
+    protected static Object popStructuredOutputSchema(Map<String, Object> modelParams) {
+        if (modelParams == null) {
+            return null;
+        }
+        return modelParams.remove(STRUCTURED_OUTPUT_SCHEMA_KEY);
     }
 
     /**
