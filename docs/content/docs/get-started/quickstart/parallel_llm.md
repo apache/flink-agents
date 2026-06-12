@@ -90,6 +90,9 @@ Below is the example code for the `ParallelChatAgent`. Two system prompts — `P
 
 {{< tab "Python" >}}
 ```python
+ASPECTS: Tuple[str, ...] = ("taste", "service", "price")
+N_ASPECTS = len(ASPECTS)
+
 PARALLEL_SYSTEM_PROMPT = (
     "You are a sentiment analysis assistant. Return JSON: "
     '{"aspect":"<dimension>", "result":"<positive|negative|not_mentioned>"}'
