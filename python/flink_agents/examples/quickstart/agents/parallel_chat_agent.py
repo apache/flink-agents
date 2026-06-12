@@ -148,7 +148,6 @@ class ParallelChatAgent(Agent):
         response_event = ChatResponseEvent.from_event(event)
         parsed = response_event.response.extra_args[STRUCTURED_OUTPUT]
         row = json.loads(ctx.sensory_memory.get("res"))
-        # Pemja JVM boundary serializes pydantic instances to dicts; restore the type.
         if isinstance(parsed, dict):
             parsed = SummaryResponse(**parsed) if "summary" in parsed else AspectResponse(**parsed)
         if isinstance(parsed, SummaryResponse):
