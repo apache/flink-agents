@@ -397,6 +397,16 @@ class BaseVectorStore(Resource, ABC):
             **kwargs: Vector store specific parameters.
         """
 
+    @staticmethod
+    def _normalize_embeddings(embeddings: list[float]) -> Any:
+        """Pre-process a query embedding before the search call.
+
+        Hook for backends whose query path performs CPU/numpy work that must run
+        on the mailbox thread rather than an async cross-language worker (see the
+        ChromaDB override). Default is identity.
+        """
+        return embeddings
+
     @abstractmethod
     def _query_embedding(
         self,
