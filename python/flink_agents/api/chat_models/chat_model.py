@@ -32,6 +32,13 @@ from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL
 from flink_agents.api.tools.tool import Tool
 
+STRUCTURED_OUTPUT_SCHEMA_KEY = "__structured_output_schema__"
+"""Reserved ``kwargs`` key carrying the raw output schema (an ``OutputSchema``
+wrapping a ``BaseModel`` subclass or ``RowTypeInfo``) down to the connection so it
+can apply the provider's native structured-output mechanism. The key is
+intra-language only and must be removed before the provider SDK call so it never
+reaches the request."""
+
 
 class BaseChatModelConnection(Resource, ABC):
     """Base abstract class for chat model connection.
@@ -53,6 +60,32 @@ class BaseChatModelConnection(Resource, ABC):
     def resource_type(cls) -> ResourceType:
         """Return resource type of class."""
         return ResourceType.CHAT_MODEL_CONNECTION
+
+    supports_native_structured_output: ClassVar[bool] = False
+    """Whether this connection applies the provider's native structured-output API
+    when an output schema is supplied. Connections that translate a schema into a
+    native provider parameter override this to ``True``; the default keeps non-native
+    connections on the prompt-engineering fallback."""
+
+    @staticmethod
+    def _pop_structured_output_schema(kwargs: Dict[str, Any]) -> Any:
+        """Remove and return the reserved structured-output schema from ``kwargs``.
+
+        Every connection must call this so the reserved key never leaks into the
+        provider SDK request; native connections additionally use the returned value
+        to build the native parameter.
+
+        Parameters
+        ----------
+        kwargs : Dict[str, Any]
+            The mutable keyword arguments passed to ``chat``.
+
+        Returns:
+        -------
+        Any
+            The raw output schema if present, otherwise ``None``.
+        """
+        return kwargs.pop(STRUCTURED_OUTPUT_SCHEMA_KEY, None)
 
     DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str], ...]] = (
         re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE),

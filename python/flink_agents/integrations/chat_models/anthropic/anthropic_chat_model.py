@@ -171,6 +171,10 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         **kwargs: Any,
     ) -> ChatMessage:
         """Direct communication with Anthropic model service for chat conversation."""
+        # Strip the reserved schema so it never leaks into the SDK request; this
+        # connection does not apply native structured output, so it is discarded.
+        self._pop_structured_output_schema(kwargs)
+
         anthropic_tools = None
         if tools is not None:
             anthropic_tools = [

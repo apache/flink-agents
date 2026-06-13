@@ -19,7 +19,7 @@ import json
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, Dict, List, cast
+from typing import TYPE_CHECKING, Any, Dict, List, cast
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -29,6 +29,7 @@ from pyflink.common.typeinfo import RowTypeInfo
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.chat_model import STRUCTURED_OUTPUT_SCHEMA_KEY
 from flink_agents.api.chat_models.java_chat_model import JavaChatModelSetup
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
@@ -314,15 +315,25 @@ async def chat(
     actual_retry_count = 0
     total_wait_time_sec = 0
 
+    # Thread the output schema to the connection via a reserved kwarg so a
+    # native-capable connection can apply the provider's structured-output API. The
+    # connection pops the key before its SDK call (see BaseChatModelConnection). Only
+    # thread it for a same-language (Python) setup: native structured output cannot work
+    # across the Pemja bridge because a Python schema object is not consumable by a Java
+    # connection, so a Java-backed setup keeps the prior behavior (no reserved kwarg).
+    chat_kwargs: Dict[str, Any] = {"prompt_args": prompt_args}
+    if output_schema is not None and not isinstance(chat_model, JavaChatModelSetup):
+        chat_kwargs[STRUCTURED_OUTPUT_SCHEMA_KEY] = output_schema
+
     for attempt in range(num_retries + 1):
         try:
             if chat_async:
                 response = await ctx.durable_execute_async(
-                    chat_model.chat, messages, prompt_args=prompt_args
+                    chat_model.chat, messages, **chat_kwargs
                 )
             else:
                 response = ctx.durable_execute(
-                    chat_model.chat, messages, prompt_args=prompt_args
+                    chat_model.chat, messages, **chat_kwargs
                 )
 
             if (
