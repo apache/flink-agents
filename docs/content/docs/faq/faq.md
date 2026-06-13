@@ -81,17 +81,17 @@ Async execution can significantly improve performance by allowing multiple opera
 | Java (JDK 21+) | ✅ Supported (via Continuation API) |
 | Java (JDK < 21) | ❌ Not supported (falls back to synchronous execution) |
 
-> **Cross-language async limitation**: When using cross-language resources (e.g., calling Java integrations from Python or vice versa), async execution is not supported. Cross-language calls always execute synchronously regardless of your JDK version.
-
 This is important because:
 
 - **For Python users**: Async execution is always available.
-- **For Java users on JDK 21+**: Async execution is available, so using native integrations (instead of cross-language) matters for performance.
-- **For Java users on JDK < 21**: Async execution is **not available regardless of whether you use native or cross-language integrations**. Therefore, the cross-language async limitation has **no additional performance impact** for these users.
+- **For Java users on JDK 21+**: Async execution is available.
+- **For Java users on JDK < 21**: Async execution is not available and falls back to synchronous execution.
+
+> **Cross-language async note**: Async execution for cross-language resources requires the pemja 0.5.7 fix, available in Flink 1.20.5+ / 2.0.2+ / 2.1.3+ / 2.2.1+. Current builds target Flink 2.2.0, so cross-language calls still run synchronously for now; this is resolved automatically once running on a Flink version that includes the fix.
 
 ### Native Integration Support Matrix
 
-Flink Agents provides built-in integrations for many ecosystem providers. Some integrations are only available in one language. For those marked as ❌, you can still use them from the other language via cross-language support, but cross-language calls do not support async execution.
+Flink Agents provides built-in integrations for many ecosystem providers. Some integrations are only available in one language. For those marked as ❌, you can still use them from the other language via cross-language support.
 
 **Chat Models**
 
