@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import json
+import logging
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Sequence
 
@@ -70,6 +71,35 @@ def test_from_agent():
     assert func.module == "flink_agents.plan.tests.test_agent_plan"
     assert func.qualname == "AgentForTest.increment"
     assert action.listen_event_types == [InputEvent.EVENT_TYPE]
+
+
+class AgentWithReturningAction(Agent):
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def returns_value(event: Event, ctx: RunnerContext) -> str:
+        return "result"
+
+
+def test_warns_when_action_returns_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        AgentPlan.from_agent(AgentWithReturningAction(), AgentConfiguration())
+    assert any(
+        "returns_value" in record.getMessage()
+        and "ignored" in record.getMessage().lower()
+        for record in caplog.records
+    )
+
+
+def test_no_warning_for_none_returning_action(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        AgentPlan.from_agent(AgentForTest(), AgentConfiguration())
+    assert not any(
+        "ignored" in record.getMessage().lower() for record in caplog.records
+    )
 
 
 class InvalidAgent(Agent):
