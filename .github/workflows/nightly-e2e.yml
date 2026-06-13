@@ -1,0 +1,80 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: Nightly E2E Tests
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      flink-version:
+        description: 'Flink version to test (e.g., 2.2.0, 2.1.1)'
+        required: false
+        default: '2.2.0'
+        type: string
+  pull_request:
+    branches: [main]
+    paths:
+      - 'examples/**'
+      - 'python/flink_agents/examples/**'
+      - 'tools/install.sh'
+      - 'e2e-test/test-scripts/test_submit_examples_to_flink.sh'
+      - '.github/workflows/nightly-e2e.yml'
+
+jobs:
+  submit-examples-to-flink:
+    name: submit-examples [flink-${{ matrix.flink-version }}]
+    runs-on: ubuntu-latest
+    # Budget: download ~5m + build ~15m + cluster/submit ~5m + buffer.
+    timeout-minutes: 60
+    env:
+      SKIP_SPOTLESS_CHECK: true
+    strategy:
+      fail-fast: false
+      matrix:
+        flink-version: ['2.2.0']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'adopt'
+      - name: Install python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Run submit-examples E2E test
+        env:
+          FLINK_VERSION: ${{ github.event.inputs.flink-version || matrix.flink-version }}
+          # Use a lightweight chat model on GitHub-hosted runners (CPU only,
+          # ~7GB RAM). The script aliases this to the names examples hardcode.
+          OLLAMA_CHAT_MODEL: 'qwen3:0.6b'
+          OLLAMA_EMBED_MODEL: 'nomic-embed-text'
+        run: bash e2e-test/test-scripts/test_submit_examples_to_flink.sh
+      - name: Upload Flink logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flink-logs-${{ matrix.flink-version }}
+          path: flink-logs-*.tar.gz
+          if-no-files-found: ignore
