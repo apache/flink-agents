@@ -37,6 +37,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Test for {@link ActionJsonSerializer}. */
@@ -68,8 +70,8 @@ public class ActionJsonSerializerTest {
         assertTrue(
                 json.contains("\"method_name\":\"legal\""), "JSON should contain the method name");
         assertTrue(
-                json.contains("\"listen_event_types\":["),
-                "JSON should contain the listen event types");
+                json.contains("\"trigger_conditions\":["),
+                "JSON should contain the trigger conditions");
         assertTrue(
                 json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
                 "JSON should contain the event type string");
@@ -103,8 +105,8 @@ public class ActionJsonSerializerTest {
                 json.contains("\"qualname\":\"test_function\""),
                 "JSON should contain the qualified name");
         assertTrue(
-                json.contains("\"listen_event_types\":["),
-                "JSON should contain the listen event types");
+                json.contains("\"trigger_conditions\":["),
+                "JSON should contain the trigger conditions");
         assertTrue(
                 json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
                 "JSON should contain the event type string");
@@ -133,8 +135,8 @@ public class ActionJsonSerializerTest {
                 json.contains("\"name\":\"multiEventAction\""),
                 "JSON should contain the action name");
         assertTrue(
-                json.contains("\"listen_event_types\":["),
-                "JSON should contain the listen event types");
+                json.contains("\"trigger_conditions\":["),
+                "JSON should contain the trigger conditions");
         assertTrue(
                 json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
                 "JSON should contain the InputEvent type string");
@@ -147,27 +149,19 @@ public class ActionJsonSerializerTest {
     }
 
     @Test
-    public void testSerializeEmptyEventTypes() throws Exception {
-        // Create a JavaFunction
-        JavaFunction function =
-                new JavaFunction(
-                        "org.apache.flink.agents.plan.TestAction",
-                        "legal",
-                        new Class[] {Event.class, RunnerContext.class});
-
-        // Create an Action with an empty event types list
-        Action action = new Action("emptyEventsAction", function, Collections.emptyList());
-
-        // Serialize the action to JSON
-        String json = new ObjectMapper().writeValueAsString(action);
-
-        // Verify the JSON contains the expected fields
-        assertTrue(
-                json.contains("\"name\":\"emptyEventsAction\""),
-                "JSON should contain the action name");
-        assertTrue(
-                json.contains("\"listen_event_types\":[]"),
-                "JSON should contain an empty listen event types array");
+    public void testSerializeEmptyEventTypes() {
+        // Empty trigger conditions are now rejected at Action construction time
+        // (the CEL feature requires at least one entry to evaluate against).
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> {
+                    JavaFunction function =
+                            new JavaFunction(
+                                    "org.apache.flink.agents.plan.TestAction",
+                                    "legal",
+                                    new Class[] {Event.class, RunnerContext.class});
+                    new Action("emptyEventsAction", function, Collections.emptyList());
+                });
     }
 
     @Test
@@ -233,5 +227,28 @@ public class ActionJsonSerializerTest {
         Assertions.assertEquals("123", ((InputEvent) deserializeConfig.get("arg0")).getInput());
         Assertions.assertEquals(arg1, deserializeConfig.get("arg1"));
         Assertions.assertEquals(arg2, deserializeConfig.get("arg2"));
+    }
+
+    @Test
+    public void testDeserializeLegacyListenEventTypesKey() throws Exception {
+        String legacyJson =
+                "{"
+                        + "\"name\":\"legacyAction\","
+                        + "\"exec\":{"
+                        + "\"func_type\":\"PythonFunction\","
+                        + "\"module\":\"test_module\","
+                        + "\"qualname\":\"test_function\""
+                        + "},"
+                        + "\"listen_event_types\":[\"_input_event\",\"_output_event\"]"
+                        + "}";
+
+        ObjectMapper mapper = new ObjectMapper();
+        Action action = mapper.readValue(legacyJson, Action.class);
+
+        assertEquals("legacyAction", action.getName());
+        assertNotNull(action.getTriggerConditions());
+        assertEquals(
+                List.of(InputEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE),
+                action.getTriggerConditions());
     }
 }

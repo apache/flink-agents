@@ -475,7 +475,7 @@ async def process_chat_request_or_tool_response(
 CHAT_MODEL_ACTION = Action(
     name="chat_model_action",
     exec=PythonFunction.from_callable(process_chat_request_or_tool_response),
-    listen_event_types=[
+    trigger_conditions=[
         ChatRequestEvent.EVENT_TYPE,
         ToolResponseEvent.EVENT_TYPE,
     ],

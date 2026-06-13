@@ -85,6 +85,13 @@ public class AgentPlan implements Serializable {
     /** Mapping from event type string to list of actions that should be triggered by the event. */
     private Map<String, List<Action>> actionsByEvent;
 
+    /**
+     * Actions that carry at least one CEL expression in their trigger conditions and therefore
+     * require runtime CEL evaluation in addition to (or instead of) the actionsByEvent reverse map.
+     * Rebuilt by {@link #rebuildActionsWithCel()} after construction and deserialization.
+     */
+    private transient List<Action> actionsWithCel = new ArrayList<>();
+
     /** Two-level mapping of resource type to resource name to resource provider. */
     private Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
 
@@ -95,6 +102,7 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = new HashMap<>();
         this.config = new AgentConfiguration();
+        rebuildActionsWithCel();
     }
 
     public AgentPlan(
@@ -105,6 +113,7 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = resourceProviders;
         this.config = new AgentConfiguration();
+        rebuildActionsWithCel();
     }
 
     public AgentPlan(
@@ -116,6 +125,7 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = resourceProviders;
         this.config = config;
+        rebuildActionsWithCel();
     }
 
     /**
@@ -180,43 +190,71 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = agentPlan.getActionsByEvent();
         this.resourceProviders = agentPlan.getResourceProviders();
         this.config = agentPlan.getConfig();
+        rebuildActionsWithCel();
     }
 
     private void extractActions(
             String actionName,
-            String[] listenEventTypeStrings,
+            String[] triggerEntries,
             org.apache.flink.agents.plan.Function function,
             Map<String, Object> config)
             throws Exception {
-        List<String> eventTypeNames = new ArrayList<>(Arrays.asList(listenEventTypeStrings));
+        List<String> triggerConditions = new ArrayList<>(Arrays.asList(triggerEntries));
 
-        if (eventTypeNames.isEmpty()) {
+        if (triggerConditions.isEmpty()) {
             throw new IllegalArgumentException(
                     "Action "
                             + actionName
-                            + " must specify at least one event type via listenEventTypes.");
+                            + " must specify at least one trigger entry via @Action(value = ...).");
         }
 
         // Create an Action
-        Action action = new Action(actionName, function, eventTypeNames, config);
-
-        // Add to actions map
-        actions.put(action.getName(), action);
-
-        // Add to actionsByEvent map
-        for (String eventTypeName : eventTypeNames) {
-            actionsByEvent.computeIfAbsent(eventTypeName, k -> new ArrayList<>()).add(action);
-        }
+        Action action = new Action(actionName, function, triggerConditions, config);
+        registerAction(action);
     }
 
     private void addBuiltAction(Action action) {
-        // Add to actions map
-        actions.put(action.getName(), action);
+        registerAction(action);
+    }
 
-        // Add to actionsByEvent map
+    /**
+     * Registers an action into both {@link #actions}, {@link #actionsByEvent} (using type-only
+     * entries from {@link Action#getListenEventTypes()}), and {@link #actionsWithCel} if the action
+     * carries any CEL expression.
+     */
+    private void registerAction(Action action) {
+        actions.put(action.getName(), action);
         for (String eventTypeName : action.getListenEventTypes()) {
             actionsByEvent.computeIfAbsent(eventTypeName, k -> new ArrayList<>()).add(action);
         }
+        if (action.hasCelCondition()) {
+            actionsWithCel.add(action);
+        }
+    }
+
+    /**
+     * Rebuilds {@link #actionsWithCel} from {@link #actions}. Used after deserialization (where
+     * actionsWithCel is transient).
+     */
+    private void rebuildActionsWithCel() {
+        if (actionsWithCel == null) {
+            actionsWithCel = new ArrayList<>();
+        } else {
+            actionsWithCel.clear();
+        }
+        if (actions == null) {
+            return;
+        }
+        for (Action action : actions.values()) {
+            if (action.hasCelCondition()) {
+                actionsWithCel.add(action);
+            }
+        }
+    }
+
+    /** Returns the list of actions that require CEL evaluation. */
+    public List<Action> getActionsWithCel() {
+        return actionsWithCel;
     }
 
     private void extractActionsFromAgent(Agent agent) throws Exception {
@@ -251,7 +289,7 @@ public class AgentPlan implements Serializable {
                     Objects.requireNonNull(
                             method.getAnnotation(
                                     org.apache.flink.agents.api.annotation.Action.class));
-            String[] listenEventTypeStrings = actionAnnotation.listenEventTypes();
+            String[] triggerEntries = actionAnnotation.value();
             org.apache.flink.agents.api.annotation.PythonFunction target =
                     actionAnnotation.target();
             String targetModule = target.module();
@@ -276,7 +314,7 @@ public class AgentPlan implements Serializable {
                                 + method.getName()
                                 + "' must set both module and qualname");
             }
-            extractActions(method.getName(), listenEventTypeStrings, execFunction, null);
+            extractActions(method.getName(), triggerEntries, execFunction, null);
         }
 
         for (Map.Entry<

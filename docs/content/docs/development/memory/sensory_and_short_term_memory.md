@@ -95,7 +95,7 @@ Python memory values must be checkpoint-stable primitives, unlike the Java contr
 
 {{< tab "Python" >}}
 ```python
-@action(InputEvent.EVENT_TYPE)
+@action(EventType.InputEvent)
 def process_event(event: Event, ctx: RunnerContext) -> None:
     memory: MemoryObject = ctx.sensory_memory # or ctx.short_term_memory
     # store primitive
@@ -120,7 +120,7 @@ def process_event(event: Event, ctx: RunnerContext) -> None:
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void processEvent(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     MemoryObject memory = ctx.getSensoryMemory(); // ctx.getShortTermMemory();
@@ -228,7 +228,7 @@ def first_action(event: Event, ctx: RunnerContext):
     ctx.send_event(MyEvent(value=data_ref))
     ...
 
-@action(MyEvent.EVENT_TYPE)
+@action("MyEvent")
 @staticmethod
 def second_action(event: Event, ctx: RunnerContext):
     my_event = MyEvent.from_event(event)
@@ -242,7 +242,7 @@ def second_action(event: Event, ctx: RunnerContext):
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void firstAction(Event event, RunnerContext ctx) throws Exception {
     ...
     MemoryObject sensoryMemory = ctx.getSensoryMemory();
@@ -252,7 +252,7 @@ public static void firstAction(Event event, RunnerContext ctx) throws Exception 
     ...
 }
 
-@Action(listenEventTypes = {MyEvent.EVENT_TYPE})
+@Action("MyEvent")
 public static void secondAction(Event event, RunnerContext ctx) throws Exception {
     MyEvent myEvent = MyEvent.fromEvent(event);
     ...

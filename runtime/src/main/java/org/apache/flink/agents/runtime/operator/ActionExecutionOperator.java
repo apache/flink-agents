@@ -266,7 +266,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
             // We then obtain the triggered action and add ActionTasks to the waiting processing
             // queue.
-            List<Action> triggerActions = eventRouter.getActionsTriggeredBy(event, agentPlan);
+            List<Action> triggerActions = eventRouter.getActionsTriggeredBy(event);
             if (triggerActions != null && !triggerActions.isEmpty()) {
                 for (Action triggerAction : triggerActions) {
                     stateManager.addActionTask(createActionTask(key, triggerAction, event));

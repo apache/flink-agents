@@ -136,4 +136,18 @@ public class ActionJsonDeserializerTest {
                 .containsKey("extra");
         assertNull(result.get("extra"));
     }
+
+    @Test
+    public void testDeserializeLegacyListenEventTypes() throws Exception {
+        String json = Utils.readJsonFromResource("actions/action_legacy_listen_event_types.json");
+
+        ObjectMapper mapper = new ObjectMapper();
+        Action action = mapper.readValue(json, Action.class);
+
+        assertEquals("legacyAction", action.getName());
+        assertInstanceOf(JavaFunction.class, action.getExec());
+        assertEquals(1, action.getListenEventTypes().size());
+        assertEquals(InputEvent.EVENT_TYPE, action.getListenEventTypes().get(0));
+        assertThat(action.getTriggerConditions()).containsExactly(InputEvent.EVENT_TYPE);
+    }
 }

@@ -362,7 +362,7 @@ class MyAgent(Agent):
             collection="my_chroma_store"
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def search_documents(event: Event, ctx: RunnerContext) -> None:
         # Get the vector store from the runtime context
@@ -416,7 +416,7 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void searchDocuments(Event event, RunnerContext ctx) {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         // Option 1: Manual search via the vector store
@@ -429,7 +429,7 @@ public class MyAgent extends Agent {
         ctx.sendEvent(new ContextRetrievalRequestEvent(queryText, "vectorStore"));
     }
 
-    @Action(listenEventTypes = {ContextRetrievalResponseEvent.EVENT_TYPE})
+    @Action(EventType.ContextRetrievalResponseEvent)
     public static void onSearchResponse(Event event, RunnerContext ctx) {
         ContextRetrievalResponseEvent response = ContextRetrievalResponseEvent.fromEvent(event);
         List<Document> documents = response.getDocuments();
@@ -1049,7 +1049,7 @@ class MyAgent(Agent):
             dims=768
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         # Use Java vector store from Python
@@ -1096,7 +1096,7 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         // Use Python vector store from Java

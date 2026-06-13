@@ -1,0 +1,39 @@
+# CEL macro whitelist test fixture.
+# Shared by Java (CelExpressionFacadeTest) and Python (test_cel_facade).
+# Phase-1 policy: only `has()` is allowed; all others are rejected.
+
+reject:
+  # Free-form calls
+  - "exists(x, x > 0)"
+  - "exists_one(x, x == 1)"
+  - "all(x, x > 0)"
+  - "filter(x, x > 0)"
+  - "map(x, x + 1)"
+  # Method-style calls (most common CEL usage)
+  - "attributes.tags.exists(x, x == 'a')"
+  - "attributes.scores.all(s, s >= 60)"
+  - "attributes.items.filter(i, i.active == true)"
+  - "attributes.items.map(i, i.name)"
+  - "attributes.tags.exists_one(t, t == 'urgent')"
+  # Nested in logical operators
+  - "has(attributes.x) && attributes.list.all(t, t > 0)"
+  - "type == '_input_event' || attributes.items.exists(i, i.price > 100)"
+  # Nested macros inside macro arguments
+  - "attributes.groups.exists(g, g.members.all(m, m.active == true))"
+
+accept:
+  # has() is allowed
+  - "has(attributes.score)"
+  - "has(attributes.user_id) && attributes.score > 10"
+  # Basic operators, no macros
+  - "type == '_input_event'"
+  - "attributes.score >= 90"
+  - "attributes.count != 0 && type == '_output_event'"
+  # Macro name inside string literal (not a call)
+  - "type == 'exists_check_event'"
+  - "attributes.name == 'filter_result'"
+  - "attributes.label == 'has all filter map exists'"
+  # Macro name as identifier substring (not a call)
+  - "attributes.existing == true"
+  - "attributes.mapKey == 'value'"
+  - "attributes.filter_count > 5"

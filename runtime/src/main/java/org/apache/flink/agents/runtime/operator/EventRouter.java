@@ -30,6 +30,7 @@ import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.condition.ActionRouter;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
@@ -87,6 +88,13 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     private final EventLogger eventLogger;
     private final List<EventListener> eventListeners;
     private final AgentPlan agentPlan;
+
+    /**
+     * CEL-aware router; owns event → action resolution including CEL conditions. Built and opened
+     * at construction.
+     */
+    private final ActionRouter actionRouter;
+
     private StreamRecord<OUT> reusedStreamRecord;
     private SegmentedQueue keySegmentQueue;
     private BuiltInMetrics builtInMetrics;
@@ -101,6 +109,8 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         this.inputIsJava = inputIsJava;
         this.eventLogger = eventLogger;
         this.eventListeners = new ArrayList<>();
+        this.actionRouter = new ActionRouter(agentPlan);
+        this.actionRouter.open();
     }
 
     /**
@@ -216,8 +226,8 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         }
     }
 
-    List<Action> getActionsTriggeredBy(Event event, AgentPlan agentPlan) {
-        return agentPlan.getActionsTriggeredBy(event.getType());
+    List<Action> getActionsTriggeredBy(Event event) {
+        return actionRouter.route(event);
     }
 
     /**
@@ -308,6 +318,7 @@ class EventRouter<IN, OUT> implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
+        actionRouter.close();
         if (eventLogger != null) {
             eventLogger.close();
         }

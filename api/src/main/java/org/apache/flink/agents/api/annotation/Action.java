@@ -24,23 +24,24 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Annotation for marking a method as an agent action.
+ * Marks a method as an agent action triggered by matching events.
  *
- * <p>This annotation specifies which event types the action should respond to. The annotated method
- * will be triggered when any of the specified event types occur.
- *
- * <p>Events are specified as type strings via {@link #listenEventTypes()}. Use the {@code
- * EVENT_TYPE} constants on built-in event classes for standard events, or plain strings for custom
- * events.
- *
- * <p>Example usage:
+ * <p>Each {@link #value()} entry is an event type name string. Use the {@code EVENT_TYPE} constants
+ * on built-in event classes, the {@link org.apache.flink.agents.api.EventType} constants, or plain
+ * strings for custom events. Multiple entries combine with OR.
  *
  * <pre>{@code
- * @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
- * public void handleInput(Event event, RunnerContext ctx) { ... }
+ * // Built-in event type via the EventType constant
+ * @Action(EventType.InputEvent)
  *
- * @Action(listenEventTypes = {InputEvent.EVENT_TYPE, "MyCustomEvent"})
- * public void handleMultiple(Event event, RunnerContext ctx) { ... }
+ * // Equivalent via the legacy class constant
+ * @Action(InputEvent.EVENT_TYPE)
+ *
+ * // User-defined event type
+ * @Action("MyCustomEvent")
+ *
+ * // Multiple types (OR semantics)
+ * @Action({EventType.InputEvent, "MyCustomEvent"})
  * }</pre>
  *
  * <p>For a cross-language action, set {@link #target()} to a {@link PythonFunction} with a
@@ -49,7 +50,7 @@ import java.lang.annotation.Target;
  *
  * <pre>{@code
  * @Action(
- *     listenEventTypes = {InputEvent.EVENT_TYPE},
+ *     value = EventType.InputEvent,
  *     target = @PythonFunction(module = "my_pkg.handlers", qualname = "handle_input"))
  * public void handleInput(Event event, RunnerContext ctx) {
  *     throw new UnsupportedOperationException("cross-language stub");
@@ -59,12 +60,8 @@ import java.lang.annotation.Target;
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Action {
-    /**
-     * List of event type strings that this action should respond to.
-     *
-     * @return Array of event type strings
-     */
-    String[] listenEventTypes();
+    /** Event type name strings; multiple entries have OR semantics. */
+    String[] value();
 
     /**
      * Cross-language target. When {@link PythonFunction#module()} is non-empty, dispatch routes to

@@ -21,7 +21,8 @@ from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import action, chat_model_setup, tool
-from flink_agents.api.events.event import Event, InputEvent
+from flink_agents.api.events.event import Event
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
 
@@ -51,7 +52,7 @@ class MockChatModel(BaseChatModelSetup):
 class PythonAgentPlanCompatibilityTestAgent(Agent):
     """Agent for generating python agent plan json."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def first_action(event: Event, ctx: RunnerContext) -> None:
         """Test implementation."""

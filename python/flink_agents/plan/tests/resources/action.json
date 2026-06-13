@@ -5,7 +5,7 @@
         "module": "flink_agents.plan.tests.test_action",
         "qualname": "legal_signature"
     },
-    "listen_event_types": [
+    "trigger_conditions": [
         "_input_event"
     ],
     "config": {
