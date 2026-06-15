@@ -196,6 +196,20 @@ class ProductReviewAnalysisRes(BaseModel):
     reasons: list[str]
 
 
+# Custom types for parallel chat agent.
+class AspectResponse(BaseModel):
+    """LLM response for a single aspect judgment."""
+
+    aspect: str
+    result: str
+
+
+class SummaryResponse(BaseModel):
+    """LLM response for the aggregation phase."""
+
+    summary: str
+
+
 # ollama chat model connection descriptor
 ollama_server_descriptor = ResourceDescriptor(
     clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=120
