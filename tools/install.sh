@@ -444,7 +444,7 @@ mark_explicit FLINK_AGENTS_VERSION
 mark_explicit INSTALL_DIR
 mark_explicit VENV_DIR
 
-FLINK_VERSION="${FLINK_VERSION:-2.2.0}"
+FLINK_VERSION="${FLINK_VERSION:-2.2.1}"
 FLINK_AGENTS_VERSION="${FLINK_AGENTS_VERSION:-0.2.1}"
 FLINK_SCALA_VERSION="${FLINK_SCALA_VERSION:-2.12}"
 FLINK_BASE_URL="${FLINK_BASE_URL:-https://dlcdn.apache.org/flink}"
@@ -455,8 +455,8 @@ FLINK_AGENTS_BASE_URL="${FLINK_AGENTS_BASE_URL:-https://dlcdn.apache.org/flink}"
 # because the mirror network does not redistribute checksum files.
 FLINK_AGENTS_CHECKSUM_BASE_URL="${FLINK_AGENTS_CHECKSUM_BASE_URL:-https://downloads.apache.org/flink}"
 
-FLINK_SUPPORTED_VERSIONS=("2.2.0" "2.1.1" "2.0.1" "1.20.3")
-FLINK_RECOMMENDED_VERSION="2.2.0"
+FLINK_SUPPORTED_VERSIONS=("2.2.1" "2.1.3" "2.0.2" "1.20.5")
+FLINK_RECOMMENDED_VERSION="2.2.1"
 
 # Mirrors https://flink.apache.org/downloads/#apache-flink-agents
 # (latest first). Note: 0.1.x only ships JARs for Flink 1.20, while 0.2.x
@@ -491,7 +491,7 @@ Options:
   --verbose               Print debug output (set -x)
   --dry-run               Print install plan without making changes
   --python <path>         Path to a Python3 interpreter (overrides PATH lookup)
-  --flink-version <ver>   Apache Flink version (e.g. 2.2.0); overrides the interactive picker
+  --flink-version <ver>   Apache Flink version (e.g. 2.2.1); overrides the interactive picker
   --flink-agents-version <ver>
                           Flink Agents version (default: ${FLINK_AGENTS_RECOMMENDED_VERSION}); overrides the picker
   --help, -h              Show this help
@@ -514,7 +514,7 @@ Environment variables:
 
 Examples:
   bash install.sh --install-flink --enable-pyflink --non-interactive
-  FLINK_VERSION=2.2.0 bash install.sh --verbose
+  FLINK_VERSION=2.2.1 bash install.sh --verbose
   bash install.sh --dry-run
 EOF
 }
@@ -794,7 +794,7 @@ plan_flink() {
             ui_success "Detected Flink version: $FLINK_VERSION"
         else
             ui_warn "Could not auto-detect Flink version from $FLINK_HOME; assuming ${FLINK_VERSION}."
-            ui_warn "If JAR copy fails, set FLINK_VERSION explicitly (e.g. FLINK_VERSION=2.1.1 bash install.sh)."
+            ui_warn "If JAR copy fails, set FLINK_VERSION explicitly (e.g. FLINK_VERSION=2.1.3 bash install.sh)."
         fi
         FLINK_MAJOR_MINOR="$(flink_major_minor "$FLINK_VERSION")"
         return
