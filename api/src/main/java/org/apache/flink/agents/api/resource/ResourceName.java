@@ -227,4 +227,18 @@ public final class ResourceName {
 
     // ==================== MCP ====================
     public static final String MCP_SERVER = "DECIDE_IN_RUNTIME_MCPServer";
+
+    // ==================== RoutingStrategy ====================
+    /**
+     * Built-in {@code RoutingStrategy} implementations, for use in a {@code ChatModelRouter}'s
+     * {@code strategy} descriptor.
+     */
+    public static final class RoutingStrategy {
+        public static final String RULE_BASED =
+                "org.apache.flink.agents.api.chat.model.routing.RuleBasedRoutingStrategy";
+        public static final String LLM =
+                "org.apache.flink.agents.api.chat.model.routing.LlmRoutingStrategy";
+
+        private RoutingStrategy() {}
+    }
 }
