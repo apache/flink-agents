@@ -40,7 +40,7 @@ If you have questions or need support, don't hesitate to ask! We welcome you to 
 
 See the [Apache Flink website](https://flink.apache.org/what-is-flink/community/#slack) for how to join the slack workspace.
 - [#flink-agents-user](https://apache-flink.slack.com/archives/C09KP5YUWE8) is for user-facing discussions and trouble-shootings.
-- [#flink-agents-dev](https://apache-flink.slack.com/archives/C097QF5HG8J) is for developement related discussions.
+- [#flink-agents-dev](https://apache-flink.slack.com/archives/C097QF5HG8J) is for development related discussions.
 
 ### Community Sync
 
