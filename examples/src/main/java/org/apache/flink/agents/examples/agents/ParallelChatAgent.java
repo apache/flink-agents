@@ -31,7 +31,6 @@ import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,9 +43,21 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
  * ChatRequestEvent} events.
  *
  * <p>This agent receives a restaurant review and uses an LLM to judge sentiment along multiple
- * dimensions (taste / service / price) in parallel, then aggregates the results into a one-line
+ * dimensions (taste / service) in parallel, then aggregates the results into a one-line
  * summary with a final LLM call. It handles prompt construction, parallel chat dispatch, response
  * accumulation, and output assembly.
+ *
+ * <p>Event flow:
+ * <ol>
+ *   <li>InputEvent → requestAspectJudgments → emits SentimentInputEvent
+ *   <li>SentimentInputEvent triggers handlers in parallel:
+ *       <ul>
+ *         <li>handleTasteInput   → ChatRequestEvent (taste LLM call)
+ *         <li>handleServiceInput → ChatRequestEvent (service LLM call)
+ *       </ul>
+ *   <li>Each ChatResponseEvent → handleResponse (accumulates aspect results)
+ *   <li>Once all aspects received → aggregation LLM call → OutputEvent
+ * </ol>
  *
  * <p><b>JDK version note:</b> On JDK 21+, the framework uses the Continuation API to execute
  * concurrent chat actions in parallel, so the wall clock time is roughly "slowest single branch +
@@ -62,7 +73,7 @@ public class ParallelChatAgent extends Agent {
     /** Input text for the demo. */
     public static final String INPUT_TEXT = "The food here is great, but the service is too slow";
 
-    private static final String[] ASPECTS = {"taste", "service", "price"};
+    private static final String[] ASPECTS = {"taste", "service"};
     private static final int N_ASPECTS = ASPECTS.length;
 
     private static final String PARALLEL_SYSTEM_PROMPT =
@@ -70,11 +81,23 @@ public class ParallelChatAgent extends Agent {
                     + "{\"aspect\":\"<dimension>\", \"result\":\"<positive|negative|not_mentioned>\"}"
                     + " — no explanation, no extra fields.";
     private static final String AGGREGATE_SYSTEM_PROMPT =
-            "You are a summary assistant. Based on the sentiment judgments for three "
+            "You are a summary assistant. Based on the sentiment judgments for two "
                     + "dimensions, compose a brief one-line evaluation. Return JSON: "
                     + "{\"summary\":\"taste:<positive/negative/not_mentioned>, "
-                    + "service:<positive/negative/not_mentioned>, "
-                    + "price:<positive/negative/not_mentioned>\"} — return only this JSON.";
+                    + "service:<positive/negative/not_mentioned>\"} — return only this JSON.";
+
+    /** Intermediate event that broadcasts the review input to all aspect handlers. */
+    public static class SentimentInputEvent extends Event {
+        public static final String EVENT_TYPE = "SentimentInputEvent";
+        public final int inputId;
+        public final String text;
+
+        public SentimentInputEvent(int inputId, String text) {
+            super(EVENT_TYPE);
+            this.inputId = inputId;
+            this.text = text;
+        }
+    }
 
     @ChatModelSetup
     public static ResourceDescriptor sentimentModel() {
@@ -139,23 +162,41 @@ public class ParallelChatAgent extends Agent {
         return sentiments.size() == N_ASPECTS;
     }
 
-    /** Process input event and fan-out chat requests for each aspect. */
-    @SuppressWarnings("unchecked")
+    /** Process input event and dispatch a SentimentInputEvent for each aspect handler. */
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void requestAspectJudgments(Event event, RunnerContext ctx) throws Exception {
         Map<String, Object> row = initRow(event);
-        List<ChatRequestEvent> requests = new ArrayList<>();
-        Map<String, String> aspectMap = (Map<String, String>) row.get("aspect_map");
-        for (String aspect : ASPECTS) {
-            ChatRequestEvent req = buildAspectRequest((String) row.get("text"), aspect);
-            aspectMap.put(req.getId().toString(), aspect);
-            requests.add(req);
-        }
         // Sensory memory stores the Map directly in Java; no JSON serialization required.
         ctx.getSensoryMemory().set("res", row);
-        for (ChatRequestEvent req : requests) {
-            ctx.sendEvent(req);
-        }
+        ctx.sendEvent(new SentimentInputEvent((int) row.get("id"), (String) row.get("text")));
+    }
+
+    /** Handle taste aspect: build and send ChatRequestEvent for taste judgment. */
+    @SuppressWarnings("unchecked")
+    @Action(listenEventTypes = {SentimentInputEvent.EVENT_TYPE})
+    public static void handleTasteInput(Event event, RunnerContext ctx) throws Exception {
+        SentimentInputEvent in = (SentimentInputEvent) event;
+        Map<String, Object> row =
+                (Map<String, Object>) ctx.getSensoryMemory().get("res").getValue();
+        ChatRequestEvent req = buildAspectRequest(in.text, "taste");
+        ((Map<String, String>) row.get("aspect_map")).put(req.getId().toString(), "taste");
+        // Sensory memory stores the Map directly in Java; no JSON serialization required.
+        ctx.getSensoryMemory().set("res", row);
+        ctx.sendEvent(req);
+    }
+
+    /** Handle service aspect: build and send ChatRequestEvent for service judgment. */
+    @SuppressWarnings("unchecked")
+    @Action(listenEventTypes = {SentimentInputEvent.EVENT_TYPE})
+    public static void handleServiceInput(Event event, RunnerContext ctx) throws Exception {
+        SentimentInputEvent in = (SentimentInputEvent) event;
+        Map<String, Object> row =
+                (Map<String, Object>) ctx.getSensoryMemory().get("res").getValue();
+        ChatRequestEvent req = buildAspectRequest(in.text, "service");
+        ((Map<String, String>) row.get("aspect_map")).put(req.getId().toString(), "service");
+        // Sensory memory stores the Map directly in Java; no JSON serialization required.
+        ctx.getSensoryMemory().set("res", row);
+        ctx.sendEvent(req);
     }
 
     /** Process chat response event. */
