@@ -15,9 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import json
 import os
-from typing import Any, ClassVar, Dict, Tuple
+from typing import ClassVar, Dict
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
 from flink_agents.api.agents.types import OutputSchema
@@ -35,7 +34,7 @@ from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
 OLLAMA_MODEL = os.environ.get("PARALLEL_CHAT_OLLAMA_MODEL", "qwen3:1.7b")
 
 INPUT_TEXT = "The food here is great, but the service is too slow"
-ASPECTS: Tuple[str, ...] = ("taste", "service")
+ASPECTS: tuple = ("taste", "service")
 N_ASPECTS = len(ASPECTS)
 
 PARALLEL_SYSTEM_PROMPT = (
@@ -52,24 +51,16 @@ AGGREGATE_SYSTEM_PROMPT = (
 
 
 class SentimentInputEvent(Event):
+    """Intermediate event that broadcasts the review input to all aspect handlers."""
+
     EVENT_TYPE: ClassVar[str] = "SentimentInputEvent"
 
     def __init__(self, input_id: int, text: str) -> None:
+        """Initialize with the review id and text."""
         super().__init__(
             type=SentimentInputEvent.EVENT_TYPE,
             attributes={"input_id": input_id, "text": text},
         )
-
-
-def _init_row(event: Event) -> Dict[str, Any]:
-    """Build a row skeleton from the InputEvent."""
-    payload = InputEvent.from_event(event).input
-    return {
-        "id": payload["id"],
-        "text": payload["text"],
-        "sentiments": {},
-        "aspect_map": {},
-    }
 
 
 def _build_aspect_request(text: str, aspect: str) -> ChatRequestEvent:
@@ -87,11 +78,10 @@ def _build_aspect_request(text: str, aspect: str) -> ChatRequestEvent:
     )
 
 
-def _build_summarize_request(row: Dict[str, Any]) -> ChatRequestEvent:
+def _build_summarize_request(text: str, sentiments: Dict[str, str]) -> ChatRequestEvent:
     """Build a ChatRequestEvent for the aggregation phase."""
-    sentiments = row["sentiments"]
     body = (
-        f"Original: {row['text']}\n"
+        f"Original: {text}\n"
         + "Judgments: "
         + " ".join(f"{a}:{sentiments[a]}" for a in ASPECTS)
     )
@@ -105,14 +95,9 @@ def _build_summarize_request(row: Dict[str, Any]) -> ChatRequestEvent:
     )
 
 
-def _build_output_event(row: Dict[str, Any], parsed: SummaryResponse) -> OutputEvent:
+def _build_output_event(row_id: int, text: str, parsed: SummaryResponse) -> OutputEvent:
     """Build the final OutputEvent from the aggregated row."""
-    return OutputEvent(output={"id": row["id"], "text": row["text"], "summary": parsed.summary})
-
-
-def _all_aspects_received(row: Dict[str, Any]) -> bool:
-    """Return True when all aspect judgments have been collected."""
-    return len(row["sentiments"]) == N_ASPECTS
+    return OutputEvent(output={"id": row_id, "text": text, "summary": parsed.summary})
 
 
 class ParallelChatAgent(Agent):
@@ -147,32 +132,27 @@ class ParallelChatAgent(Agent):
     @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def request_aspect_judgments(event: Event, ctx: RunnerContext) -> None:
-        """Process input event and dispatch a SentimentInputEvent for each aspect handler."""
-        row = _init_row(event)
-        # Sensory memory requires JSON serialization across the Pemja JVM boundary.
-        ctx.sensory_memory.set("res", json.dumps(row, ensure_ascii=False))
-        ctx.send_event(SentimentInputEvent(input_id=row["id"], text=row["text"]))
+        """Process input event and dispatch SentimentInputEvent to aspect handlers."""
+        payload = InputEvent.from_event(event).input
+        # Primitive types (int, str) cross the Pemja JVM boundary without serialization.
+        ctx.sensory_memory.set("id", payload["id"])
+        ctx.sensory_memory.set("text", payload["text"])
+        ctx.send_event(SentimentInputEvent(input_id=payload["id"], text=payload["text"]))
 
     @action(SentimentInputEvent.EVENT_TYPE)
     @staticmethod
     def handle_taste_input(event: Event, ctx: RunnerContext) -> None:
         """Handle taste aspect: build and send ChatRequestEvent for taste judgment."""
-        row = json.loads(ctx.sensory_memory.get("res"))
         req = _build_aspect_request(event.get_attr("text"), "taste")
-        row["aspect_map"][str(req.id)] = "taste"
-        # Sensory memory requires JSON serialization across the Pemja JVM boundary.
-        ctx.sensory_memory.set("res", json.dumps(row, ensure_ascii=False))
+        ctx.sensory_memory.set(f"aspect_map.{req.id}", "taste")
         ctx.send_event(req)
 
     @action(SentimentInputEvent.EVENT_TYPE)
     @staticmethod
     def handle_service_input(event: Event, ctx: RunnerContext) -> None:
-        """Handle service aspect: build and send ChatRequestEvent for service judgment."""
-        row = json.loads(ctx.sensory_memory.get("res"))
+        """Handle service aspect: build and send ChatRequestEvent for service."""
         req = _build_aspect_request(event.get_attr("text"), "service")
-        row["aspect_map"][str(req.id)] = "service"
-        # Sensory memory requires JSON serialization across the Pemja JVM boundary.
-        ctx.sensory_memory.set("res", json.dumps(row, ensure_ascii=False))
+        ctx.sensory_memory.set(f"aspect_map.{req.id}", "service")
         ctx.send_event(req)
 
     @action(ChatResponseEvent.EVENT_TYPE)
@@ -181,15 +161,20 @@ class ParallelChatAgent(Agent):
         """Process chat response event and send output event."""
         response_event = ChatResponseEvent.from_event(event)
         parsed = response_event.response.extra_args[STRUCTURED_OUTPUT]
-        row = json.loads(ctx.sensory_memory.get("res"))
         if isinstance(parsed, dict):
             parsed = SummaryResponse(**parsed) if "summary" in parsed else AspectResponse(**parsed)
         if isinstance(parsed, SummaryResponse):
-            ctx.send_event(_build_output_event(row, parsed))
+            ctx.send_event(
+                _build_output_event(
+                    ctx.sensory_memory.get("id"),
+                    ctx.sensory_memory.get("text"),
+                    parsed,
+                )
+            )
             return
-        aspect = row["aspect_map"][str(response_event.request_id)]
-        row["sentiments"][aspect] = parsed.result
-        # Sensory memory requires JSON serialization across the Pemja JVM boundary.
-        ctx.sensory_memory.set("res", json.dumps(row, ensure_ascii=False))
-        if _all_aspects_received(row):
-            ctx.send_event(_build_summarize_request(row))
+        aspect = ctx.sensory_memory.get(f"aspect_map.{response_event.request_id}")
+        ctx.sensory_memory.set(f"sentiments.{aspect}", parsed.result)
+        if all(ctx.sensory_memory.is_exist(f"sentiments.{a}") for a in ASPECTS):
+            text = ctx.sensory_memory.get("text")
+            sentiments = {a: ctx.sensory_memory.get(f"sentiments.{a}") for a in ASPECTS}
+            ctx.send_event(_build_summarize_request(text, sentiments))

@@ -43,16 +43,17 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
  * ChatRequestEvent} events.
  *
  * <p>This agent receives a restaurant review and uses an LLM to judge sentiment along multiple
- * dimensions (taste / service) in parallel, then aggregates the results into a one-line
- * summary with a final LLM call. It handles prompt construction, parallel chat dispatch, response
+ * dimensions (taste / service) in parallel, then aggregates the results into a one-line summary
+ * with a final LLM call. It handles prompt construction, parallel chat dispatch, response
  * accumulation, and output assembly.
  *
  * <p>Event flow:
+ *
  * <ol>
  *   <li>InputEvent → requestAspectJudgments → emits SentimentInputEvent
  *   <li>SentimentInputEvent triggers handlers in parallel:
  *       <ul>
- *         <li>handleTasteInput   → ChatRequestEvent (taste LLM call)
+ *         <li>handleTasteInput → ChatRequestEvent (taste LLM call)
  *         <li>handleServiceInput → ChatRequestEvent (service LLM call)
  *       </ul>
  *   <li>Each ChatResponseEvent → handleResponse (accumulates aspect results)
@@ -74,7 +75,6 @@ public class ParallelChatAgent extends Agent {
     public static final String INPUT_TEXT = "The food here is great, but the service is too slow";
 
     private static final String[] ASPECTS = {"taste", "service"};
-    private static final int N_ASPECTS = ASPECTS.length;
 
     private static final String PARALLEL_SYSTEM_PROMPT =
             "You are a sentiment analysis assistant. Return JSON: "
@@ -108,18 +108,6 @@ public class ParallelChatAgent extends Agent {
                 .build();
     }
 
-    private static Map<String, Object> initRow(Event event) {
-        InputEvent inputEvent = InputEvent.fromEvent(event);
-        CustomTypesAndResources.SentimentRequest request =
-                (CustomTypesAndResources.SentimentRequest) inputEvent.getInput();
-        Map<String, Object> row = new HashMap<>();
-        row.put("id", request.getId());
-        row.put("text", request.getText());
-        row.put("sentiments", new HashMap<String, String>());
-        row.put("aspect_map", new HashMap<String, String>());
-        return row;
-    }
-
     private static ChatRequestEvent buildAspectRequest(String text, String aspect) {
         List<ChatMessage> messages =
                 List.of(
@@ -131,14 +119,13 @@ public class ParallelChatAgent extends Agent {
                 "sentimentModel", messages, CustomTypesAndResources.AspectResponse.class);
     }
 
-    @SuppressWarnings("unchecked")
-    private static ChatRequestEvent buildSummarizeRequest(Map<String, Object> row) {
-        Map<String, String> sentiments = (Map<String, String>) row.get("sentiments");
+    private static ChatRequestEvent buildSummarizeRequest(
+            String text, Map<String, String> sentiments) {
         StringJoiner sj = new StringJoiner(" ");
         for (String aspect : ASPECTS) {
             sj.add(aspect + ":" + sentiments.get(aspect));
         }
-        String body = "Original: " + row.get("text") + "\nJudgments: " + sj;
+        String body = "Original: " + text + "\nJudgments: " + sj;
         List<ChatMessage> messages =
                 List.of(
                         new ChatMessage(MessageRole.SYSTEM, AGGREGATE_SYSTEM_PROMPT),
@@ -148,83 +135,81 @@ public class ParallelChatAgent extends Agent {
     }
 
     private static OutputEvent buildOutputEvent(
-            Map<String, Object> row, CustomTypesAndResources.SummaryResponse parsed) {
+            int id, String text, CustomTypesAndResources.SummaryResponse parsed) {
         Map<String, Object> output = new HashMap<>();
-        output.put("id", row.get("id"));
-        output.put("text", row.get("text"));
+        output.put("id", id);
+        output.put("text", text);
         output.put("summary", parsed.summary);
         return new OutputEvent(output);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static boolean allAspectsReceived(Map<String, Object> row) {
-        Map<String, String> sentiments = (Map<String, String>) row.get("sentiments");
-        return sentiments.size() == N_ASPECTS;
     }
 
     /** Process input event and dispatch a SentimentInputEvent for each aspect handler. */
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void requestAspectJudgments(Event event, RunnerContext ctx) throws Exception {
-        Map<String, Object> row = initRow(event);
-        // Sensory memory stores the Map directly in Java; no JSON serialization required.
-        ctx.getSensoryMemory().set("res", row);
-        ctx.sendEvent(new SentimentInputEvent((int) row.get("id"), (String) row.get("text")));
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        CustomTypesAndResources.SentimentRequest request =
+                (CustomTypesAndResources.SentimentRequest) inputEvent.getInput();
+        ctx.getSensoryMemory().set("id", request.getId());
+        ctx.getSensoryMemory().set("text", request.getText());
+        ctx.sendEvent(new SentimentInputEvent(request.getId(), request.getText()));
     }
 
     /** Handle taste aspect: build and send ChatRequestEvent for taste judgment. */
-    @SuppressWarnings("unchecked")
     @Action(listenEventTypes = {SentimentInputEvent.EVENT_TYPE})
     public static void handleTasteInput(Event event, RunnerContext ctx) throws Exception {
         SentimentInputEvent in = (SentimentInputEvent) event;
-        Map<String, Object> row =
-                (Map<String, Object>) ctx.getSensoryMemory().get("res").getValue();
         ChatRequestEvent req = buildAspectRequest(in.text, "taste");
-        ((Map<String, String>) row.get("aspect_map")).put(req.getId().toString(), "taste");
-        // Sensory memory stores the Map directly in Java; no JSON serialization required.
-        ctx.getSensoryMemory().set("res", row);
+        ctx.getSensoryMemory().set("aspect_map." + req.getId(), "taste");
         ctx.sendEvent(req);
     }
 
     /** Handle service aspect: build and send ChatRequestEvent for service judgment. */
-    @SuppressWarnings("unchecked")
     @Action(listenEventTypes = {SentimentInputEvent.EVENT_TYPE})
     public static void handleServiceInput(Event event, RunnerContext ctx) throws Exception {
         SentimentInputEvent in = (SentimentInputEvent) event;
-        Map<String, Object> row =
-                (Map<String, Object>) ctx.getSensoryMemory().get("res").getValue();
         ChatRequestEvent req = buildAspectRequest(in.text, "service");
-        ((Map<String, String>) row.get("aspect_map")).put(req.getId().toString(), "service");
-        // Sensory memory stores the Map directly in Java; no JSON serialization required.
-        ctx.getSensoryMemory().set("res", row);
+        ctx.getSensoryMemory().set("aspect_map." + req.getId(), "service");
         ctx.sendEvent(req);
     }
 
     /** Process chat response event. */
-    @SuppressWarnings("unchecked")
     @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void handleResponse(Event event, RunnerContext ctx) throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
         Object parsed = chatResponse.getResponse().getExtraArgs().get(STRUCTURED_OUTPUT);
-        Map<String, Object> row =
-                (Map<String, Object>) ctx.getSensoryMemory().get("res").getValue();
 
         if (parsed instanceof CustomTypesAndResources.SummaryResponse) {
             CustomTypesAndResources.SummaryResponse summary =
                     (CustomTypesAndResources.SummaryResponse) parsed;
-            ctx.sendEvent(buildOutputEvent(row, summary));
+            int id = (int) ctx.getSensoryMemory().get("id").getValue();
+            String text = (String) ctx.getSensoryMemory().get("text").getValue();
+            ctx.sendEvent(buildOutputEvent(id, text, summary));
             return;
         }
 
         CustomTypesAndResources.AspectResponse aspectResponse =
                 (CustomTypesAndResources.AspectResponse) parsed;
-        Map<String, String> sentiments = (Map<String, String>) row.get("sentiments");
-        Map<String, String> aspectMap = (Map<String, String>) row.get("aspect_map");
-        String dispatchedAspect = aspectMap.get(chatResponse.getRequestId().toString());
-        sentiments.put(dispatchedAspect, aspectResponse.result);
-        // Sensory memory stores the Map directly in Java; no JSON serialization required.
-        ctx.getSensoryMemory().set("res", row);
-        if (allAspectsReceived(row)) {
-            ctx.sendEvent(buildSummarizeRequest(row));
+        String aspect =
+                (String)
+                        ctx.getSensoryMemory()
+                                .get("aspect_map." + chatResponse.getRequestId())
+                                .getValue();
+        ctx.getSensoryMemory().set("sentiments." + aspect, aspectResponse.result);
+        boolean allReceived = true;
+        for (String a : ASPECTS) {
+            if (!ctx.getSensoryMemory().isExist("sentiments." + a)) {
+                allReceived = false;
+                break;
+            }
+        }
+        if (allReceived) {
+            String text = (String) ctx.getSensoryMemory().get("text").getValue();
+            Map<String, String> sentiments = new HashMap<>();
+            for (String a : ASPECTS) {
+                sentiments.put(
+                        a, (String) ctx.getSensoryMemory().get("sentiments." + a).getValue());
+            }
+            ctx.sendEvent(buildSummarizeRequest(text, sentiments));
         }
     }
 }

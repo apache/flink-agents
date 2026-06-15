@@ -84,13 +84,13 @@ agentsEnv.addResource(
 
 ### Create the Agent
 
-Below is the example code for the `ParallelChatAgent`. Two system prompts — `PARALLEL_SYSTEM_PROMPT` for the parallel aspect judgments and `AGGREGATE_SYSTEM_PROMPT` for the aggregation call — are packaged into `ChatRequestEvent`s by `_build_aspect_request` / `buildAspectRequest` and `_build_summarize_request` / `buildSummarizeRequest`. The agent defines a chat model and four actions: `request_aspect_judgments` initializes the row state and emits a single `SentimentInputEvent`; `handle_taste_input` and `handle_service_input` each listen on `SentimentInputEvent` and independently dispatch one `ChatRequestEvent`, recording a `{request_id → aspect}` entry in the shared `aspect_map`; and `handle_response` looks up the dispatched aspect by `request_id`, accumulates the results, and emits the final output. For more details, please refer to the [Workflow Agent]({{< ref "docs/development/workflow_agent" >}}) documentation.
+Below is the example code for the `ParallelChatAgent`. Two system prompts — `PARALLEL_SYSTEM_PROMPT` for the parallel aspect judgments and `AGGREGATE_SYSTEM_PROMPT` for the aggregation call — are packaged into `ChatRequestEvent`s by `_build_aspect_request` / `buildAspectRequest` and `_build_summarize_request` / `buildSummarizeRequest`. The agent defines a chat model and four actions: `request_aspect_judgments` stores the review `id` and `text` in sensory memory and emits a single `SentimentInputEvent`; `handle_taste_input` and `handle_service_input` each listen on `SentimentInputEvent` and independently dispatch one `ChatRequestEvent`, recording a `{request_id → aspect}` entry using path-based memory access (`aspect_map.<request_id>`); and `handle_response` looks up the dispatched aspect, stores the result under `sentiments.<aspect>`, and triggers aggregation once all aspects are collected. For more details, please refer to the [Workflow Agent]({{< ref "docs/development/workflow_agent" >}}) documentation.
 
 {{< tabs "Create the Agent" >}}
 
 {{< tab "Python" >}}
 ```python
-ASPECTS: Tuple[str, ...] = ("taste", "service")
+ASPECTS: tuple = ("taste", "service")
 N_ASPECTS = len(ASPECTS)
 
 PARALLEL_SYSTEM_PROMPT = (
@@ -107,9 +107,12 @@ AGGREGATE_SYSTEM_PROMPT = (
 
 
 class SentimentInputEvent(Event):
+    """Intermediate event that broadcasts the review input to all aspect handlers."""
+
     EVENT_TYPE: ClassVar[str] = "SentimentInputEvent"
 
     def __init__(self, input_id: int, text: str) -> None:
+        """Initialize with the review id and text."""
         super().__init__(
             type=SentimentInputEvent.EVENT_TYPE,
             attributes={"input_id": input_id, "text": text},
@@ -131,11 +134,10 @@ def _build_aspect_request(text: str, aspect: str) -> ChatRequestEvent:
     )
 
 
-def _build_summarize_request(row: Dict[str, Any]) -> ChatRequestEvent:
+def _build_summarize_request(text: str, sentiments: Dict[str, str]) -> ChatRequestEvent:
     """Build a ChatRequestEvent for the aggregation phase."""
-    sentiments = row["sentiments"]
     body = (
-        f"Original: {row['text']}\n"
+        f"Original: {text}\n"
         + "Judgments: "
         + " ".join(f"{a}:{sentiments[a]}" for a in ASPECTS)
     )
@@ -181,32 +183,27 @@ class ParallelChatAgent(Agent):
     @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def request_aspect_judgments(event: Event, ctx: RunnerContext) -> None:
-        """Process input event and dispatch a SentimentInputEvent for each aspect handler."""
-        row = _init_row(event)
-        # Sensory memory requires JSON serialization across the Pemja JVM boundary.
-        ctx.sensory_memory.set("res", json.dumps(row, ensure_ascii=False))
-        ctx.send_event(SentimentInputEvent(input_id=row["id"], text=row["text"]))
+        """Process input event and dispatch SentimentInputEvent to aspect handlers."""
+        payload = InputEvent.from_event(event).input
+        # Primitive types (int, str) cross the Pemja JVM boundary without serialization.
+        ctx.sensory_memory.set("id", payload["id"])
+        ctx.sensory_memory.set("text", payload["text"])
+        ctx.send_event(SentimentInputEvent(input_id=payload["id"], text=payload["text"]))
 
     @action(SentimentInputEvent.EVENT_TYPE)
     @staticmethod
     def handle_taste_input(event: Event, ctx: RunnerContext) -> None:
         """Handle taste aspect: build and send ChatRequestEvent for taste judgment."""
-        row = json.loads(ctx.sensory_memory.get("res"))
         req = _build_aspect_request(event.get_attr("text"), "taste")
-        row["aspect_map"][str(req.id)] = "taste"
-        # Sensory memory requires JSON serialization across the Pemja JVM boundary.
-        ctx.sensory_memory.set("res", json.dumps(row, ensure_ascii=False))
+        ctx.sensory_memory.set(f"aspect_map.{req.id}", "taste")
         ctx.send_event(req)
 
     @action(SentimentInputEvent.EVENT_TYPE)
     @staticmethod
     def handle_service_input(event: Event, ctx: RunnerContext) -> None:
-        """Handle service aspect: build and send ChatRequestEvent for service judgment."""
-        row = json.loads(ctx.sensory_memory.get("res"))
+        """Handle service aspect: build and send ChatRequestEvent for service."""
         req = _build_aspect_request(event.get_attr("text"), "service")
-        row["aspect_map"][str(req.id)] = "service"
-        # Sensory memory requires JSON serialization across the Pemja JVM boundary.
-        ctx.sensory_memory.set("res", json.dumps(row, ensure_ascii=False))
+        ctx.sensory_memory.set(f"aspect_map.{req.id}", "service")
         ctx.send_event(req)
 
     @action(ChatResponseEvent.EVENT_TYPE)
@@ -216,7 +213,7 @@ class ParallelChatAgent(Agent):
         ...
 ```
 
-The complete source including `_init_row`, `_build_output_event`, `_all_aspects_received`, and other supporting functions can be found in [`parallel_chat_agent.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/agents/parallel_chat_agent.py).
+The complete source including `_build_output_event` and other supporting functions can be found in [`parallel_chat_agent.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/agents/parallel_chat_agent.py).
 {{< /tab >}}
 
 {{< tab "Java" >}}
@@ -229,7 +226,7 @@ The complete source including `_init_row`, `_build_output_event`, `_all_aspects_
  *   <li>InputEvent → requestAspectJudgments → emits SentimentInputEvent
  *   <li>SentimentInputEvent triggers handlers in parallel:
  *       <ul>
- *         <li>handleTasteInput   → ChatRequestEvent (taste LLM call)
+ *         <li>handleTasteInput → ChatRequestEvent (taste LLM call)
  *         <li>handleServiceInput → ChatRequestEvent (service LLM call)
  *       </ul>
  *   <li>Each ChatResponseEvent → handleResponse (accumulates aspect results)
@@ -239,7 +236,6 @@ The complete source including `_init_row`, `_build_output_event`, `_all_aspects_
 public class ParallelChatAgent extends Agent {
 
     private static final String[] ASPECTS = {"taste", "service"};
-    private static final int N_ASPECTS = ASPECTS.length;
 
     private static final String PARALLEL_SYSTEM_PROMPT =
             "You are a sentiment analysis assistant. Return JSON: "
@@ -283,14 +279,13 @@ public class ParallelChatAgent extends Agent {
                 "sentimentModel", messages, CustomTypesAndResources.AspectResponse.class);
     }
 
-    @SuppressWarnings("unchecked")
-    private static ChatRequestEvent buildSummarizeRequest(Map<String, Object> row) {
-        Map<String, String> sentiments = (Map<String, String>) row.get("sentiments");
+    private static ChatRequestEvent buildSummarizeRequest(
+            String text, Map<String, String> sentiments) {
         StringJoiner sj = new StringJoiner(" ");
         for (String aspect : ASPECTS) {
             sj.add(aspect + ":" + sentiments.get(aspect));
         }
-        String body = "Original: " + row.get("text") + "\nJudgments: " + sj;
+        String body = "Original: " + text + "\nJudgments: " + sj;
         List<ChatMessage> messages =
                 List.of(
                         new ChatMessage(MessageRole.SYSTEM, AGGREGATE_SYSTEM_PROMPT),
@@ -302,41 +297,31 @@ public class ParallelChatAgent extends Agent {
     /** Process input event and dispatch a SentimentInputEvent for each aspect handler. */
     @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
     public static void requestAspectJudgments(Event event, RunnerContext ctx) throws Exception {
-        Map<String, Object> row = initRow(event);
-        // Sensory memory stores the Map directly in Java; no JSON serialization required.
-        ctx.getSensoryMemory().set("res", row);
-        ctx.sendEvent(new SentimentInputEvent((int) row.get("id"), (String) row.get("text")));
+        CustomTypesAndResources.SentimentRequest request =
+                (CustomTypesAndResources.SentimentRequest) InputEvent.fromEvent(event).getInput();
+        ctx.getSensoryMemory().set("id", request.getId());
+        ctx.getSensoryMemory().set("text", request.getText());
+        ctx.sendEvent(new SentimentInputEvent(request.getId(), request.getText()));
     }
 
     /** Handle taste aspect: build and send ChatRequestEvent for taste judgment. */
-    @SuppressWarnings("unchecked")
     @Action(listenEventTypes = {SentimentInputEvent.EVENT_TYPE})
     public static void handleTasteInput(Event event, RunnerContext ctx) throws Exception {
         SentimentInputEvent in = (SentimentInputEvent) event;
-        Map<String, Object> row =
-                (Map<String, Object>) ctx.getSensoryMemory().get("res").getValue();
         ChatRequestEvent req = buildAspectRequest(in.text, "taste");
-        ((Map<String, String>) row.get("aspect_map")).put(req.getId().toString(), "taste");
-        // Sensory memory stores the Map directly in Java; no JSON serialization required.
-        ctx.getSensoryMemory().set("res", row);
+        ctx.getSensoryMemory().set("aspect_map." + req.getId(), "taste");
         ctx.sendEvent(req);
     }
 
     /** Handle service aspect: build and send ChatRequestEvent for service judgment. */
-    @SuppressWarnings("unchecked")
     @Action(listenEventTypes = {SentimentInputEvent.EVENT_TYPE})
     public static void handleServiceInput(Event event, RunnerContext ctx) throws Exception {
         SentimentInputEvent in = (SentimentInputEvent) event;
-        Map<String, Object> row =
-                (Map<String, Object>) ctx.getSensoryMemory().get("res").getValue();
         ChatRequestEvent req = buildAspectRequest(in.text, "service");
-        ((Map<String, String>) row.get("aspect_map")).put(req.getId().toString(), "service");
-        // Sensory memory stores the Map directly in Java; no JSON serialization required.
-        ctx.getSensoryMemory().set("res", row);
+        ctx.getSensoryMemory().set("aspect_map." + req.getId(), "service");
         ctx.sendEvent(req);
     }
 
-    @SuppressWarnings("unchecked")
     @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
     public static void handleResponse(Event event, RunnerContext ctx) throws Exception {
         ...
@@ -344,7 +329,7 @@ public class ParallelChatAgent extends Agent {
 }
 ```
 
-Other private helpers (`initRow`, `buildOutputEvent`, `allAspectsReceived`) are omitted above; the full source is at [`ParallelChatAgent.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/agents/ParallelChatAgent.java).
+Other private helpers (`buildOutputEvent`) are omitted above; the full source is at [`ParallelChatAgent.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/agents/ParallelChatAgent.java).
 {{< /tab >}}
 
 {{< /tabs >}}
@@ -352,8 +337,8 @@ Other private helpers (`initRow`, `buildOutputEvent`, `allAspectsReceived`) are 
 {{< hint warning >}}
 **Constraints when using parallel actions:**
 - **Dispatch action must exit immediately after sending events.** The action that emits `SentimentInputEvent` (i.e. `request_aspect_judgments`) should return right after calling `ctx.send_event(...)`. Do not `await`, block, or perform further business logic in the same action — the framework needs control back to schedule the parallel chat actions.
-- **Action handlers on the same key execute sequentially.** Multiple action invocations triggered by the same key are processed one at a time, not concurrently. This means `handle_taste_input` and `handle_service_input` are called in sequence, making the read-modify-write pattern on sensory memory (e.g. `load_row → update → save_row`) safe and free from concurrent overwrites. The actual LLM calls dispatched by these handlers still execute in parallel.
-- **Response handlers on the same key execute sequentially.** Multiple `ChatResponseEvent` triggers for the same key are processed one at a time, not concurrently. This means the read-modify-write pattern on sensory memory in `handle_response` is safe and will not suffer from concurrent overwrites.
+- **Action handlers on the same key execute sequentially.** Multiple action invocations triggered by the same key are processed one at a time, not concurrently. This means `handle_taste_input` and `handle_service_input` are called in sequence. Each handler writes a single path-based entry (`aspect_map.<request_id>`) to sensory memory without reading back, so there is no conflict between the two. The actual LLM calls dispatched by these handlers still execute in parallel.
+- **Response handlers on the same key execute sequentially.** Multiple `ChatResponseEvent` triggers for the same key are processed one at a time, not concurrently. This means the path-based writes to `sentiments.<aspect>` in `handle_response` are safe and will not suffer from concurrent overwrites.
 {{< /hint >}}
 
 ### Integrate the Agent with Flink
