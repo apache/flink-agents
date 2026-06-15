@@ -24,7 +24,7 @@ under the License.
 
 ## What is Flink Agents?
 
-**Apache Flink Agents** is a streaming **Agent OS** for enterprise, production-grade scenarios, built as a sub-project of the Apache Flink community. It brings AI agents into the Flink streaming pipeline - an agent becomes a first-class operator in your real-time datastream, making AI decisions in the flow of live events rather than in response to human prompts.
+**Apache Flink Agents** is a **streaming Agent OS** for enterprise, production-grade scenarios, built as a sub-project of the Apache Flink community. It brings AI agents into the Flink streaming pipeline - an agent becomes a first-class operator in your real-time datastream, making AI decisions in the flow of live events rather than in response to human prompts.
 
 Like any Agent OS, it manages the core building blocks of an agent - orchestration, context, memory, skills, and tool/MCP invocation. Built on Flink's battle-tested streaming engine, it additionally inherits **distributed, at-scale, fault-tolerant** processing and mature state management, so agents run **event-driven, distributed, and reliable** at production scale.
 
