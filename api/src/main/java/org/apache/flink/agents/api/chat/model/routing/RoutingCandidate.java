@@ -39,7 +39,13 @@ public class RoutingCandidate {
     private final Map<String, Object> metadata;
 
     public RoutingCandidate(String name, String description, Map<String, Object> metadata) {
-        this.name = Objects.requireNonNull(name, "candidate name must not be null");
+        Objects.requireNonNull(name, "candidate name must not be null");
+        if (name.isEmpty()) {
+            // An empty name has no valid resource to resolve, and would make the whole-token match
+            // in LlmRoutingStrategy.parseChoice over-match arbitrary boundaries (mis-routing).
+            throw new IllegalArgumentException("candidate name must not be empty");
+        }
+        this.name = name;
         this.description = description != null ? description : "";
         this.metadata =
                 metadata != null

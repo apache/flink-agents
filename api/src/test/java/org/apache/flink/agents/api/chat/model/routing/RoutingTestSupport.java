@@ -117,6 +117,47 @@ final class RoutingTestSupport {
         }
     }
 
+    /**
+     * A chat model that must be {@code open()}-ed before {@code chat()} — a stand-in for a real
+     * {@code BaseChatModelSetup} whose backend connection is resolved in {@code open()} and would
+     * be {@code null} (NPE on {@code chat()}) otherwise. Used to pin the router's open-before-chat
+     * invariant.
+     */
+    static final class OpenRequiringModel extends BaseChatModelSetup {
+        final String tag;
+        boolean opened = false;
+        int callCount = 0;
+
+        OpenRequiringModel(String tag) {
+            super(emptyDescriptor(OpenRequiringModel.class), null);
+            this.tag = tag;
+        }
+
+        @Override
+        public void open() {
+            // Stand-in for resolving the backend connection; must run before chat().
+            this.opened = true;
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return Collections.emptyMap();
+        }
+
+        @Override
+        public ChatMessage chat(
+                List<ChatMessage> messages,
+                Map<String, Object> promptArgs,
+                Map<String, Object> modelParams) {
+            if (!opened) {
+                throw new IllegalStateException(
+                        "chat() called before open(): the backend connection would be null");
+            }
+            this.callCount++;
+            return new ChatMessage(MessageRole.ASSISTANT, "handled-by:" + tag);
+        }
+    }
+
     /** A {@link ResourceContext} backed by a fixed name → resource map. */
     static ResourceContext context(Map<String, Resource> byName) {
         return ResourceContext.fromGetResource(
@@ -124,6 +165,27 @@ final class RoutingTestSupport {
                     Resource resource = byName.get(name);
                     if (resource == null) {
                         throw new RuntimeException("No resource registered for name: " + name);
+                    }
+                    return resource;
+                });
+    }
+
+    /**
+     * A {@link ResourceContext} that {@code open()}s each resolved resource before returning it,
+     * mirroring the runtime {@code ResourceCache.getResource()} contract (lazy open on first
+     * resolution). Use this to exercise the router's open-before-chat invariant.
+     */
+    static ResourceContext openingContext(Map<String, Resource> byName) {
+        return ResourceContext.fromGetResource(
+                (name, type) -> {
+                    Resource resource = byName.get(name);
+                    if (resource == null) {
+                        throw new RuntimeException("No resource registered for name: " + name);
+                    }
+                    try {
+                        resource.open();
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to open resource: " + name, e);
                     }
                     return resource;
                 });

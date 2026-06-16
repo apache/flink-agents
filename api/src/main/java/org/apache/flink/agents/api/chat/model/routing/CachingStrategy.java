@@ -25,7 +25,13 @@ import java.util.Map;
 /**
  * A {@link RoutingStrategy} decorator that memoizes the wrapped strategy's decision per
  * conversation (keyed on {@link RoutingContext#firstUserMessage()}), so an expensive selection —
- * e.g. an LLM judge — runs once per conversation rather than on every tool-call round.
+ * e.g. an LLM judge — typically runs once per conversation rather than on every tool-call round.
+ *
+ * <p>This is <b>best-effort</b> memoization, not a hard guarantee: the lookup and compute are not
+ * atomic, so two async-pool threads racing on a key's <i>first</i> touch may both miss and both
+ * invoke the delegate (last-writer-wins on the same key). The backing map is synchronized, so there
+ * is no corruption, and the redundant compute is benign — hence no locking. Once a value is cached,
+ * subsequent rounds are served from it.
  *
  * <p>The cache is a <b>bounded LRU</b> with real eviction (oldest entries are dropped past the
  * capacity), so it never grows without bound and never silently stops caching. Empty keys (requests

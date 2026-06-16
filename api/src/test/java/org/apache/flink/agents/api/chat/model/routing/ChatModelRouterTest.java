@@ -431,6 +431,54 @@ class ChatModelRouterTest {
     }
 
     @Test
+    @DisplayName("a routed candidate is open()-ed before chat() (open-before-chat invariant)")
+    void testCandidateOpenedBeforeChat() throws Exception {
+        Map<String, Resource> registry = new HashMap<>();
+        registry.put("small", new RoutingTestSupport.OpenRequiringModel("small"));
+        RoutingTestSupport.OpenRequiringModel big =
+                new RoutingTestSupport.OpenRequiringModel("big");
+        registry.put("big", big);
+        // A context that opens a resource on resolution, like the runtime
+        // ResourceCache.getResource()
+        // (ResourceCache.java calls resource.open() before returning it). This pins the invariant
+        // the
+        // router's no-op open() relies on: the chosen candidate is opened before its chat() runs.
+        ResourceContext ctx = RoutingTestSupport.openingContext(registry);
+
+        ChatModelRouter router = router(ruleStrategy(), false, Arrays.asList("small", "big"), ctx);
+        ChatMessage response =
+                router.chat(
+                        Collections.singletonList(RoutingTestSupport.user("please write code")),
+                        Collections.emptyMap(),
+                        Collections.emptyMap());
+
+        assertEquals("handled-by:big", response.getContent());
+        assertTrue(big.opened, "the routed candidate must have been opened before chat()");
+    }
+
+    @Test
+    @DisplayName("the open-before-chat invariant is load-bearing: a non-opened candidate fails")
+    void testCandidateNotOpenedFails() throws Exception {
+        // Same candidates, but a plain context that does NOT open on resolution -> chat() must
+        // fail,
+        // proving the invariant above is real and not vacuously satisfied.
+        Map<String, Resource> registry = new HashMap<>();
+        registry.put("small", new RoutingTestSupport.OpenRequiringModel("small"));
+        registry.put("big", new RoutingTestSupport.OpenRequiringModel("big"));
+        ResourceContext ctx = RoutingTestSupport.context(registry);
+
+        ChatModelRouter router = router(ruleStrategy(), false, Arrays.asList("small", "big"), ctx);
+        assertThrows(
+                RuntimeException.class,
+                () ->
+                        router.chat(
+                                Collections.singletonList(
+                                        RoutingTestSupport.user("please write code")),
+                                Collections.emptyMap(),
+                                Collections.emptyMap()));
+    }
+
+    @Test
     @DisplayName("connection name is non-null so retry metrics never NPE")
     void testStableConnectionName() throws Exception {
         ChatModelRouter router =

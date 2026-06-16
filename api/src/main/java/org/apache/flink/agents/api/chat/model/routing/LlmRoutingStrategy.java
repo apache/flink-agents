@@ -47,8 +47,9 @@ import java.util.regex.Pattern;
  * <b>transient judge failure</b> (resolve/call error) it instead <b>abstains</b> by returning
  * {@code null}, so the router degrades to its own default and a wrapping {@link CachingStrategy}
  * does not pin the conversation to a fallback; the judge is retried on the next round. It does not
- * cache — wrap it in {@link CachingStrategy} (the router does this by default) so the judge runs
- * once per conversation.
+ * cache — wrap it in {@link CachingStrategy} (the router does this by default) so the judge
+ * typically runs once per conversation (best-effort; see {@link CachingStrategy} for the concurrent
+ * first-touch caveat).
  *
  * <p><b>Security note.</b> The user's message is sent to the judge model, so this routing decision
  * is susceptible to prompt injection (a crafted message could steer the choice). Do not gate cost,

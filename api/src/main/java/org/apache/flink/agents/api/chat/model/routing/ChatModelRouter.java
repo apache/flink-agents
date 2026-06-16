@@ -155,10 +155,19 @@ public class ChatModelRouter extends BaseChatModelSetup {
     /**
      * The router has no connection of its own to resolve (it delegates to candidate models, each of
      * which resolves its own). Override to skip the base class's connection resolution.
+     *
+     * <p><b>Invariant this relies on:</b> a routed candidate is resolved through {@code
+     * ResourceContext.getResource(name, CHAT_MODEL)} at {@link #chat} time, and the runtime {@code
+     * ResourceCache} lazily {@code open()}s a resource when it is first resolved — so a candidate's
+     * connection is non-null before its {@code chat()} runs. The router therefore does not need to
+     * open anything here; opening is the resolved candidate's responsibility, performed for it on
+     * first resolution. (Do not eagerly open candidates here: that would defeat the lazy, per-use
+     * resolution the cache provides.)
      */
     @Override
     public void open() {
-        // no-op
+        // no-op; see the invariant in the Javadoc above (candidates are lazily opened on
+        // resolution)
     }
 
     /**
