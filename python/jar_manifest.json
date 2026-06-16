@@ -6,31 +6,31 @@
     {
       "artifact_id": "flink-agents-dist-common",
       "dest": "flink_agents/lib/common/",
-      "sha256": "PLACEHOLDER"
+      "sha256": "c54c4d355bb694a19c169a1af18d3f3fc347b31a7f76047a61a54ffd99e03687"
     },
     {
       "artifact_id": "flink-agents-dist-flink-1.20",
       "classifier": "thin",
       "dest": "flink_agents/lib/flink-1.20/",
-      "sha256": "PLACEHOLDER"
+      "sha256": "ef6f9b24adab24d60dcbd69fb240b46469b050920b4444250f8395e09963f902"
     },
     {
       "artifact_id": "flink-agents-dist-flink-2.0",
       "classifier": "thin",
       "dest": "flink_agents/lib/flink-2.0/",
-      "sha256": "PLACEHOLDER"
+      "sha256": "550b2491d1a58cd71c29c547e23ee5de5289b461dc6aea2cef164e6f6d1c5b96"
     },
     {
       "artifact_id": "flink-agents-dist-flink-2.1",
       "classifier": "thin",
       "dest": "flink_agents/lib/flink-2.1/",
-      "sha256": "PLACEHOLDER"
+      "sha256": "a718100fb312e91abbea0da02d131cd1092b4dbb9dc09d45937be5e79400181a"
     },
     {
       "artifact_id": "flink-agents-dist-flink-2.2",
       "classifier": "thin",
       "dest": "flink_agents/lib/flink-2.2/",
-      "sha256": "PLACEHOLDER"
+      "sha256": "5169235a023e1a9cc635129ae7abc8594c96608221ab9f64a12b4106cdc25e41"
     }
   ]
 }
