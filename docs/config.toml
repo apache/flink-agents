@@ -57,6 +57,7 @@ pygmentsUseClasses = true
   ]
 
   PreviousDocs = [
+    ["0.3", "http://nightlies.apache.org/flink/flink-agents-docs-release-0.3"],
     ["0.2", "http://nightlies.apache.org/flink/flink-agents-docs-release-0.2"],
     ["0.1", "http://nightlies.apache.org/flink/flink-agents-docs-release-0.1"],
   ]
