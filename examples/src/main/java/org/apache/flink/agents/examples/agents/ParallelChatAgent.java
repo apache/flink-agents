@@ -76,6 +76,8 @@ public class ParallelChatAgent extends Agent {
 
     private static final String[] ASPECTS = {"taste", "service"};
 
+    private static final String SENTIMENT_INPUT_EVENT_TYPE = "SentimentInputEvent";
+
     private static final String PARALLEL_SYSTEM_PROMPT =
             "You are a sentiment analysis assistant. Return JSON: "
                     + "{\"aspect\":\"<dimension>\", \"result\":\"<positive|negative|not_mentioned>\"}"
@@ -85,19 +87,6 @@ public class ParallelChatAgent extends Agent {
                     + "dimensions, compose a brief one-line evaluation. Return JSON: "
                     + "{\"summary\":\"taste:<positive/negative/not_mentioned>, "
                     + "service:<positive/negative/not_mentioned>\"} — return only this JSON.";
-
-    /** Intermediate event that broadcasts the review input to all aspect handlers. */
-    public static class SentimentInputEvent extends Event {
-        public static final String EVENT_TYPE = "SentimentInputEvent";
-        public final int inputId;
-        public final String text;
-
-        public SentimentInputEvent(int inputId, String text) {
-            super(EVENT_TYPE);
-            this.inputId = inputId;
-            this.text = text;
-        }
-    }
 
     @ChatModelSetup
     public static ResourceDescriptor sentimentModel() {
@@ -151,23 +140,24 @@ public class ParallelChatAgent extends Agent {
                 (CustomTypesAndResources.SentimentRequest) inputEvent.getInput();
         ctx.getSensoryMemory().set("id", request.getId());
         ctx.getSensoryMemory().set("text", request.getText());
-        ctx.sendEvent(new SentimentInputEvent(request.getId(), request.getText()));
+        ctx.sendEvent(
+                new Event(
+                        SENTIMENT_INPUT_EVENT_TYPE,
+                        Map.of("input_id", request.getId(), "text", request.getText())));
     }
 
     /** Handle taste aspect: build and send ChatRequestEvent for taste judgment. */
-    @Action(listenEventTypes = {SentimentInputEvent.EVENT_TYPE})
+    @Action(listenEventTypes = {SENTIMENT_INPUT_EVENT_TYPE})
     public static void handleTasteInput(Event event, RunnerContext ctx) throws Exception {
-        SentimentInputEvent in = (SentimentInputEvent) event;
-        ChatRequestEvent req = buildAspectRequest(in.text, "taste");
+        ChatRequestEvent req = buildAspectRequest((String) event.getAttr("text"), "taste");
         ctx.getSensoryMemory().set("aspect_map." + req.getId(), "taste");
         ctx.sendEvent(req);
     }
 
     /** Handle service aspect: build and send ChatRequestEvent for service judgment. */
-    @Action(listenEventTypes = {SentimentInputEvent.EVENT_TYPE})
+    @Action(listenEventTypes = {SENTIMENT_INPUT_EVENT_TYPE})
     public static void handleServiceInput(Event event, RunnerContext ctx) throws Exception {
-        SentimentInputEvent in = (SentimentInputEvent) event;
-        ChatRequestEvent req = buildAspectRequest(in.text, "service");
+        ChatRequestEvent req = buildAspectRequest((String) event.getAttr("text"), "service");
         ctx.getSensoryMemory().set("aspect_map." + req.getId(), "service");
         ctx.sendEvent(req);
     }

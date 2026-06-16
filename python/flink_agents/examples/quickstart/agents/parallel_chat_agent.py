@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 import os
-from typing import ClassVar, Dict
+from typing import Dict
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
 from flink_agents.api.agents.types import OutputSchema
@@ -34,6 +34,7 @@ from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
 OLLAMA_MODEL = os.environ.get("PARALLEL_CHAT_OLLAMA_MODEL", "qwen3:1.7b")
 
 INPUT_TEXT = "The food here is great, but the service is too slow"
+SENTIMENT_INPUT_EVENT_TYPE = "SentimentInputEvent"
 ASPECTS: tuple = ("taste", "service")
 N_ASPECTS = len(ASPECTS)
 
@@ -48,19 +49,6 @@ AGGREGATE_SYSTEM_PROMPT = (
     '{"summary":"taste:<positive/negative/not_mentioned>, '
     'service:<positive/negative/not_mentioned>"} — return only this JSON.'
 )
-
-
-class SentimentInputEvent(Event):
-    """Intermediate event that broadcasts the review input to all aspect handlers."""
-
-    EVENT_TYPE: ClassVar[str] = "SentimentInputEvent"
-
-    def __init__(self, input_id: int, text: str) -> None:
-        """Initialize with the review id and text."""
-        super().__init__(
-            type=SentimentInputEvent.EVENT_TYPE,
-            attributes={"input_id": input_id, "text": text},
-        )
 
 
 def _build_aspect_request(text: str, aspect: str) -> ChatRequestEvent:
@@ -137,9 +125,14 @@ class ParallelChatAgent(Agent):
         # Primitive types (int, str) cross the Pemja JVM boundary without serialization.
         ctx.sensory_memory.set("id", payload["id"])
         ctx.sensory_memory.set("text", payload["text"])
-        ctx.send_event(SentimentInputEvent(input_id=payload["id"], text=payload["text"]))
+        ctx.send_event(
+            Event(
+                type=SENTIMENT_INPUT_EVENT_TYPE,
+                attributes={"input_id": payload["id"], "text": payload["text"]},
+            )
+        )
 
-    @action(SentimentInputEvent.EVENT_TYPE)
+    @action(SENTIMENT_INPUT_EVENT_TYPE)
     @staticmethod
     def handle_taste_input(event: Event, ctx: RunnerContext) -> None:
         """Handle taste aspect: build and send ChatRequestEvent for taste judgment."""
@@ -147,7 +140,7 @@ class ParallelChatAgent(Agent):
         ctx.sensory_memory.set(f"aspect_map.{req.id}", "taste")
         ctx.send_event(req)
 
-    @action(SentimentInputEvent.EVENT_TYPE)
+    @action(SENTIMENT_INPUT_EVENT_TYPE)
     @staticmethod
     def handle_service_input(event: Event, ctx: RunnerContext) -> None:
         """Handle service aspect: build and send ChatRequestEvent for service."""

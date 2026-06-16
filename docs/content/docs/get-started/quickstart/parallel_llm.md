@@ -84,7 +84,7 @@ agentsEnv.addResource(
 
 ### Create the Agent
 
-Below is the example code for the `ParallelChatAgent`. Two system prompts — `PARALLEL_SYSTEM_PROMPT` for the parallel aspect judgments and `AGGREGATE_SYSTEM_PROMPT` for the aggregation call — are packaged into `ChatRequestEvent`s by `_build_aspect_request` / `buildAspectRequest` and `_build_summarize_request` / `buildSummarizeRequest`. The agent defines a chat model and four actions: `request_aspect_judgments` stores the review `id` and `text` in sensory memory and emits a single `SentimentInputEvent`; `handle_taste_input` and `handle_service_input` each listen on `SentimentInputEvent` and independently dispatch one `ChatRequestEvent`, recording a `{request_id → aspect}` entry using path-based memory access (`aspect_map.<request_id>`); and `handle_response` looks up the dispatched aspect, stores the result under `sentiments.<aspect>`, and triggers aggregation once all aspects are collected. For more details, please refer to the [Workflow Agent]({{< ref "docs/development/workflow_agent" >}}) documentation.
+Below is the example code for the `ParallelChatAgent`. Two system prompts — `PARALLEL_SYSTEM_PROMPT` for the parallel aspect judgments and `AGGREGATE_SYSTEM_PROMPT` for the aggregation call — are packaged into `ChatRequestEvent`s by `_build_aspect_request` / `buildAspectRequest` and `_build_summarize_request` / `buildSummarizeRequest`. The agent defines a chat model and four actions: `request_aspect_judgments` stores the review `id` and `text` in sensory memory and emits a single generic `Event` of type `SENTIMENT_INPUT_EVENT_TYPE`; `handle_taste_input` and `handle_service_input` each listen on that event type and independently dispatch one `ChatRequestEvent`, recording a `{request_id → aspect}` entry using path-based memory access (`aspect_map.<request_id>`); and `handle_response` looks up the dispatched aspect, stores the result under `sentiments.<aspect>`, and triggers aggregation once all aspects are collected.
 
 {{< tabs "Create the Agent" >}}
 
@@ -92,6 +92,7 @@ Below is the example code for the `ParallelChatAgent`. Two system prompts — `P
 ```python
 ASPECTS: tuple = ("taste", "service")
 N_ASPECTS = len(ASPECTS)
+SENTIMENT_INPUT_EVENT_TYPE = "SentimentInputEvent"
 
 PARALLEL_SYSTEM_PROMPT = (
     "You are a sentiment analysis assistant. Return JSON: "
@@ -104,19 +105,6 @@ AGGREGATE_SYSTEM_PROMPT = (
     '{"summary":"taste:<positive/negative/not_mentioned>, '
     'service:<positive/negative/not_mentioned>"} — return only this JSON.'
 )
-
-
-class SentimentInputEvent(Event):
-    """Intermediate event that broadcasts the review input to all aspect handlers."""
-
-    EVENT_TYPE: ClassVar[str] = "SentimentInputEvent"
-
-    def __init__(self, input_id: int, text: str) -> None:
-        """Initialize with the review id and text."""
-        super().__init__(
-            type=SentimentInputEvent.EVENT_TYPE,
-            attributes={"input_id": input_id, "text": text},
-        )
 
 
 def _build_aspect_request(text: str, aspect: str) -> ChatRequestEvent:
@@ -188,9 +176,14 @@ class ParallelChatAgent(Agent):
         # Primitive types (int, str) cross the Pemja JVM boundary without serialization.
         ctx.sensory_memory.set("id", payload["id"])
         ctx.sensory_memory.set("text", payload["text"])
-        ctx.send_event(SentimentInputEvent(input_id=payload["id"], text=payload["text"]))
+        ctx.send_event(
+            Event(
+                type=SENTIMENT_INPUT_EVENT_TYPE,
+                attributes={"input_id": payload["id"], "text": payload["text"]},
+            )
+        )
 
-    @action(SentimentInputEvent.EVENT_TYPE)
+    @action(SENTIMENT_INPUT_EVENT_TYPE)
     @staticmethod
     def handle_taste_input(event: Event, ctx: RunnerContext) -> None:
         """Handle taste aspect: build and send ChatRequestEvent for taste judgment."""
@@ -198,7 +191,7 @@ class ParallelChatAgent(Agent):
         ctx.sensory_memory.set(f"aspect_map.{req.id}", "taste")
         ctx.send_event(req)
 
-    @action(SentimentInputEvent.EVENT_TYPE)
+    @action(SENTIMENT_INPUT_EVENT_TYPE)
     @staticmethod
     def handle_service_input(event: Event, ctx: RunnerContext) -> None:
         """Handle service aspect: build and send ChatRequestEvent for service."""
@@ -237,6 +230,8 @@ public class ParallelChatAgent extends Agent {
 
     private static final String[] ASPECTS = {"taste", "service"};
 
+    private static final String SENTIMENT_INPUT_EVENT_TYPE = "SentimentInputEvent";
+
     private static final String PARALLEL_SYSTEM_PROMPT =
             "You are a sentiment analysis assistant. Return JSON: "
                     + "{\"aspect\":\"<dimension>\", \"result\":\"<positive|negative|not_mentioned>\"}"
@@ -246,18 +241,6 @@ public class ParallelChatAgent extends Agent {
                     + "dimensions, compose a brief one-line evaluation. Return JSON: "
                     + "{\"summary\":\"taste:<positive/negative/not_mentioned>, "
                     + "service:<positive/negative/not_mentioned>\"} — return only this JSON.";
-
-    public static class SentimentInputEvent extends Event {
-        public static final String EVENT_TYPE = "SentimentInputEvent";
-        public final int inputId;
-        public final String text;
-
-        public SentimentInputEvent(int inputId, String text) {
-            super(EVENT_TYPE);
-            this.inputId = inputId;
-            this.text = text;
-        }
-    }
 
     @ChatModelSetup
     public static ResourceDescriptor sentimentModel() {
@@ -301,23 +284,24 @@ public class ParallelChatAgent extends Agent {
                 (CustomTypesAndResources.SentimentRequest) InputEvent.fromEvent(event).getInput();
         ctx.getSensoryMemory().set("id", request.getId());
         ctx.getSensoryMemory().set("text", request.getText());
-        ctx.sendEvent(new SentimentInputEvent(request.getId(), request.getText()));
+        ctx.sendEvent(
+                new Event(
+                        SENTIMENT_INPUT_EVENT_TYPE,
+                        Map.of("input_id", request.getId(), "text", request.getText())));
     }
 
     /** Handle taste aspect: build and send ChatRequestEvent for taste judgment. */
-    @Action(listenEventTypes = {SentimentInputEvent.EVENT_TYPE})
+    @Action(listenEventTypes = {SENTIMENT_INPUT_EVENT_TYPE})
     public static void handleTasteInput(Event event, RunnerContext ctx) throws Exception {
-        SentimentInputEvent in = (SentimentInputEvent) event;
-        ChatRequestEvent req = buildAspectRequest(in.text, "taste");
+        ChatRequestEvent req = buildAspectRequest((String) event.getAttr("text"), "taste");
         ctx.getSensoryMemory().set("aspect_map." + req.getId(), "taste");
         ctx.sendEvent(req);
     }
 
     /** Handle service aspect: build and send ChatRequestEvent for service judgment. */
-    @Action(listenEventTypes = {SentimentInputEvent.EVENT_TYPE})
+    @Action(listenEventTypes = {SENTIMENT_INPUT_EVENT_TYPE})
     public static void handleServiceInput(Event event, RunnerContext ctx) throws Exception {
-        SentimentInputEvent in = (SentimentInputEvent) event;
-        ChatRequestEvent req = buildAspectRequest(in.text, "service");
+        ChatRequestEvent req = buildAspectRequest((String) event.getAttr("text"), "service");
         ctx.getSensoryMemory().set("aspect_map." + req.getId(), "service");
         ctx.sendEvent(req);
     }
