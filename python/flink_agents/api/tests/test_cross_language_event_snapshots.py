@@ -297,18 +297,18 @@ def test_tool_response_event_python_snapshot_is_stable() -> None:
     )
 
 
-def test_java_tool_response_event_is_shape_mismatched_when_consumed_by_python() -> None:
+def test_python_can_deserialize_java_tool_response_event_status_fields() -> None:
     base = _read_java_snapshot("tool_response_event.json")
     typed = ToolResponseEvent.from_event(base)
 
     assert typed.request_id == _FIXED_REQUEST_ID
+    assert typed.success[_FIXED_TOOL_CALL_ID] is True
+    assert typed.error == {}
 
     response_value = typed.responses[_FIXED_TOOL_CALL_ID]
     assert isinstance(response_value, dict)
     assert "result" in response_value
 
-    assert "success" not in typed.attributes
-    assert "error" not in typed.attributes
     assert "timestamp" not in typed.attributes
 
 

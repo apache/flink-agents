@@ -24,6 +24,12 @@ from pydantic import BaseModel, field_serializer, model_validator
 from typing_extensions import override
 
 from flink_agents.api.resource import ResourceType, SerializableResource
+from flink_agents.api.tools.tool_parameter_injection import (
+    InjectedArg,
+    merge_injected_args,
+    normalize_injected_args,
+    validate_injected_arg_names,
+)
 from flink_agents.api.tools.utils import create_model_from_schema
 
 if TYPE_CHECKING:
@@ -108,12 +114,25 @@ class Tool(SerializableResource, ABC):
     metadata: ToolMetadata | None = None
 
     @staticmethod
-    def from_callable(func: typing.Callable) -> "FunctionTool":
+    def from_callable(
+        func: typing.Callable,
+        *,
+        injected_args: dict[str, InjectedArg | dict] | None = None,
+    ) -> "FunctionTool":
         """Wrap a Python callable as a declarative ``FunctionTool``."""
         from flink_agents.api.function import PythonFunction
         from flink_agents.api.tools.function_tool import FunctionTool
 
-        return FunctionTool(func=PythonFunction.from_callable(func))
+        declared = normalize_injected_args(injected_args)
+        annotated = getattr(func, "_injected_args", None)
+        normalized = merge_injected_args(
+            annotated, declared, tool_name=getattr(func, "__qualname__", str(func))
+        )
+        validate_injected_arg_names(func, normalized)
+        return FunctionTool(
+            func=PythonFunction.from_callable(func),
+            injected_args=normalized,
+        )
 
     @property
     def name(self) -> str:

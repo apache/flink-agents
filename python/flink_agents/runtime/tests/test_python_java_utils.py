@@ -15,9 +15,27 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from flink_agents.api.tools.tool_parameter_injection import (
-    InjectedArg,
-    ToolParameterSource,
-)
+import json
 
-__all__ = ["InjectedArg", "ToolParameterSource"]
+from flink_agents.api.decorators import tool
+from flink_agents.api.tools import InjectedArg
+from flink_agents.runtime.python_java_utils import get_python_tool_metadata
+
+
+@tool(injected_args={"tenant_id": InjectedArg.from_config("tenant.id")})
+def decorated_python_tool(order_id: str, tenant_id: str, request_id: str) -> str:
+    """Query order."""
+    return f"{tenant_id}:{request_id}:{order_id}"
+
+
+def test_get_python_tool_metadata_merges_callable_injected_args() -> None:
+    flat = get_python_tool_metadata(
+        __name__, "decorated_python_tool", injected_args=["request_id"]
+    )
+
+    schema = json.loads(flat["inputSchema"])
+    assert set(schema["properties"]) == {"order_id"}
+    injected_args = json.loads(flat["injectedArgs"])
+    assert injected_args == {
+        "tenant_id": {"source": "config", "key": "tenant.id"}
+    }

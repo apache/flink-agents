@@ -92,7 +92,9 @@ class ToolResponseEvent(Event):
         self,
         request_id: UUID,
         responses: Dict[UUID, Any],
-        external_ids: Dict[UUID, str | None],
+        external_ids: Dict[UUID, str | None] | None = None,
+        success: Dict[UUID, bool] | None = None,
+        error: Dict[UUID, str] | None = None,
     ) -> None:
         """Create a ToolResponseEvent."""
         super().__init__(
@@ -100,7 +102,11 @@ class ToolResponseEvent(Event):
             attributes={
                 "request_id": request_id,
                 "responses": responses,
-                "external_ids": external_ids,
+                "success": success
+                if success is not None
+                else dict.fromkeys(responses, True),
+                "error": error if error is not None else {},
+                "external_ids": external_ids if external_ids is not None else {},
             },
         )
 
@@ -109,11 +115,15 @@ class ToolResponseEvent(Event):
     def from_event(cls, event: Event) -> "ToolResponseEvent":
         assert "request_id" in event.attributes
         assert "responses" in event.attributes
-        assert "external_ids" in event.attributes
+        responses = event.attributes["responses"]
         result = ToolResponseEvent(
             request_id=event.attributes["request_id"],
-            responses=event.attributes["responses"],
-            external_ids=event.attributes["external_ids"],
+            responses=responses,
+            external_ids=event.attributes.get("external_ids", {}),
+            success=event.attributes.get(
+                "success", dict.fromkeys(responses, True)
+            ),
+            error=event.attributes.get("error", {}),
         )
         result.id = event.id
         return result
@@ -128,6 +138,16 @@ class ToolResponseEvent(Event):
     def responses(self) -> Dict[UUID, Any]:
         """Return the tool call responses."""
         return self.get_attr("responses")
+
+    @property
+    def success(self) -> Dict[UUID, bool]:
+        """Return whether each tool call succeeded."""
+        return self.get_attr("success")
+
+    @property
+    def error(self) -> Dict[UUID, str]:
+        """Return diagnostic errors for failed tool calls."""
+        return self.get_attr("error")
 
     @property
     def external_ids(self) -> Dict[UUID, str | None]:

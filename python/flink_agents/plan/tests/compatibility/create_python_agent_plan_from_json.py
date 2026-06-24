@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import sys
 from pathlib import Path
 
@@ -29,6 +30,7 @@ if __name__ == "__main__":
     with Path.open(Path(json_path)) as f:
         java_plan_json = f.read()
 
+    raw_agent_plan = json.loads(java_plan_json)
     agent_plan = AgentPlan.model_validate_json(java_plan_json)
     actions = agent_plan.actions
 
@@ -80,3 +82,16 @@ if __name__ == "__main__":
 
     assert my_event in actions_by_event
     assert actions_by_event[my_event] == ["secondAction"]
+
+    # check Java tool parameter injection survives agent plan JSON
+    raw_tool_providers = raw_agent_plan["resource_providers"].get(
+        "tool", raw_agent_plan["resource_providers"].get("TOOL")
+    )
+    raw_tool_provider = raw_tool_providers["add"]
+    serialized_tool = json.loads(raw_tool_provider["serializedResource"])
+    input_schema = json.loads(serialized_tool["metadata"]["inputSchema"])
+    assert set(input_schema["properties"]) == {"a", "b"}
+    assert "tenant_id" not in input_schema["properties"]
+    assert serialized_tool["injected_args"] == {
+        "tenant_id": {"source": "config", "key": "tenant.id"}
+    }

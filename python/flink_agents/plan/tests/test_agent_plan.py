@@ -29,6 +29,7 @@ from flink_agents.api.decorators import (
     chat_model_setup,
     embedding_model_connection,
     embedding_model_setup,
+    tool,
     vector_store,
 )
 from flink_agents.api.embedding_models.embedding_model import (
@@ -38,8 +39,11 @@ from flink_agents.api.embedding_models.embedding_model import (
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.function import JavaFunction
+from flink_agents.api.function import PythonFunction as ApiPythonFunction
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.tools import InjectedArg
+from flink_agents.api.tools.function_tool import FunctionTool as ApiFunctionTool
 from flink_agents.api.vector_stores.vector_store import (
     BaseVectorStore,
     Document,
@@ -47,6 +51,8 @@ from flink_agents.api.vector_stores.vector_store import (
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.resource_provider import PythonSerializableResourceProvider
+from flink_agents.plan.tools.function_tool import FunctionTool
 from flink_agents.runtime.resource_cache import ResourceCache
 
 
@@ -355,6 +361,139 @@ def test_agent_plan_deserialize(agent_plan: AgentPlan) -> None:
         expected_json = f.read()
     deserialized_agent_plan = AgentPlan.model_validate_json(expected_json)
     assert deserialized_agent_plan == agent_plan
+
+
+class AgentWithInjectedTool(Agent):
+    @tool(injected_args={"tenant_id": InjectedArg.from_config("tenant.id")})
+    @staticmethod
+    def query_order(order_id: str, tenant_id: str) -> str:
+        """Query an order.
+
+        Parameters
+        ----------
+        order_id : str
+            The order id.
+        tenant_id : str
+            The tenant id.
+        """
+        return f"{tenant_id}:{order_id}"
+
+
+def query_order(order_id: str, tenant_id: str) -> str:
+    return f"{tenant_id}:{order_id}"
+
+
+@tool(injected_args={"tenant_id": InjectedArg.from_config("tenant.id")})
+def decorated_query_order(order_id: str, tenant_id: str) -> str:
+    """Query an order.
+
+    Parameters
+    ----------
+    order_id : str
+        The order id.
+    tenant_id : str
+        The tenant id.
+    """
+    return f"{tenant_id}:{order_id}"
+
+
+def test_agent_plan_serializes_and_deserializes_tool_injected_args() -> None:
+    agent_plan = AgentPlan.from_agent(AgentWithInjectedTool(), AgentConfiguration())
+    json_value = agent_plan.model_dump_json(serialize_as_any=True)
+
+    raw_plan = json.loads(json_value)
+    raw_tool = raw_plan["resource_providers"]["tool"]["query_order"]["serialized"]
+    assert raw_tool["injected_args"] == {
+        "tenant_id": {"source": "config", "key": "tenant.id"}
+    }
+    assert "tenant_id" not in raw_tool["metadata"]["args_schema"]["properties"]
+
+    restored = AgentPlan.model_validate_json(json_value)
+    provider = restored.resource_providers[ResourceType.TOOL]["query_order"]
+    assert isinstance(provider, PythonSerializableResourceProvider)
+    assert provider.serialized["injected_args"] == {
+        "tenant_id": {"source": "config", "key": "tenant.id"}
+    }
+    tool_resource = provider.provide(None, AgentConfiguration())
+    assert isinstance(tool_resource, FunctionTool)
+    assert tool_resource.injected_args == {
+        "tenant_id": InjectedArg.from_config("tenant.id")
+    }
+
+
+def test_agent_plan_merges_decorated_python_tool_injected_args() -> None:
+    agent = Agent()
+    agent.add_resource(
+        name="query_order",
+        resource_type=ResourceType.TOOL,
+        instance=ApiFunctionTool(
+            func=ApiPythonFunction.from_callable(decorated_query_order),
+        ),
+    )
+
+    agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())
+    provider = agent_plan.resource_providers[ResourceType.TOOL]["query_order"]
+    tool_resource = provider.provide(None, AgentConfiguration())
+    assert isinstance(tool_resource, FunctionTool)
+    assert tool_resource.injected_args == {
+        "tenant_id": InjectedArg.from_config("tenant.id")
+    }
+    assert (
+        "tenant_id"
+        not in tool_resource.metadata.args_schema.model_json_schema()["properties"]
+    )
+
+
+def test_agent_plan_accepts_matching_decorated_python_tool_injected_args() -> None:
+    agent = Agent()
+    agent.add_resource(
+        name="query_order",
+        resource_type=ResourceType.TOOL,
+        instance=ApiFunctionTool(
+            func=ApiPythonFunction.from_callable(decorated_query_order),
+            injected_args={"tenant_id": InjectedArg.from_config("tenant.id")},
+        ),
+    )
+
+    agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())
+    provider = agent_plan.resource_providers[ResourceType.TOOL]["query_order"]
+    tool_resource = provider.provide(None, AgentConfiguration())
+    assert isinstance(tool_resource, FunctionTool)
+    assert tool_resource.injected_args == {
+        "tenant_id": InjectedArg.from_config("tenant.id")
+    }
+
+
+def test_agent_plan_rejects_conflicting_decorated_python_tool_injected_args() -> None:
+    agent = Agent()
+    agent.add_resource(
+        name="query_order",
+        resource_type=ResourceType.TOOL,
+        instance=ApiFunctionTool(
+            func=ApiPythonFunction.from_callable(decorated_query_order),
+            injected_args={
+                "tenant_id": InjectedArg.from_sensory_memory("request.tenant_id")
+            },
+        ),
+    )
+
+    with pytest.raises(ValueError, match="injected_args conflict"):
+        AgentPlan.from_agent(agent, AgentConfiguration())
+
+
+def test_agent_plan_validates_api_function_tool_injected_arg_names() -> None:
+    agent = Agent()
+    agent.add_resource(
+        name="query_order",
+        resource_type=ResourceType.TOOL,
+        instance=ApiFunctionTool(
+            func=ApiPythonFunction.from_callable(query_order),
+            injected_args={"tenent_id": InjectedArg.from_config("tenant.id")},
+        ),
+    )
+
+    with pytest.raises(ValueError, match="tenent_id do not match function"):
+        AgentPlan.from_agent(agent, AgentConfiguration())
 
 
 def test_get_resource() -> None:
