@@ -75,6 +75,24 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
+def query_order(order_id: str, tenant_id: str) -> str:
+    """Query an order in the injected tenant.
+
+    Parameters
+    ----------
+    order_id : str
+        The order id requested by the model.
+    tenant_id : str
+        The tenant id injected by runtime.
+
+    Returns:
+    -------
+    str:
+        The tenant-scoped order identifier.
+    """
+    return f"yaml-checked:{tenant_id}:{order_id}"
+
+
 def process_input(event: Event, ctx: RunnerContext) -> None:
     """Route the incoming text to the math or creative chat model.
 

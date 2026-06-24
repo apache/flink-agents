@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.FunctionTool;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.yaml.spec.DescriptorSpec;
 import org.apache.flink.agents.api.yaml.spec.PromptSpec;
 import org.apache.flink.agents.api.yaml.spec.SkillsSpec;
@@ -96,10 +97,22 @@ class YamlLoaderBuildersTest {
 
     @Test
     void buildToolPython() throws Exception {
-        ToolSpec spec = M.readValue("name: t\nfunction: pkg:fn\ntype: python\n", ToolSpec.class);
+        ToolSpec spec =
+                M.readValue(
+                        "name: t\n"
+                                + "function: pkg:fn\n"
+                                + "type: python\n"
+                                + "injected_args:\n"
+                                + "  tenant_id:\n"
+                                + "    source: config\n"
+                                + "    key: tenant_id\n",
+                        ToolSpec.class);
         FunctionTool tool = YamlLoader.buildTool(spec);
         assertThat(tool.getFunc()).isInstanceOf(PythonFunction.class);
         assertThat(((PythonFunction) tool.getFunc()).getQualName()).isEqualTo("fn");
+        assertThat(tool.getInjectedArgs())
+                .containsExactlyEntriesOf(
+                        Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant_id")));
     }
 
     @Test
@@ -119,6 +132,44 @@ class YamlLoaderBuildersTest {
         FunctionTool tool = YamlLoader.buildTool(spec);
         assertThat(tool.getFunc()).isInstanceOf(JavaFunction.class);
         assertThat(((JavaFunction) tool.getFunc()).getParameterTypes()).containsExactly("int");
+    }
+
+    @Test
+    void buildToolJavaKeepsUnknownInjectedArgNamesForPlanValidation() throws Exception {
+        ToolSpec spec =
+                M.readValue(
+                        "name: t\n"
+                                + "function: org.apache.flink.agents.api.yaml.LoaderTargets:queryOrder\n"
+                                + "type: java\n"
+                                + "parameter_types: [java.lang.String, java.lang.String]\n"
+                                + "injected_args:\n"
+                                + "  tenent_id:\n"
+                                + "    source: config\n"
+                                + "    key: tenant_id\n",
+                        ToolSpec.class);
+        FunctionTool tool = YamlLoader.buildTool(spec);
+        assertThat(tool.getInjectedArgs())
+                .containsExactlyEntriesOf(
+                        Map.of("tenent_id", ToolParameterInjection.fromConfig("tenant_id")));
+    }
+
+    @Test
+    void buildToolJavaAcceptsKnownInjectedArgNames() throws Exception {
+        ToolSpec spec =
+                M.readValue(
+                        "name: t\n"
+                                + "function: org.apache.flink.agents.api.yaml.LoaderTargets:queryOrder\n"
+                                + "type: java\n"
+                                + "parameter_types: [java.lang.String, java.lang.String]\n"
+                                + "injected_args:\n"
+                                + "  tenant_id:\n"
+                                + "    source: config\n"
+                                + "    key: tenant_id\n",
+                        ToolSpec.class);
+        FunctionTool tool = YamlLoader.buildTool(spec);
+        assertThat(tool.getInjectedArgs())
+                .containsExactlyEntriesOf(
+                        Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant_id")));
     }
 
     @Test

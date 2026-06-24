@@ -35,6 +35,10 @@ def notify(id: str, message: str) -> str:
     return f"notified {id}: {message}"
 
 
+def query_order(order_id: str, tenant_id: str) -> str:
+    return f"{tenant_id}:{order_id}"
+
+
 class Counter:
     """Holder for a class-method action target — exercises the
     ``module:Class.method`` form in YAML function references.

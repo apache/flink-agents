@@ -79,6 +79,17 @@ public final class YamlChatActions {
     }
 
     /**
+     * Query an order in the injected tenant. Referenced by the YAML parameter-injection fixture;
+     * the {@code tenant_id} parameter is declared as injected in YAML, not on this method.
+     */
+    @Tool(description = "Query order in the current tenant")
+    public static String queryOrder(
+            @ToolParam(name = "order_id", description = "The order id") String orderId,
+            @ToolParam(name = "tenant_id", description = "The tenant id") String tenantId) {
+        return "yaml-checked:" + tenantId + ":" + orderId;
+    }
+
+    /**
      * Route the incoming text to the math or creative chat model. The math model has access to the
      * {@code add} tool; the creative model does not. Routing is a simple keyword check on the
      * input. Stash the record's {@code id} in short-term memory so {@code processChatResponse} can

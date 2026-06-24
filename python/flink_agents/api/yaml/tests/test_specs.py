@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from flink_agents.api.tools import InjectedArg
 from flink_agents.api.yaml.specs import (
     ActionSpec,
     AgentSpec,
@@ -65,6 +66,65 @@ def test_descriptor_spec_accepts_python_and_java() -> None:
 def test_descriptor_spec_rejects_unknown_type() -> None:
     with pytest.raises(ValidationError):
         DescriptorSpec.model_validate({"name": "n", "clazz": "x.Y", "type": "go"})
+
+
+def test_tool_spec_rejects_list_injected_args() -> None:
+    with pytest.raises(TypeError, match="'injected_args' must be a dict"):
+        ToolSpec.model_validate(
+            {"name": "t", "function": "pkg:fn", "injected_args": ["tenant_id"]}
+        )
+
+
+def test_tool_spec_rejects_string_injected_arg_spec() -> None:
+    with pytest.raises(TypeError, match="Unsupported injected arg spec"):
+        ToolSpec.model_validate(
+            {
+                "name": "t",
+                "function": "pkg:fn",
+                "injected_args": {"tenant_id": "tenant.id"},
+            }
+        )
+
+
+def test_tool_spec_accepts_declarative_injected_args() -> None:
+    spec = ToolSpec.model_validate(
+        {
+            "name": "t",
+            "function": "pkg:fn",
+            "injected_args": {"tenant_id": {"source": "config", "key": "tenant.id"}},
+        }
+    )
+    assert spec.injected_args == {
+        "tenant_id": InjectedArg.from_config("tenant.id"),
+    }
+
+
+def test_tool_spec_defaults_injected_arg_source_to_sensory_memory() -> None:
+    spec = ToolSpec.model_validate(
+        {
+            "name": "t",
+            "function": "pkg:fn",
+            "injected_args": {"tenant_id": {"key": "request.tenant_id"}},
+        }
+    )
+    assert spec.injected_args == {
+        "tenant_id": InjectedArg.from_sensory_memory("request.tenant_id"),
+    }
+
+
+def test_tool_spec_accepts_uppercase_injected_arg_source() -> None:
+    spec = ToolSpec.model_validate(
+        {
+            "name": "t",
+            "function": "pkg:fn",
+            "injected_args": {
+                "tenant_id": {"source": "SENSORY_MEMORY", "key": "request.tenant_id"}
+            },
+        }
+    )
+    assert spec.injected_args == {
+        "tenant_id": InjectedArg.from_sensory_memory("request.tenant_id"),
+    }
 
 
 def test_message_role_values() -> None:
