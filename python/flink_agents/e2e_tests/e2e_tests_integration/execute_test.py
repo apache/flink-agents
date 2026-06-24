@@ -96,7 +96,7 @@ def test_durable_execute_basic_flink(tmp_path: Path) -> None:
 
     check_result(
         result_dir=result_dir,
-        groud_truth_dir=Path(
+        ground_truth_dir=Path(
             f"{current_dir}/../resources/ground_truth/test_execute_basic.txt"
         ),
     )
@@ -148,7 +148,7 @@ def test_durable_execute_multiple_calls_flink(tmp_path: Path) -> None:
 
     check_result(
         result_dir=result_dir,
-        groud_truth_dir=Path(
+        ground_truth_dir=Path(
             f"{current_dir}/../resources/ground_truth/test_execute_multiple.txt"
         ),
     )
@@ -200,7 +200,7 @@ def test_durable_execute_with_async_flink(tmp_path: Path) -> None:
 
     check_result(
         result_dir=result_dir,
-        groud_truth_dir=Path(
+        ground_truth_dir=Path(
             f"{current_dir}/../resources/ground_truth/test_execute_with_async.txt"
         ),
     )
@@ -252,7 +252,7 @@ def test_durable_execute_async_exception_flink(tmp_path: Path) -> None:
 
     check_result(
         result_dir=result_dir,
-        groud_truth_dir=Path(
+        ground_truth_dir=Path(
             f"{current_dir}/../resources/ground_truth/test_execute_async_exception.txt"
         ),
     )

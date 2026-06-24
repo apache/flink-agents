@@ -94,7 +94,7 @@ def test_from_datastream_to_datastream(tmp_path: Path) -> None:
 
     check_result(
         result_dir=result_dir,
-        groud_truth_dir=Path(
+        ground_truth_dir=Path(
             f"{current_dir}/../resources/ground_truth/test_from_datastream_to_datastream.txt"
         ),
     )
@@ -169,7 +169,7 @@ def test_from_table_to_table(tmp_path: Path) -> None:
 
     check_result(
         result_dir=result_dir,
-        groud_truth_dir=Path(
+        ground_truth_dir=Path(
             f"{current_dir}/../resources/ground_truth/test_from_table_to_table.txt"
         ),
     )
@@ -242,7 +242,7 @@ def test_from_datastream_to_table(tmp_path: Path) -> None:
 
     check_result(
         result_dir=result_dir,
-        groud_truth_dir=Path(
+        ground_truth_dir=Path(
             f"{current_dir}/../resources/ground_truth/test_from_table_to_table.txt"
         ),
     )
