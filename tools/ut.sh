@@ -43,8 +43,8 @@ Options:
   -e, --e2e         Run e2e tests
   -b, --both        Run both Java and Python tests (default)
   -f, --flink       Specify Flink version to test (can be used multiple times)
-                    Supported versions: 2.2, 1.20
-                    Examples: -f 2.2, -f 1.20, -f 2.2 -f 1.20
+                    Supported versions: 2.3, 2.2, 2.1, 2.0, 1.20
+                    Examples: -f 2.3, -f 1.20, -f 2.3 -f 1.20
                     Default: run all versions if not specified
   -v, --verbose     Show verbose output
   -h, --help        Display this help message
