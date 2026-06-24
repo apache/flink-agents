@@ -179,6 +179,113 @@ ReActAgent reviewAnalysisReactAgent = new ReActAgent(
 - Use `AgentsExecutionEnvironment.add_resource` to register the tool to the execution environment
 - Reference the tool by its name in the `tools` list of the `ResourceDescriptor`
 
+## Tool Parameter Injection
+
+Some tools need runtime data that should not be chosen by the model, such as a tenant id, account id, request trace id, or other framework-owned context. Mark those parameters as injected so they are hidden from the model-facing tool schema, and declare where the runtime should read each value.
+
+The model only sees and provides normal tool parameters. The injected parameters are merged into the tool call immediately before the built-in `tool_call_action` executes the tool.
+
+{{< tabs "Inject Tool Parameters" >}}
+
+{{< tab "Python" >}}
+```python
+from flink_agents.api.agents import Agent
+from flink_agents.api.decorators import tool
+from flink_agents.api.tools import InjectedArg
+
+
+class OrderAgent(Agent):
+
+    @tool(injected_args={"tenant_id": InjectedArg.from_config("tenant_id")})
+    @staticmethod
+    def query_order(order_id: str, tenant_id: str) -> str:
+        """Query an order.
+
+        Parameters
+        ----------
+        order_id : str
+            The order id to query.
+        """
+        return query_order_from_store(order_id=order_id, tenant_id=tenant_id)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class OrderAgent extends Agent {
+
+    @Tool(description = "Query an order.")
+    public static String queryOrder(
+            @ToolParam(name = "order_id") String orderId,
+            @ToolParam(
+                    name = "tenant_id",
+                    injected = true,
+                    source = ToolParameterSource.CONFIG,
+                    key = "tenant_id")
+                    String tenantId) {
+        return queryOrderFromStore(orderId, tenantId);
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+Configure the injected value on the agent execution environment. Python uses `agents_env.get_config().set_str("tenant_id", "tenant-a")`; Java uses `agentsEnv.getConfig().setStr("tenant_id", "tenant-a")`.
+
+Injected values can also come from memory when the value is attached to the current request or session instead of static environment configuration:
+
+{{< tabs "Inject Tool Parameters From Memory" >}}
+
+{{< tab "Python" >}}
+```python
+from flink_agents.api.decorators import tool
+from flink_agents.api.tools import InjectedArg
+
+
+@tool(
+    injected_args={
+        "trace_id": InjectedArg.from_sensory_memory("request.trace_id"),
+    }
+)
+def lookup_order(order_id: str, trace_id: str) -> str:
+    return query_order_with_trace(order_id=order_id, trace_id=trace_id)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+@Tool(description = "Look up an order.")
+public static String lookupOrder(
+        @ToolParam(name = "order_id") String orderId,
+        @ToolParam(
+                name = "trace_id",
+                injected = true,
+                source = ToolParameterSource.SENSORY_MEMORY,
+                key = "request.trace_id")
+                String traceId) {
+    return queryOrderWithTrace(orderId, traceId);
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+The supported sources are `config`, `sensory_memory`, and `short_term_memory`.
+If `source` is omitted, it defaults to `sensory_memory`.
+For Java annotation-based tools, `@ToolParam(injected = true)` is what marks the
+parameter as framework-injected and hidden from the model; `source` and `key` only
+configure where the value is read from.
+If the same injected parameter is declared both on the tool function and by a
+descriptor such as YAML, the declarations must resolve to the same source and key;
+conflicting declarations fail during agent plan construction.
+
+Injected parameters are part of the tool execution contract, not the model contract:
+
+- They are not included in the JSON schema sent to the model.
+- They are not written back to the original `ToolRequestEvent`.
+- If a model supplies an argument with the same name, the injected value wins during execution.
+
 ## MCP Tool
 
 See [MCP]({{< ref "docs/development/mcp" >}}) for details.
