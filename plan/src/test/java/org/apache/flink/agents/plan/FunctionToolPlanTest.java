@@ -20,6 +20,7 @@
 
 package org.apache.flink.agents.plan;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.agents.Agent;
@@ -28,6 +29,7 @@ import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.tools.FunctionTool;
@@ -60,6 +62,12 @@ class FunctionToolPlanTest {
             default:
                 throw new IllegalArgumentException("Unknown operation: " + op);
         }
+    }
+
+    public static String queryOrder(
+            @ToolParam(name = "order_id") String orderId,
+            @ToolParam(name = "tenant_id", injected = true) String tenantId) {
+        return tenantId + ":" + orderId;
     }
 
     static class TestAgent extends Agent {
@@ -141,5 +149,20 @@ class FunctionToolPlanTest {
                                 new HashMap<>(Map.of("a", 10, "b", 2.5, "operation", "div"))));
         assertTrue(ok.isSuccess());
         assertEquals(4.0, (Double) ok.getResult(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("Injected @ToolParam is hidden from metadata schema")
+    void injectedToolParamHiddenFromMetadata() throws Exception {
+        Method m = FunctionToolPlanTest.class.getMethod("queryOrder", String.class, String.class);
+        FunctionTool tool = FunctionTool.fromStaticMethod("query order", m);
+
+        JsonNode schema = new ObjectMapper().readTree(tool.getMetadata().getInputSchema());
+
+        assertEquals(
+                Map.of("tenant_id", ToolParameterInjection.fromSensoryMemory("tenant_id")),
+                tool.getInjectedArgs());
+        assertTrue(schema.get("properties").has("order_id"));
+        assertFalse(schema.get("properties").has("tenant_id"));
     }
 }

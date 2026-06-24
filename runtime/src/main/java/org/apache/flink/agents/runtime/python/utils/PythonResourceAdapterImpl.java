@@ -207,10 +207,17 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
 
     @Override
     public Map<String, String> getPythonToolMetadata(String module, String qualName) {
+        return getPythonToolMetadata(module, qualName, java.util.List.of());
+    }
+
+    @Override
+    public Map<String, String> getPythonToolMetadata(
+            String module, String qualName, java.util.List<String> injectedArgs) {
         @SuppressWarnings("unchecked")
         Map<String, String> result =
                 (Map<String, String>)
-                        interpreter.invoke(GET_PYTHON_TOOL_METADATA, module, qualName);
+                        interpreter.invoke(
+                                GET_PYTHON_TOOL_METADATA, module, qualName, injectedArgs);
         if (result == null) {
             throw new IllegalStateException(
                     "Python get_python_tool_metadata returned null for " + module + ":" + qualName);

@@ -17,12 +17,14 @@
  */
 package org.apache.flink.agents.runtime.python.utils;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -132,25 +134,37 @@ public class JavaResourceAdapter {
      *
      * <p>Invoked from the Python side via the {@code _j_resource_adapter} bridge when a {@code
      * plan.FunctionTool} backed by a {@code JavaFunction} first materialises its metadata.
-     * Delegates to {@link ToolMetadataFactory#fromStaticMethod(Method)} once the {@code Method} is
-     * resolved, then flattens the resulting {@link ToolMetadata} into a {@code Map<String, String>}
-     * before returning.
+     * Delegates to {@link ToolMetadataFactory#fromStaticMethod(Method, java.util.Collection)} once
+     * the {@code Method} is resolved, then flattens the resulting {@link ToolMetadata} plus any
+     * method-declared injected arguments into a {@code Map<String, String>} before returning.
      *
      * <p>The flattening is required because pemja can crash with a SIGSEGV inside {@code
      * JcpPyJObject_New} when Java returns an arbitrary Java object to a Python call that originated
      * on a non-main interpreter thread (e.g. a Flink mailbox worker that resolves a tool's
      * metadata). Returning only String fields — which pemja maps natively to {@code str} —
      * sidesteps the reverse Java→Python object wrap entirely. The Python side rebuilds {@link
-     * ToolMetadata} from the flat map.
+     * ToolMetadata} and injected-argument declarations from the flat map.
      */
     public Map<String, String> getJavaToolMetadata(
             String className, String methodName, List<String> parameterTypes) throws Exception {
+        return getJavaToolMetadata(className, methodName, parameterTypes, List.of());
+    }
+
+    public Map<String, String> getJavaToolMetadata(
+            String className,
+            String methodName,
+            List<String> parameterTypes,
+            List<String> injectedArgs)
+            throws Exception {
         Method method = resolveMethod(className, methodName, parameterTypes);
-        ToolMetadata metadata = ToolMetadataFactory.fromStaticMethod(method);
+        ToolMetadata metadata = ToolMetadataFactory.fromStaticMethod(method, injectedArgs);
+        Map<String, ToolParameterInjection> annotatedInjectedArgs =
+                FunctionTool.getInjectedArgs(method);
         Map<String, String> result = new HashMap<>();
         result.put("name", metadata.getName());
         result.put("description", metadata.getDescription());
         result.put("inputSchema", metadata.getInputSchema());
+        result.put("injectedArgs", new ObjectMapper().writeValueAsString(annotatedInjectedArgs));
         return result;
     }
 

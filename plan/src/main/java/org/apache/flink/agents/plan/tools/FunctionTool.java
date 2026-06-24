@@ -21,12 +21,15 @@
 package org.apache.flink.agents.plan.tools;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
@@ -40,6 +43,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -51,14 +56,25 @@ import java.util.Map;
 @JsonDeserialize(using = FunctionToolJsonDeserializer.class)
 public class FunctionTool extends Tool {
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     private final Function function;
+    private Map<String, ToolParameterInjection> injectedArgs;
 
     @JsonIgnore private transient PythonResourceAdapter pythonResourceAdapter;
 
     /** Create a FunctionTool from ToolMetadata and Function */
     public FunctionTool(ToolMetadata metadata, Function function) {
+        this(metadata, function, Map.of());
+    }
+
+    public FunctionTool(
+            ToolMetadata metadata,
+            Function function,
+            Map<String, ToolParameterInjection> injectedArgs) {
         super(metadata);
         this.function = function;
+        this.injectedArgs = normalizeInjectedArgs(injectedArgs);
     }
 
     /** Create a FunctionTool from a static method annotated with @Tool */
@@ -72,14 +88,18 @@ public class FunctionTool extends Tool {
                 method.getAnnotation(org.apache.flink.agents.api.annotation.Tool.class);
         String name = method.getName();
         String description = toolAnnotation != null ? toolAnnotation.description() : "";
+        Map<String, ToolParameterInjection> injectedArgs = getInjectedArgs(method);
 
         ToolMetadata metadata =
-                new ToolMetadata(name, description, SchemaUtils.generateSchema(method));
+                new ToolMetadata(
+                        name,
+                        description,
+                        SchemaUtils.generateSchema(method, injectedArgs.keySet()));
         JavaFunction javaFunction =
                 new JavaFunction(
                         method.getDeclaringClass(), method.getName(), method.getParameterTypes());
 
-        return new FunctionTool(metadata, javaFunction);
+        return new FunctionTool(metadata, javaFunction, injectedArgs);
     }
 
     /**
@@ -92,15 +112,16 @@ public class FunctionTool extends Tool {
             throw new IllegalArgumentException(
                     "FunctionTool only supports static methods. Method: " + method.getName());
         }
+        Map<String, ToolParameterInjection> injectedArgs = getInjectedArgs(method);
         ToolMetadata metadata =
                 new ToolMetadata(
                         method.getName(),
                         description != null ? description : "",
-                        SchemaUtils.generateSchema(method));
+                        SchemaUtils.generateSchema(method, injectedArgs.keySet()));
         JavaFunction javaFunction =
                 new JavaFunction(
                         method.getDeclaringClass(), method.getName(), method.getParameterTypes());
-        return new FunctionTool(metadata, javaFunction);
+        return new FunctionTool(metadata, javaFunction, injectedArgs);
     }
 
     @Override
@@ -156,6 +177,8 @@ public class FunctionTool extends Tool {
                                     + "' has no PythonResourceAdapter; runtime should inject one"
                                     + " before invocation."));
         }
+        // ToolCallAction resolves injected parameters before FunctionTool is invoked; this adapter
+        // only forwards the final keyword arguments across the language boundary.
         Map<String, Object> kwargs = new HashMap<>();
         for (String name : parameters.getParameterNames()) {
             kwargs.put(name, parameters.getParameter(name));
@@ -169,6 +192,14 @@ public class FunctionTool extends Tool {
         return function;
     }
 
+    public Map<String, ToolParameterInjection> getInjectedArgs() {
+        return injectedArgs;
+    }
+
+    public List<String> getInjectedArgNames() {
+        return List.copyOf(injectedArgs.keySet());
+    }
+
     /**
      * Refresh this tool's metadata via the Python bridge when the underlying function is a {@link
      * PythonFunction}. No-op for Java-backed tools.
@@ -176,7 +207,9 @@ public class FunctionTool extends Tool {
      * <p>Called by the runtime resource cache the first time the tool is resolved, so the
      * placeholder metadata that {@code AgentPlan.registerApiFunctionTool} writes for Python tools
      * gets replaced with real introspected values (name, description, inputSchema) sourced from the
-     * Python callable's signature and docstring.
+     * Python callable's signature and docstring. Callable-declared injected args returned by the
+     * bridge are merged into this tool so the Java-side ToolCallAction can inject them at execution
+     * time.
      */
     public void setPythonResourceAdapter(PythonResourceAdapter adapter) {
         if (!(function instanceof PythonFunction)) {
@@ -184,11 +217,85 @@ public class FunctionTool extends Tool {
         }
         this.pythonResourceAdapter = adapter;
         PythonFunction pf = (PythonFunction) function;
-        Map<String, String> flat = adapter.getPythonToolMetadata(pf.getModule(), pf.getQualName());
+        Map<String, String> flat =
+                adapter.getPythonToolMetadata(
+                        pf.getModule(), pf.getQualName(), getInjectedArgNames());
+        this.injectedArgs =
+                mergeInjectedArgs(
+                        parseInjectedArgs(flat.get("injectedArgs")),
+                        this.injectedArgs,
+                        flat.getOrDefault("name", pf.getQualName()));
         setMetadata(
                 new ToolMetadata(
                         flat.get("name"),
                         flat.getOrDefault("description", ""),
                         flat.getOrDefault("inputSchema", "{}")));
+    }
+
+    public static Map<String, ToolParameterInjection> getInjectedArgs(Method method) {
+        Map<String, ToolParameterInjection> result = new LinkedHashMap<>();
+        for (Parameter parameter : method.getParameters()) {
+            if (!parameter.isAnnotationPresent(ToolParam.class)) {
+                continue;
+            }
+            ToolParam toolParam = parameter.getAnnotation(ToolParam.class);
+            if (!toolParam.injected()) {
+                continue;
+            }
+            String name = toolParam.name().isEmpty() ? parameter.getName() : toolParam.name();
+            ToolParameterInjection injection =
+                    new ToolParameterInjection(toolParam.source(), toolParam.key())
+                            .withDefaultKey(name);
+            result.put(name, injection);
+        }
+        return result;
+    }
+
+    private static Map<String, ToolParameterInjection> parseInjectedArgs(String payload) {
+        if (payload == null || payload.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            return normalizeInjectedArgs(
+                    OBJECT_MAPPER.readValue(
+                            payload, new TypeReference<Map<String, ToolParameterInjection>>() {}));
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Failed to parse Python tool injectedArgs.", e);
+        }
+    }
+
+    private static Map<String, ToolParameterInjection> mergeInjectedArgs(
+            Map<String, ToolParameterInjection> annotatedArgs,
+            Map<String, ToolParameterInjection> declaredArgs,
+            String toolName) {
+        Map<String, ToolParameterInjection> merged = new LinkedHashMap<>();
+        if (annotatedArgs != null) {
+            merged.putAll(annotatedArgs);
+        }
+        if (declaredArgs != null) {
+            declaredArgs.forEach(
+                    (name, injection) -> {
+                        ToolParameterInjection existing = merged.get(name);
+                        if (existing != null && !existing.equals(injection)) {
+                            throw new IllegalArgumentException(
+                                    "Tool '"
+                                            + toolName
+                                            + "': injected_args conflict for parameter '"
+                                            + name
+                                            + "' between callable annotation and descriptor.");
+                        }
+                        merged.put(name, injection);
+                    });
+        }
+        return Map.copyOf(merged);
+    }
+
+    private static Map<String, ToolParameterInjection> normalizeInjectedArgs(
+            Map<String, ToolParameterInjection> injectedArgs) {
+        Map<String, ToolParameterInjection> result = new LinkedHashMap<>();
+        if (injectedArgs != null) {
+            injectedArgs.forEach((name, spec) -> result.put(name, spec.withDefaultKey(name)));
+        }
+        return Map.copyOf(result);
     }
 }

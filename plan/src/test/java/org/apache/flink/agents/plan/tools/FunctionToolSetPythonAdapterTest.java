@@ -19,6 +19,7 @@ package org.apache.flink.agents.plan.tools;
 
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,7 @@ import org.mockito.Mockito;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -42,7 +44,7 @@ class FunctionToolSetPythonAdapterTest {
         FunctionTool tool = new FunctionTool(placeholder, pf);
 
         PythonResourceAdapter adapter = Mockito.mock(PythonResourceAdapter.class);
-        when(adapter.getPythonToolMetadata("pkg.mod", "notify"))
+        when(adapter.getPythonToolMetadata(eq("pkg.mod"), eq("notify"), anyList()))
                 .thenReturn(
                         Map.of(
                                 "name", "notify",
@@ -56,7 +58,38 @@ class FunctionToolSetPythonAdapterTest {
         assertThat(tool.getMetadata().getName()).isEqualTo("notify");
         assertThat(tool.getMetadata().getDescription()).isEqualTo("Send a notification.");
         assertThat(tool.getMetadata().getInputSchema()).contains("recipient id");
-        verify(adapter, times(1)).getPythonToolMetadata(eq("pkg.mod"), eq("notify"));
+        verify(adapter, times(1)).getPythonToolMetadata(eq("pkg.mod"), eq("notify"), anyList());
+    }
+
+    @Test
+    void mergesPythonCallableInjectedArgsFromAdapter() {
+        ToolMetadata placeholder = new ToolMetadata("notify", "", "{}");
+        PythonFunction pf = new PythonFunction("pkg.mod", "notify");
+        FunctionTool tool =
+                new FunctionTool(
+                        placeholder,
+                        pf,
+                        Map.of(
+                                "request_id",
+                                ToolParameterInjection.fromSensoryMemory("request.id")));
+
+        PythonResourceAdapter adapter = Mockito.mock(PythonResourceAdapter.class);
+        when(adapter.getPythonToolMetadata(eq("pkg.mod"), eq("notify"), anyList()))
+                .thenReturn(
+                        Map.of(
+                                "name", "notify",
+                                "description", "Send a notification.",
+                                "inputSchema", "{\"properties\":{\"id\":{\"type\":\"string\"}}}",
+                                "injectedArgs",
+                                        "{\"tenant_id\":{\"source\":\"config\","
+                                                + "\"key\":\"tenant.id\"}}"));
+
+        tool.setPythonResourceAdapter(adapter);
+
+        assertThat(tool.getInjectedArgs())
+                .containsEntry("tenant_id", ToolParameterInjection.fromConfig("tenant.id"))
+                .containsEntry(
+                        "request_id", ToolParameterInjection.fromSensoryMemory("request.id"));
     }
 
     @Test
@@ -74,7 +107,8 @@ class FunctionToolSetPythonAdapterTest {
 
         // Metadata untouched
         assertThat(tool.getMetadata()).isSameAs(original);
-        verify(adapter, never()).getPythonToolMetadata(Mockito.anyString(), Mockito.anyString());
+        verify(adapter, never())
+                .getPythonToolMetadata(Mockito.anyString(), Mockito.anyString(), anyList());
     }
 
     /** Helper static method to back JavaFunction in the no-op test. */

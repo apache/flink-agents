@@ -20,6 +20,7 @@
 
 package org.apache.flink.agents.plan;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventType;
@@ -32,16 +33,24 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
+import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.yaml.YamlLoader;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -82,6 +91,18 @@ class AgentPlanDeclareToolMethodTest {
             return String.format(
                     "Weather in %s: %.1f°%s, Sunny",
                     location, temp, "fahrenheit".equals(units) ? "F" : "C");
+        }
+
+        @org.apache.flink.agents.api.annotation.Tool(description = "Query an order")
+        public static String queryOrder(
+                @ToolParam(name = "order_id") String orderId,
+                @ToolParam(
+                                name = "tenant_id",
+                                injected = true,
+                                source = ToolParameterSource.CONFIG,
+                                key = "tenant.id")
+                        String tenantId) {
+            return tenantId + ":" + orderId;
         }
 
         @Action(EventType.InputEvent)
@@ -190,6 +211,185 @@ class AgentPlanDeclareToolMethodTest {
                                         "getWeather", String.class, String.class)));
         AgentPlan addedPlan = new AgentPlan(agent);
         checkToolCall(addedPlan);
+    }
+
+    @Test
+    @DisplayName("Validate injected args on tools added to agent instance")
+    void validateInjectedArgsOnAgentAddedTool() throws Exception {
+        Agent agent = new Agent();
+        agent.addResource(
+                "getWeather",
+                ResourceType.TOOL,
+                new org.apache.flink.agents.api.tools.FunctionTool(
+                        org.apache.flink.agents.api.function.JavaFunction.fromMethod(
+                                TestAgent.class.getMethod(
+                                        "getWeather", String.class, String.class)),
+                        Map.of("tenent_id", ToolParameterInjection.fromConfig("tenant_id"))));
+
+        assertThatThrownBy(() -> new AgentPlan(agent))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unknown parameter")
+                .hasMessageContaining("tenent_id");
+    }
+
+    @Test
+    @DisplayName("Injected args declared on API function tool are hidden from Java metadata")
+    void hideApiFunctionToolInjectedArgsFromJavaMetadata() throws Exception {
+        Agent agent = new Agent();
+        agent.addResource(
+                "getWeather",
+                ResourceType.TOOL,
+                new org.apache.flink.agents.api.tools.FunctionTool(
+                        org.apache.flink.agents.api.function.JavaFunction.fromMethod(
+                                TestAgent.class.getMethod(
+                                        "getWeather", String.class, String.class)),
+                        Map.of("units", ToolParameterInjection.fromConfig("units"))));
+
+        AgentPlan plan = new AgentPlan(agent);
+        Tool weather =
+                (Tool)
+                        plan.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("getWeather")
+                                .provide(
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
+        String schema = weather.getMetadata().getInputSchema();
+        JsonNode properties = new ObjectMapper().readTree(schema).get("properties");
+
+        assertTrue(properties.has("location"));
+        assertFalse(properties.has("units"));
+    }
+
+    @Test
+    @DisplayName("Annotation-only injected args are preserved on API function tools")
+    void preserveAnnotationOnlyInjectedArgsOnApiFunctionTool() throws Exception {
+        Agent agent = new Agent();
+        agent.addResource(
+                "queryOrder",
+                ResourceType.TOOL,
+                new org.apache.flink.agents.api.tools.FunctionTool(
+                        org.apache.flink.agents.api.function.JavaFunction.fromMethod(
+                                TestAgent.class.getMethod(
+                                        "queryOrder", String.class, String.class))));
+
+        AgentPlan plan = new AgentPlan(agent);
+        FunctionTool tool =
+                (FunctionTool)
+                        plan.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("queryOrder")
+                                .provide(
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
+        JsonNode properties =
+                new ObjectMapper().readTree(tool.getMetadata().getInputSchema()).get("properties");
+
+        assertEquals(
+                Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant.id")),
+                tool.getInjectedArgs());
+        assertTrue(properties.has("order_id"));
+        assertFalse(properties.has("tenant_id"));
+    }
+
+    @Test
+    @DisplayName("Matching descriptor injected args are accepted with Java annotations")
+    void acceptMatchingDescriptorInjectedArgsWithJavaAnnotations() throws Exception {
+        Agent agent = new Agent();
+        agent.addResource(
+                "queryOrder",
+                ResourceType.TOOL,
+                new org.apache.flink.agents.api.tools.FunctionTool(
+                        org.apache.flink.agents.api.function.JavaFunction.fromMethod(
+                                TestAgent.class.getMethod(
+                                        "queryOrder", String.class, String.class)),
+                        Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant.id"))));
+
+        AgentPlan plan = new AgentPlan(agent);
+        FunctionTool tool =
+                (FunctionTool)
+                        plan.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("queryOrder")
+                                .provide(
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
+
+        assertEquals(
+                Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant.id")),
+                tool.getInjectedArgs());
+    }
+
+    @Test
+    @DisplayName("Conflicting descriptor injected args fail fast with Java annotations")
+    void rejectConflictingDescriptorInjectedArgsWithJavaAnnotations() throws Exception {
+        Agent agent = new Agent();
+        agent.addResource(
+                "queryOrder",
+                ResourceType.TOOL,
+                new org.apache.flink.agents.api.tools.FunctionTool(
+                        org.apache.flink.agents.api.function.JavaFunction.fromMethod(
+                                TestAgent.class.getMethod(
+                                        "queryOrder", String.class, String.class)),
+                        Map.of(
+                                "tenant_id",
+                                ToolParameterInjection.fromSensoryMemory("request.tenant_id"))));
+
+        assertThatThrownBy(() -> new AgentPlan(agent))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("injected_args conflict")
+                .hasMessageContaining("tenant_id");
+    }
+
+    @Test
+    @DisplayName("YAML-declared injected args are hidden from Java metadata")
+    void hideYamlInjectedArgsFromJavaMetadata(@TempDir Path tmp) throws Exception {
+        Path yaml = tmp.resolve("agent.yaml");
+        Files.writeString(
+                yaml,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    tools:\n"
+                        + "      - name: getWeather\n"
+                        + "        type: java\n"
+                        + "        function: "
+                        + TestAgent.class.getName()
+                        + ":getWeather\n"
+                        + "        parameter_types: [java.lang.String, java.lang.String]\n"
+                        + "        injected_args:\n"
+                        + "          units:\n"
+                        + "            source: config\n"
+                        + "            key: units\n");
+
+        Agent agent = YamlLoader.buildAgents(yaml).getAgents().get("a");
+        AgentPlan plan = new AgentPlan(agent);
+        Tool weather =
+                (Tool)
+                        plan.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("getWeather")
+                                .provide(
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
+        JsonNode properties =
+                new ObjectMapper()
+                        .readTree(weather.getMetadata().getInputSchema())
+                        .get("properties");
+
+        assertTrue(properties.has("location"));
+        assertFalse(properties.has("units"));
     }
 
     @Test

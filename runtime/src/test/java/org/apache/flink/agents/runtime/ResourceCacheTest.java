@@ -196,6 +196,12 @@ public class ResourceCacheTest {
         }
 
         @Override
+        public Map<String, String> getPythonToolMetadata(
+                String module, String qualName, List<String> injectedArgs) {
+            return getPythonToolMetadata(module, qualName);
+        }
+
+        @Override
         public Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs) {
             return null;
         }

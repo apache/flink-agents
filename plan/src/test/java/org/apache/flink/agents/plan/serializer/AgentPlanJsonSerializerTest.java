@@ -18,13 +18,17 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -64,6 +68,22 @@ public class AgentPlanJsonSerializerTest {
         // Non-annotated method should be ignored
         public void regularMethod() {
             // This should not be included in the AgentPlan
+        }
+    }
+
+    /** Test Agent class with @Tool annotated methods. */
+    public static class TestAgentWithInjectedTool extends Agent {
+
+        @Tool
+        public static String queryOrder(
+                @ToolParam(name = "order_id", description = "Order id.") String orderId,
+                @ToolParam(
+                                name = "tenant_id",
+                                injected = true,
+                                source = ToolParameterSource.CONFIG,
+                                key = "tenant.id")
+                        String tenantId) {
+            return tenantId + ":" + orderId;
         }
     }
 
@@ -229,5 +249,31 @@ public class AgentPlanJsonSerializerTest {
 
         // Verify that config data from AgentConfiguration is present
         assertThat(json).contains("\"conf_data\":{\"config.key\":\"config.value\"}");
+    }
+
+    @Test
+    public void testSerializeAgentPlanWithInjectedToolArgs() throws Exception {
+        AgentPlan agentPlan =
+                new AgentPlan(new TestAgentWithInjectedTool(), new AgentConfiguration());
+
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(agentPlan);
+
+        JsonNode plan = mapper.readTree(json);
+        JsonNode tools =
+                plan.get("resource_providers").has("tool")
+                        ? plan.get("resource_providers").get("tool")
+                        : plan.get("resource_providers").get("TOOL");
+        JsonNode serializedTool =
+                mapper.readTree(tools.get("queryOrder").get("serializedResource").asText());
+        JsonNode inputSchema =
+                mapper.readTree(serializedTool.get("metadata").get("inputSchema").asText());
+
+        assertThat(inputSchema.get("properties").has("order_id")).isTrue();
+        assertThat(inputSchema.get("properties").has("tenant_id")).isFalse();
+        assertThat(serializedTool.get("injected_args").get("tenant_id").get("source").asText())
+                .isEqualTo("config");
+        assertThat(serializedTool.get("injected_args").get("tenant_id").get("key").asText())
+                .isEqualTo("tenant.id");
     }
 }
