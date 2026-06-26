@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.resource;
 
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 
 /**
  * Base interface for all kinds of resources, including chat models, tools, prompts and so on.
@@ -60,6 +61,9 @@ public abstract class Resource {
      */
     public void setMetricGroup(FlinkAgentsMetricGroup metricGroup) {
         this.metricGroup = metricGroup;
+        if (this instanceof PythonResourceWrapper) {
+            ((PythonResourceWrapper) this).setPythonResourceMetricGroup(metricGroup);
+        }
     }
 
     /**

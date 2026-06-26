@@ -132,4 +132,9 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
     public Object getPythonResource() {
         return embeddingModelSetup;
     }
+
+    @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
 }

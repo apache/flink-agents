@@ -377,3 +377,13 @@ def call_method(obj: Any, method_name: str, kwargs: Dict[str, Any]) -> Any:
 
     method = getattr(obj, method_name)
     return method(**kwargs)
+
+
+def set_metric_group(obj: Resource, j_metric_group: Any) -> None:
+    """Bind a Java metric group to a Python resource."""
+    from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
+
+    metric_group = (
+        FlinkMetricGroup(j_metric_group) if j_metric_group is not None else None
+    )
+    obj.set_metric_group(metric_group)

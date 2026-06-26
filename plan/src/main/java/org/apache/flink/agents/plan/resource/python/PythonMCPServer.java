@@ -85,6 +85,11 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
     }
 
     @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
+    @Override
     public ResourceType getResourceType() {
         return ResourceType.MCP_SERVER;
     }
