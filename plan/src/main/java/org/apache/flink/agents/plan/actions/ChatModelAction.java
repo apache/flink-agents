@@ -182,7 +182,10 @@ public class ChatModelAction {
         }
     }
 
-    static void recordChatTokenMetrics(BaseChatModelSetup chatModel, ChatMessage response) {
+    static void recordChatTokenMetrics(
+            BaseChatModelSetup chatModel,
+            ChatMessage response,
+            FlinkAgentsMetricGroup requestMetricGroup) {
         Map<String, Object> extraArgs = response.getExtraArgs();
         Object modelName = extraArgs.get("model_name");
         Object promptTokens = extraArgs.get("promptTokens");
@@ -194,7 +197,8 @@ public class ChatModelAction {
             long prompt = ((Number) promptTokens).longValue();
             long completion = ((Number) completionTokens).longValue();
             if (prompt > 0 && completion > 0) {
-                chatModel.recordTokenMetrics(modelName.toString(), prompt, completion);
+                chatModel.recordTokenMetrics(
+                        requestMetricGroup, modelName.toString(), prompt, completion);
             }
         }
     }
@@ -322,6 +326,7 @@ public class ChatModelAction {
             throws Exception {
         BaseChatModelSetup chatModel =
                 (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
+        FlinkAgentsMetricGroup requestMetricGroup = ctx.getActionMetricGroup();
 
         boolean chatAsync = ctx.getConfig().get(AgentExecutionOptions.CHAT_ASYNC);
 
@@ -372,7 +377,7 @@ public class ChatModelAction {
                         chatAsync
                                 ? ctx.durableExecuteAsync(callable)
                                 : ctx.durableExecute(callable);
-                recordChatTokenMetrics(chatModel, response);
+                recordChatTokenMetrics(chatModel, response, requestMetricGroup);
                 // only generate structured output for final response.
                 if (outputSchema != null && response.getToolCalls().isEmpty()) {
                     response = generateStructuredOutput(response, outputSchema);

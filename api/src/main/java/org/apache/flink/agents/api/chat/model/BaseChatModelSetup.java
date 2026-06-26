@@ -116,7 +116,22 @@ public abstract class BaseChatModelSetup extends Resource {
      * @param completionTokens the number of completion tokens
      */
     public void recordTokenMetrics(String modelName, long promptTokens, long completionTokens) {
-        FlinkAgentsMetricGroup metricGroup = getMetricGroup();
+        recordTokenMetrics(getMetricGroup(), modelName, promptTokens, completionTokens);
+    }
+
+    /**
+     * Record token usage metrics for the given model on the provided metric group.
+     *
+     * @param metricGroup the metric group captured when the request was initiated
+     * @param modelName the name of the model used
+     * @param promptTokens the number of prompt tokens
+     * @param completionTokens the number of completion tokens
+     */
+    public void recordTokenMetrics(
+            @Nullable FlinkAgentsMetricGroup metricGroup,
+            String modelName,
+            long promptTokens,
+            long completionTokens) {
         if (metricGroup == null) {
             return;
         }

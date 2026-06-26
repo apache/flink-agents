@@ -46,10 +46,16 @@ class TestChatModelSetup(BaseChatModelSetup):
         return ChatMessage(role=MessageRole.ASSISTANT, content="Test response")
 
     def test_record_token_metrics(
-        self, model_name: str, prompt_tokens: int, completion_tokens: int
+        self,
+        model_name: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        metric_group: MetricGroup | None = None,
     ) -> None:
         """Expose protected method for testing."""
-        self._record_token_metrics(model_name, prompt_tokens, completion_tokens)
+        self._record_token_metrics(
+            model_name, prompt_tokens, completion_tokens, metric_group
+        )
 
 
 class _MockCounter(Counter):
@@ -123,6 +129,28 @@ class TestBaseChatModelTokenMetrics:
         # Record token metrics - should not throw
         chat_model.test_record_token_metrics("gpt-4", 100, 50)
         # No exception should be raised
+
+    def test_record_token_metrics_with_request_scoped_metric_group(self) -> None:
+        """Token metrics use the metric group captured when the request started."""
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
+        action_a_metric_group = _MockMetricGroup()
+        action_b_metric_group = _MockMetricGroup()
+
+        chat_model.set_metric_group(action_a_metric_group)
+        request_metric_group = chat_model.metric_group
+
+        chat_model.set_metric_group(action_b_metric_group)
+        chat_model.test_record_token_metrics(
+            "gpt-4", 100, 50, metric_group=request_metric_group
+        )
+
+        action_a_model_group = action_a_metric_group.get_sub_group("model", "gpt-4")
+        assert action_a_model_group.get_counter("promptTokens").get_count() == 100
+        assert action_a_model_group.get_counter("completionTokens").get_count() == 50
+
+        action_b_model_group = action_b_metric_group.get_sub_group("model", "gpt-4")
+        assert action_b_model_group.get_counter("promptTokens").get_count() == 0
+        assert action_b_model_group.get_counter("completionTokens").get_count() == 0
 
     def test_token_metrics_hierarchy(self) -> None:
         """Test token metrics hierarchy: actionMetricGroup -> modelName -> counters."""
