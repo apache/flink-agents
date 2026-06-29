@@ -15,7 +15,9 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import TYPE_CHECKING, Any, Dict, List, cast
+import inspect
+import logging
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, cast
 
 from pydantic import BaseModel, field_serializer, model_validator
 
@@ -55,6 +57,8 @@ if TYPE_CHECKING:
         Resource,
     )
     from flink_agents.integrations.mcp.mcp import MCPServer
+
+logger = logging.getLogger(__name__)
 
 BUILT_IN_ACTIONS = [CHAT_MODEL_ACTION, TOOL_CALL_ACTION, CONTEXT_RETRIEVAL_ACTION]
 
@@ -248,6 +252,16 @@ def _action_marker(value: Any) -> tuple | None:
     return inner, marker._listen_events, getattr(marker, "_target", None)
 
 
+def _warn_if_action_returns_value(name: str, func: Callable) -> None:
+    """Warn if an action declares a non-None return type; its value is ignored."""
+    return_annotation = inspect.signature(func).return_annotation
+    if return_annotation not in (inspect.Signature.empty, None, type(None), "None"):
+        logger.warning(
+            f"Action '{name}' declares return type '{return_annotation}', but action "
+            f"return values are ignored; use ctx.send_event(...) instead."
+        )
+
+
 def _get_actions(agent: Agent) -> List[Action]:
     """Extract all registered agent actions from an agent.
 
@@ -280,6 +294,8 @@ def _get_actions(agent: Agent) -> List[Action]:
         if marker is None:
             continue
         inner, listen_events, target = marker
+        if target is None:
+            _warn_if_action_returns_value(name, inner)
         exec_ = (
             _to_plan_function(target)
             if target is not None

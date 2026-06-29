@@ -47,7 +47,6 @@ class Action(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str
-    # TODO: Raise a warning when the action has a return value, as it will be ignored.
     exec: PythonFunction | JavaFunction
     listen_event_types: List[str]
     config: Dict[str, Any] | None = None
