@@ -18,6 +18,7 @@
 package org.apache.flink.agents.examples.agents;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -133,7 +134,7 @@ public class ParallelChatAgent extends Agent {
     }
 
     /** Process input event and dispatch a SentimentInputEvent for each aspect handler. */
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void requestAspectJudgments(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         CustomTypesAndResources.SentimentRequest request =
@@ -147,7 +148,7 @@ public class ParallelChatAgent extends Agent {
     }
 
     /** Handle taste aspect: build and send ChatRequestEvent for taste judgment. */
-    @Action(listenEventTypes = {SENTIMENT_INPUT_EVENT_TYPE})
+    @Action(SENTIMENT_INPUT_EVENT_TYPE)
     public static void handleTasteInput(Event event, RunnerContext ctx) throws Exception {
         ChatRequestEvent req = buildAspectRequest((String) event.getAttr("text"), "taste");
         ctx.getSensoryMemory().set("aspect_map." + req.getId(), "taste");
@@ -155,7 +156,7 @@ public class ParallelChatAgent extends Agent {
     }
 
     /** Handle service aspect: build and send ChatRequestEvent for service judgment. */
-    @Action(listenEventTypes = {SENTIMENT_INPUT_EVENT_TYPE})
+    @Action(SENTIMENT_INPUT_EVENT_TYPE)
     public static void handleServiceInput(Event event, RunnerContext ctx) throws Exception {
         ChatRequestEvent req = buildAspectRequest((String) event.getAttr("text"), "service");
         ctx.getSensoryMemory().set("aspect_map." + req.getId(), "service");
@@ -163,7 +164,7 @@ public class ParallelChatAgent extends Agent {
     }
 
     /** Process chat response event. */
-    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    @Action(EventType.ChatResponseEvent)
     public static void handleResponse(Event event, RunnerContext ctx) throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
         Object parsed = chatResponse.getResponse().getExtraArgs().get(STRUCTURED_OUTPUT);

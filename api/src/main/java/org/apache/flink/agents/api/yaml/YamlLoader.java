@@ -430,9 +430,11 @@ public final class YamlLoader {
     /** Register an action on the agent with event aliases resolved. */
     static void addActionToAgent(Agent agent, ActionSpec action) {
         Function fn = resolveActionFunction(action);
-        String[] events =
-                action.getListenTo().stream().map(Aliases::resolveEventType).toArray(String[]::new);
+        String[] triggerConditions =
+                action.getTriggerConditions().stream()
+                        .map(Aliases::resolveEventType)
+                        .toArray(String[]::new);
         Map<String, Object> config = action.getConfig();
-        agent.addAction(action.getName(), events, fn, config);
+        agent.addAction(action.getName(), triggerConditions, fn, config);
     }
 }

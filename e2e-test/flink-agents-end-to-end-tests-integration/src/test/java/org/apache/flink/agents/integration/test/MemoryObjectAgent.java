@@ -18,6 +18,7 @@
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -76,7 +77,7 @@ public class MemoryObjectAgent extends Agent {
         }
     }
 
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void testMemoryObject(Event event, RunnerContext ctx) throws Exception {
         MemoryObject stm = ctx.getShortTermMemory();
         MemoryObject sm = ctx.getSensoryMemory();

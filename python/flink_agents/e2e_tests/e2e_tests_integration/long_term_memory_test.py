@@ -53,6 +53,7 @@ from flink_agents.api.decorators import (
     vector_store,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.memory.long_term_memory import (
     LongTermMemoryOptions,
@@ -189,7 +190,7 @@ class LongTermMemoryAgent(Agent):
             collection="context",
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     async def add_items(event: Event, ctx: RunnerContext) -> None:
         input_data = ItemData.model_validate(InputEvent.from_event(event).input)

@@ -30,6 +30,7 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalResponseEvent,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceName,
@@ -153,7 +154,7 @@ class VectorStoreCrossLanguageAgent(Agent):
         msg = f"Unsupported vector store backend: {backend}"
         raise ValueError(msg)
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing input.
@@ -273,7 +274,7 @@ class VectorStoreCrossLanguageAgent(Agent):
             )
         )
 
-    @action(ContextRetrievalResponseEvent.EVENT_TYPE)
+    @action(EventType.ContextRetrievalResponseEvent)
     @staticmethod
     def contextRetrievalResponseEvent(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing context retrieval response.

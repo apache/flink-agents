@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -56,7 +57,7 @@ class ShortTermMemoryTTLIntegrationTest {
 
     public static class TTLTestAgent extends Agent {
 
-        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @Action(EventType.InputEvent)
         public static void input(org.apache.flink.agents.api.Event event, RunnerContext ctx)
                 throws Exception {
             InputEvent inputEvent = (InputEvent) event;

@@ -40,8 +40,8 @@ agents:
       - name: process_input
         type: python
         function: flink_agents.e2e_tests.e2e_tests_resource_cross_language.yaml_cross_language_actions:process_input
-        listen_to: [input]
+        trigger_conditions: [input]
       - name: process_chat_response
         type: python
         function: flink_agents.e2e_tests.e2e_tests_resource_cross_language.yaml_cross_language_actions:process_chat_response
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]

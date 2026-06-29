@@ -19,6 +19,7 @@ package org.apache.flink.agents.resource.test;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -172,7 +173,7 @@ public class Mem0LongTermMemoryAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void addItems(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         ItemData input = (ItemData) inputEvent.getInput();
@@ -213,7 +214,7 @@ public class Mem0LongTermMemoryAgent extends Agent {
     }
 
     @SuppressWarnings("unchecked")
-    @Action(listenEventTypes = {MyEvent})
+    @Action(MyEvent)
     public static void retrieveItems(Event event, RunnerContext ctx) throws Exception {
         Map<String, Object> record = (Map<String, Object>) event.getAttr("value");
         record.put("timestamp_second_action", Instant.now().toString());

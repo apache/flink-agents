@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.serializer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -42,18 +43,20 @@ public class AgentPlanJsonSerializerTest {
     /** Test Agent class with @Action annotated methods. */
     public static class TestAgent extends Agent {
 
-        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public void handleInputEvent(Event event, RunnerContext context) {
             InputEvent inputEvent = InputEvent.fromEvent(event);
         }
 
-        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {OutputEvent.EVENT_TYPE})
+        @org.apache.flink.agents.api.annotation.Action(EventType.OutputEvent)
         public void processOutputEvent(Event event, RunnerContext context) {
             OutputEvent outputEvent = OutputEvent.fromEvent(event);
         }
 
-        @org.apache.flink.agents.api.annotation.Action(
-                listenEventTypes = {InputEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE})
+        @org.apache.flink.agents.api.annotation.Action({
+            EventType.InputEvent,
+            EventType.OutputEvent
+        })
         public void handleMultipleEvents(Event event, RunnerContext context) {
             // Test action logic for multiple event types
         }
@@ -94,7 +97,7 @@ public class AgentPlanJsonSerializerTest {
         assertThat(json).contains("\"func_type\":\"JavaFunction\"");
         assertThat(json).contains("\"qualname\":\"org.apache.flink.agents.plan.TestAction\"");
         assertThat(json).contains("\"method_name\":\"legal\"");
-        assertThat(json).contains("\"listen_event_types\":[");
+        assertThat(json).contains("\"trigger_conditions\":[");
         assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\"");
         assertThat(json).contains("\"actions_by_event\":{}");
     }

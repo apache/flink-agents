@@ -33,6 +33,7 @@ from flink_agents.api.chat_message import (
 from flink_agents.api.decorators import action
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -141,7 +142,7 @@ class ReActAgent(Agent):
 
         self.add_action(
             name="start_action",
-            events=[InputEvent.EVENT_TYPE],
+            trigger_conditions=[InputEvent.EVENT_TYPE],
             func=self.start_action,
             output_schema=OutputSchema(output_schema=output_schema) if output_schema else None,
         )
@@ -205,7 +206,7 @@ class ReActAgent(Agent):
             )
         )
 
-    @action(ChatResponseEvent.EVENT_TYPE)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
     def stop_action(event: Event, ctx: RunnerContext) -> None:
         """Stop action to output result."""

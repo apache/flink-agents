@@ -8,7 +8,7 @@
         "parameter_types": ["org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext"],
         "func_type": "JavaFunction"
       },
-      "listen_event_types": [
+      "trigger_conditions": [
         "_input_event"
       ]
     },
@@ -20,7 +20,7 @@
         "parameter_types": ["org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext"],
         "func_type": "JavaFunction"
       },
-      "listen_event_types": [
+      "trigger_conditions": [
         "_input_event",
         "MyEvent"
       ]

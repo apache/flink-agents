@@ -18,7 +18,7 @@ agents:
       - name: chat_request
         type: java
         function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:chatRequest
-        listen_to: [input]
+        trigger_conditions: [input]
       - process_chat_response
 
   - name: commentator_agent
@@ -36,7 +36,7 @@ agents:
       - name: commentary_request
         type: java
         function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:commentaryRequest
-        listen_to: [input]
+        trigger_conditions: [input]
       - process_chat_response
 
 # File-level shared resources reused by every agent above.
@@ -51,4 +51,4 @@ actions:
   - name: process_chat_response
     type: java
     function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:processChatResponse
-    listen_to: [chat_response]
+    trigger_conditions: [chat_response]

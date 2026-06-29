@@ -147,7 +147,7 @@ class YamlLoaderBuildAgentsTest {
                         + "    actions:\n"
                         + "      - name: act\n"
                         + "        function: pkg.mod:fn\n"
-                        + "        listen_to: [input]\n");
+                        + "        trigger_conditions: [input]\n");
         LoadedFile out = YamlLoader.buildAgents(file);
         Tuple3<String[], Function, Map<String, Object>> entry =
                 out.getAgents().get("a").getActions().get("act");

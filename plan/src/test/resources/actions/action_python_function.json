@@ -5,5 +5,5 @@
     "module": "test_module",
     "qualname": "test_function"
   },
-  "listen_event_types": ["_input_event"]
+  "trigger_conditions": ["_input_event"]
 }

@@ -32,29 +32,31 @@ class ActionSpecTest {
     @Test
     void minimal() throws Exception {
         ActionSpec spec =
-                M.readValue("name: a\nfunction: pkg:fn\nlisten_to: [input]\n", ActionSpec.class);
+                M.readValue(
+                        "name: a\nfunction: pkg:fn\ntrigger_conditions: [input]\n",
+                        ActionSpec.class);
         assertThat(spec.getName()).isEqualTo("a");
         assertThat(spec.getFunction()).isEqualTo("pkg:fn");
-        assertThat(spec.getListenTo()).containsExactly("input");
+        assertThat(spec.getTriggerConditions()).containsExactly("input");
         assertThat(spec.getConfig()).isNull();
         assertThat(spec.getType()).isNull();
     }
 
     @Test
-    void rejectsEmptyListenTo() {
+    void rejectsEmptyTriggerConditions() {
         assertThatThrownBy(
                         () ->
                                 M.readValue(
-                                        "name: a\nfunction: x:y\nlisten_to: []\n",
+                                        "name: a\nfunction: x:y\ntrigger_conditions: []\n",
                                         ActionSpec.class))
-                .hasMessageContaining("listen_to");
+                .hasMessageContaining("trigger_conditions");
     }
 
     @Test
     void typeJava() throws Exception {
         ActionSpec spec =
                 M.readValue(
-                        "name: a\nfunction: X:m\nlisten_to: [input]\ntype: java\n",
+                        "name: a\nfunction: X:m\ntrigger_conditions: [input]\ntype: java\n",
                         ActionSpec.class);
         assertThat(spec.getType()).isEqualTo(Language.JAVA);
     }
@@ -64,7 +66,7 @@ class ActionSpecTest {
         assertThatThrownBy(
                         () ->
                                 M.readValue(
-                                        "name: a\nfunction: x:y\nlisten_to: [input]\nextra: 1\n",
+                                        "name: a\nfunction: x:y\ntrigger_conditions: [input]\nextra: 1\n",
                                         ActionSpec.class))
                 .hasMessageContaining("extra");
     }

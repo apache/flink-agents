@@ -19,6 +19,7 @@
 package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -126,13 +127,15 @@ public class AgentPlanTest {
     /** Test agent class with annotated methods. */
     public static class TestAgent extends Agent {
 
-        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public void handleInputEvent(Event event, RunnerContext context) {
             InputEvent inputEvent = InputEvent.fromEvent(event);
         }
 
-        @org.apache.flink.agents.api.annotation.Action(
-                listenEventTypes = {TestEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE})
+        @org.apache.flink.agents.api.annotation.Action({
+            TestEvent.EVENT_TYPE,
+            EventType.OutputEvent
+        })
         public void handleMultipleEvents(Event event, RunnerContext context) {
             // Test action implementation
         }
@@ -161,7 +164,7 @@ public class AgentPlanTest {
 
         @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
-        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public void handleInputEvent(Event event, RunnerContext context) {
             InputEvent inputEvent = InputEvent.fromEvent(event);
         }
@@ -262,7 +265,7 @@ public class AgentPlanTest {
     /** Cross-language action via {@code @Action(target = @PythonFunction(...))}. */
     public static class AgentWithCrossLanguageAction extends Agent {
         @org.apache.flink.agents.api.annotation.Action(
-                listenEventTypes = {InputEvent.EVENT_TYPE},
+                value = EventType.InputEvent,
                 target =
                         @org.apache.flink.agents.api.annotation.PythonFunction(
                                 module = "my_pkg.handlers",
@@ -291,7 +294,7 @@ public class AgentPlanTest {
 
     /** Plain {@code @Action} (no {@code target}) compiles to a native Java exec. */
     public static class AgentWithNativeJavaAction extends Agent {
-        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public static void handle(Event event, RunnerContext ctx) {
             // intentionally empty
         }
@@ -311,7 +314,7 @@ public class AgentPlanTest {
     /** Partially-set target (module without qualname) — must be rejected at compile. */
     public static class AgentWithHalfSetPythonTargetMissingQualname extends Agent {
         @org.apache.flink.agents.api.annotation.Action(
-                listenEventTypes = {InputEvent.EVENT_TYPE},
+                value = EventType.InputEvent,
                 target = @org.apache.flink.agents.api.annotation.PythonFunction(module = "pkg"))
         public static void handle(Event event, RunnerContext ctx) {
             throw new UnsupportedOperationException("cross-language stub");
@@ -329,7 +332,7 @@ public class AgentPlanTest {
     /** Partially-set target (qualname without module) — must be rejected at compile. */
     public static class AgentWithHalfSetPythonTargetMissingModule extends Agent {
         @org.apache.flink.agents.api.annotation.Action(
-                listenEventTypes = {InputEvent.EVENT_TYPE},
+                value = EventType.InputEvent,
                 target =
                         @org.apache.flink.agents.api.annotation.PythonFunction(
                                 qualname = "handle_input"))
@@ -350,7 +353,7 @@ public class AgentPlanTest {
      * @Action declared on a parent agent class — must be rejected loudly, not silently dropped.
      */
     public abstract static class BaseAgentWithInheritedAction extends Agent {
-        @org.apache.flink.agents.api.annotation.Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public static void sharedAction(Event event, RunnerContext ctx) {
             throw new UnsupportedOperationException("test stub");
         }

@@ -40,7 +40,7 @@ def test_action_signature_legal() -> None:
     Action(
         name="legal",
         exec=PythonFunction.from_callable(legal_signature),
-        listen_event_types=[InputEvent.EVENT_TYPE],
+        trigger_conditions=[InputEvent.EVENT_TYPE],
     )
 
 
@@ -49,7 +49,7 @@ def test_action_signature_illegal() -> None:
         Action(
             name="illegal",
             exec=PythonFunction.from_callable(illegal_signature),
-            listen_event_types=[InputEvent.EVENT_TYPE],
+            trigger_conditions=[InputEvent.EVENT_TYPE],
         )
 
 
@@ -59,7 +59,7 @@ def action() -> Action:
     return Action(
         name="legal",
         exec=func,
-        listen_event_types=[InputEvent.EVENT_TYPE],
+        trigger_conditions=[InputEvent.EVENT_TYPE],
         config={
             "output_schema": OutputSchema(
                 output_schema=RowTypeInfo(
@@ -88,7 +88,7 @@ def test_action_deserialize(action: Action) -> None:
         expected_json = f.read()
     action = Action.model_validate_json(expected_json)
     assert action.name == "legal"
-    assert action.listen_event_types == ["_input_event"]
+    assert action.trigger_conditions== ["_input_event"]
     func = action.exec
     assert func.module == "flink_agents.plan.tests.test_action"
     assert func.qualname == "legal_signature"
@@ -103,7 +103,7 @@ def test_action_deserialize_java_shape_config_unwraps_primitives() -> None:
                 "module": "flink_agents.plan.tests.test_action",
                 "qualname": "legal_signature",
             },
-            "listen_event_types": ["_input_event"],
+            "trigger_conditions": ["_input_event"],
             "config": {
                 "__config_type__": "java",
                 "timeout_sec": {"@class": "java.lang.Integer", "value": 30},

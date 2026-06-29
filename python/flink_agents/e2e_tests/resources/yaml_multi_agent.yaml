@@ -14,7 +14,7 @@ agents:
     actions:
       - name: chat_request
         function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:chat_request
-        listen_to: [input]
+        trigger_conditions: [input]
       - process_chat_response
 
   - name: commentator_agent
@@ -31,7 +31,7 @@ agents:
     actions:
       - name: commentary_request
         function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:commentary_request
-        listen_to: [input]
+        trigger_conditions: [input]
       - process_chat_response
 
 # File-level shared resources reused by every agent above.
@@ -43,4 +43,4 @@ chat_model_connections:
 actions:
   - name: process_chat_response
     function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:process_chat_response
-    listen_to: [chat_response]
+    trigger_conditions: [chat_response]
