@@ -107,7 +107,7 @@ class MathAgent(Agent):
             allowed_commands=["echo", "bc"],
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send a chat request to evaluate the question."""
@@ -119,7 +119,7 @@ class MathAgent(Agent):
             )
         )
 
-    @action(ChatResponseEvent.EVENT_TYPE)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send the answer as output."""
@@ -167,7 +167,7 @@ public class MathAgent extends Agent {
     }
 
     /** Process input event and send a chat request to evaluate the question. */
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void processInput(InputEvent event, RunnerContext ctx) {
         ctx.sendEvent(
                 new ChatRequestEvent(
@@ -177,7 +177,7 @@ public class MathAgent extends Agent {
     }
 
     /** Process chat response event and send the answer as output. */
-    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
         ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
     }

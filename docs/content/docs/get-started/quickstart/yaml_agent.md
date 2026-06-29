@@ -51,10 +51,10 @@ agents:
     actions:
       - name: process_input
         function: flink_agents.examples.quickstart.agents.review_analysis_agent:ReviewAnalysisAgent.process_input
-        listen_to: [input]
+        trigger_conditions: [input]
       - name: process_chat_response
         function: flink_agents.examples.quickstart.agents.review_analysis_agent:ReviewAnalysisAgent.process_chat_response
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]
 
     chat_model_connections:
       - name: ollama_server
@@ -120,11 +120,11 @@ agents:
       - name: processInput
         type: java
         function: org.apache.flink.agents.examples.agents.ReviewAnalysisAgent:processInput
-        listen_to: [input]
+        trigger_conditions: [input]
       - name: processChatResponse
         type: java
         function: org.apache.flink.agents.examples.agents.ReviewAnalysisAgent:processChatResponse
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]
 
     chat_model_connections:
       - name: ollama_server
@@ -188,7 +188,7 @@ agents:
 A few things to notice in the YAML above:
 
 - `clazz: ollama` is an alias resolved by the loader to the full Ollama chat-model class — see the alias table in the [YAML API]({{< ref "docs/development/yaml#class-aliases" >}}) doc.
-- `listen_to: [input]` / `[chat_response]` use **event aliases** for the framework's built-in events.
+- `trigger_conditions: [input]` / `[chat_response]` use **event aliases** for the framework's built-in events.
 - `function:` strings use the `<module-or-class>:<qualname>` format. The right side is the class-qualified method name, so the YAML reuses the same `process_input` / `processInput` static methods the original `ReviewAnalysisAgent` already defines.
 - The prompt is declared inline as a `messages:` list and referenced from the chat-model setup by name.
 
