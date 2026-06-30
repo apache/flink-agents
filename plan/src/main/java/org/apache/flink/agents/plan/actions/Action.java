@@ -23,27 +23,28 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.Function;
+import org.apache.flink.agents.plan.condition.ActionSelector;
+import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
+import org.apache.flink.agents.plan.condition.ConditionExpressionValidator;
 import org.apache.flink.agents.plan.serializer.ActionJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.ActionJsonSerializer;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Representation of an agent action with unified trigger conditions.
- *
- * <p>Each entry of {@code triggerConditions} is an event type name string. Multiple entries combine
- * with OR.
- */
+/** Representation of an agent action with raw trigger conditions and Plan-derived selectors. */
 @JsonSerialize(using = ActionJsonSerializer.class)
 @JsonDeserialize(using = ActionJsonDeserializer.class)
 public class Action {
     private final String name;
     private final Function exec;
-    private final List<String> triggerConditions;
+    private final ArrayList<String> triggerConditions;
+    private transient volatile List<ActionSelector> selectors;
 
     // TODO: support nested map/list with non primitive type value.
     @Nullable private final Map<String, Object> config;
@@ -56,8 +57,14 @@ public class Action {
             throws Exception {
         this.name = name;
         this.exec = exec;
-        this.triggerConditions = triggerConditions;
+        if (triggerConditions == null || triggerConditions.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Action '" + name + "' must have at least one trigger condition");
+        }
+        this.triggerConditions = new ArrayList<>(triggerConditions);
+        this.selectors = buildSelectors();
         this.config = config;
+
         exec.checkSignature(new Class[] {Event.class, RunnerContext.class});
     }
 
@@ -73,19 +80,17 @@ public class Action {
         return exec;
     }
 
-    /** Returns the full trigger conditions list. */
+    /** Returns raw event-type or condition entries in declaration order. */
     public List<String> getTriggerConditions() {
-        return triggerConditions;
+        return Collections.unmodifiableList(triggerConditions);
     }
 
-    /**
-     * Returns event-type names. Kept for callers that still consume the old naming; in this PR all
-     * trigger entries are plain event-type names so the list is identical to {@link
-     * #getTriggerConditions()}. A follow-up PR introduces CEL expressions and overrides this to
-     * filter out non-type entries.
-     */
-    public List<String> getListenEventTypes() {
-        return triggerConditions;
+    /** Returns immutable, validated selectors in raw declaration order. */
+    public List<ActionSelector> getSelectors() {
+        if (selectors == null) {
+            selectors = buildSelectors();
+        }
+        return selectors;
     }
 
     @Nullable
@@ -106,5 +111,31 @@ public class Action {
     @Override
     public int hashCode() {
         return Objects.hash(name, exec, triggerConditions);
+    }
+
+    private List<ActionSelector> buildSelectors() {
+        List<ActionSelector> builtSelectors = new ArrayList<>(triggerConditions.size());
+        for (int index = 0; index < triggerConditions.size(); index++) {
+            String rawSource = triggerConditions.get(index);
+            try {
+                ActionSelector selector = ActionSelector.classify(rawSource);
+                if (selector instanceof ConditionExpression) {
+                    ConditionExpressionValidator.validate((ConditionExpression) selector);
+                }
+                builtSelectors.add(selector);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "Invalid trigger condition #"
+                                + (index + 1)
+                                + " for action '"
+                                + name
+                                + "' from source \""
+                                + String.valueOf(rawSource)
+                                + "\": "
+                                + e.getMessage(),
+                        e);
+            }
+        }
+        return Collections.unmodifiableList(builtSelectors);
     }
 }

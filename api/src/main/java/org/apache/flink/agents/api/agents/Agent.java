@@ -56,8 +56,8 @@ public class Agent {
     /**
      * Add action to agent.
      *
-     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
-     *     future condition-expression form.
+     * @param triggerConditions Raw event-type names or Boolean conditions combined with OR
+     *     semantics. Shape and expression validation occur during {@code AgentPlan} construction.
      * @param method The method of this action, should be static method.
      * @param config The optional config can be used by this action.
      */
@@ -70,8 +70,8 @@ public class Agent {
     /**
      * Add action to agent.
      *
-     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
-     *     future condition-expression form.
+     * @param triggerConditions Raw event-type names or Boolean conditions combined with OR
+     *     semantics. Shape and expression validation occur during {@code AgentPlan} construction.
      * @param method The method of this action, should be static method.
      */
     public Agent addAction(String[] triggerConditions, Method method) {
@@ -82,8 +82,8 @@ public class Agent {
      * Add action to agent.
      *
      * @param name The action name. Must be unique within this agent.
-     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
-     *     future condition-expression form.
+     * @param triggerConditions Raw event-type names or Boolean conditions combined with OR
+     *     semantics. Shape and expression validation occur during {@code AgentPlan} construction.
      * @param function The api-layer function descriptor; will be promoted to a plan-layer
      *     executable at {@code AgentPlan} construction.
      * @param config Optional config for this action.

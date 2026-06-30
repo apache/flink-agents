@@ -30,6 +30,7 @@ import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.condition.ActionMatcher;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
@@ -87,6 +88,10 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     private final EventLogger eventLogger;
     private final List<EventListener> eventListeners;
     private final AgentPlan agentPlan;
+
+    /** Handles event-to-action matching, including condition expressions. */
+    private final ActionMatcher actionMatcher;
+
     private StreamRecord<OUT> reusedStreamRecord;
     private SegmentedQueue keySegmentQueue;
     private BuiltInMetrics builtInMetrics;
@@ -101,6 +106,7 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         this.inputIsJava = inputIsJava;
         this.eventLogger = eventLogger;
         this.eventListeners = new ArrayList<>();
+        this.actionMatcher = new ActionMatcher(agentPlan);
     }
 
     /**
@@ -216,8 +222,8 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         }
     }
 
-    List<Action> getActionsTriggeredBy(Event event, AgentPlan agentPlan) {
-        return agentPlan.getActionsTriggeredBy(event.getType());
+    List<Action> getActionsTriggeredBy(Event event) {
+        return actionMatcher.match(event);
     }
 
     /**

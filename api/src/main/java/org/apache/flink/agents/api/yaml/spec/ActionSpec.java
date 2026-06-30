@@ -29,8 +29,8 @@ import java.util.Map;
 /**
  * Action referencing a user function plus its trigger conditions.
  *
- * <p>Each entry in {@code trigger_conditions} is either an event-type name (bare identifier) or a
- * future condition-expression form — the runtime classifies the string when it loads the plan.
+ * <p>Each entry in {@code trigger_conditions} is either an event-type name or a condition
+ * expression. Entries are classified and validated during {@code AgentPlan} construction.
  */
 @JsonIgnoreProperties(ignoreUnknown = false)
 public final class ActionSpec {
@@ -44,16 +44,12 @@ public final class ActionSpec {
     public ActionSpec(
             @JsonProperty(value = "name", required = true) String name,
             @JsonProperty("function") String function,
-            @JsonProperty(value = "trigger_conditions", required = true)
-                    List<String> triggerConditions,
+            @JsonProperty("trigger_conditions") List<String> triggerConditions,
             @JsonProperty("config") Map<String, Object> config,
             @JsonProperty("type") Language type) {
-        if (triggerConditions == null || triggerConditions.isEmpty()) {
-            throw new IllegalArgumentException("trigger_conditions must not be empty");
-        }
         this.name = name;
         this.function = function;
-        this.triggerConditions = triggerConditions;
+        this.triggerConditions = triggerConditions == null ? List.of() : triggerConditions;
         this.config = config;
         this.type = type;
     }

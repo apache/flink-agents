@@ -427,7 +427,7 @@ public final class YamlLoader {
         return resolveFunction(action.getName(), action.getFunction(), language, paramTypes);
     }
 
-    /** Register an action on the agent with event aliases resolved. */
+    /** Register an action after resolving event aliases that occupy a complete selector entry. */
     static void addActionToAgent(Agent agent, ActionSpec action) {
         Function fn = resolveActionFunction(action);
         String[] triggerConditions =
