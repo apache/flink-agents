@@ -44,7 +44,7 @@ final class TestActions {
                             TestActions.class,
                             "noop",
                             new Class<?>[] {InputEvent.class, RunnerContext.class}),
-                    List.of(InputEvent.class.getName()));
+                    List.of(InputEvent.EVENT_TYPE));
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

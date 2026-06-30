@@ -21,7 +21,6 @@ package org.apache.flink.agents.api.yaml;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
-import org.apache.flink.agents.api.function.Function;
 import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.prompt.Prompt;
@@ -31,7 +30,6 @@ import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.FunctionTool;
 import org.apache.flink.agents.api.yaml.YamlLoader.LoadedFile;
-import org.apache.flink.api.java.tuple.Tuple3;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -53,8 +51,8 @@ class YamlLoaderBuildAgentsTest {
         assertThat(out.getAgents()).containsOnlyKeys("incrementer");
         Agent agent = out.getAgents().get("incrementer");
 
-        Map<String, Tuple3<String[], Function, Map<String, Object>>> actions = agent.getActions();
-        Tuple3<String[], Function, Map<String, Object>> entry = actions.get("increment");
+        var actions = agent.getActions();
+        var entry = actions.get("increment");
         assertThat(entry.f0).containsExactly(InputEvent.EVENT_TYPE);
         assertThat(entry.f1).isInstanceOf(JavaFunction.class);
         JavaFunction jf = (JavaFunction) entry.f1;
@@ -149,11 +147,148 @@ class YamlLoaderBuildAgentsTest {
                         + "        function: pkg.mod:fn\n"
                         + "        trigger_conditions: [input]\n");
         LoadedFile out = YamlLoader.buildAgents(file);
-        Tuple3<String[], Function, Map<String, Object>> entry =
-                out.getAgents().get("a").getActions().get("act");
+        var entry = out.getAgents().get("a").getActions().get("act");
         assertThat(entry.f1).isInstanceOf(PythonFunction.class);
         PythonFunction pf = (PythonFunction) entry.f1;
         assertThat(pf.getModule()).isEqualTo("pkg.mod");
         assertThat(pf.getQualName()).isEqualTo("fn");
+    }
+
+    @Test
+    void preservesRawTriggerEntries(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("raw_trigger_conditions.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: act\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions:\n"
+                        + "          - input\n"
+                        + "          - input\n"
+                        + "          - \"type == '_input_event'\"\n"
+                        + "          - ' score > 1 '\n"
+                        + "          - 'type =='\n");
+
+        var definition = YamlLoader.buildAgents(file).getAgents().get("a").getActions().get("act");
+        assertThat(definition.f0)
+                .containsExactly(
+                        InputEvent.EVENT_TYPE,
+                        InputEvent.EVENT_TYPE,
+                        "type == '_input_event'",
+                        " score > 1 ",
+                        "type ==");
+    }
+
+    @Test
+    void resolvesOnlyCompleteEventAliases(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("complete_alias_entries.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: act\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions:\n"
+                        + "          - input\n"
+                        + "          - \"attributes.kind == 'input'\"\n"
+                        + "          - \"'input'\"\n");
+
+        var definition = YamlLoader.buildAgents(file).getAgents().get("a").getActions().get("act");
+        assertThat(definition.f0)
+                .containsExactly(InputEvent.EVENT_TYPE, "attributes.kind == 'input'", "'input'");
+    }
+
+    @Test
+    void rejectsMissingOrEmptyConditions(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("deferred_trigger_validation.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: missing\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        type: python\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .rootCause()
+                .hasMessageContaining("trigger_conditions");
+
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: empty\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: []\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .rootCause()
+                .hasMessageContaining("trigger_conditions")
+                .hasMessageContaining("at least one");
+    }
+
+    @Test
+    void defersEntryValidationToPlan(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("deferred_trigger_validation.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: invalid_entries\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: ['  ', null]\n");
+
+        Agent agent = YamlLoader.buildAgents(file).getAgents().get("a");
+        assertThat(agent.getActions().get("invalid_entries").f0).containsExactly("  ", null);
+    }
+
+    @Test
+    void rejectsNonStringCondition(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("non_string_trigger_condition.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: invalid\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [true]\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .rootCause()
+                .hasMessageContaining("trigger_conditions")
+                .hasMessageContaining("entry #1")
+                .hasMessageContaining("string");
+    }
+
+    @Test
+    void preservesYamlActionOrder(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("ordered_actions.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: first\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n"
+                        + "      - name: second\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n"
+                        + "      - name: third\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n"
+                        + "      - name: fourth\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n");
+
+        assertThat(YamlLoader.buildAgents(file).getAgents().get("a").getActions().keySet())
+                .containsExactly("first", "second", "third", "fourth");
     }
 }
