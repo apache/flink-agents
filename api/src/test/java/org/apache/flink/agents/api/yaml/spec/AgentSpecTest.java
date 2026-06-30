@@ -44,7 +44,7 @@ class AgentSpecTest {
                         + "  - shared_one\n"
                         + "  - name: own\n"
                         + "    function: pkg:fn\n"
-                        + "    listen_to: [input]\n";
+                        + "    trigger_conditions: [input]\n";
         AgentSpec spec = M.readValue(yaml, AgentSpec.class);
         assertThat(spec.getActions()).hasSize(2);
         assertThat(spec.getActions().get(0).isReference()).isTrue();

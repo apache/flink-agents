@@ -118,7 +118,7 @@ public class CrossLanguageActionRuntimeTest {
                 + "        \"org.apache.flink.agents.api.context.RunnerContext\""
                 + "      ]"
                 + "    },"
-                + "    \"listen_event_types\":[\"_input_event\"],"
+                + "    \"trigger_conditions\":[\"_input_event\"],"
                 + "    \"config\":null"
                 + "  }"
                 + "},"

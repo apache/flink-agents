@@ -19,29 +19,30 @@ import pytest
 
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.function import JavaFunction, PythonFunction
 from flink_agents.api.runner_context import RunnerContext
 
 
 def test_action_decorator() -> None:
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     def forward_action(event: Event, ctx: RunnerContext) -> None:
         input = InputEvent.from_event(event).input
         ctx.send_event(OutputEvent(output=input))
 
-    assert hasattr(forward_action, "_listen_events")
-    listen_events = forward_action._listen_events
+    assert hasattr(forward_action, "_trigger_conditions")
+    listen_events = forward_action._trigger_conditions
     assert listen_events == (InputEvent.EVENT_TYPE,)
 
 
 def test_action_decorator_listen_multi_events() -> None:
-    @action(InputEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent, EventType.OutputEvent)
     def forward_action(event: Event, ctx: RunnerContext) -> None:
         input = InputEvent.from_event(event).input
         ctx.send_event(OutputEvent(output=input))
 
-    assert hasattr(forward_action, "_listen_events")
-    listen_events = forward_action._listen_events
+    assert hasattr(forward_action, "_trigger_conditions")
+    listen_events = forward_action._trigger_conditions
     assert listen_events == (InputEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE)
 
 
@@ -70,8 +71,8 @@ def test_action_decorator_with_string_identifier() -> None:
     def my_handler(event: Event, ctx: RunnerContext) -> None:
         pass
 
-    assert hasattr(my_handler, "_listen_events")
-    assert my_handler._listen_events == ("MyCustomEvent",)
+    assert hasattr(my_handler, "_trigger_conditions")
+    assert my_handler._trigger_conditions == ("MyCustomEvent",)
 
 
 def test_action_decorator_multiple_strings() -> None:
@@ -81,7 +82,7 @@ def test_action_decorator_multiple_strings() -> None:
     def mixed_handler(event: Event, ctx: RunnerContext) -> None:
         pass
 
-    assert mixed_handler._listen_events == ("_input_event", "AnotherEvent")
+    assert mixed_handler._trigger_conditions == ("_input_event", "AnotherEvent")
 
 
 def test_action_decorator_rejects_invalid_types() -> None:
@@ -100,25 +101,25 @@ def _java_target() -> JavaFunction:
 def test_action_decorator_with_cross_language_target() -> None:
     target = _java_target()
 
-    @action(InputEvent.EVENT_TYPE, target=target)
+    @action(EventType.InputEvent, target=target)
     def stub(event: Event, ctx: RunnerContext) -> None:
         msg = "cross-language stub"
         raise NotImplementedError(msg)
 
-    assert stub._listen_events == (InputEvent.EVENT_TYPE,)
+    assert stub._trigger_conditions == (InputEvent.EVENT_TYPE,)
     assert stub._target is target
 
 
 def test_action_decorator_rejects_non_function_target() -> None:
     with pytest.raises(TypeError, match="api-layer Function descriptor"):
 
-        @action(InputEvent.EVENT_TYPE, target="not a function")  # type: ignore[arg-type]
+        @action(EventType.InputEvent, target="not a function")  # type: ignore[arg-type]
         def stub(event: Event, ctx: RunnerContext) -> None:
             pass
 
 
 def test_action_decorator_without_target_does_not_set_attribute() -> None:
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     def regular(event: Event, ctx: RunnerContext) -> None:
         pass
 
@@ -129,7 +130,7 @@ def test_action_decorator_rejects_java_target_with_empty_qualname() -> None:
     bad = JavaFunction(qualname="", method_name="handle", parameter_types=[])
     with pytest.raises(ValueError, match="qualname"):
 
-        @action(InputEvent.EVENT_TYPE, target=bad)
+        @action(EventType.InputEvent, target=bad)
         def stub(event: Event, ctx: RunnerContext) -> None:
             pass
 
@@ -138,7 +139,7 @@ def test_action_decorator_rejects_java_target_with_empty_method_name() -> None:
     bad = JavaFunction(qualname="com.example.X", method_name="", parameter_types=[])
     with pytest.raises(ValueError, match="method_name"):
 
-        @action(InputEvent.EVENT_TYPE, target=bad)
+        @action(EventType.InputEvent, target=bad)
         def stub(event: Event, ctx: RunnerContext) -> None:
             pass
 
@@ -147,7 +148,7 @@ def test_action_decorator_rejects_python_target_with_empty_module() -> None:
     bad = PythonFunction(module="", qualname="handle")
     with pytest.raises(ValueError, match="module"):
 
-        @action(InputEvent.EVENT_TYPE, target=bad)
+        @action(EventType.InputEvent, target=bad)
         def stub(event: Event, ctx: RunnerContext) -> None:
             pass
 
@@ -156,7 +157,7 @@ def test_action_decorator_rejects_python_target_with_empty_qualname() -> None:
     bad = PythonFunction(module="pkg.mod", qualname="")
     with pytest.raises(ValueError, match="qualname"):
 
-        @action(InputEvent.EVENT_TYPE, target=bad)
+        @action(EventType.InputEvent, target=bad)
         def stub(event: Event, ctx: RunnerContext) -> None:
             pass
 
@@ -165,6 +166,6 @@ def test_action_decorator_target_error_names_decorated_function() -> None:
     bad = PythonFunction(module="pkg.mod", qualname="")
     with pytest.raises(ValueError, match="my_named_stub"):
 
-        @action(InputEvent.EVENT_TYPE, target=bad)
+        @action(EventType.InputEvent, target=bad)
         def my_named_stub(event: Event, ctx: RunnerContext) -> None:
             pass

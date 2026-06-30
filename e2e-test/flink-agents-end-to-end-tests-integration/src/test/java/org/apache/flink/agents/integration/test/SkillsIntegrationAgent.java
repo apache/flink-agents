@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.integration.test;
 
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -103,7 +104,7 @@ public class SkillsIntegrationAgent extends Agent {
                                         + "first and strictly follow the instructions of the skill.")));
     }
 
-    @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+    @Action(EventType.InputEvent)
     public static void process(InputEvent event, RunnerContext ctx) throws Exception {
         ctx.sendEvent(
                 new ChatRequestEvent(
@@ -112,7 +113,7 @@ public class SkillsIntegrationAgent extends Agent {
                                 new ChatMessage(MessageRole.USER, (String) event.getInput()))));
     }
 
-    @Action(listenEventTypes = {ChatResponseEvent.EVENT_TYPE})
+    @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
         ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
     }

@@ -172,11 +172,15 @@ class SkillsSpec(BaseModel):
 
 
 class ActionSpec(BaseModel):
-    """An action references a user function and the event types it listens to.
+    """An action references a user function and its trigger conditions.
 
     ``function`` is written as ``<module-or-class>:<qualname>`` — the
     colon separates the Python module (or Java class FQN) from the
     attribute path inside it.
+
+    ``trigger_conditions`` carries one or more strings. Each is either an
+    event-type name (bare identifier) or a future condition-expression
+    form — the runtime classifies the string when it loads the plan.
 
     Action signatures are fixed (``(Event, RunnerContext)``), so there is
     no ``parameter_types`` knob — Python doesn't need it, and the Java
@@ -187,7 +191,7 @@ class ActionSpec(BaseModel):
 
     name: str
     function: str | None = None
-    listen_to: List[str] = Field(..., min_length=1)
+    trigger_conditions: List[str] = Field(..., min_length=1)
     config: Dict[str, Any] | None = None
     type: Language | None = None
 

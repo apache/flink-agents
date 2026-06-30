@@ -4,4 +4,4 @@ agents:
       - name: increment
         function: org.apache.flink.agents.api.yaml.LoaderTargets:increment
         type: java
-        listen_to: [input]
+        trigger_conditions: [input]

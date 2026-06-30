@@ -4,7 +4,7 @@ agents:
       - name: decrement
         function: org.apache.flink.agents.api.yaml.LoaderTargets:decrement
         type: java
-        listen_to: [input]
+        trigger_conditions: [input]
 chat_model_connections:
   - name: conn_from_b
     clazz: ollama

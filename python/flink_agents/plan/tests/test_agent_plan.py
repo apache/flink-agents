@@ -36,6 +36,7 @@ from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelSetup,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.function import JavaFunction
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -50,7 +51,7 @@ from flink_agents.runtime.resource_cache import ResourceCache
 
 
 class AgentForTest(Agent):
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def increment(event: Event, ctx: RunnerContext) -> None:
         value = InputEvent.from_event(event).input
@@ -69,11 +70,11 @@ def test_from_agent():
     assert isinstance(func, PythonFunction)
     assert func.module == "flink_agents.plan.tests.test_agent_plan"
     assert func.qualname == "AgentForTest.increment"
-    assert action.listen_event_types == [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
 
 
 class InvalidAgent(Agent):
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def invalid_signature_action(event: Event) -> None:
         pass
@@ -96,13 +97,13 @@ def test_builtin_actions_are_python_native_after_compile() -> None:
 class AgentWithConventionalDecoratorOrder(Agent):
     """`@staticmethod` outer, `@action` inner — the conventional Python order.
 
-    The decorator stack puts ``_listen_events`` on the inner function (i.e.
+    The decorator stack puts ``_trigger_conditions`` on the inner function (i.e.
     ``staticmethod.__func__``) rather than on the staticmethod wrapper, so
     ``_get_actions`` must unwrap before inspecting attributes.
     """
 
     @staticmethod
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     def handle(event: Event, ctx: RunnerContext) -> None:
         ctx.send_event(OutputEvent(output=InputEvent.from_event(event).input))
 
@@ -115,7 +116,7 @@ def test_conventional_staticmethod_outer_decorator_order_is_registered() -> None
     assert len(actions) == 1, (
         "Action defined with `@staticmethod` outer / `@action` inner was silently "
         "dropped — `_get_actions` should unwrap the staticmethod before checking "
-        "for `_listen_events`."
+        "for `_trigger_conditions`."
     )
     assert actions[0].name == "handle"
 
@@ -123,7 +124,7 @@ def test_conventional_staticmethod_outer_decorator_order_is_registered() -> None
 class _BaseAgentWithInheritedAction(Agent):
     """Base class with an @action — used to verify the inheritance guard."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def shared_action(event: Event, ctx: RunnerContext) -> None:
         ctx.send_event(OutputEvent(output="shared"))
@@ -148,7 +149,7 @@ _JAVA_HANDLER_QUALNAME = (
 
 class AgentWithCrossLanguageDecoratedAction(Agent):
     @action(
-        InputEvent.EVENT_TYPE,
+        EventType.InputEvent,
         target=JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput"),
     )
     @staticmethod
@@ -164,7 +165,7 @@ def test_decorated_action_with_target_compiles_to_plan_java_function() -> None:
     action = plan.actions["handle"]
     assert action.exec.qualname == _JAVA_HANDLER_QUALNAME
     assert action.exec.method_name == "handleInput"
-    assert action.listen_event_types == [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
 
 
 class MyEvent(Event):
@@ -319,7 +320,7 @@ class MyAgent(Agent):
             collection_name="test_collection",
         )
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def first_action(event: Event, ctx: RunnerContext) -> None:
         pass
@@ -369,10 +370,10 @@ def test_get_resource() -> None:
 def test_add_action_and_resource_to_agent() -> None:
     my_agent = Agent()
     my_agent.add_action(
-        name="first_action", events=["_input_event"], func=MyAgent.first_action
+        name="first_action", trigger_conditions=["_input_event"], func=MyAgent.first_action
     )
     my_agent.add_action(
-        name="second_action", events=["_input_event", "_my_event"], func=MyAgent.second_action
+        name="second_action", trigger_conditions=["_input_event", "_my_event"], func=MyAgent.second_action
     )
     my_agent.add_resource(
         name="mock",
@@ -446,7 +447,7 @@ def test_from_agent_with_string_identifier() -> None:
     actions = agent_plan.get_actions("CustomEvent")
     assert len(actions) == 1
     assert actions[0].name == "handle_custom"
-    assert "CustomEvent" in actions[0].listen_event_types
+    assert "CustomEvent" in actions[0].trigger_conditions
 
     # Verify serialization roundtrip preserves the string identifier
     json_str = agent_plan.model_dump_json(serialize_as_any=True)

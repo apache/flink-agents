@@ -56,43 +56,47 @@ public class Agent {
     /**
      * Add action to agent.
      *
-     * @param eventTypes The event type strings this action listens to.
+     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
+     *     future condition-expression form.
      * @param method The method of this action, should be static method.
      * @param config The optional config can be used by this action.
      */
     public Agent addAction(
-            String[] eventTypes, Method method, @Nullable Map<String, Object> config) {
-        return addAction(method.getName(), eventTypes, JavaFunction.fromMethod(method), config);
+            String[] triggerConditions, Method method, @Nullable Map<String, Object> config) {
+        return addAction(
+                method.getName(), triggerConditions, JavaFunction.fromMethod(method), config);
     }
 
     /**
      * Add action to agent.
      *
-     * @param eventTypes The event type strings this action listens to.
+     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
+     *     future condition-expression form.
      * @param method The method of this action, should be static method.
      */
-    public Agent addAction(String[] eventTypes, Method method) {
-        return addAction(eventTypes, method, null);
+    public Agent addAction(String[] triggerConditions, Method method) {
+        return addAction(triggerConditions, method, null);
     }
 
     /**
      * Add action to agent.
      *
      * @param name The action name. Must be unique within this agent.
-     * @param eventTypes The event type strings this action listens to.
+     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
+     *     future condition-expression form.
      * @param function The api-layer function descriptor; will be promoted to a plan-layer
      *     executable at {@code AgentPlan} construction.
      * @param config Optional config for this action.
      */
     public Agent addAction(
             String name,
-            String[] eventTypes,
+            String[] triggerConditions,
             Function function,
             @Nullable Map<String, Object> config) {
         if (actions.containsKey(name)) {
             throw new IllegalArgumentException(String.format("Action %s already defined.", name));
         }
-        actions.put(name, new Tuple3<>(eventTypes, function, config));
+        actions.put(name, new Tuple3<>(triggerConditions, function, config));
         return this;
     }
 

@@ -3,5 +3,5 @@
   "exec": {
     "func_type": "JavaFunction"
   },
-  "listenEventTypes": ["org.apache.flink.agents.api.InputEvent"]
+  "trigger_conditions": ["org.apache.flink.agents.api.InputEvent"]
 }

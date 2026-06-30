@@ -18,6 +18,7 @@
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -89,7 +90,7 @@ public class FlinkIntegrationAgent {
          * @param event The input event to process
          * @param ctx The runner context for sending events
          */
-        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @Action(EventType.InputEvent)
         public static void processInput(Event event, RunnerContext ctx) throws Exception {
             InputEvent inputEvent = InputEvent.fromEvent(event);
             ItemData item = (ItemData) inputEvent.getInput();
@@ -114,7 +115,7 @@ public class FlinkIntegrationAgent {
          * @param event The processed event
          * @param ctx The runner context for sending events
          */
-        @Action(listenEventTypes = {ProcessedEvent.EVENT_TYPE})
+        @Action(ProcessedEvent.EVENT_TYPE)
         public static void generateOutput(Event event, RunnerContext ctx) throws Exception {
             ProcessedEvent processedEvent = (ProcessedEvent) event;
             MemoryRef itemRef = processedEvent.getItemRef();
@@ -143,7 +144,7 @@ public class FlinkIntegrationAgent {
          * @param event The input event to process
          * @param ctx The runner context for sending events
          */
-        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @Action(EventType.InputEvent)
         public static void processInput(Event event, RunnerContext ctx) throws Exception {
             InputEvent inputEvent = InputEvent.fromEvent(event);
             Object input = inputEvent.getInput();
@@ -168,7 +169,7 @@ public class FlinkIntegrationAgent {
          * @param event The processed event
          * @param ctx The runner context for sending events
          */
-        @Action(listenEventTypes = {ProcessedEvent.EVENT_TYPE})
+        @Action(ProcessedEvent.EVENT_TYPE)
         public static void generateOutput(Event event, RunnerContext ctx) throws Exception {
             ProcessedEvent processedEvent = (ProcessedEvent) event;
             MemoryRef inputRef = processedEvent.getItemRef();

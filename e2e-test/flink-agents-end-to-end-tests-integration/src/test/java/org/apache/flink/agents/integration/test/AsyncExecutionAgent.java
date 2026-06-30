@@ -18,6 +18,7 @@
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -94,7 +95,7 @@ public class AsyncExecutionAgent {
      */
     public static class SimpleAsyncAgent extends Agent {
 
-        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @Action(EventType.InputEvent)
         public static void processInput(Event event, RunnerContext ctx) throws Exception {
             InputEvent inputEvent = InputEvent.fromEvent(event);
             AsyncRequest request = (AsyncRequest) inputEvent.getInput();
@@ -135,7 +136,7 @@ public class AsyncExecutionAgent {
          * @param event The processed event
          * @param ctx The runner context for sending events
          */
-        @Action(listenEventTypes = {AsyncProcessedEvent.EVENT_TYPE})
+        @Action(AsyncProcessedEvent.EVENT_TYPE)
         public static void generateOutput(Event event, RunnerContext ctx) throws Exception {
             AsyncProcessedEvent processedEvent = (AsyncProcessedEvent) event;
 
@@ -153,7 +154,7 @@ public class AsyncExecutionAgent {
     /** Agent that chains multiple durableExecuteAsync calls. */
     public static class MultiAsyncAgent extends Agent {
 
-        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @Action(EventType.InputEvent)
         public static void processWithMultipleAsync(Event event, RunnerContext ctx)
                 throws Exception {
             InputEvent inputEvent = InputEvent.fromEvent(event);
@@ -261,7 +262,7 @@ public class AsyncExecutionAgent {
             return timestampDir;
         }
 
-        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @Action(EventType.InputEvent)
         public static void processWithTiming(Event event, RunnerContext ctx) throws Exception {
             InputEvent inputEvent = InputEvent.fromEvent(event);
             AsyncRequest request = (AsyncRequest) inputEvent.getInput();
@@ -303,7 +304,7 @@ public class AsyncExecutionAgent {
     /** Agent that uses durableExecute (sync) for simulating slow operations. */
     public static class SyncDurableAgent extends Agent {
 
-        @Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+        @Action(EventType.InputEvent)
         public static void processInputSync(Event event, RunnerContext ctx) throws Exception {
             InputEvent inputEvent = InputEvent.fromEvent(event);
             AsyncRequest request = (AsyncRequest) inputEvent.getInput();

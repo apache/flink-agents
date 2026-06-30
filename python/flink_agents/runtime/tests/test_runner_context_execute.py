@@ -20,6 +20,7 @@
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 
@@ -42,7 +43,7 @@ def raise_exception(msg: str) -> None:
 class AgentWithDurableExecute(Agent):
     """Agent that uses synchronous durable_execute() method."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event using durable_execute()."""
@@ -54,7 +55,7 @@ class AgentWithDurableExecute(Agent):
 class AgentWithMultipleDurableExecute(Agent):
     """Agent that makes multiple durable_execute() calls."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event with multiple durable_execute() calls."""
@@ -67,7 +68,7 @@ class AgentWithMultipleDurableExecute(Agent):
 class AgentWithDurableExecuteAndAsync(Agent):
     """Agent that uses both durable_execute() and durable_execute_async()."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     async def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event using both durable_execute() and durable_execute_async()."""
@@ -82,7 +83,7 @@ class AgentWithDurableExecuteAndAsync(Agent):
 class AgentWithDurableExecuteException(Agent):
     """Agent that uses durable_execute() with a function that raises an exception."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event where durable_execute() raises an exception."""
@@ -96,7 +97,7 @@ class AgentWithDurableExecuteException(Agent):
 class AgentWithKwargs(Agent):
     """Agent that uses durable_execute() with keyword arguments."""
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process(event: Event, ctx: RunnerContext) -> None:
         """Process an event using durable_execute() with kwargs."""

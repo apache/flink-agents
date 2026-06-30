@@ -4,11 +4,11 @@ agents:
       - name: increment
         function: org.apache.flink.agents.api.yaml.LoaderTargets:increment
         type: java
-        listen_to: [input]
+        trigger_conditions: [input]
       - name: decrement
         function: org.apache.flink.agents.api.yaml.LoaderTargets:decrement
         type: java
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]
     chat_model_connections:
       - name: ollama_conn
         clazz: ollama

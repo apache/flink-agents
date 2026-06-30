@@ -112,12 +112,12 @@ def test_build_agents_rejects_duplicate_agent_within_file(tmp_path: Path) -> Non
         "    actions:\n"
         "      - name: increment\n"
         f"        function: {_TARGETS_MODULE}:increment\n"
-        "        listen_to: [input]\n"
+        "        trigger_conditions: [input]\n"
         "  - name: dup\n"
         "    actions:\n"
         "      - name: decrement\n"
         f"        function: {_TARGETS_MODULE}:decrement\n"
-        "        listen_to: [input]\n"
+        "        trigger_conditions: [input]\n"
     )
     p = tmp_path / "dup.yaml"
     p.write_text(yaml_text)
@@ -295,9 +295,9 @@ def test_load_yaml_duplicate_shared_action_within_file_errors(tmp_path) -> None:
         "  - name: a\n"
         "actions:\n"
         "  - name: shared\n"
-        "    listen_to: [input]\n"
+        "    trigger_conditions: [input]\n"
         "  - name: shared\n"
-        "    listen_to: [input]\n"
+        "    trigger_conditions: [input]\n"
     )
     env = AgentsExecutionEnvironment.get_execution_environment()
     with pytest.raises(ValueError, match="Duplicate shared action name 'shared'"):
@@ -525,7 +525,7 @@ def test_build_agents_builds_java_action(tmp_path: Path) -> None:
         "      - name: a1\n"
         "        type: java\n"
         "        function: com.example.MyAgent:handle\n"
-        "        listen_to: [input]\n"
+        "        trigger_conditions: [input]\n"
     )
     p = tmp_path / "java_action.yaml"
     p.write_text(yaml_text)
@@ -554,7 +554,7 @@ def test_build_agents_rejects_java_tool_missing_parameter_types(
         "    actions:\n"
         "      - name: noop\n"
         f"        function: {_TARGETS_MODULE}:increment\n"
-        "        listen_to: [input]\n"
+        "        trigger_conditions: [input]\n"
     )
     p = tmp_path / "java_tool_no_params.yaml"
     p.write_text(yaml_text)
@@ -578,7 +578,7 @@ def test_build_agents_rejects_python_tool_with_parameter_types(
         "    actions:\n"
         "      - name: noop\n"
         f"        function: {_TARGETS_MODULE}:increment\n"
-        "        listen_to: [input]\n"
+        "        trigger_conditions: [input]\n"
     )
     p = tmp_path / "python_tool_params.yaml"
     p.write_text(yaml_text)
@@ -605,7 +605,7 @@ def test_build_agents_builds_java_tool_descriptor(tmp_path: Path) -> None:
         "    actions:\n"
         "      - name: noop\n"
         f"        function: {_TARGETS_MODULE}:increment\n"
-        "        listen_to: [input]\n"
+        "        trigger_conditions: [input]\n"
     )
     p = tmp_path / "java_tool.yaml"
     p.write_text(yaml_text)

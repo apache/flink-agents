@@ -10,11 +10,11 @@ agents:
       - name: processInput
         type: java
         function: org.apache.flink.agents.examples.agents.ReviewAnalysisAgent:processInput
-        listen_to: [input]
+        trigger_conditions: [input]
       - name: processChatResponse
         type: java
         function: org.apache.flink.agents.examples.agents.ReviewAnalysisAgent:processChatResponse
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]
 
     chat_model_connections:
       - name: ollama_server

@@ -148,7 +148,7 @@ from flink_agents.api.decorators import action
 from flink_agents.api.events.event import InputEvent, Event
 from flink_agents.api.runner_context import RunnerContext
 
-@action(InputEvent.EVENT_TYPE)
+@action(EventType.InputEvent)
 @staticmethod
 def process_event(event: Event, ctx: RunnerContext) -> None:
     ltm = ctx.long_term_memory
@@ -162,7 +162,7 @@ def process_event(event: Event, ctx: RunnerContext) -> None:
 {{< tab "Java" >}}
 
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void processEvent(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     BaseLongTermMemory ltm = ctx.getLongTermMemory();
@@ -464,7 +464,7 @@ from flink_agents.api.runner_context import RunnerContext
 
 class PersonalizedAssistant:
     
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def process_event(event: Event, ctx: RunnerContext) -> None:
         """Respond to user using long-term memory."""
@@ -501,7 +501,7 @@ agents_config.set(LongTermMemoryOptions.Mem0.VECTOR_STORE, "my_vector_store")
 {{< tab "Java" >}}
 
 ```java
-@Action(listenEventTypes = {InputEvent.EVENT_TYPE})
+@Action(EventType.InputEvent)
 public static void processEvent(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = InputEvent.fromEvent(event);
     BaseLongTermMemory ltm = ctx.getLongTermMemory();

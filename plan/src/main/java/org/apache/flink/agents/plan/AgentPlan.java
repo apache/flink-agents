@@ -184,27 +184,27 @@ public class AgentPlan implements Serializable {
 
     private void extractActions(
             String actionName,
-            String[] listenEventTypeStrings,
+            String[] triggerEntries,
             org.apache.flink.agents.plan.Function function,
             Map<String, Object> config)
             throws Exception {
-        List<String> eventTypeNames = new ArrayList<>(Arrays.asList(listenEventTypeStrings));
+        List<String> triggerConditions = new ArrayList<>(Arrays.asList(triggerEntries));
 
-        if (eventTypeNames.isEmpty()) {
+        if (triggerConditions.isEmpty()) {
             throw new IllegalArgumentException(
                     "Action "
                             + actionName
-                            + " must specify at least one event type via listenEventTypes.");
+                            + " must specify at least one trigger entry via @Action(EventType.x).");
         }
 
         // Create an Action
-        Action action = new Action(actionName, function, eventTypeNames, config);
+        Action action = new Action(actionName, function, triggerConditions, config);
 
         // Add to actions map
         actions.put(action.getName(), action);
 
         // Add to actionsByEvent map
-        for (String eventTypeName : eventTypeNames) {
+        for (String eventTypeName : triggerConditions) {
             actionsByEvent.computeIfAbsent(eventTypeName, k -> new ArrayList<>()).add(action);
         }
     }
@@ -251,7 +251,7 @@ public class AgentPlan implements Serializable {
                     Objects.requireNonNull(
                             method.getAnnotation(
                                     org.apache.flink.agents.api.annotation.Action.class));
-            String[] listenEventTypeStrings = actionAnnotation.listenEventTypes();
+            String[] triggerEntries = actionAnnotation.value();
             org.apache.flink.agents.api.annotation.PythonFunction target =
                     actionAnnotation.target();
             String targetModule = target.module();
@@ -276,7 +276,7 @@ public class AgentPlan implements Serializable {
                                 + method.getName()
                                 + "' must set both module and qualname");
             }
-            extractActions(method.getName(), listenEventTypeStrings, execFunction, null);
+            extractActions(method.getName(), triggerEntries, execFunction, null);
         }
 
         for (Map.Entry<

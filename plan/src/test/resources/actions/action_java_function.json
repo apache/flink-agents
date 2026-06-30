@@ -6,5 +6,5 @@
     "method_name": "legal",
     "parameter_types": ["org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext"]
   },
-  "listen_event_types": ["_input_event"]
+  "trigger_conditions": ["_input_event"]
 }

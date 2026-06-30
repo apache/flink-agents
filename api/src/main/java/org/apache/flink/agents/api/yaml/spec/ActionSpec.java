@@ -26,12 +26,17 @@ import org.apache.flink.agents.api.yaml.Language;
 import java.util.List;
 import java.util.Map;
 
-/** Action referencing a user function plus the event types it listens to. */
+/**
+ * Action referencing a user function plus its trigger conditions.
+ *
+ * <p>Each entry in {@code trigger_conditions} is either an event-type name (bare identifier) or a
+ * future condition-expression form — the runtime classifies the string when it loads the plan.
+ */
 @JsonIgnoreProperties(ignoreUnknown = false)
 public final class ActionSpec {
     private final String name;
     private final String function;
-    private final List<String> listenTo;
+    private final List<String> triggerConditions;
     private final Map<String, Object> config;
     private final Language type;
 
@@ -39,15 +44,16 @@ public final class ActionSpec {
     public ActionSpec(
             @JsonProperty(value = "name", required = true) String name,
             @JsonProperty("function") String function,
-            @JsonProperty(value = "listen_to", required = true) List<String> listenTo,
+            @JsonProperty(value = "trigger_conditions", required = true)
+                    List<String> triggerConditions,
             @JsonProperty("config") Map<String, Object> config,
             @JsonProperty("type") Language type) {
-        if (listenTo == null || listenTo.isEmpty()) {
-            throw new IllegalArgumentException("listen_to must not be empty");
+        if (triggerConditions == null || triggerConditions.isEmpty()) {
+            throw new IllegalArgumentException("trigger_conditions must not be empty");
         }
         this.name = name;
         this.function = function;
-        this.listenTo = listenTo;
+        this.triggerConditions = triggerConditions;
         this.config = config;
         this.type = type;
     }
@@ -60,8 +66,8 @@ public final class ActionSpec {
         return function;
     }
 
-    public List<String> getListenTo() {
-        return listenTo;
+    public List<String> getTriggerConditions() {
+        return triggerConditions;
     }
 
     public Map<String, Object> getConfig() {

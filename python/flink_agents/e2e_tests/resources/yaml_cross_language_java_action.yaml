@@ -12,4 +12,4 @@ agents:
       - name: multiply_by_two
         type: java
         function: org.apache.flink.agents.resource.test.JavaActionHandler:multiplyByTwo
-        listen_to: [input]
+        trigger_conditions: [input]

@@ -5,7 +5,7 @@ agents:
       - name: own_dec
         function: org.apache.flink.agents.api.yaml.LoaderTargets:decrement
         type: java
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]
   - name: a2
     actions:
       - shared_inc
@@ -20,4 +20,4 @@ actions:
   - name: shared_inc
     function: org.apache.flink.agents.api.yaml.LoaderTargets:increment
     type: java
-    listen_to: [input]
+    trigger_conditions: [input]

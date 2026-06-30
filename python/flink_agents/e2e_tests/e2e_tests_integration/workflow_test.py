@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 
@@ -68,7 +69,7 @@ class MyAgent(Agent):
     validation.
     """
 
-    @action(InputEvent.EVENT_TYPE)
+    @action(EventType.InputEvent)
     @staticmethod
     def first_action(event: Event, ctx: RunnerContext) -> None:
         key = ctx.key

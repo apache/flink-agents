@@ -77,7 +77,7 @@ def test_compile_agent_with_python_function_descriptor() -> None:
     """ApiPythonFunction added via add_action becomes plan PythonFunction."""
     agent = Agent()
     pf = _make_python_function_descriptor()
-    agent.add_action(name="act", events=[InputEvent.EVENT_TYPE], func=pf)
+    agent.add_action(name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=pf)
 
     plan = AgentPlan.from_agent(agent, AgentConfiguration())
     action = plan.actions["act"]
@@ -87,7 +87,7 @@ def test_compile_agent_with_python_function_descriptor() -> None:
     )
     assert action.exec.module == pf.module
     assert action.exec.qualname == pf.qualname
-    assert action.listen_event_types == [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions== [InputEvent.EVENT_TYPE]
 
 
 def test_compile_agent_with_java_function_descriptor() -> None:
@@ -99,7 +99,7 @@ def test_compile_agent_with_java_function_descriptor() -> None:
     """
     agent = Agent()
     jf = _make_java_function_descriptor()
-    agent.add_action(name="act", events=[InputEvent.EVENT_TYPE], func=jf)
+    agent.add_action(name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=jf)
 
     plan = AgentPlan.from_agent(agent, AgentConfiguration())
     action = plan.actions["act"]
@@ -110,7 +110,7 @@ def test_compile_agent_with_java_function_descriptor() -> None:
     assert action.exec.qualname == jf.qualname
     assert action.exec.method_name == jf.method_name
     assert list(action.exec.parameter_types) == list(jf.parameter_types)
-    assert action.listen_event_types == [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions== [InputEvent.EVENT_TYPE]
 
 
 def test_python_plan_compile_does_not_validate_java_class_exists() -> None:
@@ -126,7 +126,7 @@ def test_python_plan_compile_does_not_validate_java_class_exists() -> None:
         method_name="ghost",
         parameter_types=["java.lang.String", "int"],
     )
-    agent.add_action(name="act", events=[InputEvent.EVENT_TYPE], func=fake)
+    agent.add_action(name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=fake)
 
     plan = AgentPlan.from_agent(agent, AgentConfiguration())
     assert plan.actions["act"].exec.qualname == "com.does.not.Exist"
@@ -136,7 +136,7 @@ def test_compile_preserves_action_config() -> None:
     agent = Agent()
     agent.add_action(
         name="act",
-        events=[InputEvent.EVENT_TYPE],
+        trigger_conditions=[InputEvent.EVENT_TYPE],
         func=_make_python_function_descriptor(),
         timeout_sec=30,
         retry=2,
@@ -155,7 +155,7 @@ def test_compile_rejects_unknown_function_descriptor() -> None:
 
     agent = Agent()
     agent.add_action(
-        name="act", events=[InputEvent.EVENT_TYPE], func=WeirdFunction()
+        name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=WeirdFunction()
     )
 
     with pytest.raises(TypeError, match="Unsupported function descriptor"):
@@ -170,7 +170,7 @@ def _java_action_plan() -> AgentPlan:
     agent = Agent()
     agent.add_action(
         name="handle",
-        events=[InputEvent.EVENT_TYPE],
+        trigger_conditions=[InputEvent.EVENT_TYPE],
         func=_make_java_function_descriptor(),
     )
     return AgentPlan.from_agent(agent, AgentConfiguration())
@@ -181,7 +181,7 @@ def _python_action_plan() -> AgentPlan:
     agent = Agent()
     agent.add_action(
         name="handle",
-        events=[InputEvent.EVENT_TYPE],
+        trigger_conditions=[InputEvent.EVENT_TYPE],
         func=_make_python_function_descriptor(),
     )
     return AgentPlan.from_agent(agent, AgentConfiguration())
@@ -305,7 +305,7 @@ def test_python_plan_with_java_action_matches_runtime_operator_wire_shape() -> N
     agent = Agent()
     agent.add_action(
         name="handle",
-        events=[InputEvent.EVENT_TYPE],
+        trigger_conditions=[InputEvent.EVENT_TYPE],
         func=ApiJavaFunction(
             qualname=handler_qualname,
             method_name="handleInput",
@@ -318,7 +318,7 @@ def test_python_plan_with_java_action_matches_runtime_operator_wire_shape() -> N
 
     handle_block = emitted["actions"]["handle"]
     assert handle_block["name"] == "handle"
-    assert handle_block["listen_event_types"] == [InputEvent.EVENT_TYPE]
+    assert handle_block["trigger_conditions"] == [InputEvent.EVENT_TYPE]
     assert handle_block["config"] is None
     assert handle_block["exec"] == {
         "func_type": "JavaFunction",
@@ -340,7 +340,7 @@ def test_python_preserves_conf_data_types_and_event_ordering() -> None:
                         "module": _dummy_action.__module__,
                         "qualname": _dummy_action.__qualname__,
                     },
-                    "listen_event_types": [InputEvent.EVENT_TYPE],
+                    "trigger_conditions": [InputEvent.EVENT_TYPE],
                     "config": None,
                 },
                 "second": {
@@ -350,7 +350,7 @@ def test_python_preserves_conf_data_types_and_event_ordering() -> None:
                         "module": _dummy_action.__module__,
                         "qualname": _dummy_action.__qualname__,
                     },
-                    "listen_event_types": [InputEvent.EVENT_TYPE],
+                    "trigger_conditions": [InputEvent.EVENT_TYPE],
                     "config": None,
                 },
             },

@@ -34,8 +34,8 @@ agents:
       - name: process_input
         type: java
         function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:processInput
-        listen_to: [input]
+        trigger_conditions: [input]
       - name: process_chat_response
         type: java
         function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:processChatResponse
-        listen_to: [chat_response]
+        trigger_conditions: [chat_response]
