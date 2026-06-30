@@ -33,14 +33,31 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class AgentPlanJsonDeserializerTest {
+    @Test
+    public void testActionsMustBePresentObjectButMayBeEmpty() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+
+        for (String json :
+                List.of("{}", "{\"actions\":null}", "{\"actions\":[]}", "{\"actions\":\"bad\"}")) {
+            IOException error =
+                    assertThrows(IOException.class, () -> mapper.readValue(json, AgentPlan.class));
+            assertTrue(error.getMessage().contains("actions"));
+        }
+
+        AgentPlan empty = mapper.readValue("{\"actions\":{}}", AgentPlan.class);
+        assertTrue(empty.getActions().isEmpty());
+    }
+
     @Test
     public void testDeserialize() throws Exception {
         // Read JSON for an Action with JavaFunction from resource file
@@ -52,7 +69,7 @@ public class AgentPlanJsonDeserializerTest {
         assertTrue(agentPlan.getActions().containsKey("first_action"));
         Action firstAction = agentPlan.getActions().get("first_action");
         assertInstanceOf(JavaFunction.class, firstAction.getExec());
-        assertEquals(List.of(InputEvent.EVENT_TYPE), firstAction.getListenEventTypes());
+        assertEquals(List.of(InputEvent.EVENT_TYPE), firstAction.getTriggerConditions());
 
         // Check the second action
         assertTrue(agentPlan.getActions().containsKey("second_action"));
@@ -60,15 +77,7 @@ public class AgentPlanJsonDeserializerTest {
         assertInstanceOf(JavaFunction.class, secondAction.getExec());
         assertEquals(
                 List.of(InputEvent.EVENT_TYPE, MyEvent.EVENT_TYPE),
-                secondAction.getListenEventTypes());
-
-        // Check event trigger actions
-        assertEquals(2, agentPlan.getActionsByEvent().size());
-        assertTrue(agentPlan.getActionsByEvent().containsKey(InputEvent.EVENT_TYPE));
-        assertEquals(
-                List.of(firstAction, secondAction),
-                agentPlan.getActionsByEvent().get(InputEvent.EVENT_TYPE));
-        assertEquals(List.of(secondAction), agentPlan.getActionsByEvent().get(MyEvent.EVENT_TYPE));
+                secondAction.getTriggerConditions());
 
         // Check the flink agent config
         Map<String, Object> configData = agentPlan.getConfigData();
@@ -97,8 +106,6 @@ public class AgentPlanJsonDeserializerTest {
                 mapper.writeValueAsString(
                         Map.of(
                                 "actions",
-                                Map.of(),
-                                "actions_by_event",
                                 Map.of(),
                                 "resource_providers",
                                 Map.of(

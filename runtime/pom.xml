@@ -201,14 +201,6 @@ under the License.
     </dependencies>
 
     <build>
-        <testResources>
-            <testResource>
-                <directory>src/test/resources</directory>
-            </testResource>
-            <testResource>
-                <directory>${project.basedir}/../e2e-test/cel-fixtures</directory>
-            </testResource>
-        </testResources>
         <plugins>
             <!-- Configure jar plugin for Multi-Release JAR -->
             <plugin>

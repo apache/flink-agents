@@ -40,7 +40,8 @@ class YamlAgentsDocumentTest {
         String yaml =
                 "agents:\n  - name: a\n"
                         + "chat_model_connections:\n  - name: shared\n    clazz: x.Y\n"
-                        + "actions:\n  - name: shared_a\n    function: pkg:fn\n    trigger_conditions: [input]\n";
+                        + "actions:\n  - name: shared_a\n    function: pkg:fn\n"
+                        + "    trigger_conditions: [input]\n";
         YamlAgentsDocument doc = M.readValue(yaml, YamlAgentsDocument.class);
         assertThat(doc.getChatModelConnections()).hasSize(1);
         assertThat(doc.getActions()).hasSize(1);
