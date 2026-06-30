@@ -26,22 +26,29 @@ import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** Tests for {@link EventType}. */
 class EventTypeTest {
 
     @Test
-    void builtInConstantsMatchEventClassConstants() {
-        assertEquals(InputEvent.EVENT_TYPE, EventType.InputEvent);
-        assertEquals(OutputEvent.EVENT_TYPE, EventType.OutputEvent);
-        assertEquals(ChatRequestEvent.EVENT_TYPE, EventType.ChatRequestEvent);
-        assertEquals(ChatResponseEvent.EVENT_TYPE, EventType.ChatResponseEvent);
-        assertEquals(ToolRequestEvent.EVENT_TYPE, EventType.ToolRequestEvent);
-        assertEquals(ToolResponseEvent.EVENT_TYPE, EventType.ToolResponseEvent);
+    void allConstantsProvidesAnUnmodifiableNameToValueMap() {
         assertEquals(
-                ContextRetrievalRequestEvent.EVENT_TYPE, EventType.ContextRetrievalRequestEvent);
-        assertEquals(
-                ContextRetrievalResponseEvent.EVENT_TYPE, EventType.ContextRetrievalResponseEvent);
+                Map.of(
+                        "InputEvent", InputEvent.EVENT_TYPE,
+                        "OutputEvent", OutputEvent.EVENT_TYPE,
+                        "ChatRequestEvent", ChatRequestEvent.EVENT_TYPE,
+                        "ChatResponseEvent", ChatResponseEvent.EVENT_TYPE,
+                        "ToolRequestEvent", ToolRequestEvent.EVENT_TYPE,
+                        "ToolResponseEvent", ToolResponseEvent.EVENT_TYPE,
+                        "ContextRetrievalRequestEvent", ContextRetrievalRequestEvent.EVENT_TYPE,
+                        "ContextRetrievalResponseEvent", ContextRetrievalResponseEvent.EVENT_TYPE),
+                EventType.allConstants());
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> EventType.allConstants().put("custom", "custom"));
     }
 }

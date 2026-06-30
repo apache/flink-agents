@@ -1,14 +1,15 @@
 {
   "name": "testAction",
   "exec": {
-    "func_type": "InvalidFunction",
+    "func_type": "JavaFunction",
     "qualname": "org.apache.flink.agents.plan.TestAction",
     "method_name": "legal",
     "parameter_types": [
-      "org.apache.flink.agents.api.Event"
+      "org.apache.flink.agents.api.Event",
+      "org.apache.flink.agents.api.context.RunnerContext"
     ]
   },
   "trigger_conditions": [
-    "_input_event"
+    "org.apache.flink.agents.api.NonExistentEvent"
   ]
 }

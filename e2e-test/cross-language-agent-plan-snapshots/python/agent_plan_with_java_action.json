@@ -12,7 +12,8 @@
         ]
       },
       "trigger_conditions": [
-        "_input_event"
+        "_input_event",
+        "attributes.ready == true"
       ],
       "config": null
     },
@@ -53,23 +54,6 @@
       ],
       "config": null
     }
-  },
-  "actions_by_event": {
-    "_input_event": [
-      "handle"
-    ],
-    "_chat_request_event": [
-      "chat_model_action"
-    ],
-    "_tool_response_event": [
-      "chat_model_action"
-    ],
-    "_tool_request_event": [
-      "tool_call_action"
-    ],
-    "_context_retrieval_request_event": [
-      "context_retrieval_action"
-    ]
   },
   "resource_providers": {},
   "config": {

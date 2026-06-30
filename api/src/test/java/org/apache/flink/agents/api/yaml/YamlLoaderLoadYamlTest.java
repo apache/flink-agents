@@ -22,13 +22,11 @@ import org.apache.flink.agents.api.AgentBuilder;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.configuration.Configuration;
-import org.apache.flink.agents.api.function.Function;
 import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.api.java.functions.KeySelector;
-import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.table.api.Table;
 import org.junit.jupiter.api.Test;
@@ -62,8 +60,8 @@ class YamlLoaderLoadYamlTest {
         Agent a1 = env.getAgents().get("a1");
         Agent a2 = env.getAgents().get("a2");
 
-        Map<String, Tuple3<String[], Function, Map<String, Object>>> a1Actions = a1.getActions();
-        Map<String, Tuple3<String[], Function, Map<String, Object>>> a2Actions = a2.getActions();
+        var a1Actions = a1.getActions();
+        var a2Actions = a2.getActions();
         assertThat(a1Actions).containsKey("shared_inc").containsKey("own_dec");
         assertThat(a2Actions).containsKey("shared_inc");
 

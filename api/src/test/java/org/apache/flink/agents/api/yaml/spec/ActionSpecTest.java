@@ -33,23 +33,29 @@ class ActionSpecTest {
     void minimal() throws Exception {
         ActionSpec spec =
                 M.readValue(
-                        "name: a\nfunction: pkg:fn\ntrigger_conditions: [input]\n",
+                        "name: a\nfunction: pkg:fn\n"
+                                + "trigger_conditions: [input, 'score > 1']\n",
                         ActionSpec.class);
         assertThat(spec.getName()).isEqualTo("a");
         assertThat(spec.getFunction()).isEqualTo("pkg:fn");
-        assertThat(spec.getTriggerConditions()).containsExactly("input");
+        assertThat(spec.getTriggerConditions()).containsExactly("input", "score > 1");
         assertThat(spec.getConfig()).isNull();
         assertThat(spec.getType()).isNull();
     }
 
     @Test
-    void rejectsEmptyTriggerConditions() {
-        assertThatThrownBy(
-                        () ->
-                                M.readValue(
-                                        "name: a\nfunction: x:y\ntrigger_conditions: []\n",
-                                        ActionSpec.class))
-                .hasMessageContaining("trigger_conditions");
+    void preservesInvalidSelectorsForPlan() throws Exception {
+        ActionSpec missing = M.readValue("name: a\nfunction: x:y\n", ActionSpec.class);
+        ActionSpec empty =
+                M.readValue("name: a\nfunction: x:y\ntrigger_conditions: []\n", ActionSpec.class);
+        ActionSpec invalidEntries =
+                M.readValue(
+                        "name: a\nfunction: x:y\ntrigger_conditions: ['  ', null]\n",
+                        ActionSpec.class);
+
+        assertThat(missing.getTriggerConditions()).isEmpty();
+        assertThat(empty.getTriggerConditions()).isEmpty();
+        assertThat(invalidEntries.getTriggerConditions()).containsExactly("  ", null);
     }
 
     @Test
@@ -62,11 +68,23 @@ class ActionSpecTest {
     }
 
     @Test
+    void preservesRawValuesAndOrder() throws Exception {
+        ActionSpec spec =
+                M.readValue(
+                        "name: a\n"
+                                + "function: x:y\n"
+                                + "trigger_conditions: [input, input, ' score > 1 ']\n",
+                        ActionSpec.class);
+        assertThat(spec.getTriggerConditions()).containsExactly("input", "input", " score > 1 ");
+    }
+
+    @Test
     void rejectsUnknownProperty() {
         assertThatThrownBy(
                         () ->
                                 M.readValue(
-                                        "name: a\nfunction: x:y\ntrigger_conditions: [input]\nextra: 1\n",
+                                        "name: a\nfunction: x:y\n"
+                                                + "trigger_conditions: [input]\nextra: 1\n",
                                         ActionSpec.class))
                 .hasMessageContaining("extra");
     }

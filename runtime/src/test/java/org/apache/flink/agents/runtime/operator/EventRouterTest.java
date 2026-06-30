@@ -68,7 +68,7 @@ class EventRouterTest {
         Action action = TestActions.noopAction();
         Map<String, Action> actions = Map.of(action.getName(), action);
         Map<String, List<Action>> byEvent = Map.of(InputEvent.EVENT_TYPE, List.of(action));
-        AgentPlan plan = new AgentPlan(actions, byEvent);
+        AgentPlan plan = new AgentPlan(actions);
 
         EventRouter<Long, Object> router = new EventRouter<>(plan, /* inputIsJava */ true);
 

@@ -55,8 +55,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * wrong required field, additionalProperties strictness mismatch).
  *
  * <p>Reads each {@code $defs} entry from the schema, finds the matching Java class by simple name,
- * and asserts: same property names, same {@code required} set, same {@code additionalProperties}
- * stance. Also checks the top-level document and the {@code MessageRole} enum.
+ * and asserts: same property names, same {@code required} set after explicit Plan-validation
+ * exceptions, same {@code additionalProperties} stance. Also checks the top-level document and the
+ * {@code MessageRole} enum.
  *
  * <p>Counterpart of Python's {@code test_checked_in_schema_matches_pydantic_models} in {@code
  * python/flink_agents/api/yaml/tests/test_specs.py}.
@@ -64,6 +65,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SchemaParityTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * Schema-required fields that the Java YAML DTO intentionally preserves for Plan validation.
+     *
+     * <p>{@link ActionSpec} is a thin registration-layer DTO: missing or empty trigger conditions
+     * must reach {@code AgentPlan}, which applies the same validation path as the programmatic Java
+     * API. The language-neutral YAML contract remains stricter and declares the field required.
+     */
+    private static final Map<String, Set<String>> PLAN_VALIDATED_REQUIRED_FIELDS =
+            Map.of("ActionSpec", Set.of("trigger_conditions"));
 
     /** $defs simple-name → Java spec class. Top-level document handled separately. */
     private static final Map<String, Class<?>> SPEC_CLASSES;
@@ -176,7 +187,10 @@ class SchemaParityTest {
                         .filter(Map.Entry::getValue)
                         .map(Map.Entry::getKey)
                         .collect(Collectors.toSet());
-        assertThat(jacksonRequired)
+        Set<String> effectiveJavaRequired = new HashSet<>(jacksonRequired);
+        effectiveJavaRequired.addAll(
+                PLAN_VALIDATED_REQUIRED_FIELDS.getOrDefault(defName, Set.of()));
+        assertThat(effectiveJavaRequired)
                 .as("%s: required fields drift from schema", defName)
                 .isEqualTo(schemaRequired);
 

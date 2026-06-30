@@ -1,0 +1,280 @@
+{
+  "cases": [
+    {
+      "name": "bare_event_type",
+      "entry": "a",
+      "classification": "event_type",
+      "plan_validation": "pass",
+      "runtime_compilation": "not_applicable",
+      "probe_event_type": "a",
+      "probe_attributes": {},
+      "matches_probe": true
+    },
+    {
+      "name": "bare_dotted_event_type",
+      "entry": "a.b.c",
+      "classification": "event_type",
+      "plan_validation": "pass",
+      "runtime_compilation": "not_applicable",
+      "probe_event_type": "a.b.c",
+      "probe_attributes": {},
+      "matches_probe": true
+    },
+    {
+      "name": "trimmed_event_type",
+      "entry": "  my_event  ",
+      "classification": "event_type",
+      "plan_validation": "pass",
+      "runtime_compilation": "not_applicable",
+      "probe_event_type": "my_event",
+      "probe_attributes": {},
+      "matches_probe": true
+    },
+    {
+      "name": "quoted_routable_event_type",
+      "entry": "'order-created.v1'",
+      "classification": "event_type",
+      "plan_validation": "pass",
+      "runtime_compilation": "not_applicable",
+      "probe_event_type": "order-created.v1",
+      "probe_attributes": {},
+      "matches_probe": true
+    },
+    {
+      "name": "quoted_event_type_non_match",
+      "entry": "\"order-created.v1\"",
+      "classification": "event_type",
+      "plan_validation": "pass",
+      "runtime_compilation": "not_applicable",
+      "probe_event_type": "other",
+      "probe_attributes": {},
+      "matches_probe": false
+    },
+    {
+      "name": "quoted_keyword_event_type",
+      "entry": "'true'",
+      "classification": "event_type",
+      "plan_validation": "pass",
+      "runtime_compilation": "not_applicable",
+      "probe_event_type": "true",
+      "probe_attributes": {},
+      "matches_probe": true
+    },
+    {
+      "name": "bare_in_event_type",
+      "entry": "in",
+      "classification": "event_type",
+      "plan_validation": "pass",
+      "runtime_compilation": "not_applicable",
+      "probe_event_type": "in",
+      "probe_attributes": {},
+      "matches_probe": true
+    },
+    {
+      "name": "escaped_quoted_value",
+      "entry": "\"order\\\"created\"",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "fail",
+      "error_category": "type_check",
+      "runtime_error_fragment": "Boolean result"
+    },
+    {
+      "name": "empty_string_literal",
+      "entry": "''",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "fail",
+      "error_category": "type_check",
+      "runtime_error_fragment": "Boolean result"
+    },
+    {
+      "name": "boolean_true",
+      "entry": "true",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "pass",
+      "probe_event_type": "other",
+      "probe_attributes": {},
+      "matches_probe": true
+    },
+    {
+      "name": "boolean_false",
+      "entry": "false",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "pass",
+      "probe_event_type": "other",
+      "probe_attributes": {},
+      "matches_probe": false
+    },
+    {
+      "name": "event_type_comparison",
+      "entry": "type == EventType.InputEvent",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "pass",
+      "probe_event_type": "_input_event",
+      "probe_attributes": {},
+      "matches_probe": true
+    },
+    {
+      "name": "explicit_boolean_path",
+      "entry": "a.b.c == true",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "pass",
+      "probe_event_type": "other",
+      "probe_attributes": {
+        "a": {
+          "b": {
+            "c": true
+          }
+        }
+      },
+      "matches_probe": true
+    },
+    {
+      "name": "has_macro",
+      "entry": "has(score)",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "pass",
+      "probe_event_type": "other",
+      "probe_attributes": {
+        "score": 7
+      },
+      "matches_probe": true
+    },
+    {
+      "name": "unknown_function",
+      "entry": "noSuchFn(1)",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "fail",
+      "error_category": "type_check",
+      "runtime_error_fragment": "Runtime type-check"
+    },
+    {
+      "name": "dynamic_whole_attributes_index",
+      "entry": "attributes[key_name] == 5",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "fail",
+      "error_category": "referenced_attributes",
+      "runtime_error_fragment": "whole 'attributes' map"
+    },
+    {
+      "name": "standalone_null",
+      "entry": "null",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "fail",
+      "error_category": "type_check",
+      "runtime_error_fragment": "Boolean result"
+    },
+    {
+      "name": "standalone_number",
+      "entry": "42",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "fail",
+      "error_category": "type_check",
+      "runtime_error_fragment": "Boolean result"
+    },
+    {
+      "name": "standalone_event_type_constant",
+      "entry": "EventType.InputEvent",
+      "classification": "expression",
+      "plan_validation": "fail",
+      "runtime_compilation": "not_applicable",
+      "error_category": "unsupported_construct"
+    },
+    {
+      "name": "parenthesized_path",
+      "entry": "(a.b.c)",
+      "classification": "expression",
+      "plan_validation": "fail",
+      "runtime_compilation": "not_applicable",
+      "error_category": "unsupported_construct"
+    },
+    {
+      "name": "spaced_path",
+      "entry": "a . b . c",
+      "classification": "expression",
+      "plan_validation": "fail",
+      "runtime_compilation": "not_applicable",
+      "error_category": "unsupported_construct"
+    },
+    {
+      "name": "invalid_cel",
+      "entry": "type ==",
+      "classification": "expression",
+      "plan_validation": "fail",
+      "runtime_compilation": "not_applicable",
+      "error_category": "syntax"
+    },
+    {
+      "name": "unknown_event_type",
+      "entry": "type == EventType.NotARealEvent",
+      "classification": "expression",
+      "plan_validation": "fail",
+      "runtime_compilation": "not_applicable",
+      "error_category": "unknown_event_type"
+    },
+    {
+      "name": "disallowed_macro",
+      "entry": "[1, 2].all(value, value > 0)",
+      "classification": "expression",
+      "plan_validation": "fail",
+      "runtime_compilation": "not_applicable",
+      "error_category": "unsupported_construct"
+    },
+    {
+      "name": "quoted_name_with_whitespace",
+      "entry": "'order created'",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "fail",
+      "error_category": "type_check",
+      "runtime_error_fragment": "Boolean result"
+    },
+    {
+      "name": "unquoted_extended_name",
+      "entry": "order-created",
+      "classification": "expression",
+      "plan_validation": "pass",
+      "runtime_compilation": "pass",
+      "probe_event_type": "other",
+      "probe_attributes": {"order": 10, "created": 3},
+      "matches_probe": false
+    }
+  ],
+  "ordering_dedupe_type_first": {
+    "probe_event_type": "_input_event",
+    "actions": [
+      {
+        "name": "condition_first_in_plan",
+        "entries": ["type == EventType.InputEvent"]
+      },
+      {
+        "name": "first_type_hit",
+        "entries": [
+          "_input_event",
+          "_input_event",
+          "type == EventType.InputEvent",
+          "type == EventType.InputEvent"
+        ]
+      },
+      {
+        "name": "second_type_hit",
+        "entries": ["'_input_event'"]
+      }
+    ],
+    "expected_matches": [
+      "first_type_hit",
+      "second_type_hit",
+      "condition_first_in_plan"
+    ]
+  }
+}

@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.MCPServer;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -198,7 +199,7 @@ public class AgentPlanTest {
         Action inputAction = agentPlan.getActions().get("handleInputEvent");
         assertThat(inputAction).isNotNull();
         assertThat(inputAction.getName()).isEqualTo("handleInputEvent");
-        assertThat(inputAction.getListenEventTypes()).isEqualTo(List.of(InputEvent.EVENT_TYPE));
+        assertThat(inputAction.getTriggerConditions()).isEqualTo(List.of(InputEvent.EVENT_TYPE));
         assertThat(inputAction.getExec()).isInstanceOf(JavaFunction.class);
 
         // Check that the JavaFunction instance has the correct method/class/params
@@ -211,30 +212,23 @@ public class AgentPlanTest {
         Action multiAction = agentPlan.getActions().get("handleMultipleEvents");
         assertThat(multiAction).isNotNull();
         assertThat(multiAction.getName()).isEqualTo("handleMultipleEvents");
-        assertThat(multiAction.getListenEventTypes())
+        assertThat(multiAction.getTriggerConditions())
                 .isEqualTo(List.of(TestEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE));
         assertThat(multiAction.getExec()).isInstanceOf(JavaFunction.class);
+    }
 
-        // Verify actionsByEvent mapping
-        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(7);
+    @Test
+    public void rejectsInvalidSelectorsDuringPlanConstruction() {
+        for (String[] invalidConditions :
+                List.<String[]>of(new String[0], new String[] {"  "}, new String[] {null})) {
+            Agent agent = new Agent();
+            agent.addAction(
+                    "invalid", invalidConditions, new PythonFunction("pkg", "function"), null);
 
-        // Check InputEvent mapping
-        List<Action> inputEventActions = agentPlan.getActionsByEvent().get(InputEvent.EVENT_TYPE);
-        assertThat(inputEventActions).isNotNull();
-        assertThat(inputEventActions.size()).isEqualTo(1);
-        assertThat(inputEventActions.get(0).getName()).isEqualTo("handleInputEvent");
-
-        // Check TestEvent mapping
-        List<Action> testEventActions = agentPlan.getActionsByEvent().get(TestEvent.EVENT_TYPE);
-        assertThat(testEventActions).isNotNull();
-        assertThat(testEventActions.size()).isEqualTo(1);
-        assertThat(testEventActions.get(0).getName()).isEqualTo("handleMultipleEvents");
-
-        // Check OutputEvent mapping
-        List<Action> outputEventActions = agentPlan.getActionsByEvent().get(OutputEvent.EVENT_TYPE);
-        assertThat(outputEventActions).isNotNull();
-        assertThat(outputEventActions.size()).isEqualTo(1);
-        assertThat(outputEventActions.get(0).getName()).isEqualTo("handleMultipleEvents");
+            assertThat(agent.getActions()).containsKey("invalid");
+            assertThatThrownBy(() -> new AgentPlan(agent))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
     @Test
@@ -249,7 +243,6 @@ public class AgentPlanTest {
 
         // Verify that no actions were collected
         assertThat(agentPlan.getActions().size()).isEqualTo(3);
-        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(4);
     }
 
     @Test
@@ -291,7 +284,7 @@ public class AgentPlanTest {
                 (org.apache.flink.agents.plan.PythonFunction) action.getExec();
         assertThat(exec.getModule()).isEqualTo("my_pkg.handlers");
         assertThat(exec.getQualName()).isEqualTo("handle_input");
-        assertThat(action.getListenEventTypes()).containsExactly(InputEvent.EVENT_TYPE);
+        assertThat(action.getTriggerConditions()).containsExactly(InputEvent.EVENT_TYPE);
     }
 
     /** Plain {@code @Action} (no {@code target}) compiles to a native Java exec. */
@@ -412,14 +405,16 @@ public class AgentPlanTest {
         Assertions.assertEquals(expectedInputAction.getName(), actualInputAction.getName());
         Assertions.assertEquals(expectedInputAction.getExec(), actualInputAction.getExec());
         Assertions.assertEquals(
-                expectedInputAction.getListenEventTypes(), actualInputAction.getListenEventTypes());
+                expectedInputAction.getTriggerConditions(),
+                actualInputAction.getTriggerConditions());
 
         expectedInputAction = expectedPlan.getActions().get("handleMultipleEvents");
         actualInputAction = actualPlan.getActions().get("handleMultipleEvents");
         Assertions.assertEquals(expectedInputAction.getName(), actualInputAction.getName());
         Assertions.assertEquals(expectedInputAction.getExec(), actualInputAction.getExec());
         Assertions.assertEquals(
-                expectedInputAction.getListenEventTypes(), actualInputAction.getListenEventTypes());
+                expectedInputAction.getTriggerConditions(),
+                actualInputAction.getTriggerConditions());
         Assertions.assertEquals(
                 123, actualPlan.getActionConfigValue("handleMultipleEvents", "key"));
     }
