@@ -85,6 +85,13 @@ public class AgentPlan implements Serializable {
     /** Mapping from event type string to list of actions that should be triggered by the event. */
     private Map<String, List<Action>> actionsByEvent;
 
+    /**
+     * Actions with at least one CEL expression — need runtime evaluation, not just the
+     * actionsByEvent map. Transient; rebuilt by {@link #rebuildActionsWithCel()} after
+     * deserialization.
+     */
+    private transient List<Action> actionsWithCel = new ArrayList<>();
+
     /** Two-level mapping of resource type to resource name to resource provider. */
     private Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
 
@@ -95,6 +102,7 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = new HashMap<>();
         this.config = new AgentConfiguration();
+        rebuildActionsWithCel();
     }
 
     public AgentPlan(
@@ -105,6 +113,7 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = resourceProviders;
         this.config = new AgentConfiguration();
+        rebuildActionsWithCel();
     }
 
     public AgentPlan(
@@ -116,6 +125,7 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = resourceProviders;
         this.config = config;
+        rebuildActionsWithCel();
     }
 
     /**
@@ -180,6 +190,7 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = agentPlan.getActionsByEvent();
         this.resourceProviders = agentPlan.getResourceProviders();
         this.config = agentPlan.getConfig();
+        rebuildActionsWithCel();
     }
 
     private void extractActions(
@@ -199,24 +210,51 @@ public class AgentPlan implements Serializable {
 
         // Create an Action
         Action action = new Action(actionName, function, triggerConditions, config);
-
-        // Add to actions map
-        actions.put(action.getName(), action);
-
-        // Add to actionsByEvent map
-        for (String eventTypeName : triggerConditions) {
-            actionsByEvent.computeIfAbsent(eventTypeName, k -> new ArrayList<>()).add(action);
-        }
+        registerAction(action);
     }
 
     private void addBuiltAction(Action action) {
-        // Add to actions map
-        actions.put(action.getName(), action);
+        registerAction(action);
+    }
 
-        // Add to actionsByEvent map
+    /**
+     * Registers an action into both {@link #actions}, {@link #actionsByEvent} (using type-only
+     * entries from {@link Action#getListenEventTypes()}), and {@link #actionsWithCel} if the action
+     * carries any CEL expression.
+     */
+    private void registerAction(Action action) {
+        actions.put(action.getName(), action);
         for (String eventTypeName : action.getListenEventTypes()) {
             actionsByEvent.computeIfAbsent(eventTypeName, k -> new ArrayList<>()).add(action);
         }
+        if (action.hasCelCondition()) {
+            actionsWithCel.add(action);
+        }
+    }
+
+    /**
+     * Rebuilds {@link #actionsWithCel} from {@link #actions}. Used after deserialization (where
+     * actionsWithCel is transient).
+     */
+    private void rebuildActionsWithCel() {
+        if (actionsWithCel == null) {
+            actionsWithCel = new ArrayList<>();
+        } else {
+            actionsWithCel.clear();
+        }
+        if (actions == null) {
+            return;
+        }
+        for (Action action : actions.values()) {
+            if (action.hasCelCondition()) {
+                actionsWithCel.add(action);
+            }
+        }
+    }
+
+    /** Returns the list of actions that require CEL evaluation. */
+    public List<Action> getActionsWithCel() {
+        return actionsWithCel;
     }
 
     private void extractActionsFromAgent(Agent agent) throws Exception {

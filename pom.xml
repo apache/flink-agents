@@ -52,6 +52,7 @@ under the License.
         <assertj.version>3.27.7</assertj.version>
         <mockito.version>5.14.2</mockito.version>
         <bytebuddy.version>1.15.4</bytebuddy.version>
+        <cel.version>0.12.0</cel.version>
         <gpg.useagent>true</gpg.useagent>
         <arguments />
     </properties>
