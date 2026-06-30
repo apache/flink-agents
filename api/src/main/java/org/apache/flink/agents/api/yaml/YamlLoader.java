@@ -321,27 +321,31 @@ public final class YamlLoader {
         for (Path path : paths) {
             LoadedFile loaded = buildAgents(path);
 
-            // Resolve shared-action string refs first so a bad ref doesn't leave partial state on
-            // the env.
             for (Map.Entry<String, Agent> entry : loaded.getAgents().entrySet()) {
                 AgentSpec spec = loaded.getAgentSpecs().get(entry.getKey());
+                List<ActionSpec> orderedActions = new ArrayList<>();
                 for (AgentActionRef ref : spec.getActions()) {
-                    if (!ref.isReference()) {
-                        continue;
+                    ActionSpec actionSpec = ref.getSpec();
+                    if (ref.isReference()) {
+                        actionSpec = loaded.getSharedActions().get(ref.getReference());
+                        if (actionSpec == null) {
+                            throw new IllegalArgumentException(
+                                    "Agent '"
+                                            + entry.getKey()
+                                            + "' references shared action '"
+                                            + ref.getReference()
+                                            + "' in "
+                                            + path
+                                            + ", but no shared action with that name is defined at"
+                                            + " the file level.");
+                        }
                     }
-                    ActionSpec shared = loaded.getSharedActions().get(ref.getReference());
-                    if (shared == null) {
-                        throw new IllegalArgumentException(
-                                "Agent '"
-                                        + entry.getKey()
-                                        + "' references shared action '"
-                                        + ref.getReference()
-                                        + "' in "
-                                        + path
-                                        + ", but no shared action with that name is defined at"
-                                        + " the file level.");
-                    }
-                    addActionToAgent(entry.getValue(), shared);
+                    orderedActions.add(actionSpec);
+                }
+
+                entry.getValue().getActions().clear();
+                for (ActionSpec actionSpec : orderedActions) {
+                    addActionToAgent(entry.getValue(), actionSpec);
                 }
             }
 
@@ -427,7 +431,10 @@ public final class YamlLoader {
         return resolveFunction(action.getName(), action.getFunction(), language, paramTypes);
     }
 
-    /** Register an action on the agent with event aliases resolved. */
+    /**
+     * Registers an action, replacing trigger conditions that exactly match built-in event aliases
+     * while leaving expression conditions unchanged.
+     */
     static void addActionToAgent(Agent agent, ActionSpec action) {
         Function fn = resolveActionFunction(action);
         String[] triggerConditions =

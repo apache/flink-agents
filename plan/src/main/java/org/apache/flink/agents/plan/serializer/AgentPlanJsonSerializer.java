@@ -59,28 +59,6 @@ public class AgentPlanJsonSerializer extends StdSerializer<AgentPlan> {
                         });
         jsonGenerator.writeEndObject();
 
-        // Serialize event trigger actions
-        jsonGenerator.writeFieldName("actions_by_event");
-        jsonGenerator.writeStartObject();
-        agentPlan
-                .getActionsByEvent()
-                .forEach(
-                        (eventClass, actions) -> {
-                            try {
-                                jsonGenerator.writeFieldName(eventClass);
-                                jsonGenerator.writeStartArray();
-                                for (Action action : actions) {
-                                    jsonGenerator.writeString(action.getName());
-                                }
-                                jsonGenerator.writeEndArray();
-                            } catch (IOException e) {
-                                throw new RuntimeException(
-                                        "Error writing event trigger actions for: " + eventClass,
-                                        e);
-                            }
-                        });
-        jsonGenerator.writeEndObject();
-
         // Serialize resource providers
         jsonGenerator.writeFieldName("resource_providers");
         jsonGenerator.writeStartObject();

@@ -72,7 +72,7 @@ class EventRouterTest {
 
         EventRouter<Long, Object> router = new EventRouter<>(plan, /* inputIsJava */ true);
 
-        List<Action> triggered = router.getActionsTriggeredBy(new InputEvent(0L), plan);
+        List<Action> triggered = router.getActionsTriggeredBy(new InputEvent(0L));
 
         assertThat(triggered).containsExactly(action);
     }
