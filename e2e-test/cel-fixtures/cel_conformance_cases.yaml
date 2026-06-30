@@ -1,0 +1,284 @@
+# CEL trigger condition conformance test corpus.
+# Shared by Java (CelConditionEvaluatorTest) and Python (test_cel_pipeline_conformance).
+# Each case is evaluated end-to-end: parse → validate → check → eval (no AST rewriting).
+#
+# Activation contract: type/EventType are framework-owned; attributes is the single-level
+# merge of output.* > root > input.*; merged keys are also promoted to the top level; id is
+# the user attribute when present, else the event UUID.
+
+- name: null_condition_passes
+  condition: null
+  event: { id: abc, type: test, attributes: {} }
+  expected: true
+
+- name: empty_condition_passes
+  condition: ''
+  event: { id: abc, type: test, attributes: {} }
+  expected: true
+
+- name: filter_by_type_match
+  condition: 'type == "_input_event"'
+  event: { id: abc, type: _input_event, attributes: {} }
+  expected: true
+
+- name: filter_by_type_mismatch
+  condition: 'type == "other"'
+  event: { id: abc, type: test, attributes: {} }
+  expected: false
+
+- name: filter_by_id
+  condition: 'id == "550e8400-e29b-41d4-a716-446655440000"'
+  event: { id: '550e8400-e29b-41d4-a716-446655440000', type: test, attributes: {} }
+  expected: true
+
+- name: in_operator_for_map_key
+  condition: '"score" in attributes && attributes["score"] >= 3'
+  event: { id: abc, type: test, attributes: { score: 5 } }
+  expected: true
+
+- name: in_operator_missing_key
+  condition: '"score" in attributes && attributes["score"] >= 3'
+  event: { id: abc, type: test, attributes: {} }
+  expected: false
+
+- name: has_macro_on_map
+  condition: 'has(attributes.score) && attributes.score >= 3'
+  event: { id: abc, type: test, attributes: { score: 5 } }
+  expected: true
+
+- name: has_macro_missing_key
+  condition: 'has(attributes.missing) && attributes.missing == true'
+  event: { id: abc, type: test, attributes: {} }
+  expected: false
+
+- name: nested_map_access
+  condition: 'has(attributes.meta) && attributes.meta.source == "api"'
+  event: { id: abc, type: test, attributes: { meta: { source: api } } }
+  expected: true
+
+- name: combined_type_and_attribute
+  condition: 'type == "review" && has(attributes.score) && attributes.score >= 3'
+  event: { id: abc, type: review, attributes: { score: 4 } }
+  expected: true
+
+- name: boolean_attribute
+  condition: 'has(attributes.success) && attributes.success == true'
+  event: { id: abc, type: test, attributes: { success: true } }
+  expected: true
+
+- name: string_attribute
+  condition: 'has(attributes.model) && attributes.model == "gpt-4"'
+  event: { id: abc, type: _chat_request_event, attributes: { model: gpt-4 } }
+  expected: true
+
+- name: numeric_comparison_less_than
+  condition: 'has(attributes.retry_count) && attributes.retry_count < 3'
+  event: { id: abc, type: test, attributes: { retry_count: 1 } }
+  expected: true
+
+- name: numeric_comparison_fails
+  condition: 'has(attributes.retry_count) && attributes.retry_count < 3'
+  event: { id: abc, type: test, attributes: { retry_count: 5 } }
+  expected: false
+
+- name: json_string_auto_parse_object
+  condition: 'has(attributes.input) && has(attributes.input.id) && attributes.input.id == "B000YFSR4W"'
+  event:
+    id: abc
+    type: _input_event
+    attributes:
+      input: '{"id": "B000YFSR4W", "review": "comfy fit"}'
+  expected: true
+
+- name: json_string_auto_parse_nested_mismatch
+  condition: 'has(attributes.input) && has(attributes.input.id) && attributes.input.id == "OTHER"'
+  event:
+    id: abc
+    type: _input_event
+    attributes:
+      input: '{"id": "B000YFSR4W", "review": "comfy fit"}'
+  expected: false
+
+- name: json_string_auto_parse_array
+  condition: 'has(attributes.tags) && attributes.tags[0] == "sports"'
+  event:
+    id: abc
+    type: test
+    attributes:
+      tags: '["sports", "shoes"]'
+  expected: true
+
+- name: plain_string_not_parsed
+  condition: 'has(attributes.name) && attributes.name == "hello world"'
+  event: { id: abc, type: test, attributes: { name: hello world } }
+  expected: true
+
+- name: invalid_json_string_kept_as_string
+  condition: 'has(attributes.broken) && attributes.broken == "{not json"'
+  event: { id: abc, type: test, attributes: { broken: '{not json' } }
+  expected: true
+
+- name: empty_attributes_has_returns_false
+  condition: 'has(attributes.key)'
+  event: { id: abc, type: test, attributes: {} }
+  expected: false
+
+- name: deeply_nested_json_string_3_levels
+  condition: 'has(attributes.data) && has(attributes.data.order) && attributes.data.order.id == "O100"'
+  event:
+    id: abc
+    type: test
+    attributes:
+      data: '{"order": {"id": "O100", "amount": 500}}'
+  expected: true
+
+- name: numeric_int_equals_int
+  condition: 'has(attributes.count) && attributes.count == 42'
+  event: { id: abc, type: test, attributes: { count: 42 } }
+  expected: true
+
+- name: or_condition_first_branch_true
+  condition: 'has(attributes.a) && attributes.a == 1 || has(attributes.b) && attributes.b == 2'
+  event: { id: abc, type: test, attributes: { a: 1 } }
+  expected: true
+
+- name: or_condition_second_branch_true
+  condition: '(has(attributes.a) && attributes.a == 1) || (has(attributes.b) && attributes.b == 2)'
+  event: { id: abc, type: test, attributes: { b: 2 } }
+  expected: true
+
+- name: dot_chain_deep_nested_access
+  condition: 'has(region.width) && region.width.score >= 80'
+  event: { id: abc, type: test, attributes: { region: { width: { score: 95 } } } }
+  expected: true
+
+- name: dot_chain_deep_nested_mismatch
+  condition: 'has(region.width) && region.width.score >= 80'
+  event: { id: abc, type: test, attributes: { region: { width: { score: 50 } } } }
+  expected: false
+
+- name: dot_chain_six_levels
+  condition: 'has(input.region) && input.region.width.score.month12 == 88'
+  event:
+    id: abc
+    type: test
+    attributes:
+      input: { region: { width: { score: { month12: 88 } } } }
+  expected: true
+
+- name: or_short_circuit_left_true_skips_right_error
+  condition: '(type == "hit") || (attributes.nope.deep > 3)'
+  event: { id: abc, type: hit, attributes: {} }
+  expected: true
+
+- name: and_short_circuit_has_guards_missing_field_access
+  condition: 'has(attributes.missing) && (attributes.missing.deep > 3)'
+  event: { id: abc, type: test, attributes: {} }
+  expected: false
+
+- name: empty_json_object_string_parsed_has_returns_false
+  condition: 'has(attributes.config.missing_key)'
+  event: { id: abc, type: test, attributes: { config: '{}' } }
+  expected: false
+
+- name: nested_json_string_recursively_parsed
+  condition: 'has(attributes.outer.inner) && attributes.outer.inner.id == 1'
+  event:
+    id: abc
+    type: test
+    attributes:
+      outer: '{"inner": "{\"id\": 1}"}'
+  expected: true
+
+- name: event_type_select_expr_folded_to_literal
+  condition: 'type == EventType.InputEvent'
+  event: { id: abc, type: _input_event, attributes: {} }
+  expected: true
+
+- name: int64_max_in_range
+  condition: 'attributes.x == 9223372036854775807'
+  event: { id: abc, type: test, attributes: { x: 9223372036854775807 } }
+  expected: true
+
+# ----- Flattened-activation contract (Method D) -----
+
+- name: bare_root_attribute_access
+  condition: 'score >= 3'
+  event: { id: abc, type: test, attributes: { score: 5 } }
+  expected: true
+
+- name: has_on_bare_attribute_present
+  condition: 'has(score) && score >= 3'
+  event: { id: abc, type: test, attributes: { score: 5 } }
+  expected: true
+
+- name: has_on_bare_attribute_missing
+  condition: 'has(score) && score >= 3'
+  event: { id: abc, type: test, attributes: {} }
+  expected: false
+
+- name: output_subkey_wins_over_root_attribute
+  condition: 'k == "out"'
+  event: { id: abc, type: test, attributes: { k: root, output: { k: out } } }
+  expected: true
+
+- name: root_attribute_wins_over_input_subkey
+  condition: 'k == "root"'
+  event: { id: abc, type: test, attributes: { k: root, input: { k: in } } }
+  expected: true
+
+- name: user_id_attribute_overrides_event_uuid
+  condition: 'id == "tenant-42"'
+  event: { id: abc, type: test, attributes: { id: tenant-42 } }
+  expected: true
+
+- name: framework_type_wins_over_attribute_type
+  condition: 'type == "real"'
+  event: { id: abc, type: real, attributes: { type: fake } }
+  expected: true
+
+- name: attribute_type_still_reachable_via_attributes
+  condition: 'attributes.type == "fake"'
+  event: { id: abc, type: real, attributes: { type: fake } }
+  expected: true
+
+- name: flatten_is_single_level_only
+  condition: 'mylist.name == "x"'
+  event: { id: abc, type: test, attributes: { mylist: { name: x } } }
+  expected: true
+
+- name: event_type_constant_combined_with_bare_attribute
+  condition: 'type == EventType.InputEvent && score > 0.8'
+  event: { id: abc, type: _input_event, attributes: { score: 0.9 } }
+  expected: true
+
+# ----- Nested has() short-circuit (has(a.b.c) desugaring) -----
+# has(a.b.c) desugars to has(a) && has(a.b) && has(a.b.c): a missing intermediate (or a
+# wholly-absent root) short-circuits to false in BOTH engines, never throwing "no such key".
+# Without this, cel-java threw on the intermediate select and WARN_AND_SKIP turned it into a
+# silent missed trigger, while cel-python returned false — a cross-language divergence.
+
+- name: has_nested_intermediate_missing_returns_false
+  condition: 'has(attributes.meta.source)'
+  event: { id: abc, type: test, attributes: {} }
+  expected: false
+
+- name: has_nested_deep_all_present
+  condition: 'has(attributes.meta.source)'
+  event: { id: abc, type: test, attributes: { meta: { source: api } } }
+  expected: true
+
+- name: has_nested_guard_then_access
+  condition: 'has(attributes.meta.source) && attributes.meta.source == "api"'
+  event: { id: abc, type: test, attributes: { meta: { source: api } } }
+  expected: true
+
+- name: has_bare_root_nested_intermediate_missing_returns_false
+  condition: 'has(value.user.tier)'
+  event: { id: abc, type: test, attributes: { value: { other: 1 } } }
+  expected: false
+
+- name: has_bare_root_nested_wholly_absent_returns_false
+  condition: 'has(value.user.tier)'
+  event: { id: abc, type: test, attributes: {} }
+  expected: false
