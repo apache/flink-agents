@@ -65,6 +65,12 @@ public final class ResourceName {
         public static final String BEDROCK_SETUP =
                 "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup";
 
+        // Gemini
+        public static final String GEMINI_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.gemini.GeminiChatModelConnection";
+        public static final String GEMINI_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.gemini.GeminiChatModelSetup";
+
         // Ollama
         public static final String OLLAMA_CONNECTION =
                 "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection";

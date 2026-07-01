@@ -280,6 +280,10 @@ class ResourceName:
             BEDROCK_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelConnection"
             BEDROCK_SETUP = "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup"
 
+            # Gemini
+            GEMINI_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.gemini.GeminiChatModelConnection"
+            GEMINI_SETUP = "org.apache.flink.agents.integrations.chatmodels.gemini.GeminiChatModelSetup"
+
             # Ollama
             OLLAMA_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection"
             OLLAMA_SETUP = "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup"
