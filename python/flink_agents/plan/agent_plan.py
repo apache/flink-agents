@@ -328,8 +328,6 @@ def _to_plan_function(func: ApiFunction) -> PythonFunction | JavaFunction:
     raise TypeError(msg)
 
 
-
-
 def _get_resource_providers(
     agent: Agent, config: AgentConfiguration
 ) -> List[ResourceProvider]:
@@ -359,16 +357,21 @@ def _get_resource_providers(
                     )
 
         elif hasattr(value, "_is_tool"):
+            injected_args = getattr(value, "_injected_args", None)
             if isinstance(value, staticmethod):
                 value = value.__func__
+                injected_args = injected_args or getattr(value, "_injected_args", None)
 
             if callable(value):
                 # TODO: support other tool type.
-                tool = Tool.from_callable(func=value)
+                tool = Tool.from_callable(func=value, injected_args=injected_args)
                 resource_providers.append(
                     PythonSerializableResourceProvider.from_resource(
                         name=name,
-                        resource=FunctionTool(func=_to_plan_function(tool.func)),
+                        resource=FunctionTool(
+                            func=_to_plan_function(tool.func),
+                            injected_args=dict(tool.injected_args),
+                        ),
                     )
                 )
         elif hasattr(value, "_is_prompt"):
@@ -402,7 +405,10 @@ def _get_resource_providers(
             PythonSerializableResourceProvider.from_resource(
                 name=name,
                 resource=(
-                    FunctionTool(func=_to_plan_function(tool.func))
+                    FunctionTool(
+                        func=_to_plan_function(tool.func),
+                        injected_args=dict(tool.injected_args),
+                    )
                     if isinstance(tool, ApiFunctionTool)
                     else tool
                 ),

@@ -152,7 +152,7 @@ public final class YamlLoader {
         Function fn =
                 resolveFunction(
                         spec.getName(), spec.getFunction(), language, spec.getParameterTypes());
-        return new FunctionTool(fn);
+        return new FunctionTool(fn, spec.getInjectedArgs());
     }
 
     /** Build a {@link Prompt} from a parsed {@link PromptSpec}. */

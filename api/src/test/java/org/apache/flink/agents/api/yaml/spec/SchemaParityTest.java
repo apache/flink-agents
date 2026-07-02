@@ -25,6 +25,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
+import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -76,6 +78,7 @@ class SchemaParityTest {
         m.put("SkillsSpec", SkillsSpec.class);
         m.put("PackageSkillSpec", PackageSkillSpec.class);
         m.put("ToolSpec", ToolSpec.class);
+        m.put("InjectedArg", ToolParameterInjection.class);
         SPEC_CLASSES = Map.copyOf(m);
     }
 
@@ -94,6 +97,10 @@ class SchemaParityTest {
                 assertMessageRoleEnum(def);
                 continue;
             }
+            if ("ToolParameterSource".equals(name)) {
+                assertToolParameterSourceEnum(def);
+                continue;
+            }
             Class<?> javaClass = SPEC_CLASSES.get(name);
             assertThat(javaClass).as("no Java spec for $defs/%s", name).isNotNull();
             assertDefMatchesClass(name, def, javaClass);
@@ -102,6 +109,7 @@ class SchemaParityTest {
         // Every Java spec in the map must have appeared in $defs.
         Set<String> expectedSchemaDefs = new HashSet<>(SPEC_CLASSES.keySet());
         expectedSchemaDefs.add("MessageRole");
+        expectedSchemaDefs.add("ToolParameterSource");
         assertThat(seen).as("$defs entries").isEqualTo(expectedSchemaDefs);
 
         // Top-level YAML document.
@@ -118,6 +126,18 @@ class SchemaParityTest {
                         .map(MessageRole::getValue)
                         .collect(Collectors.toSet());
         assertThat(schemaValues).as("MessageRole enum values").isEqualTo(javaValues);
+    }
+
+    private static void assertToolParameterSourceEnum(JsonNode def) {
+        Set<String> schemaValues = new HashSet<>();
+        for (JsonNode v : def.get("enum")) {
+            schemaValues.add(v.asText());
+        }
+        Set<String> javaValues =
+                Arrays.stream(ToolParameterSource.values())
+                        .map(ToolParameterSource::getValue)
+                        .collect(Collectors.toSet());
+        assertThat(schemaValues).as("ToolParameterSource enum values").isEqualTo(javaValues);
     }
 
     private static void assertDefMatchesClass(String defName, JsonNode def, Class<?> clz) {

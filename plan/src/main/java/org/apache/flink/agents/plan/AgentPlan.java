@@ -22,7 +22,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.agents.Agent;
-import org.apache.flink.agents.api.annotation.*;
+import org.apache.flink.agents.api.annotation.ChatModelConnection;
+import org.apache.flink.agents.api.annotation.ChatModelSetup;
+import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
+import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
+import org.apache.flink.agents.api.annotation.MCPServer;
+import org.apache.flink.agents.api.annotation.Prompt;
+import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.annotation.VectorStore;
+import org.apache.flink.agents.api.function.JavaFunctionUtils;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -31,6 +39,8 @@ import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
+import org.apache.flink.agents.api.tools.ToolParameterInjectionValidator;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ContextRetrievalAction;
@@ -343,7 +353,8 @@ public class AgentPlan implements Serializable {
         JavaFunction javaFunction =
                 new JavaFunction(method.getDeclaringClass(), method.getName(), paramTypes);
 
-        FunctionTool tool = new FunctionTool(metadata, javaFunction);
+        FunctionTool tool =
+                new FunctionTool(metadata, javaFunction, FunctionTool.getInjectedArgs(method));
         JavaSerializableResourceProvider provider =
                 JavaSerializableResourceProvider.createResourceProvider(name, TOOL, tool);
 
@@ -658,11 +669,9 @@ public class AgentPlan implements Serializable {
         if (f instanceof org.apache.flink.agents.api.function.JavaFunction) {
             org.apache.flink.agents.api.function.JavaFunction jf =
                     (org.apache.flink.agents.api.function.JavaFunction) f;
-            Class<?>[] params = resolveParameterTypes(jf.getParameterTypes());
-            Class<?> clazz =
-                    Class.forName(
-                            jf.getQualName(), true, Thread.currentThread().getContextClassLoader());
-            return new org.apache.flink.agents.plan.JavaFunction(clazz, jf.getMethodName(), params);
+            Method method = JavaFunctionUtils.resolveMethod(jf);
+            return new org.apache.flink.agents.plan.JavaFunction(
+                    method.getDeclaringClass(), method.getName(), method.getParameterTypes());
         }
         if (f instanceof org.apache.flink.agents.api.function.PythonFunction) {
             org.apache.flink.agents.api.function.PythonFunction pf =
@@ -671,40 +680,6 @@ public class AgentPlan implements Serializable {
                     pf.getModule(), pf.getQualName());
         }
         throw new IllegalStateException("Unknown api.function.Function: " + f);
-    }
-
-    private static Class<?>[] resolveParameterTypes(List<String> names)
-            throws ClassNotFoundException {
-        Class<?>[] out = new Class<?>[names.size()];
-        for (int i = 0; i < names.size(); i++) {
-            out[i] = resolveParameterType(names.get(i));
-        }
-        return out;
-    }
-
-    private static Class<?> resolveParameterType(String name) throws ClassNotFoundException {
-        switch (name) {
-            case "boolean":
-                return boolean.class;
-            case "byte":
-                return byte.class;
-            case "short":
-                return short.class;
-            case "int":
-                return int.class;
-            case "long":
-                return long.class;
-            case "float":
-                return float.class;
-            case "double":
-                return double.class;
-            case "char":
-                return char.class;
-            case "void":
-                return void.class;
-            default:
-                return Class.forName(name, true, Thread.currentThread().getContextClassLoader());
-        }
     }
 
     /**
@@ -718,15 +693,21 @@ public class AgentPlan implements Serializable {
         if (func instanceof org.apache.flink.agents.api.function.JavaFunction) {
             org.apache.flink.agents.api.function.JavaFunction jf =
                     (org.apache.flink.agents.api.function.JavaFunction) func;
-            Class<?>[] params = resolveParameterTypes(jf.getParameterTypes());
-            Class<?> clazz =
-                    Class.forName(
-                            jf.getQualName(), true, Thread.currentThread().getContextClassLoader());
-            Method method = clazz.getMethod(jf.getMethodName(), params);
-            ToolMetadata metadata = ToolMetadataFactory.fromStaticMethod(method);
+            Method method = JavaFunctionUtils.resolveMethod(jf);
+            Map<String, ToolParameterInjection> injectedArgs =
+                    mergeInjectedArgs(
+                            FunctionTool.getInjectedArgs(method),
+                            apiTool.getInjectedArgs(),
+                            resourceName);
+            ToolParameterInjectionValidator.validate(func, injectedArgs, resourceName);
+            ToolMetadata metadata =
+                    ToolMetadataFactory.fromStaticMethod(method, injectedArgs.keySet());
             org.apache.flink.agents.plan.JavaFunction planFunc =
-                    new org.apache.flink.agents.plan.JavaFunction(clazz, method.getName(), params);
-            FunctionTool tool = new FunctionTool(metadata, planFunc);
+                    new org.apache.flink.agents.plan.JavaFunction(
+                            method.getDeclaringClass(),
+                            method.getName(),
+                            method.getParameterTypes());
+            FunctionTool tool = new FunctionTool(metadata, planFunc, injectedArgs);
             addResourceProvider(
                     JavaSerializableResourceProvider.createResourceProvider(
                             resourceName, TOOL, tool));
@@ -739,7 +720,7 @@ public class AgentPlan implements Serializable {
             // Placeholder metadata: ResourceCache will replace it with introspected values from
             // the Python bridge via FunctionTool.setPythonResourceAdapter at first resolve.
             ToolMetadata metadata = new ToolMetadata(resourceName, "", "{}");
-            FunctionTool tool = new FunctionTool(metadata, planFunc);
+            FunctionTool tool = new FunctionTool(metadata, planFunc, apiTool.getInjectedArgs());
             addResourceProvider(
                     JavaSerializableResourceProvider.createResourceProvider(
                             resourceName, TOOL, tool));
@@ -747,5 +728,31 @@ public class AgentPlan implements Serializable {
             throw new IllegalStateException(
                     "Unknown api.function.Function for tool '" + resourceName + "': " + func);
         }
+    }
+
+    private static Map<String, ToolParameterInjection> mergeInjectedArgs(
+            Map<String, ToolParameterInjection> annotatedArgs,
+            Map<String, ToolParameterInjection> declaredArgs,
+            String resourceName) {
+        Map<String, ToolParameterInjection> merged = new LinkedHashMap<>();
+        if (annotatedArgs != null) {
+            merged.putAll(annotatedArgs);
+        }
+        if (declaredArgs != null) {
+            declaredArgs.forEach(
+                    (name, injection) -> {
+                        ToolParameterInjection existing = merged.get(name);
+                        if (existing != null && !existing.equals(injection)) {
+                            throw new IllegalArgumentException(
+                                    "Tool '"
+                                            + resourceName
+                                            + "': injected_args conflict for parameter '"
+                                            + name
+                                            + "' between @ToolParam and descriptor.");
+                        }
+                        merged.put(name, injection);
+                    });
+        }
+        return Map.copyOf(merged);
     }
 }

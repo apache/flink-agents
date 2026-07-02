@@ -20,6 +20,7 @@ package org.apache.flink.agents.api.yaml.spec;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.yaml.Language;
 import org.junit.jupiter.api.Test;
 
@@ -36,6 +37,7 @@ class ToolSpecTest {
         assertThat(spec.getFunction()).isEqualTo("pkg:fn");
         assertThat(spec.getType()).isNull();
         assertThat(spec.getParameterTypes()).isNull();
+        assertThat(spec.getInjectedArgs()).isEmpty();
     }
 
     @Test
@@ -48,6 +50,50 @@ class ToolSpecTest {
         ToolSpec spec = M.readValue(yaml, ToolSpec.class);
         assertThat(spec.getType()).isEqualTo(Language.JAVA);
         assertThat(spec.getParameterTypes()).containsExactly("int", "java.lang.String");
+    }
+
+    @Test
+    void rejectsListInjectedArgs() {
+        assertThatThrownBy(
+                        () ->
+                                M.readValue(
+                                        "name: t\nfunction: pkg:fn\ninjected_args: [tenant_id]\n",
+                                        ToolSpec.class))
+                .hasMessageContaining("'injected_args' must be an object.");
+    }
+
+    @Test
+    void toolWithDeclarativeInjectedArgs() throws Exception {
+        ToolSpec spec =
+                M.readValue(
+                        "name: t\n"
+                                + "function: pkg:fn\n"
+                                + "injected_args:\n"
+                                + "  tenant_id:\n"
+                                + "    source: config\n"
+                                + "    key: tenant.id\n",
+                        ToolSpec.class);
+        assertThat(spec.getInjectedArgs())
+                .containsExactlyEntriesOf(
+                        java.util.Map.of(
+                                "tenant_id", ToolParameterInjection.fromConfig("tenant.id")));
+    }
+
+    @Test
+    void toolWithInjectedArgsDefaultsSourceToSensoryMemory() throws Exception {
+        ToolSpec spec =
+                M.readValue(
+                        "name: t\n"
+                                + "function: pkg:fn\n"
+                                + "injected_args:\n"
+                                + "  tenant_id:\n"
+                                + "    key: request.tenant_id\n",
+                        ToolSpec.class);
+        assertThat(spec.getInjectedArgs())
+                .containsExactlyEntriesOf(
+                        java.util.Map.of(
+                                "tenant_id",
+                                ToolParameterInjection.fromSensoryMemory("request.tenant_id")));
     }
 
     @Test

@@ -366,12 +366,9 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(Boolean.TRUE, boolResp.getResult());
         assertTrue(boolResp.isSuccess());
 
-        // Remaining shape gap: Python's ToolResponseEvent model has no top-level success/error/
-        // timestamp maps (those live inside each ToolResponse on the Java side). Pin it so the
-        // divergence stays visible.
         Map<String, Object> attrs = typed.getAttributes();
-        assertFalse(attrs.containsKey("success"));
-        assertFalse(attrs.containsKey("error"));
+        assertEquals(Boolean.TRUE, typed.getSuccess().get(FIXED_TOOL_CALL_ID));
+        assertTrue(typed.getError().isEmpty());
         assertFalse(attrs.containsKey("timestamp"));
     }
 

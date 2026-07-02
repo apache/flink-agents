@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import importlib
+import json
 import typing
 from typing import Any, Dict
 
@@ -126,20 +127,25 @@ def from_java_tool(j_tool: Any) -> JavaTool:
     return JavaTool(metadata=metadata)
 
 
-def get_python_tool_metadata(module: str, qual_name: str) -> Dict[str, str]:
+def get_python_tool_metadata(
+    module: str, qual_name: str, injected_args: list[str] | None = None
+) -> Dict[str, str]:
     """Introspect a Python callable into the flat tool-metadata shape expected by
     the Java-side ``PythonResourceAdapter.getPythonToolMetadata``.
 
     Mirrors the Python side's eager-metadata derivation for
-    ``PythonFunction``-backed ``FunctionTool``s. Returns the same three-key shape
-    ``JavaResourceAdapter.getJavaToolMetadata`` returns in the reverse direction
-    so the Java side can rebuild ``ToolMetadata`` from String fields only —
-    avoiding pemja's SIGSEGV when wrapping arbitrary Python objects on non-main
+    ``PythonFunction``-backed ``FunctionTool``s. Returns the same flat String map
+    shape ``JavaResourceAdapter.getJavaToolMetadata`` returns in the reverse
+    direction, with ``name``, ``description``, ``inputSchema``, and optional
+    ``injectedArgs`` JSON. The Java side rebuilds ``ToolMetadata`` and merges
+    callable-declared injected args from these String fields only, avoiding
+    pemja's SIGSEGV when wrapping arbitrary Python objects on non-main
     interpreter threads.
     """
     from docstring_parser import parse
 
     from flink_agents.api.function import PythonFunction
+    from flink_agents.api.tools.tool_parameter_injection import normalize_injected_args
     from flink_agents.api.tools.utils import (
         create_java_tool_schema_str_from_model,
         create_schema_from_function,
@@ -149,9 +155,26 @@ def get_python_tool_metadata(module: str, qual_name: str) -> Dict[str, str]:
     callable_ = descriptor.as_callable()
     name = callable_.__name__
     description = (parse(callable_.__doc__).description or "") if callable_.__doc__ else ""
-    args_schema_model = create_schema_from_function(name, callable_)
+    callable_injected_args = normalize_injected_args(
+        getattr(callable_, "_injected_args", None)
+    )
+    hidden_args = set(injected_args or ()) | set(callable_injected_args)
+    args_schema_model = create_schema_from_function(
+        name, callable_, injected_args=hidden_args
+    )
     input_schema = create_java_tool_schema_str_from_model(args_schema_model)
-    return {"name": name, "description": description, "inputSchema": input_schema}
+    return {
+        "name": name,
+        "description": description,
+        "inputSchema": input_schema,
+        "injectedArgs": _dump_injected_args(callable_injected_args),
+    }
+
+
+def _dump_injected_args(injected_args: Dict[str, Any]) -> str:
+    return json.dumps(
+        {name: spec.model_dump(mode="json") for name, spec in injected_args.items()}
+    )
 
 
 def invoke_python_tool(

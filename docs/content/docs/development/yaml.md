@@ -137,6 +137,7 @@ prompts:
 | `function` | yes | Fully-qualified callable in the form `<module-or-class>:<qualname>`. See [Function references](#function-references). |
 | `type` | no | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
 | `parameter_types` | java only | Required for Java tools — one Java type FQN per declared parameter, in order. Forbidden for Python tools (the signature is reflected from the callable). |
+| `injected_args` | no | Tool arguments injected by the framework at execution time. Declare a map from tool parameter name to `{source, key}`. These arguments are hidden from the model-facing tool schema. |
 
 ```yaml
 tools:
@@ -153,6 +154,58 @@ tools:
     type: java
     function: com.example.MyTools:add
     parameter_types: [java.lang.Integer, java.lang.Integer]
+```
+
+To hide framework-owned arguments from the model, declare them in `injected_args` and bind each argument to a runtime source:
+
+```yaml
+agents:
+  - name: order_agent
+    tools:
+      - name: query_order
+        function: my_pkg.tools:query_order
+        injected_args:
+          tenant_id:
+            source: config
+            key: tenant_id
+```
+
+The supported `source` values are `config`, `sensory_memory`, and `short_term_memory`. If omitted, `source` defaults to `sensory_memory`. For `config`, `key` is read from the agent execution environment configuration. For memory sources, `key` is the memory path.
+
+For Java tools loaded from YAML, the `injected_args` entry itself marks the parameter
+as framework-injected and hides it from the model-facing schema. The Java method may
+use `@ToolParam(name = "...")` to provide stable parameter names, but it does not need
+`@ToolParam(injected = true)` when injection is declared in YAML.
+If both YAML and the tool function declare the same injected parameter, they must use
+the same source and key; conflicting declarations fail during agent plan construction.
+
+Per-request values, such as a trace id written to sensory memory before tool execution, can be injected the same way:
+
+```yaml
+agents:
+  - name: traced_order_agent
+    tools:
+      - name: lookup_order
+        function: my_pkg.tools:lookup_order
+        injected_args:
+          trace_id:
+            source: sensory_memory
+            key: request.trace_id
+```
+
+```yaml
+# Java-loaded YAML
+agents:
+  - name: java_order_agent
+    tools:
+      - name: queryOrder
+        type: java
+        function: com.example.OrderTools:queryOrder
+        parameter_types: [java.lang.String, java.lang.String]
+        injected_args:
+          tenant_id:
+            source: config
+            key: tenant_id
 ```
 
 **Skills** — bundles of agent skill assets loaded from one or more sources. At least one of `paths` / `urls` / `classpath` / `package` must be non-empty; multiple sources can coexist.

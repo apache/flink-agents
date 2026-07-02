@@ -29,6 +29,11 @@ from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from flink_agents.api.tools.tool_parameter_injection import (
+    InjectedArg,
+    normalize_injected_args,
+)
+
 Language = Literal["python", "java"]
 """Implementation language of a YAML-declared resource, action, or tool."""
 
@@ -121,6 +126,15 @@ class ToolSpec(BaseModel):
     function: str | None = None
     type: Language | None = None
     parameter_types: List[str] | None = None
+    injected_args: Dict[str, InjectedArg | dict] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_injected_args(cls, data: dict) -> dict:
+        if isinstance(data, dict) and "injected_args" in data:
+            data = dict(data)
+            data["injected_args"] = normalize_injected_args(data["injected_args"])
+        return data
 
 
 class PackageSkillSpec(BaseModel):

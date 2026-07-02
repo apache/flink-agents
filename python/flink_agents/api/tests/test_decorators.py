@@ -17,11 +17,12 @@
 #################################################################################
 import pytest
 
-from flink_agents.api.decorators import action
+from flink_agents.api.decorators import action, tool
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.function import JavaFunction, PythonFunction
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.tools import InjectedArg
 
 
 def test_action_decorator() -> None:
@@ -169,3 +170,65 @@ def test_action_decorator_target_error_names_decorated_function() -> None:
         @action(EventType.InputEvent, target=bad)
         def my_named_stub(event: Event, ctx: RunnerContext) -> None:
             pass
+
+
+def test_tool_decorator_supports_injected_args() -> None:
+    @tool(injected_args={"tenant_id": InjectedArg.from_config("tenant_id")})
+    def query_order(order_id: str, tenant_id: str) -> str:
+        return f"{tenant_id}:{order_id}"
+
+    assert query_order._is_tool is True
+    assert query_order._injected_args == {"tenant_id": InjectedArg.from_config("tenant_id")}
+
+
+def test_tool_decorator_defaults_injected_arg_source_to_sensory_memory() -> None:
+    @tool(injected_args={"tenant_id": {"key": "request.tenant_id"}})
+    def query_order(order_id: str, tenant_id: str) -> str:
+        return f"{tenant_id}:{order_id}"
+
+    assert query_order._injected_args == {
+        "tenant_id": InjectedArg.from_sensory_memory("request.tenant_id")
+    }
+
+
+def test_tool_decorator_rejects_unknown_injected_arg_name() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Injected tool parameter\\(s\\) tenent_id do not match function",
+    ):
+
+        @tool(injected_args={"tenent_id": InjectedArg.from_config("tenant_id")})
+        def query_order(order_id: str, tenant_id: str) -> str:
+            return f"{tenant_id}:{order_id}"
+
+
+def test_tool_decorator_allows_injected_arg_with_kwargs() -> None:
+    @tool(injected_args={"tenant_id": InjectedArg.from_config("tenant_id")})
+    def query_order(order_id: str, **kwargs: str) -> str:
+        return f"{kwargs['tenant_id']}:{order_id}"
+
+    assert query_order._injected_args == {"tenant_id": InjectedArg.from_config("tenant_id")}
+
+
+def test_tool_decorator_rejects_list_injected_args() -> None:
+    with pytest.raises(TypeError, match="'injected_args' must be a dict"):
+
+        @tool(injected_args=["tenant_id"])
+        def query_order(order_id: str, tenant_id: str) -> str:
+            return f"{tenant_id}:{order_id}"
+
+
+def test_tool_decorator_rejects_string_injected_arg_spec() -> None:
+    with pytest.raises(TypeError, match="Unsupported injected arg spec"):
+
+        @tool(injected_args={"tenant_id": "tenant.id"})
+        def query_order(order_id: str, tenant_id: str) -> str:
+            return f"{tenant_id}:{order_id}"
+
+
+def test_tool_decorator_rejects_invalid_injected_arg_spec() -> None:
+    with pytest.raises(TypeError, match="Unsupported injected arg spec"):
+
+        @tool(injected_args={"tenant_id": 1})
+        def query_order(order_id: str, tenant_id: str) -> str:
+            return f"{tenant_id}:{order_id}"

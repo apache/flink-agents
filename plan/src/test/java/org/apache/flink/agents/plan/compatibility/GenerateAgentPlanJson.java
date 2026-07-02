@@ -23,7 +23,10 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
+import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.apache.flink.agents.plan.AgentPlan;
 
 import java.io.BufferedWriter;
@@ -56,6 +59,19 @@ public class GenerateAgentPlanJson {
         @Action({EventType.InputEvent, MyEvent.EVENT_TYPE})
         public void secondAction(Event event, RunnerContext context) {
             // Test action implementation
+        }
+
+        @Tool
+        public static int add(
+                @ToolParam(name = "a", description = "The first operand") int a,
+                @ToolParam(name = "b", description = "The second operand") int b,
+                @ToolParam(
+                                name = "tenant_id",
+                                injected = true,
+                                source = ToolParameterSource.CONFIG,
+                                key = "tenant.id")
+                        String tenantId) {
+            return a + b;
         }
     }
 

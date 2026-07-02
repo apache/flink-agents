@@ -26,6 +26,8 @@ import org.apache.flink.agents.api.tools.ToolMetadata;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.Collection;
+import java.util.Set;
 
 /**
  * Plan-level utility for creating ToolMetadata from annotated methods. it handles the
@@ -35,6 +37,11 @@ public class ToolMetadataFactory {
 
     /** Create ToolMetadata from a static method annotated with @Tool. */
     public static ToolMetadata fromStaticMethod(Method method) throws JsonProcessingException {
+        return fromStaticMethod(method, Set.of());
+    }
+
+    public static ToolMetadata fromStaticMethod(
+            Method method, Collection<String> injectedParamNames) throws JsonProcessingException {
         if (!Modifier.isStatic(method.getModifiers())) {
             throw new IllegalArgumentException("Only static methods are supported");
         }
@@ -46,7 +53,7 @@ public class ToolMetadataFactory {
 
         String name = method.getName();
         String description = toolAnnotation.description();
-        String schema = SchemaUtils.generateSchema(method);
+        String schema = SchemaUtils.generateSchema(method, injectedParamNames);
 
         return new ToolMetadata(name, description, schema);
     }

@@ -25,6 +25,7 @@ from flink_agents.api.events.event import Event
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.tools import InjectedArg
 
 
 class MyEvent(Event):
@@ -75,9 +76,9 @@ class PythonAgentPlanCompatibilityTestAgent(Agent):
             model="mock-model",
         )
 
-    @tool
+    @tool(injected_args={"tenant_id": InjectedArg.from_config("tenant.id")})
     @staticmethod
-    def add(a: int, b: int) -> int:
+    def add(a: int, b: int, tenant_id: str) -> int:
         """Calculate the sum of a and b.
 
         Parameters
@@ -86,6 +87,8 @@ class PythonAgentPlanCompatibilityTestAgent(Agent):
             The first operand
         b : int
             The second operand
+        tenant_id : str
+            The injected tenant id
 
         Returns:
         -------

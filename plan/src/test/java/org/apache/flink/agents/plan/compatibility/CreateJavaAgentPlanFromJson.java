@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -184,6 +185,9 @@ public class CreateJavaAgentPlanFromJson {
         metadata.put("args_schema", argsSchema);
 
         serialized.put("metadata", metadata);
+        serialized.put(
+                "injected_args",
+                Map.of("tenant_id", Map.of("source", "config", "key", "tenant.id")));
 
         Map<String, String> func = new HashMap<>();
         func.put("func_type", "PythonFunction");
@@ -200,13 +204,40 @@ public class CreateJavaAgentPlanFromJson {
                         "FunctionTool",
                         serialized);
 
-        Map<ResourceType, Map<String, ResourceProvider>> resourceProviders = new HashMap<>();
         Map<String, ResourceProvider> chatModels = new HashMap<>();
-        Map<String, ResourceProvider> tools = new HashMap<>();
         chatModels.put("chat_model", resourceProvider);
-        tools.put("add", serializableResourceProvider);
-        resourceProviders.put(ResourceType.CHAT_MODEL, chatModels);
-        resourceProviders.put(ResourceType.TOOL, tools);
-        assertEquals(resourceProviders, agentPlan.getResourceProviders());
+        assertEquals(chatModels, agentPlan.getResourceProviders().get(ResourceType.CHAT_MODEL));
+
+        ResourceProvider actualToolProvider =
+                agentPlan.getResourceProviders().get(ResourceType.TOOL).get("add");
+        assertInstanceOf(PythonSerializableResourceProvider.class, actualToolProvider);
+        PythonSerializableResourceProvider actualSerializableToolProvider =
+                (PythonSerializableResourceProvider) actualToolProvider;
+        assertEquals(
+                serializableResourceProvider.getName(), actualSerializableToolProvider.getName());
+        assertEquals(
+                serializableResourceProvider.getType(), actualSerializableToolProvider.getType());
+        assertEquals(
+                serializableResourceProvider.getModule(),
+                actualSerializableToolProvider.getModule());
+        assertEquals(
+                serializableResourceProvider.getClazz(), actualSerializableToolProvider.getClazz());
+
+        Map<String, Object> actualSerialized = actualSerializableToolProvider.getSerialized();
+        Map<String, Object> actualMetadata = (Map<String, Object>) actualSerialized.get("metadata");
+        Map<String, Object> actualArgsSchema =
+                (Map<String, Object>) actualMetadata.get("args_schema");
+        Map<String, Object> actualProperties =
+                (Map<String, Object>) actualArgsSchema.get("properties");
+        assertTrue(actualProperties.containsKey("a"));
+        assertTrue(actualProperties.containsKey("b"));
+        assertFalse(actualProperties.containsKey("tenant_id"));
+
+        Map<String, Object> actualInjectedArgs =
+                (Map<String, Object>) actualSerialized.get("injected_args");
+        Map<String, Object> tenantInjection =
+                (Map<String, Object>) actualInjectedArgs.get("tenant_id");
+        assertEquals("config", tenantInjection.get("source"));
+        assertEquals("tenant.id", tenantInjection.get("key"));
     }
 }

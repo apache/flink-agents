@@ -24,6 +24,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
 import java.lang.reflect.Method;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -34,9 +36,15 @@ import java.util.Objects;
 public class FunctionTool extends SerializableResource {
 
     private final Function func;
+    private final Map<String, ToolParameterInjection> injectedArgs;
 
     public FunctionTool(Function func) {
+        this(func, Map.of());
+    }
+
+    public FunctionTool(Function func, Map<String, ToolParameterInjection> injectedArgs) {
         this.func = Objects.requireNonNull(func, "func");
+        this.injectedArgs = normalizeInjectedArgs(injectedArgs);
     }
 
     /** Convenience factory: derive a {@link JavaFunction} from a reflected method. */
@@ -46,6 +54,19 @@ public class FunctionTool extends SerializableResource {
 
     public Function getFunc() {
         return func;
+    }
+
+    public Map<String, ToolParameterInjection> getInjectedArgs() {
+        return injectedArgs;
+    }
+
+    private static Map<String, ToolParameterInjection> normalizeInjectedArgs(
+            Map<String, ToolParameterInjection> injectedArgs) {
+        Map<String, ToolParameterInjection> result = new LinkedHashMap<>();
+        if (injectedArgs != null) {
+            injectedArgs.forEach((name, spec) -> result.put(name, spec.withDefaultKey(name)));
+        }
+        return Map.copyOf(result);
     }
 
     @Override
