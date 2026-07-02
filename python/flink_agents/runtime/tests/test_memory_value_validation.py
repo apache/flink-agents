@@ -41,14 +41,19 @@ class _Plain:
     pass
 
 
+class _BytesSub(bytes):
+    pass
+
+
 def test_accepts_none_and_scalars() -> None:
-    for value in (None, True, False, 0, 1, -3, 3.14, "", "hello"):
+    for value in (None, True, False, 0, 1, -3, 3.14, "", "hello", b"", b"hello"):
         validate_memory_value("p", value)
 
 
 def test_accepts_nested_list_and_dict() -> None:
     validate_memory_value("p", [1, "a", [2, 3], {"k": [4, None]}])
     validate_memory_value("p", {"a": 1, "b": {"c": [True, "x"]}})
+    validate_memory_value("p", [b"x", {"k": b"y"}])
 
 
 def test_rejects_pydantic_model() -> None:
@@ -64,6 +69,14 @@ def test_rejects_uuid() -> None:
 def test_rejects_tuple_set_frozenset() -> None:
     for value in ((1, 2), {1, 2}, frozenset({1, 2})):
         with pytest.raises(TypeError, match=r"list\(value\)"):
+            validate_memory_value("p", value)
+
+
+def test_rejects_bytearray_and_bytes_subclass() -> None:
+    # Exact `bytes` is accepted, but bytearray and bytes-subclasses are PyObject-wrapped
+    # by Pemja; the exact-type check must reject them.
+    for value in (bytearray(b"x"), _BytesSub(b"x")):
+        with pytest.raises(TypeError, match="not checkpoint-stable"):
             validate_memory_value("p", value)
 
 

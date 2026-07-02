@@ -77,16 +77,16 @@ The key of the pairs stored in `MemoryObject` must be a string. The supported va
 
 **Python** is restricted to recursively *checkpoint-stable* values:
 
-- **Primitive Types**: `None`, `bool`, `int`, `float`, `str`
+- **Primitive Types**: `None`, `bool`, `int`, `float`, `str`, `bytes`
 - **Collections**: `list`, and `dict` with `str` keys (values are recursively validated)
 - **Memory Object**: A nested `MemoryObject` created via `new_object()`.
 
-Anything else — Pydantic models, `uuid.UUID`, `Enum`, custom classes, `tuple`, `set`, or a `dict` with non-`str` keys — is **rejected by `set()` with a `TypeError`**. `bytes` is not supported yet.
+Anything else — Pydantic models, `uuid.UUID`, `Enum`, custom classes, `tuple`, `set`, `bytearray`, or a `dict` with non-`str` keys — is **rejected by `set()` with a `TypeError`**. Exact `bytes` is supported (it converts to a native Java `byte[]`), but `bytearray` and `bytes` subclasses are not — Pemja wraps them as non-checkpoint-stable objects rather than materializing a `byte[]`.
 
 This is because Python values are converted across the Pemja boundary into Flink state, and only the types above materialize into native, checkpoint-stable JVM values; other objects would be stored as wrappers that fail on state restore. To store a richer object, materialize it to a primitive form first (e.g. `model.model_dump(mode="json")` for a Pydantic model, or `str(value)` for a UUID) and reconstruct it on read.
 
 {{< hint warning >}}
-Python memory values must be checkpoint-stable primitives, unlike the Java contract which also supports POJOs and Kryo-serializable objects. Python values materialize across the Pemja boundary before reaching Flink state, so models and other objects must be materialized first with `model_dump(mode="json")` (or `str(...)`) and reconstructed on read.
+Python memory values must be checkpoint-stable primitives, unlike the Java contract which also supports POJOs and Kryo-serializable objects. Python values materialize across the Pemja boundary before reaching Flink state, so models and other objects must be materialized first with `model_dump(mode="json")` (or `str(...)`) and reconstructed on read. Use exact `bytes` rather than `bytearray` for binary values, since only `bytes` materializes into a native `byte[]`.
 {{< /hint >}}
 
 ### Read & Write

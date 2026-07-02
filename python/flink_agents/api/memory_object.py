@@ -28,7 +28,9 @@ if TYPE_CHECKING:
 # Exact builtin types Pemja materializes into native, checkpoint-stable JVM values.
 # Exact-type (not isinstance): a str/int Enum or numpy scalar is a subclass that Pemja
 # PyObject-wraps despite passing isinstance — accepting it would defeat the validator.
-_CHECKPOINT_STABLE_SCALARS = (bool, int, float, str)
+# Exact `bytes` converts to a Java byte[]; bytearray and bytes-subclasses are PyObject-
+# wrapped, and the exact-type check excludes both for free.
+_CHECKPOINT_STABLE_SCALARS = (bool, int, float, str, bytes)
 
 
 def validate_memory_value(path: str, value: Any) -> None:
@@ -45,7 +47,7 @@ def validate_memory_value(path: str, value: Any) -> None:
         The memory path the value is being set at, used to build the error breadcrumb.
     value: Any
         The value to validate. Must be recursively composed of None, bool, int, float,
-        str, list, or dict with str keys.
+        str, bytes, list, or dict with str keys.
     """
     _validate(value, f"value at memory path {path!r}")
 
@@ -77,8 +79,9 @@ def _validate(value: Any, where: str) -> None:
     msg = (
         f"{where} has type {type(value).__name__!r}, which is not checkpoint-stable. "
         f"Python memory values must be recursively composed of None, bool, int, float, "
-        f"str, list, or dict with str keys, because they cross the Pemja boundary into "
-        f"Flink state and non-primitive objects cannot be safely checkpointed/restored. "
+        f"str, bytes, list, or dict with str keys, because they cross the Pemja boundary "
+        f"into Flink state and non-primitive objects cannot be safely "
+        f"checkpointed/restored. "
         f"Materialize it first, e.g. str(value) for a UUID, value.model_dump(mode='json')"
         f" for a Pydantic model, or list(value) for a tuple/set."
     )
