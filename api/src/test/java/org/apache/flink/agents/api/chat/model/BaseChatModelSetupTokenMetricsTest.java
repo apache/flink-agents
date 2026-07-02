@@ -62,6 +62,10 @@ class BaseChatModelSetupTokenMetricsTest {
         public Map<String, Object> getParameters() {
             return Collections.emptyMap();
         }
+
+        FlinkAgentsMetricGroup captureMetricGroup() {
+            return getMetricGroup();
+        }
     }
 
     @BeforeEach
@@ -102,6 +106,27 @@ class BaseChatModelSetupTokenMetricsTest {
         assertDoesNotThrow(() -> setup.recordTokenMetrics("gpt-4", 100, 50));
 
         verifyNoInteractions(mockMetricGroup);
+    }
+
+    @Test
+    @DisplayName("Test token metrics use the request-scoped metric group")
+    void testRecordTokenMetricsWithRequestScopedMetricGroup() {
+        TestMetricGroup actionA = new TestMetricGroup();
+        TestMetricGroup actionB = new TestMetricGroup();
+
+        setup.setMetricGroup(actionA);
+        FlinkAgentsMetricGroup requestMetricGroup = setup.captureMetricGroup();
+
+        setup.setMetricGroup(actionB);
+        setup.recordTokenMetrics(requestMetricGroup, "gpt-4", 100, 50);
+
+        TestMetricGroup actionAModelGroup = (TestMetricGroup) actionA.getSubGroup("model", "gpt-4");
+        assertEquals(100, actionAModelGroup.counters.get("promptTokens").getCount());
+        assertEquals(50, actionAModelGroup.counters.get("completionTokens").getCount());
+
+        TestMetricGroup actionBModelGroup = (TestMetricGroup) actionB.getSubGroup("model", "gpt-4");
+        assertEquals(0, actionBModelGroup.getCounter("promptTokens").getCount());
+        assertEquals(0, actionBModelGroup.getCounter("completionTokens").getCount());
     }
 
     @Test
