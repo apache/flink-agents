@@ -66,6 +66,11 @@ public class PythonChatModelConnection extends BaseChatModelConnection
     }
 
     @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
+    @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         Map<String, Object> kwargs = new HashMap<>(modelParams);

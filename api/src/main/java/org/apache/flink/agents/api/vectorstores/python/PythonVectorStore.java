@@ -233,4 +233,9 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
     public Object getPythonResource() {
         return vectorStore;
     }
+
+    @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
 }

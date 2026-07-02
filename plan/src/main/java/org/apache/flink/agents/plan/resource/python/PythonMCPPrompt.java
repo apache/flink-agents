@@ -47,6 +47,11 @@ public class PythonMCPPrompt extends Prompt implements PythonResourceWrapper {
         return prompt;
     }
 
+    @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
     public String getName() {
         if (name == null) {
             name = prompt.getAttr("name").toString();

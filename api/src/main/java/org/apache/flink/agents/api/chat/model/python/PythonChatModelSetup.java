@@ -90,6 +90,11 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
     }
 
     @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
+    @Override
     public Map<String, Object> getParameters() {
         return Map.of();
     }

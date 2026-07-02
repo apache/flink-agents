@@ -76,6 +76,11 @@ public class PythonMCPTool extends Tool implements PythonResourceWrapper {
     }
 
     @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
+    @Override
     public ToolType getToolType() {
         return ToolType.MCP;
     }
