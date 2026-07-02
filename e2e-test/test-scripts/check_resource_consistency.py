@@ -118,7 +118,12 @@ def get_python_resource_name_map(python_path: Path) -> dict:
         from flink_agents.api.resource import ResourceName
 
         python_map = {}
-        for resource_name in ["ChatModel", "EmbeddingModel", "VectorStore"]:
+        for resource_name in [
+            "ChatModel",
+            "EmbeddingModel",
+            "VectorStore",
+            "RoutingStrategy",
+        ]:
             if not hasattr(ResourceName, resource_name):
                 continue
             resource_cls = getattr(ResourceName, resource_name)
