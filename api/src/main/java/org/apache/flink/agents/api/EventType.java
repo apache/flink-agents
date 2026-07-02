@@ -18,6 +18,12 @@
 
 package org.apache.flink.agents.api;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * Compile-time constants for built-in event types, sourced from each {@code XxxEvent.EVENT_TYPE}.
  *
@@ -39,6 +45,26 @@ public final class EventType {
             org.apache.flink.agents.api.event.ContextRetrievalRequestEvent.EVENT_TYPE;
     public static final String ContextRetrievalResponseEvent =
             org.apache.flink.agents.api.event.ContextRetrievalResponseEvent.EVENT_TYPE;
+
+    /**
+     * Returns all built-in constants as an unmodifiable {@code name → event-type value} map.
+     * Enumerated reflectively from the {@code public static final String} fields of this class so
+     * newly added constants are picked up automatically. Iteration order is unspecified.
+     */
+    public static Map<String, String> allConstants() {
+        Map<String, String> constants = new LinkedHashMap<>();
+        for (Field field : EventType.class.getFields()) {
+            if (Modifier.isStatic(field.getModifiers()) && field.getType() == String.class) {
+                try {
+                    constants.put(field.getName(), (String) field.get(null));
+                } catch (IllegalAccessException e) {
+                    // Unreachable: getFields() only returns public fields.
+                    throw new IllegalStateException("Cannot read EventType." + field.getName(), e);
+                }
+            }
+        }
+        return Collections.unmodifiableMap(constants);
+    }
 
     private EventType() {}
 }

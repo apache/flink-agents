@@ -33,6 +33,17 @@ public class AgentConfigOptions {
     public static final ConfigOption<LoggerType> EVENT_LOGGER_TYPE =
             new ConfigOption<>("eventLoggerType", LoggerType.class, LoggerType.SLF4J);
 
+    /**
+     * Controls how the CEL condition evaluator handles runtime exceptions and non-Boolean results.
+     * Defaults to {@link CelEvaluationFailurePolicy#WARN_AND_SKIP} for streaming safety; set to
+     * {@link CelEvaluationFailurePolicy#FAIL} on strict-semantics pipelines to trigger failover.
+     */
+    public static final ConfigOption<CelEvaluationFailurePolicy> CEL_EVALUATION_FAILURE_POLICY =
+            new ConfigOption<>(
+                    "celEvaluationFailurePolicy",
+                    CelEvaluationFailurePolicy.class,
+                    CelEvaluationFailurePolicy.WARN_AND_SKIP);
+
     /** The config parameter specifies the directory for the FileEvent file. */
     public static final ConfigOption<String> BASE_LOG_DIR =
             new ConfigOption<>("baseLogDir", String.class, null);

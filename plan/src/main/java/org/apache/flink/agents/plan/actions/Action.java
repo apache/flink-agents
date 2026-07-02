@@ -23,11 +23,16 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.Function;
+import org.apache.flink.agents.plan.condition.ParsedCondition;
+import org.apache.flink.agents.plan.condition.ParsedCondition.CelExpression;
+import org.apache.flink.agents.plan.condition.ParsedCondition.TypeMatch;
 import org.apache.flink.agents.plan.serializer.ActionJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.ActionJsonSerializer;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -35,8 +40,8 @@ import java.util.Objects;
 /**
  * Representation of an agent action with unified trigger conditions.
  *
- * <p>Each entry of {@code triggerConditions} is an event type name string. Multiple entries combine
- * with OR.
+ * <p>Each entry of {@code triggerConditions} is either a plain event-type name (matched against
+ * {@code event.getType()}) or a CEL expression. Multiple entries combine with OR.
  */
 @JsonSerialize(using = ActionJsonSerializer.class)
 @JsonDeserialize(using = ActionJsonDeserializer.class)
@@ -44,6 +49,12 @@ public class Action {
     private final String name;
     private final Function exec;
     private final List<String> triggerConditions;
+
+    /**
+     * Transient cache of classified {@link #triggerConditions}: CEL AST isn't Kryo-serialisable, so
+     * it is rebuilt lazily after deserialization via {@link #parsedConditions()}.
+     */
+    private transient List<ParsedCondition> parsedConditions;
 
     // TODO: support nested map/list with non primitive type value.
     @Nullable private final Map<String, Object> config;
@@ -54,11 +65,32 @@ public class Action {
             List<String> triggerConditions,
             @Nullable Map<String, Object> config)
             throws Exception {
+        if (triggerConditions == null || triggerConditions.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Action '" + name + "' must have at least one entry in 'triggerConditions'");
+        }
         this.name = name;
         this.exec = exec;
         this.triggerConditions = triggerConditions;
         this.config = config;
+
+        // Build + validate eagerly so a bad condition fails at construction, not at runtime.
+        this.parsedConditions = buildParsedConditions(name, triggerConditions);
+
         exec.checkSignature(new Class[] {Event.class, RunnerContext.class});
+    }
+
+    private static List<ParsedCondition> buildParsedConditions(
+            String name, List<String> triggerConditions) {
+        List<ParsedCondition> parsed = new ArrayList<>(triggerConditions.size());
+        for (String entry : triggerConditions) {
+            if (entry == null || entry.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Action '" + name + "' has a null/empty trigger entry");
+            }
+            parsed.add(ParsedCondition.classify(entry));
+        }
+        return Collections.unmodifiableList(parsed);
     }
 
     public Action(String name, Function exec, List<String> triggerConditions) throws Exception {
@@ -73,19 +105,43 @@ public class Action {
         return exec;
     }
 
-    /** Returns the full trigger conditions list. */
+    /** Returns the full trigger conditions list (type names and CEL expressions). */
     public List<String> getTriggerConditions() {
         return triggerConditions;
     }
 
-    /**
-     * Returns event-type names. Kept for callers that still consume the old naming; in this PR all
-     * trigger entries are plain event-type names so the list is identical to {@link
-     * #getTriggerConditions()}. A follow-up PR introduces CEL expressions and overrides this to
-     * filter out non-type entries.
-     */
+    /** Returns parsed conditions in declaration order (unmodifiable). */
+    public List<ParsedCondition> getParsedConditions() {
+        return parsedConditions();
+    }
+
+    /** Lazily rebuilds parsedConditions on first access after deserialization. */
+    private synchronized List<ParsedCondition> parsedConditions() {
+        if (parsedConditions == null) {
+            parsedConditions = buildParsedConditions(name, triggerConditions);
+        }
+        return parsedConditions;
+    }
+
+    /** Returns event-type names extracted from {@link TypeMatch} entries (CEL entries skipped). */
     public List<String> getListenEventTypes() {
-        return triggerConditions;
+        List<String> typeNames = new ArrayList<>();
+        for (ParsedCondition pc : parsedConditions()) {
+            if (pc instanceof TypeMatch) {
+                typeNames.add(pc.source());
+            }
+        }
+        return typeNames;
+    }
+
+    /** Returns whether this action carries at least one CEL expression entry. */
+    public boolean hasCelCondition() {
+        for (ParsedCondition pc : parsedConditions()) {
+            if (pc instanceof CelExpression) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Nullable
