@@ -57,6 +57,9 @@ public final class EventType {
     public static final String LongTermSearchEvent =
             org.apache.flink.agents.api.event.LongTermSearchEvent.EVENT_TYPE;
 
+    public static final String AgentRunBeginEvent =
+            org.apache.flink.agents.api.event.AgentRunBeginEvent.EVENT_TYPE;
+
     private static final Map<String, String> ALL_CONSTANTS =
             Map.ofEntries(
                     Map.entry("InputEvent", InputEvent),
@@ -73,7 +76,8 @@ public final class EventType {
                     Map.entry("SensoryReadEvent", SensoryReadEvent),
                     Map.entry("LongTermUpdateEvent", LongTermUpdateEvent),
                     Map.entry("LongTermGetEvent", LongTermGetEvent),
-                    Map.entry("LongTermSearchEvent", LongTermSearchEvent));
+                    Map.entry("LongTermSearchEvent", LongTermSearchEvent),
+                    Map.entry("AgentRunBeginEvent", AgentRunBeginEvent));
 
     /**
      * Returns the built-in event type constants as a name-to-value map for condition expressions.

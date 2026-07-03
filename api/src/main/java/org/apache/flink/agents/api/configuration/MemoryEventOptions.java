@@ -51,12 +51,5 @@ public class MemoryEventOptions {
     public static final ConfigOption<Boolean> LONG_TERM_SEARCH =
             new ConfigOption<>("memory.generate-event.long-term-search", Boolean.class, null);
 
-    /**
-     * Opt-in agent-run lifecycle event; not governed by the memory master switch. Disabled by
-     * default.
-     */
-    public static final ConfigOption<Boolean> AGENT_RUN_BEGIN_EVENT =
-            new ConfigOption<>("agent-run.begin-event", Boolean.class, false);
-
     private MemoryEventOptions() {}
 }

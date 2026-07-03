@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api;
 
+import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
@@ -63,7 +64,8 @@ class EventTypeTest {
                         Map.entry("SensoryReadEvent", SensoryReadEvent.EVENT_TYPE),
                         Map.entry("LongTermUpdateEvent", LongTermUpdateEvent.EVENT_TYPE),
                         Map.entry("LongTermGetEvent", LongTermGetEvent.EVENT_TYPE),
-                        Map.entry("LongTermSearchEvent", LongTermSearchEvent.EVENT_TYPE)),
+                        Map.entry("LongTermSearchEvent", LongTermSearchEvent.EVENT_TYPE),
+                        Map.entry("AgentRunBeginEvent", AgentRunBeginEvent.EVENT_TYPE)),
                 EventType.allConstants());
         assertThrows(
                 UnsupportedOperationException.class,
