@@ -22,10 +22,31 @@ import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 /** Internal interface extends {@link BaseLongTermMemory} for hiding some interface to user. */
 public interface InteranlBaseLongTermMemory extends BaseLongTermMemory {
     /**
+     * Configures which long-term-memory operations produce observation records.
+     *
+     * <p>The configuration is fixed for an agent plan and should be applied once when the backend
+     * is wired.
+     */
+    void configureObservation(
+            boolean updateObservationEnabled,
+            boolean getObservationEnabled,
+            boolean searchObservationEnabled);
+
+    /**
      * Switches the context for the memory operations. This allows the same memory instance to be
      * used for different key by isolating data based on the provided key.
      *
-     * @param key the context key
+     * @param partitionKey the context key used by the long-term-memory backend
+     * @param observationSuppressed whether observation records are suppressed for this action
      */
-    void switchContext(String key);
+    void switchContext(String partitionKey, boolean observationSuppressed);
+
+    /**
+     * Drains the LTM observation records buffered for one partition key, returning them as a JSON
+     * array string. Called on the mailbox thread at the action finish boundary.
+     *
+     * @param partitionKey the partition whose records to drain
+     * @return JSON array string of drained records
+     */
+    String drainObservationRecordsJson(String partitionKey);
 }

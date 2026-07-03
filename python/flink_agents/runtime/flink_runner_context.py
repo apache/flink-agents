@@ -805,19 +805,6 @@ def _init_long_term_memory(
     )
 
 
-def flink_runner_context_switch_action_context(
-    ctx: FlinkRunnerContext,
-    key: int,
-) -> None:
-    """Switch the context of the flink runner context.
-
-    The ctx is reused across keyed partitions, the context related to
-    specific key should be switched when process new action.
-    """
-    if ctx.long_term_memory is not None:
-        ctx.long_term_memory.switch_context(str(key))
-
-
 def close_flink_runner_context(
     ctx: FlinkRunnerContext,
 ) -> None:

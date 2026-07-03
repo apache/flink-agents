@@ -42,16 +42,38 @@ public final class EventType {
     public static final String ContextRetrievalResponseEvent =
             org.apache.flink.agents.api.event.ContextRetrievalResponseEvent.EVENT_TYPE;
 
+    public static final String ShortTermWriteEvent =
+            org.apache.flink.agents.api.event.ShortTermWriteEvent.EVENT_TYPE;
+    public static final String ShortTermReadEvent =
+            org.apache.flink.agents.api.event.ShortTermReadEvent.EVENT_TYPE;
+    public static final String SensoryWriteEvent =
+            org.apache.flink.agents.api.event.SensoryWriteEvent.EVENT_TYPE;
+    public static final String SensoryReadEvent =
+            org.apache.flink.agents.api.event.SensoryReadEvent.EVENT_TYPE;
+    public static final String LongTermUpdateEvent =
+            org.apache.flink.agents.api.event.LongTermUpdateEvent.EVENT_TYPE;
+    public static final String LongTermGetEvent =
+            org.apache.flink.agents.api.event.LongTermGetEvent.EVENT_TYPE;
+    public static final String LongTermSearchEvent =
+            org.apache.flink.agents.api.event.LongTermSearchEvent.EVENT_TYPE;
+
     private static final Map<String, String> ALL_CONSTANTS =
-            Map.of(
-                    "InputEvent", InputEvent,
-                    "OutputEvent", OutputEvent,
-                    "ChatRequestEvent", ChatRequestEvent,
-                    "ChatResponseEvent", ChatResponseEvent,
-                    "ToolRequestEvent", ToolRequestEvent,
-                    "ToolResponseEvent", ToolResponseEvent,
-                    "ContextRetrievalRequestEvent", ContextRetrievalRequestEvent,
-                    "ContextRetrievalResponseEvent", ContextRetrievalResponseEvent);
+            Map.ofEntries(
+                    Map.entry("InputEvent", InputEvent),
+                    Map.entry("OutputEvent", OutputEvent),
+                    Map.entry("ChatRequestEvent", ChatRequestEvent),
+                    Map.entry("ChatResponseEvent", ChatResponseEvent),
+                    Map.entry("ToolRequestEvent", ToolRequestEvent),
+                    Map.entry("ToolResponseEvent", ToolResponseEvent),
+                    Map.entry("ContextRetrievalRequestEvent", ContextRetrievalRequestEvent),
+                    Map.entry("ContextRetrievalResponseEvent", ContextRetrievalResponseEvent),
+                    Map.entry("ShortTermWriteEvent", ShortTermWriteEvent),
+                    Map.entry("ShortTermReadEvent", ShortTermReadEvent),
+                    Map.entry("SensoryWriteEvent", SensoryWriteEvent),
+                    Map.entry("SensoryReadEvent", SensoryReadEvent),
+                    Map.entry("LongTermUpdateEvent", LongTermUpdateEvent),
+                    Map.entry("LongTermGetEvent", LongTermGetEvent),
+                    Map.entry("LongTermSearchEvent", LongTermSearchEvent));
 
     /**
      * Returns the built-in event type constants as a name-to-value map for condition expressions.

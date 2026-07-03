@@ -28,6 +28,7 @@ from flink_agents.api.events.event import Event
 from flink_agents.api.tools import InjectedArg
 from flink_agents.runtime.python_java_utils import (
     call_embedding_with_usage,
+    convert_to_python_key_text,
     get_python_tool_metadata,
     wrap_to_input_event,
 )
@@ -82,3 +83,19 @@ def test_wrap_to_input_event_assigns_unique_random_id_per_record() -> None:
     assert first.id != second.id
     assert first.id.version == 4
     assert second.id.version == 4
+
+
+def test_convert_to_python_key_text_uses_python_str() -> None:
+    assert convert_to_python_key_text(cloudpickle.dumps(7), "pickled") == "7"
+    assert (
+        convert_to_python_key_text(
+            cloudpickle.dumps(("tenant", 7)),
+            "pickled",
+        )
+        == "('tenant', 7)"
+    )
+
+
+def test_convert_to_python_key_text_does_not_unpickle_explicit_bytes() -> None:
+    assert convert_to_python_key_text(b"N.", "explicit") == "b'N.'"
+    assert convert_to_python_key_text(b"\x80\x04N.", "explicit") == "b'\\x80\\x04N.'"

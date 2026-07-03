@@ -83,7 +83,9 @@ public class JavaActionTask extends ActionTask {
 
         if (finished) {
             return new ActionTaskResult(
-                    true, runnerContext.drainEvents(event.getSourceTimestamp()), null);
+                    true,
+                    runnerContext.drainEventsAtActionFinish(event.getSourceTimestamp()),
+                    null);
         } else {
             return new ActionTaskResult(false, Collections.emptyList(), this);
         }

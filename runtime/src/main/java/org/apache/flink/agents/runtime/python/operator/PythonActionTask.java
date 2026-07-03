@@ -49,8 +49,7 @@ public class PythonActionTask extends ActionTask {
         runnerContext.checkNoPendingEvents();
 
         String pythonAwaitableRef =
-                executor.executePythonFunction(
-                        (PythonFunction) action.getExec(), event, key.hashCode());
+                executor.executePythonFunction((PythonFunction) action.getExec(), event);
         // If a user-defined action uses an interface to submit asynchronous tasks, it will return a
         // Python coroutine (awaitable) object instance upon its first execution. Otherwise, it
         // means that no asynchronous tasks were submitted and the action has already completed.
@@ -63,6 +62,6 @@ public class PythonActionTask extends ActionTask {
             return tempGeneratedActionTask.invoke(userCodeClassLoader, executor);
         }
         return new ActionTaskResult(
-                true, runnerContext.drainEvents(event.getSourceTimestamp()), null);
+                true, runnerContext.drainEventsAtActionFinish(event.getSourceTimestamp()), null);
     }
 }

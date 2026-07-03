@@ -18,8 +18,9 @@
 package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.context.MemoryObject;
-import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.junit.jupiter.api.Test;
+
+import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,24 +33,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Tests read recording and {@link MemoryObjectImpl.MemoryItem#isValue()}. */
 public class TestMemoryObjectImplReadRecording {
 
-    private MemoryObjectImpl newStm(
-            List<MemoryUpdate> updates, List<MemoryUpdate> reads, boolean recordReads)
+    private MemoryObjectImpl newStm(@Nullable List<MemoryValueObservation> readObservations)
             throws Exception {
         return new MemoryObjectImpl(
                 MemoryObject.MemoryType.SHORT_TERM,
                 new CachedMemoryStore(new ForTestMemoryMapState<>()),
                 MemoryObjectImpl.ROOT_KEY,
                 () -> {},
-                updates,
-                reads,
-                recordReads);
+                new ArrayList<>(),
+                readObservations);
     }
 
     @Test
     void testGetValueRecordsAbsolutePathWhenEnabled() throws Exception {
-        List<MemoryUpdate> updates = new ArrayList<>();
-        List<MemoryUpdate> reads = new ArrayList<>();
-        MemoryObjectImpl stm = newStm(updates, reads, true);
+        List<MemoryValueObservation> reads = new ArrayList<>();
+        MemoryObjectImpl stm = newStm(reads);
         stm.set("user.tier", "gold");
 
         Object v = stm.get("user.tier").getValue();
@@ -61,22 +59,35 @@ public class TestMemoryObjectImplReadRecording {
     }
 
     @Test
-    void testGetValueDoesNotRecordWhenDisabled() throws Exception {
-        List<MemoryUpdate> reads = new ArrayList<>();
-        MemoryObjectImpl stm = newStm(new ArrayList<>(), reads, false);
+    void testGetValueWorksWithoutReadObservationSink() throws Exception {
+        MemoryObjectImpl stm = newStm(null);
         stm.set("user.tier", "gold");
-        stm.get("user.tier").getValue();
-        assertTrue(reads.isEmpty());
+
+        assertEquals("gold", stm.get("user.tier").getValue());
     }
 
     @Test
     void testNestedChildInheritsReadRecording() throws Exception {
-        List<MemoryUpdate> reads = new ArrayList<>();
-        MemoryObjectImpl stm = newStm(new ArrayList<>(), reads, true);
+        List<MemoryValueObservation> reads = new ArrayList<>();
+        MemoryObjectImpl stm = newStm(reads);
         stm.set("user.address.city", "SF");
         stm.get("user").get("address").get("city").getValue();
         assertEquals(1, reads.size());
         assertEquals("user.address.city", reads.get(0).getPath());
+    }
+
+    @Test
+    void testGetFieldsRecordsOnlyValueChildren() throws Exception {
+        List<MemoryValueObservation> reads = new ArrayList<>();
+        MemoryObjectImpl stm = newStm(reads);
+        stm.newObject("empty", false);
+        stm.set("tier", "gold");
+
+        stm.getFields();
+
+        assertEquals(1, reads.size());
+        assertEquals("tier", reads.get(0).getPath());
+        assertEquals("gold", reads.get(0).getValue());
     }
 
     @Test
@@ -88,9 +99,7 @@ public class TestMemoryObjectImplReadRecording {
 
     @Test
     void testNestedChildInheritsMailboxChecker() throws Exception {
-        // Regression: nested child objects were built with a no-op mailbox thread
-        // checker, silently dropping the wrong-thread guard one level down. A real
-        // checker must be inherited so ops on a child still assert mailbox access.
+        // Child objects share the parent's store and must also share its mailbox-thread contract.
         AtomicInteger checkerCalls = new AtomicInteger();
         MemoryObjectImpl stm =
                 new MemoryObjectImpl(
@@ -99,8 +108,7 @@ public class TestMemoryObjectImplReadRecording {
                         MemoryObjectImpl.ROOT_KEY,
                         checkerCalls::incrementAndGet,
                         new ArrayList<>(),
-                        new ArrayList<>(),
-                        false);
+                        null);
         stm.set("user.city", "SF");
 
         MemoryObject child = stm.get("user"); // nested child object

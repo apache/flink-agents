@@ -32,6 +32,7 @@ import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
@@ -53,6 +54,8 @@ import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxProcessor;
 import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -118,15 +121,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // Inspired by Apache Paimon.
     private transient String jobIdentifier;
 
+    private final boolean inputIsJava;
+    private final boolean pythonKeyIsPickled;
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
+            boolean pythonKeyIsPickled,
             ProcessingTimeService processingTimeService,
             MailboxExecutor mailboxExecutor,
             ActionStateStore actionStateStore) {
         this.agentPlan = agentPlan;
         this.processingTimeService = processingTimeService;
         this.mailboxExecutor = mailboxExecutor;
+        this.inputIsJava = inputIsJava;
+        this.pythonKeyIsPickled = pythonKeyIsPickled;
         this.eventRouter = new EventRouter<>(agentPlan, inputIsJava);
         this.durableExecManager = new DurableExecutionManager(actionStateStore);
         OperatorUtils.setChainStrategy(this, ChainingStrategy.ALWAYS);
@@ -232,15 +241,20 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             stateManager.addPendingInputEvent(inputEvent);
         } else {
             // Otherwise, the new event is processed immediately.
-            processEvent(getCurrentKey(), inputEvent);
+            processInputEvent(getCurrentKey(), inputEvent);
         }
+    }
+
+    /** Resolves one context key for an input and reuses it for the entire agent run. */
+    private void processInputEvent(Object key, Event inputEvent) throws Exception {
+        processEvent(key, resolveContextKey(key), inputEvent);
     }
 
     /**
      * Processes an incoming event for the given key and may submit a new mail
      * `tryProcessActionTaskForKey` to continue processing.
      */
-    private void processEvent(Object key, Event event) throws Exception {
+    private void processEvent(Object key, String contextKey, Event event) throws Exception {
         eventRouter.notifyEventProcessed(event);
 
         boolean isInputEvent = EventUtil.isInputEvent(event);
@@ -276,13 +290,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         if (isInputEvent) {
             // If the event is an InputEvent, we submit a new mail to try processing the actions.
-            mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
+            mailboxExecutor.submit(
+                    () -> tryProcessActionTaskForKey(key, contextKey), "process action task");
         }
     }
 
-    private void tryProcessActionTaskForKey(Object key) {
+    private void tryProcessActionTaskForKey(Object key, String contextKey) {
         try {
-            processActionTaskForKey(key);
+            processActionTaskForKey(key, contextKey);
         } catch (Throwable t) {
             // MailboxExecutor.submit() stores task failures in its Future. Catch Throwable and
             // rethrow via execute() so Errors fail the task instead of leaving the key in-flight.
@@ -295,7 +310,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
-    private void processActionTaskForKey(Object key) throws Exception {
+    private void processActionTaskForKey(Object key, String contextKey) throws Exception {
         // 1. Get an action task for the key.
         setCurrentKey(key);
 
@@ -318,7 +333,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // 2. Invoke the action task.
         contextManager.createAndSetRunnerContext(
                 actionTask,
-                key,
+                contextKey,
                 agentPlan,
                 resourceCache,
                 metricGroup,
@@ -398,7 +413,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
 
         for (Event actionOutputEvent : outputEvents) {
-            processEvent(key, actionOutputEvent);
+            processEvent(key, contextKey, actionOutputEvent);
         }
 
         boolean currentInputEventFinished = false;
@@ -445,12 +460,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             eventRouter.processEligibleWatermarks(super::processWatermark);
             Event pendingInputEvent = stateManager.pollNextPendingInputEvent();
             if (pendingInputEvent != null) {
-                processEvent(key, pendingInputEvent);
+                processInputEvent(key, pendingInputEvent);
             }
         } else if (stateManager.hasMoreActionTasks()) {
             // If the current key has additional action tasks remaining, we should submit a new mail
             // to continue processing them.
-            mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
+            mailboxExecutor.submit(
+                    () -> tryProcessActionTaskForKey(key, contextKey), "process action task");
         }
     }
 
@@ -555,6 +571,28 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
+    /** Returns one textual context key for Java and PyFlink keyed streams. */
+    private String resolveContextKey(Object key) {
+        PythonActionExecutor pythonActionExecutor =
+                pythonBridge == null ? null : pythonBridge.getPythonActionExecutor();
+        return resolveContextKey(key, inputIsJava, pythonKeyIsPickled, pythonActionExecutor);
+    }
+
+    @VisibleForTesting
+    static String resolveContextKey(
+            Object key,
+            boolean inputIsJava,
+            boolean pythonKeyIsPickled,
+            @Nullable PythonActionExecutor pythonActionExecutor) {
+        if (inputIsJava) {
+            return String.valueOf(key);
+        }
+        checkState(
+                pythonActionExecutor != null,
+                "PythonActionExecutor must be initialized for a PyFlink keyed stream");
+        return pythonActionExecutor.resolveKeyText(key, pythonKeyIsPickled);
+    }
+
     private void tryResumeProcessActionTasks() throws Exception {
         Iterable<Object> keys = stateManager.getProcessingKeys();
         if (keys != null) {
@@ -572,8 +610,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     continue;
                 }
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
+                String contextKey = resolveContextKey(key);
                 mailboxExecutor.submit(
-                        () -> tryProcessActionTaskForKey(key), "process action task");
+                        () -> tryProcessActionTaskForKey(key, contextKey), "process action task");
             }
             stateManager.replaceProcessingKeys(new ArrayList<>(ownedKeys));
         }

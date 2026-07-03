@@ -56,7 +56,9 @@ public class PythonGeneratorActionTask extends PythonActionTask {
         ActionTask generatedActionTask = finished ? null : this;
         return new ActionTaskResult(
                 finished,
-                runnerContext.drainEvents(event.getSourceTimestamp()),
+                finished
+                        ? runnerContext.drainEventsAtActionFinish(event.getSourceTimestamp())
+                        : runnerContext.drainEvents(event.getSourceTimestamp()),
                 generatedActionTask);
     }
 }

@@ -22,6 +22,13 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.LongTermGetEvent;
+import org.apache.flink.agents.api.event.LongTermSearchEvent;
+import org.apache.flink.agents.api.event.LongTermUpdateEvent;
+import org.apache.flink.agents.api.event.SensoryReadEvent;
+import org.apache.flink.agents.api.event.SensoryWriteEvent;
+import org.apache.flink.agents.api.event.ShortTermReadEvent;
+import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.junit.jupiter.api.Test;
@@ -37,15 +44,26 @@ class EventTypeTest {
     @Test
     void allConstantsProvidesAnUnmodifiableNameToValueMap() {
         assertEquals(
-                Map.of(
-                        "InputEvent", InputEvent.EVENT_TYPE,
-                        "OutputEvent", OutputEvent.EVENT_TYPE,
-                        "ChatRequestEvent", ChatRequestEvent.EVENT_TYPE,
-                        "ChatResponseEvent", ChatResponseEvent.EVENT_TYPE,
-                        "ToolRequestEvent", ToolRequestEvent.EVENT_TYPE,
-                        "ToolResponseEvent", ToolResponseEvent.EVENT_TYPE,
-                        "ContextRetrievalRequestEvent", ContextRetrievalRequestEvent.EVENT_TYPE,
-                        "ContextRetrievalResponseEvent", ContextRetrievalResponseEvent.EVENT_TYPE),
+                Map.ofEntries(
+                        Map.entry("InputEvent", InputEvent.EVENT_TYPE),
+                        Map.entry("OutputEvent", OutputEvent.EVENT_TYPE),
+                        Map.entry("ChatRequestEvent", ChatRequestEvent.EVENT_TYPE),
+                        Map.entry("ChatResponseEvent", ChatResponseEvent.EVENT_TYPE),
+                        Map.entry("ToolRequestEvent", ToolRequestEvent.EVENT_TYPE),
+                        Map.entry("ToolResponseEvent", ToolResponseEvent.EVENT_TYPE),
+                        Map.entry(
+                                "ContextRetrievalRequestEvent",
+                                ContextRetrievalRequestEvent.EVENT_TYPE),
+                        Map.entry(
+                                "ContextRetrievalResponseEvent",
+                                ContextRetrievalResponseEvent.EVENT_TYPE),
+                        Map.entry("ShortTermWriteEvent", ShortTermWriteEvent.EVENT_TYPE),
+                        Map.entry("ShortTermReadEvent", ShortTermReadEvent.EVENT_TYPE),
+                        Map.entry("SensoryWriteEvent", SensoryWriteEvent.EVENT_TYPE),
+                        Map.entry("SensoryReadEvent", SensoryReadEvent.EVENT_TYPE),
+                        Map.entry("LongTermUpdateEvent", LongTermUpdateEvent.EVENT_TYPE),
+                        Map.entry("LongTermGetEvent", LongTermGetEvent.EVENT_TYPE),
+                        Map.entry("LongTermSearchEvent", LongTermSearchEvent.EVENT_TYPE)),
                 EventType.allConstants());
         assertThrows(
                 UnsupportedOperationException.class,

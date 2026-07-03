@@ -130,8 +130,37 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
     }
 
     @Override
-    public void switchContext(String key) {
-        adapter.callMethod(pyMem0, "switch_context", Map.of("key", key));
+    public void configureObservation(
+            boolean updateObservationEnabled,
+            boolean getObservationEnabled,
+            boolean searchObservationEnabled) {
+        adapter.callMethod(
+                pyMem0,
+                "configure_observation",
+                Map.of(
+                        "update_observation_enabled",
+                        updateObservationEnabled,
+                        "get_observation_enabled",
+                        getObservationEnabled,
+                        "search_observation_enabled",
+                        searchObservationEnabled));
+    }
+
+    @Override
+    public void switchContext(String partitionKey, boolean observationSuppressed) {
+        adapter.callMethod(
+                pyMem0,
+                "switch_context",
+                Map.of(
+                        "key", partitionKey,
+                        "observation_suppressed", observationSuppressed));
+    }
+
+    @Override
+    public String drainObservationRecordsJson(String partitionKey) {
+        return (String)
+                adapter.callMethod(
+                        pyMem0, "drain_ltm_observation_records", Map.of("key", partitionKey));
     }
 
     @Override
