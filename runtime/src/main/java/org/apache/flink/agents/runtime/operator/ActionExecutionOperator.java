@@ -32,6 +32,7 @@ import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
@@ -53,6 +54,8 @@ import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxProcessor;
 import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -118,6 +121,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // Inspired by Apache Paimon.
     private transient String jobIdentifier;
 
+    private final boolean inputIsJava;
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
@@ -127,6 +132,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.agentPlan = agentPlan;
         this.processingTimeService = processingTimeService;
         this.mailboxExecutor = mailboxExecutor;
+        this.inputIsJava = inputIsJava;
         this.eventRouter = new EventRouter<>(agentPlan, inputIsJava);
         this.durableExecManager = new DurableExecutionManager(actionStateStore);
         OperatorUtils.setChainStrategy(this, ChainingStrategy.ALWAYS);
@@ -319,6 +325,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         contextManager.createAndSetRunnerContext(
                 actionTask,
                 key,
+                resolveEventKeyText(key),
                 agentPlan,
                 resourceCache,
                 metricGroup,
@@ -553,6 +560,27 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             throw new IllegalStateException(
                     "Unsupported action type: " + action.getExec().getClass());
         }
+    }
+
+    /** Returns the logical String key for Java and PyFlink keyed streams, if supported. */
+    @Nullable
+    private String resolveEventKeyText(Object key) {
+        PythonActionExecutor pythonActionExecutor =
+                pythonBridge == null ? null : pythonBridge.getPythonActionExecutor();
+        return resolveEventKeyText(key, inputIsJava, pythonActionExecutor);
+    }
+
+    @VisibleForTesting
+    @Nullable
+    static String resolveEventKeyText(
+            Object key, boolean inputIsJava, @Nullable PythonActionExecutor pythonActionExecutor) {
+        if (key instanceof String) {
+            return (String) key;
+        }
+        if (inputIsJava || pythonActionExecutor == null) {
+            return null;
+        }
+        return pythonActionExecutor.resolveStringKey(key);
     }
 
     private void tryResumeProcessActionTasks() throws Exception {

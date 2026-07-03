@@ -238,6 +238,7 @@ class ActionTaskContextManagerTest {
         mgr.createAndSetRunnerContext(
                 task,
                 "k",
+                "k",
                 plan,
                 cache,
                 metricGroup,

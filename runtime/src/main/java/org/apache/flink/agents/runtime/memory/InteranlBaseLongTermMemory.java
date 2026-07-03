@@ -25,7 +25,20 @@ public interface InteranlBaseLongTermMemory extends BaseLongTermMemory {
      * Switches the context for the memory operations. This allows the same memory instance to be
      * used for different key by isolating data based on the provided key.
      *
-     * @param key the context key
+     * @param partitionKey the context key used by the long-term-memory backend
      */
-    void switchContext(String key);
+    void switchContext(
+            String partitionKey,
+            boolean updateObservationEnabled,
+            boolean getObservationEnabled,
+            boolean searchObservationEnabled);
+
+    /**
+     * Drains the LTM observation records buffered for one partition key, returning them as a JSON
+     * array string. Called on the mailbox thread at the action finish boundary.
+     *
+     * @param partitionKey the partition whose records to drain
+     * @return JSON array string of drained records
+     */
+    String drainObservationRecordsJson(String partitionKey);
 }

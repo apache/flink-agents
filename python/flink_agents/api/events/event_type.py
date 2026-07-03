@@ -37,6 +37,27 @@ from flink_agents.api.events.event import (
 from flink_agents.api.events.event import (
     OutputEvent as _OutputEvent,
 )
+from flink_agents.api.events.memory_event import (
+    LongTermGetEvent as _LongTermGetEvent,
+)
+from flink_agents.api.events.memory_event import (
+    LongTermSearchEvent as _LongTermSearchEvent,
+)
+from flink_agents.api.events.memory_event import (
+    LongTermUpdateEvent as _LongTermUpdateEvent,
+)
+from flink_agents.api.events.memory_event import (
+    SensoryReadEvent as _SensoryReadEvent,
+)
+from flink_agents.api.events.memory_event import (
+    SensoryWriteEvent as _SensoryWriteEvent,
+)
+from flink_agents.api.events.memory_event import (
+    ShortTermReadEvent as _ShortTermReadEvent,
+)
+from flink_agents.api.events.memory_event import (
+    ShortTermWriteEvent as _ShortTermWriteEvent,
+)
 from flink_agents.api.events.tool_event import (
     ToolRequestEvent as _ToolRequestEvent,
 )
@@ -59,3 +80,10 @@ class EventType:
     ToolResponseEvent: str = _ToolResponseEvent.EVENT_TYPE
     ContextRetrievalRequestEvent: str = _ContextRetrievalRequestEvent.EVENT_TYPE
     ContextRetrievalResponseEvent: str = _ContextRetrievalResponseEvent.EVENT_TYPE
+    ShortTermWriteEvent: str = _ShortTermWriteEvent.EVENT_TYPE
+    ShortTermReadEvent: str = _ShortTermReadEvent.EVENT_TYPE
+    SensoryWriteEvent: str = _SensoryWriteEvent.EVENT_TYPE
+    SensoryReadEvent: str = _SensoryReadEvent.EVENT_TYPE
+    LongTermUpdateEvent: str = _LongTermUpdateEvent.EVENT_TYPE
+    LongTermGetEvent: str = _LongTermGetEvent.EVENT_TYPE
+    LongTermSearchEvent: str = _LongTermSearchEvent.EVENT_TYPE
