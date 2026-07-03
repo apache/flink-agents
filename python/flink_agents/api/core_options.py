@@ -246,9 +246,6 @@ class MemoryEventOptions:
     LONG_TERM_SEARCH = ConfigOption(
         key="memory.generate-event.long-term-search", config_type=bool, default=None
     )
-    AGENT_RUN_BEGIN_EVENT = ConfigOption(
-        key="agent-run.begin-event", config_type=bool, default=False
-    )
 
 
 class AgentExecutionOptions:
@@ -282,6 +279,10 @@ class AgentExecutionOptions:
         key="chat.async",
         config_type=bool,
         default=True,
+    )
+
+    AGENT_RUN_BEGIN_EVENT = ConfigOption(
+        key="agent-run.begin-event", config_type=bool, default=False
     )
 
     TOOL_CALL_ASYNC = ConfigOption(

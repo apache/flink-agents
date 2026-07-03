@@ -58,6 +58,9 @@ from flink_agents.api.events.memory_event import (
 from flink_agents.api.events.memory_event import (
     ShortTermWriteEvent as _ShortTermWriteEvent,
 )
+from flink_agents.api.events.run_event import (
+    AgentRunBeginEvent as _AgentRunBeginEvent,
+)
 from flink_agents.api.events.tool_event import (
     ToolRequestEvent as _ToolRequestEvent,
 )
@@ -87,3 +90,4 @@ class EventType:
     LongTermUpdateEvent: str = _LongTermUpdateEvent.EVENT_TYPE
     LongTermGetEvent: str = _LongTermGetEvent.EVENT_TYPE
     LongTermSearchEvent: str = _LongTermSearchEvent.EVENT_TYPE
+    AgentRunBeginEvent: str = _AgentRunBeginEvent.EVENT_TYPE

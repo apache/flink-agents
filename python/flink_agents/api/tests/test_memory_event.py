@@ -18,7 +18,7 @@
 import pytest
 
 from flink_agents.api.configuration import ConfigOption
-from flink_agents.api.core_options import MemoryEventOptions
+from flink_agents.api.core_options import AgentExecutionOptions, MemoryEventOptions
 from flink_agents.api.events.event import Event
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.events.memory_event import (
@@ -65,6 +65,24 @@ def test_key_value_in_attributes() -> None:
     assert e.value["user.tier"] == "gold"
 
 
+def test_values_are_normalized_and_deep_copied_before_id_generation() -> None:
+    original = {"nested": {"value": 1}, "bytes": b"\x01\x02\x03"}
+    event = ShortTermWriteEvent(key="k", value=original)
+    same_wire = ShortTermWriteEvent(
+        key="k", value={"nested": {"value": 1}, "bytes": "AQID"}
+    )
+
+    original["nested"]["value"] = 2
+    assert event.value == {"nested": {"value": 1}, "bytes": "AQID"}
+    assert event.id == same_wire.id
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_values_are_rejected(value: float) -> None:
+    with pytest.raises(ValueError, match="JSON serializable"):
+        ShortTermWriteEvent(key="k", value={"bad": value})
+
+
 def test_base_class_is_abstract() -> None:
     with pytest.raises(TypeError, match="abstract"):
         MemoryEvent(key="k", value={})
@@ -102,18 +120,68 @@ def test_long_term_search_typed_results() -> None:
     e = LongTermSearchEvent(
         key="user-42",
         value={
-            "refund policy": [
-                {"id": "p_01", "value": "7-day refund", "score": 0.92},
-                {"id": "p_02", "value": "no custom refunds", "score": 0.81},
-            ]
+            "policies": {
+                "refund policy": [
+                    {"id": "p_01", "value": "7-day refund", "score": 0.92},
+                    {
+                        "id": "p_02",
+                        "value": "no custom refunds",
+                        "score": 0.81,
+                    },
+                ]
+            }
         },
     )
-    assert len(e.results["refund policy"]) == 2
-    assert e.results["refund policy"][0]["id"] == "p_01"
+    assert len(e.results["policies"]["refund policy"]) == 2
+    assert e.results["policies"]["refund policy"][0]["id"] == "p_01"
+
+
+def test_long_term_update_carries_explicit_cleared_sets() -> None:
+    event = LongTermUpdateEvent(
+        key="k", value={"prefs": {"m2": "new"}}, cleared_sets=["prefs"]
+    )
+    restored = MemoryEvent.from_event(event)
+    assert isinstance(restored, LongTermUpdateEvent)
+    assert restored.cleared_sets == ["prefs"]
+
+
+@pytest.mark.parametrize(
+    "invalid_cleared_sets",
+    ["prefs", ("prefs",), {"prefs"}, {"prefs": True}, 1],
+)
+def test_long_term_update_requires_cleared_sets_list(
+    invalid_cleared_sets: object,
+) -> None:
+    with pytest.raises(TypeError, match="must be a list"):
+        LongTermUpdateEvent(
+            key="k",
+            value={},
+            cleared_sets=invalid_cleared_sets,  # type: ignore[arg-type]
+        )
+
+
+def test_long_term_update_allows_none_but_rejects_non_string_list_items() -> None:
+    assert LongTermUpdateEvent(key="k", value={}, cleared_sets=None).cleared_sets == []
+    with pytest.raises(TypeError, match="only strings"):
+        LongTermUpdateEvent(
+            key="k",
+            value={},
+            cleared_sets=["prefs", 1],  # type: ignore[list-item]
+        )
+
+
+def test_from_event_rejects_string_cleared_sets() -> None:
+    generic = Event(
+        type=LongTermUpdateEvent.EVENT_TYPE,
+        attributes={"key": "k", "value": {}, "cleared_sets": "prefs"},
+    )
+
+    with pytest.raises(TypeError, match="must be a list"):
+        MemoryEvent.from_event(generic)
 
 
 def test_config_option_keys_match_java() -> None:
-    # (option, expected key, expected default) for all nine options. These keys
+    # (option, expected key, expected default) for all memory options. These keys
     # and defaults are the cross-language contract shared with Java
     # MemoryEventOptions; every one must be asserted so a Python-side typo or
     # drift on any sub-key is caught, not just the master switch.
@@ -154,9 +222,13 @@ def test_config_option_keys_match_java() -> None:
             "memory.generate-event.long-term-search",
             None,
         ),
-        (MemoryEventOptions.AGENT_RUN_BEGIN_EVENT, "agent-run.begin-event", False),
     ]
     for option, key, default in expected:
         assert isinstance(option, ConfigOption)
         assert option.get_key() == key
         assert option.get_default_value() is default
+
+    assert AgentExecutionOptions.AGENT_RUN_BEGIN_EVENT.get_key() == (
+        "agent-run.begin-event"
+    )
+    assert AgentExecutionOptions.AGENT_RUN_BEGIN_EVENT.get_default_value() is False

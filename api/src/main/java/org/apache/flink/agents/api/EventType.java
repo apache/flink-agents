@@ -55,5 +55,8 @@ public final class EventType {
     public static final String LongTermSearchEvent =
             org.apache.flink.agents.api.event.LongTermSearchEvent.EVENT_TYPE;
 
+    public static final String AgentRunBeginEvent =
+            org.apache.flink.agents.api.event.AgentRunBeginEvent.EVENT_TYPE;
+
     private EventType() {}
 }
