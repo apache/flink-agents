@@ -27,9 +27,11 @@ import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.LoggerType;
+import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -39,6 +41,7 @@ import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
+import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
@@ -53,7 +56,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -67,6 +72,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 /** Tests for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorTest {
@@ -77,6 +83,7 @@ public class ActionExecutionOperatorTest {
     void resetReconcilableFixtures() {
         TestAgent.resetReconcilableRecoveryFixture();
         TestAgent.resetMixedRecoveryFixture();
+        TestAgent.FOLLOWING_ACTION_EXECUTED.set(false);
     }
 
     @Test
@@ -322,6 +329,46 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
+    void testRestoredActionUsesSameTextualContextKeyForLtmWriteAndCleanup() throws Exception {
+        AgentPlan agentPlan = TestAgent.getFailedActionAfterLtmAgentPlan();
+        OperatorSubtaskState snapshot;
+        long key = 1L << 32;
+        String expectedContextKey = "4294967296";
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            testHarness.processElement(new StreamRecord<>(key));
+            assertThat(testHarness.getTaskMailbox().size()).isEqualTo(1);
+            snapshot = testHarness.snapshot(1L, 1L);
+        }
+
+        RecordingMem0LongTermMemory ltm = new RecordingMem0LongTermMemory();
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restoredHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            restoredHarness.initializeState(snapshot);
+            restoredHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) restoredHarness.getOperator();
+            replaceOperatorLtm(operator, ltm);
+
+            assertThatThrownBy(operator::waitInFlightEventsFinished)
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
+                    .rootCause()
+                    .hasMessageContaining("first action failed after LTM");
+
+            assertThat(ltm.recordedKeys()).containsExactly(expectedContextKey);
+            assertThat(ltm.drainedObservationKeys()).containsExactly(expectedContextKey);
+        }
+    }
+
+    @Test
     void testMemoryAccessProhibitedOutsideMailboxThread() throws Exception {
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -358,6 +405,207 @@ public class ActionExecutionOperatorTest {
                     .rootCause()
                     .isInstanceOf(NoClassDefFoundError.class)
                     .hasMessageContaining("synthetic missing runtime dependency");
+        }
+    }
+
+    @Test
+    void testUnsupportedObservationValueIsSkippedWithoutChangingActionSuccess() throws Exception {
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        AgentPlan agentPlan = TestAgent.getBestEffortMemoryObservationPlan();
+        try (KeyedOneInputStreamOperatorTestHarness<String, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, String>) String::valueOf,
+                        TypeInformation.of(String.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> output =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(output).singleElement().extracting(StreamRecord::getValue).isEqualTo(7L);
+
+            ActionState actionState =
+                    actionStateStore.get(
+                            "7",
+                            0L,
+                            agentPlan.getActions().get("bestEffortMemoryObservationAction"),
+                            new InputEvent(7L));
+            assertThat(actionState).isNotNull();
+            assertThat(actionState.getOutputEvents())
+                    .filteredOn(ShortTermWriteEvent.class::isInstance)
+                    .singleElement()
+                    .extracting(event -> ((ShortTermWriteEvent) event).getValue())
+                    .isEqualTo(Map.of("valid", 7));
+        }
+    }
+
+    @Test
+    void testFailedActionAfterLtmDiscardsCurrentKeyBeforeRethrowing() throws Exception {
+        RecordingMem0LongTermMemory ltm = new RecordingMem0LongTermMemory();
+        try (KeyedOneInputStreamOperatorTestHarness<String, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getFailedActionAfterLtmAgentPlan(), true),
+                        (KeySelector<Long, String>) String::valueOf,
+                        TypeInformation.of(String.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            replaceOperatorLtm(operator, ltm);
+
+            testHarness.processElement(new StreamRecord<>(0L));
+
+            assertThatThrownBy(() -> operator.waitInFlightEventsFinished())
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
+                    .rootCause()
+                    .hasMessageContaining("first action failed after LTM");
+            // The public LTM operation ran before the action failed.
+            assertThat(ltm.recordedKeys()).containsExactly("0");
+            // The common failure boundary explicitly drains this key before rethrowing. Check the
+            // same buffer directly rather than duplicating the Python LTM record schema here.
+            assertThat(ltm.pendingObservationKeys()).isEmpty();
+            assertThat(ltm.drainedObservationKeys()).containsExactly("0");
+            assertThat(ltm.drainCallCount()).isEqualTo(1);
+            // The failed mailbox task cannot continue to the following action in this operator.
+            assertThat(TestAgent.FOLLOWING_ACTION_EXECUTED).isFalse();
+        }
+    }
+
+    @Test
+    void testDiscardFailureDoesNotReplaceActionFailure() throws Exception {
+        RecordingMem0LongTermMemory ltm = new RecordingMem0LongTermMemory();
+        RuntimeException discardFailure = new RuntimeException("discard failed");
+        ltm.failDrainWith(discardFailure);
+
+        try (KeyedOneInputStreamOperatorTestHarness<String, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getFailedActionAfterLtmAgentPlan(), true),
+                        (KeySelector<Long, String>) String::valueOf,
+                        TypeInformation.of(String.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            replaceOperatorLtm(operator, ltm);
+
+            testHarness.processElement(new StreamRecord<>(0L));
+            Throwable thrown = catchThrowable(operator::waitInFlightEventsFinished);
+
+            assertThat(thrown)
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
+                    .rootCause()
+                    .hasMessageContaining("first action failed after LTM");
+            assertThat(findSuppressedFailure(thrown, discardFailure)).isSameAs(discardFailure);
+            assertThat(ltm.recordedKeys()).containsExactly("0");
+            assertThat(ltm.drainCallCount()).isEqualTo(1);
+            assertThat(TestAgent.FOLLOWING_ACTION_EXECUTED).isFalse();
+        }
+    }
+
+    private static Throwable findSuppressedFailure(Throwable failure, Throwable expected) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            for (Throwable suppressed : current.getSuppressed()) {
+                if (suppressed == expected) {
+                    return suppressed;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static void replaceOperatorLtm(
+            ActionExecutionOperator<?, ?> operator, Mem0LongTermMemory ltm) throws Exception {
+        Field ltmField = ActionExecutionOperator.class.getDeclaredField("ltm");
+        ltmField.setAccessible(true);
+        ltmField.set(operator, ltm);
+    }
+
+    /** Java-side stand-in for the Python-backed LTM wrapper used to observe the failure path. */
+    private static final class RecordingMem0LongTermMemory extends Mem0LongTermMemory {
+        private final List<String> recordedKeys = new ArrayList<>();
+        private final List<String> pendingObservationKeys = new ArrayList<>();
+        private final List<String> drainedObservationKeys = new ArrayList<>();
+        private String currentKey;
+        private boolean updateObservationConfigured = true;
+        private boolean observationSuppressed;
+        private int drainCallCount;
+        private RuntimeException drainFailure;
+
+        private RecordingMem0LongTermMemory() {
+            super(null, null);
+        }
+
+        @Override
+        public void configureObservation(
+                boolean updateObservationEnabled,
+                boolean getObservationEnabled,
+                boolean searchObservationEnabled) {
+            updateObservationConfigured = updateObservationEnabled;
+        }
+
+        @Override
+        public void switchContext(String partitionKey, boolean observationSuppressed) {
+            currentKey = partitionKey;
+            this.observationSuppressed = observationSuppressed;
+        }
+
+        @Override
+        public MemorySet getMemorySet(String name) {
+            MemorySet memorySet = new MemorySet(name);
+            memorySet.setLtm(this);
+            return memorySet;
+        }
+
+        @Override
+        public List<String> add(
+                MemorySet memorySet,
+                List<String> memoryItems,
+                @javax.annotation.Nullable List<Map<String, Object>> metadatas) {
+            recordedKeys.add(currentKey);
+            if (!updateObservationConfigured || observationSuppressed) {
+                return List.of("memory-id");
+            }
+            pendingObservationKeys.add(currentKey);
+            return List.of("memory-id");
+        }
+
+        @Override
+        public String drainObservationRecordsJson(String partitionKey) {
+            drainCallCount++;
+            if (drainFailure != null) {
+                throw drainFailure;
+            }
+            while (pendingObservationKeys.remove(partitionKey)) {
+                drainedObservationKeys.add(partitionKey);
+            }
+            return "[]";
+        }
+
+        @Override
+        public void close() {}
+
+        private List<String> recordedKeys() {
+            return recordedKeys;
+        }
+
+        private int drainCallCount() {
+            return drainCallCount;
+        }
+
+        private List<String> pendingObservationKeys() {
+            return pendingObservationKeys;
+        }
+
+        private List<String> drainedObservationKeys() {
+            return drainedObservationKeys;
+        }
+
+        private void failDrainWith(RuntimeException failure) {
+            drainFailure = failure;
         }
     }
 
@@ -1608,6 +1856,9 @@ public class ActionExecutionOperatorTest {
         public static final java.util.concurrent.atomic.AtomicInteger ACTION2_CALL_COUNTER =
                 new java.util.concurrent.atomic.AtomicInteger(0);
 
+        public static final java.util.concurrent.atomic.AtomicBoolean FOLLOWING_ACTION_EXECUTED =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+
         public static class MiddleEvent extends Event {
             public static final String EVENT_TYPE = "MiddleEvent";
 
@@ -1658,6 +1909,23 @@ public class ActionExecutionOperatorTest {
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
+        }
+
+        public static void bestEffortMemoryObservationAction(Event event, RunnerContext context) {
+            Long input = (Long) InputEvent.fromEvent(event).getInput();
+            try {
+                context.getShortTermMemory().set("valid", input);
+                context.getShortTermMemory().set("kryo-only", new KryoOnlyObservationValue());
+                context.getShortTermMemory().set("non-finite", Double.NaN);
+                context.sendEvent(new OutputEvent(input));
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+        }
+
+        private static final class KryoOnlyObservationValue implements Serializable {
+            private static final long serialVersionUID = 1L;
+            private final Object value = new Object();
         }
 
         private static <T> DurableCallable<T> durableCallable(
@@ -1917,6 +2185,21 @@ public class ActionExecutionOperatorTest {
             public static void action(Event event, RunnerContext context) {}
         }
 
+        public static void failingActionAfterLtm(Event event, RunnerContext context) {
+            try {
+                context.getLongTermMemory()
+                        .getMemorySet("notes")
+                        .add(List.of("previous action"), null);
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            throw new IllegalStateException("first action failed after LTM");
+        }
+
+        public static void followingAction(Event event, RunnerContext context) {
+            FOLLOWING_ACTION_EXECUTED.set(true);
+        }
+
         public static void resetReconcilableRecoveryFixture() {
             RECONCILABLE_CALL_COUNTER.set(0);
             RECONCILABLE_RECONCILE_COUNTER.set(0);
@@ -2158,6 +2441,57 @@ public class ActionExecutionOperatorTest {
                 actions.put(errorAction.getName(), errorAction);
 
                 return new AgentPlan(actions);
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getBestEffortMemoryObservationPlan() {
+            try {
+                Action action =
+                        new Action(
+                                "bestEffortMemoryObservationAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "bestEffortMemoryObservationAction",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                return new AgentPlan(
+                        Map.of(action.getName(), action),
+                        Map.of(InputEvent.EVENT_TYPE, List.of(action)),
+                        new HashMap<>());
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getFailedActionAfterLtmAgentPlan() {
+            try {
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                Map<String, Action> actions = new HashMap<>();
+                Action failingAction =
+                        new Action(
+                                "failingActionAfterLtm",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "failingActionAfterLtm",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                Action followingAction =
+                        new Action(
+                                "followingAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "followingAction",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                actionsByEvent.put(InputEvent.EVENT_TYPE, List.of(failingAction, followingAction));
+                actions.put(failingAction.getName(), failingAction);
+                actions.put(followingAction.getName(), followingAction);
+
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }

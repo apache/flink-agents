@@ -291,8 +291,12 @@ Short-term memory can be configured with a time-to-live (TTL) so that older stat
 
 Set `short-term-memory.state-ttl.ms` to a value greater than 0 in milliseconds to enable TTL. You can also configure how the TTL is refreshed and whether expired state can be returned before Flink cleans it up:
 
-- `short-term-memory.state-ttl.update-type`: controls whether TTL is refreshed on create/write or on read/write.
+- `short-term-memory.state-ttl.update-type`: controls whether TTL is refreshed on create/write (`ON_CREATE_AND_WRITE`) or on read/write (`ON_READ_AND_WRITE`, the default).
 - `short-term-memory.state-ttl.visibility`: controls whether expired memory is never returned or may be returned if it has not been cleaned up yet.
+
+{{< hint warning >}}
+The default `ON_READ_AND_WRITE` update type extends an entry's lifetime whenever it is read. This also applies when producing the run-begin snapshot used by [Memory Events]({{< ref "docs/development/memory/memory_events" >}}): if you opt in through `agent-run.begin-event`, each input scans the key's short-term memory and refreshes TTL for the entries it reads, although only value nodes are included in the event. Choose `ON_CREATE_AND_WRITE` when entries should expire based only on writes.
+{{< /hint >}}
 
 {{< tabs "Short-Term Memory TTL Configuration" >}}
 

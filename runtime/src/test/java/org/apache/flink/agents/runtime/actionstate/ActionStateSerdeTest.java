@@ -23,10 +23,13 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.MemoryEvent;
+import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.tools.ToolResponse;
@@ -37,6 +40,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -429,6 +433,50 @@ public class ActionStateSerdeTest {
                 json.replace("\"version\":1", "\"version\":2").getBytes(StandardCharsets.UTF_8);
 
         assertThrows(RuntimeException.class, () -> ActionStateSerde.deserialize(patched));
+    }
+
+    @Test
+    public void testMemoryEventsSurviveActionStateRoundTrip() throws Exception {
+        ActionState state = new ActionState(new InputEvent("test input"));
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("bytes", new byte[] {1, 2, 3});
+        value.put("pojo", new ObservationValuePojo("hello", 7));
+        state.addEvent(new ShortTermWriteEvent("user-42", value));
+        state.addEvent(new AgentRunBeginEvent("user-42", value));
+
+        MemoryEvent liveMemory = (MemoryEvent) state.getOutputEvents().get(0);
+        AgentRunBeginEvent liveRunBegin = (AgentRunBeginEvent) state.getOutputEvents().get(1);
+
+        ActionState restored = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+
+        assertEquals(2, restored.getOutputEvents().size());
+        MemoryEvent memory = (MemoryEvent) restored.getOutputEvents().get(0);
+        AgentRunBeginEvent runBegin = (AgentRunBeginEvent) restored.getOutputEvents().get(1);
+
+        assertEquals(liveMemory.getValue(), memory.getValue());
+        assertEquals(liveRunBegin.getValue(), runBegin.getValue());
+        assertEquals("AQID", memory.getValue().get("bytes"));
+        assertEquals(Map.of("name", "hello", "count", 7), memory.getValue().get("pojo"));
+        assertEquals("AQID", runBegin.getValue().get("bytes"));
+        assertEquals(Map.of("name", "hello", "count", 7), runBegin.getValue().get("pojo"));
+    }
+
+    public static class ObservationValuePojo {
+        private final String name;
+        private final int count;
+
+        public ObservationValuePojo(String name, int count) {
+            this.name = name;
+            this.count = count;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public int getCount() {
+            return count;
+        }
     }
 
     /** Serializable POJO used to verify Kryo preserves user types across durable recovery. */

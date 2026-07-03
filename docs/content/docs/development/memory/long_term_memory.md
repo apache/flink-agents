@@ -539,13 +539,15 @@ public static void processEvent(Event event, RunnerContext ctx) throws Exception
 
 ## Context Isolation
 
-Long-Term Memory automatically provides context isolation through Flink's keyed partition model. Each keyed partition maintains its own isolated set of memories, ensuring that memories from one user or session do not leak into another.
+Long-Term Memory provides context isolation through Flink's keyed partition model. When each logical key has a stable and unique textual representation, each keyed partition uses an isolated memory context so memories from one user or session do not leak into another.
 
 The isolation hierarchy works as follows:
 - **Job-level** (`JOB_IDENTIFIER`): Separates memories between different Flink jobs
 - **Partition-level** (keyed partition key): Separates memories between different keys within the same job
 - **Set-level** (memory set name): Separates memories between different logical categories within the same partition
 
-This means you can reuse the same memory set name across different partitions, and each partition will normally access only its own memories.
+This means you can reuse the same memory set name across different partitions, and each partition will normally access only its own memories. The partition context uses the textual representation of the logical Flink key: Java and explicitly typed PyFlink keys normally use `String.valueOf`; default pickled PyFlink keys are deserialized and use Python `str`. Explicit PyFlink primitive byte-array keys use Python's bytes representation directly, without pickle deserialization.
 
-> **Note:** Partition-level isolation is currently derived from the hash of the partition key (`String.valueOf(key.hashCode())`) rather than the full original key. Distinct keys whose hashes collide may therefore share the same memory context. Avoid relying on isolation as a strict security boundary; if collision-free isolation is required, encode a unique identifier into the memory set name.
+Keys used for Long-Term Memory should therefore have a stable and unique textual representation within the job. Distinct logical keys that produce the same text share one Mem0 context, so this representation is not a security boundary.
+
+> **Compatibility note:** Earlier experimental versions used `String.valueOf(key.hashCode())` as the Mem0 partition identity. Existing records stored under that hash-derived identity are not migrated automatically and are not visible through the new logical-key identity. Migrate those records explicitly before upgrading if they must remain accessible.
