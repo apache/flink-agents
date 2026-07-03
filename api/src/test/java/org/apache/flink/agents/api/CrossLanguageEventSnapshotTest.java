@@ -23,10 +23,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.MemoryEvent;
+import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.tools.ToolResponse;
@@ -445,6 +448,75 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(1, docs.size());
         assertEquals("doc content", docs.get(0).getContent());
         assertEquals("doc-1", docs.get(0).getId());
+    }
+
+    // ── Memory observation events ──────────────────────────────────────────
+
+    private static ShortTermWriteEvent buildShortTermWriteEvent() {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("user.tier", "gold");
+        value.put("profile.m_a01", null);
+        Map<String, Object> attrs = new LinkedHashMap<>();
+        attrs.put("key", "user-42");
+        attrs.put("value", value);
+        return new ShortTermWriteEvent(FIXED_EVENT_ID, attrs);
+    }
+
+    @Test
+    void regenerateShortTermWriteEventJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot("short_term_write_event.json", buildShortTermWriteEvent());
+    }
+
+    @Test
+    void shortTermWriteEventJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable("short_term_write_event.json", buildShortTermWriteEvent());
+    }
+
+    @Test
+    void javaCanDeserializeShortTermWriteEventFromPythonSnapshot() throws Exception {
+        Event base = readPythonSnapshot("short_term_write_event.json");
+        ShortTermWriteEvent typed = (ShortTermWriteEvent) MemoryEvent.fromEvent(base);
+
+        assertEquals(FIXED_EVENT_ID, typed.getId());
+        assertEquals("user-42", typed.getKey());
+        assertEquals("gold", typed.getValue().get("user.tier"));
+        assertTrue(typed.getValue().containsKey("profile.m_a01"));
+        assertEquals(null, typed.getValue().get("profile.m_a01"));
+    }
+
+    // ── Agent-run lifecycle events ─────────────────────────────────────────
+
+    private static AgentRunBeginEvent buildAgentRunBeginEvent() {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("user.tier", "gold");
+        value.put("user.address.city", "SF");
+        Map<String, Object> attrs = new LinkedHashMap<>();
+        attrs.put("key", "user-42");
+        attrs.put("value", value);
+        return new AgentRunBeginEvent(FIXED_EVENT_ID, attrs);
+    }
+
+    @Test
+    void regenerateAgentRunBeginEventJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot("agent_run_begin_event.json", buildAgentRunBeginEvent());
+    }
+
+    @Test
+    void agentRunBeginEventJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable("agent_run_begin_event.json", buildAgentRunBeginEvent());
+    }
+
+    @Test
+    void javaCanDeserializeAgentRunBeginEventFromPythonSnapshot() throws Exception {
+        Event base = readPythonSnapshot("agent_run_begin_event.json");
+        AgentRunBeginEvent typed = AgentRunBeginEvent.fromEvent(base);
+
+        assertEquals(FIXED_EVENT_ID, typed.getId());
+        assertEquals("user-42", typed.getKey());
+        assertEquals("gold", typed.getValue().get("user.tier"));
+        assertEquals("SF", typed.getValue().get("user.address.city"));
     }
 
     // ── Generic Event with primitive attributes (user-authored axis) ───────

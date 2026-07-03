@@ -147,8 +147,24 @@ Here is the list of all built-in core configuration options.
 | `event-log.standard.max-array-elements` | 20               | int                   | At `STANDARD` level, arrays in the event payload with more than this many elements are truncated. Has no effect at `VERBOSE`.                                                                                                                                  |
 | `event-log.standard.max-depth` | 5                     | int                   | At `STANDARD` level, objects nested deeper than this are summarized. Has no effect at `VERBOSE`.                                                                                                                                                               |
 | `short-term-memory.state-ttl.ms` | 0                    | long                  | Time-to-live for short-term memory state in milliseconds. Set to a value greater than 0 to enable TTL; 0 disables it.                                                                                                                                           |
-| `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | Update policy for short-term memory TTL. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `ON_CREATE_AND_WRITE`, `ON_READ_AND_WRITE`.                                                                                       |
+| `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | Update policy for short-term memory TTL. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `ON_CREATE_AND_WRITE`, `ON_READ_AND_WRITE`. An enabled run-begin memory snapshot also refreshes TTL for entries it reads under `ON_READ_AND_WRITE`. |
 | `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | Visibility policy for expired short-term memory state. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `NEVER_RETURN_EXPIRED`, `RETURN_EXPIRED_IF_NOT_CLEANED_UP`.                                                        |
+
+### Memory Event Options
+
+The eight `memory.generate-event*` options have no raw `ConfigOption` default. When a sub-key and the master switch are both unset, the runtime uses the effective default shown below. See [Memory Events]({{< ref "docs/development/memory/memory_events" >}}) for resolution order, event payloads, and subscription examples.
+
+| Key | Raw default | Effective default | Type | Description |
+|-----|-------------|-------------------|------|-------------|
+| `memory.generate-event` | unset | per-operation defaults | boolean | Master fallback for unset operation-specific switches. |
+| `memory.generate-event.short-term-write` | unset | on | boolean | Emit short-term memory write events. |
+| `memory.generate-event.short-term-read` | unset | off | boolean | Emit short-term memory read events. |
+| `memory.generate-event.sensory-write` | unset | on | boolean | Emit sensory memory write events. |
+| `memory.generate-event.sensory-read` | unset | off | boolean | Emit sensory memory read events. |
+| `memory.generate-event.long-term-update` | unset | on | boolean | Emit long-term memory add/delete events. |
+| `memory.generate-event.long-term-get` | unset | on | boolean | Emit long-term memory get events. |
+| `memory.generate-event.long-term-search` | unset | on | boolean | Emit long-term memory search events. |
+| `agent-run.begin-event` | false | off | boolean | Opt in to the agent-run begin event. Independent of the memory-event master switch. |
 
 ### Action State Store
 

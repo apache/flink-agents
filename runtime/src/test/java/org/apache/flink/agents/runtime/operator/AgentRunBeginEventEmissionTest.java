@@ -31,10 +31,12 @@ import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
+import org.apache.flink.types.Row;
 import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +50,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /** Tests for AgentRunBeginEvent emission by {@link ActionExecutionOperator}. */
 public class AgentRunBeginEventEmissionTest {
@@ -295,5 +299,16 @@ public class AgentRunBeginEventEmissionTest {
                     .containsEntry("run.begin.seen", true)
                     .containsEntry("user.tier", "gold");
         }
+    }
+
+    @Test
+    void javaRowKeyIsNotDecodedAsPyFlinkKey() {
+        PythonActionExecutor pythonActionExecutor = mock(PythonActionExecutor.class);
+
+        assertThat(
+                        ActionExecutionOperator.resolveEventKeyText(
+                                Row.of(new byte[] {1, 2, 3}), true, pythonActionExecutor))
+                .isNull();
+        verifyNoInteractions(pythonActionExecutor);
     }
 }
