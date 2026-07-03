@@ -67,6 +67,8 @@ public class RunnerContextImpl implements RunnerContext {
         private final CachedMemoryStore shortTermMemStore;
         private final List<MemoryUpdate> sensoryMemoryUpdates;
         private final List<MemoryUpdate> shortTermMemoryUpdates;
+        private final List<MemoryUpdate> sensoryMemoryReads;
+        private final List<MemoryUpdate> shortTermMemoryReads;
 
         public MemoryContext(
                 CachedMemoryStore sensoryMemStore, CachedMemoryStore shortTermMemStore) {
@@ -74,6 +76,8 @@ public class RunnerContextImpl implements RunnerContext {
             this.shortTermMemStore = shortTermMemStore;
             this.sensoryMemoryUpdates = new LinkedList<>();
             this.shortTermMemoryUpdates = new LinkedList<>();
+            this.sensoryMemoryReads = new LinkedList<>();
+            this.shortTermMemoryReads = new LinkedList<>();
         }
 
         public List<MemoryUpdate> getShortTermMemoryUpdates() {
@@ -82,6 +86,14 @@ public class RunnerContextImpl implements RunnerContext {
 
         public List<MemoryUpdate> getSensoryMemoryUpdates() {
             return sensoryMemoryUpdates;
+        }
+
+        public List<MemoryUpdate> getSensoryMemoryReads() {
+            return sensoryMemoryReads;
+        }
+
+        public List<MemoryUpdate> getShortTermMemoryReads() {
+            return shortTermMemoryReads;
         }
 
         public CachedMemoryStore getShortTermMemStore() {
@@ -104,6 +116,12 @@ public class RunnerContextImpl implements RunnerContext {
     protected MemoryContext memoryContext;
     protected String actionName;
     protected InteranlBaseLongTermMemory ltm;
+
+    /** Readable Flink key (String.valueOf(key)) for memory observation events. */
+    protected String observableKey;
+
+    /** True when the current action was triggered by a memory event: suppress observation. */
+    protected boolean observationSuppressed;
 
     /** Context for fine-grained durable execution, may be null if not enabled. */
     @Nullable protected DurableExecutionContext durableExecutionContext;
@@ -134,6 +152,14 @@ public class RunnerContextImpl implements RunnerContext {
 
     public MemoryContext getMemoryContext() {
         return memoryContext;
+    }
+
+    public void setObservableKey(String observableKey) {
+        this.observableKey = observableKey;
+    }
+
+    public void setObservationSuppressed(boolean observationSuppressed) {
+        this.observationSuppressed = observationSuppressed;
     }
 
     @Override
@@ -199,7 +225,9 @@ public class RunnerContextImpl implements RunnerContext {
                 memoryContext.getSensoryMemStore(),
                 MemoryObjectImpl.ROOT_KEY,
                 mailboxThreadChecker,
-                memoryContext.getSensoryMemoryUpdates());
+                memoryContext.getSensoryMemoryUpdates(),
+                memoryContext.getSensoryMemoryReads(),
+                false); // recordReads: wired to config in a later commit
     }
 
     @Override
@@ -210,7 +238,9 @@ public class RunnerContextImpl implements RunnerContext {
                 memoryContext.getShortTermMemStore(),
                 MemoryObjectImpl.ROOT_KEY,
                 mailboxThreadChecker,
-                memoryContext.getShortTermMemoryUpdates());
+                memoryContext.getShortTermMemoryUpdates(),
+                memoryContext.getShortTermMemoryReads(),
+                false); // recordReads: wired to config in a later commit
     }
 
     @Override

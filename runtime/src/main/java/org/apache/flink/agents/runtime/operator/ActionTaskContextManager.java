@@ -219,6 +219,8 @@ class ActionTaskContextManager implements AutoCloseable {
 
         context.switchActionContext(
                 actionTask.action.getName(), memoryContext, String.valueOf(key.hashCode()));
+        context.setObservableKey(String.valueOf(key));
+        context.setObservationSuppressed(false); // real check added later, once MemoryEvent exists
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;

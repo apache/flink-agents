@@ -44,13 +44,15 @@ public class MemoryObjectImpl implements MemoryObject {
 
     private final MemoryStore store;
     private final List<MemoryUpdate> memoryUpdates;
+    private final List<MemoryUpdate> memoryReads;
+    private final boolean recordReads;
     private final String prefix;
     private final Runnable mailboxThreadChecker;
 
     public MemoryObjectImpl(
             MemoryType type, MemoryStore store, String prefix, List<MemoryUpdate> memoryUpdates)
             throws Exception {
-        this(type, store, prefix, () -> {}, memoryUpdates);
+        this(type, store, prefix, () -> {}, memoryUpdates, new ArrayList<>(), false);
     }
 
     public MemoryObjectImpl(
@@ -58,7 +60,9 @@ public class MemoryObjectImpl implements MemoryObject {
             MemoryStore store,
             String prefix,
             Runnable mailboxThreadChecker,
-            List<MemoryUpdate> memoryUpdates)
+            List<MemoryUpdate> memoryUpdates,
+            List<MemoryUpdate> memoryReads,
+            boolean recordReads)
             throws Exception {
         this.type = type;
         this.store = store;
@@ -68,6 +72,8 @@ public class MemoryObjectImpl implements MemoryObject {
             store.put(ROOT_KEY, new MemoryItem());
         }
         this.memoryUpdates = memoryUpdates;
+        this.memoryReads = memoryReads;
+        this.recordReads = recordReads;
     }
 
     @Override
@@ -75,7 +81,14 @@ public class MemoryObjectImpl implements MemoryObject {
         mailboxThreadChecker.run();
         String absPath = fullPath(path);
         if (store.contains(absPath)) {
-            return new MemoryObjectImpl(type, store, absPath, memoryUpdates);
+            return new MemoryObjectImpl(
+                    type,
+                    store,
+                    absPath,
+                    mailboxThreadChecker,
+                    memoryUpdates,
+                    memoryReads,
+                    recordReads);
         }
         return null;
     }
@@ -142,7 +155,14 @@ public class MemoryObjectImpl implements MemoryObject {
         parentItem.getSubKeys().add(parts[parts.length - 1]);
         store.put(parent, parentItem);
 
-        return new MemoryObjectImpl(type, store, absPath, memoryUpdates);
+        return new MemoryObjectImpl(
+                type,
+                store,
+                absPath,
+                mailboxThreadChecker,
+                memoryUpdates,
+                memoryReads,
+                recordReads);
     }
 
     @Override
@@ -193,6 +213,9 @@ public class MemoryObjectImpl implements MemoryObject {
         mailboxThreadChecker.run();
         MemoryItem memItem = store.get(prefix);
         if (memItem != null && memItem.getType() == ItemType.VALUE) {
+            if (recordReads) {
+                memoryReads.add(new MemoryUpdate(prefix, memItem.getValue()));
+            }
             return memItem.getValue();
         }
         return null;
@@ -246,6 +269,10 @@ public class MemoryObjectImpl implements MemoryObject {
 
         public ItemType getType() {
             return type;
+        }
+
+        public boolean isValue() {
+            return type == ItemType.VALUE;
         }
 
         public Object getValue() {
