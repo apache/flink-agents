@@ -15,35 +15,26 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from pathlib import Path
-
-from pyflink.util.java_utils import add_jars_to_context_class_loader
-
 from flink_agents.api.core_options import (
     AgentConfigOptions,
     AgentExecutionOptions,
+    EventLogLevel,
     ShortTermMemoryTtlUpdate,
     ShortTermMemoryTtlVisibility,
 )
 
-# This script is used to verify that Java-defined configuration options
-# (e.g., AgentConfigOptions) are correctly exposed and accessible in the
-# Python environment via the JAR file. It loads a Java JAR into the Python
-# context and performs basic assertions on the configuration keys, types,
-# and default values to ensure compatibility between Java and Python layers.
-#
-# The JAR file path is relative to this script and should be updated if
-# the build structure changes.
+# This script verifies that Python configuration options stay aligned with the
+# Java AgentConfigOptions / AgentExecutionOptions definitions.
 if __name__ == "__main__":
-    current_dir = Path(__file__).parent
-
-    jars = Path(current_dir).glob("../../../../../api/target/flink-agents-api-*.jar")
-    jars = [f"file:///{jar}" for jar in jars]
-    add_jars_to_context_class_loader(jars)
-
     assert AgentConfigOptions.BASE_LOG_DIR.get_key() == "baseLogDir"
     assert AgentConfigOptions.BASE_LOG_DIR.get_type() is str
     assert AgentConfigOptions.BASE_LOG_DIR.get_default_value() is None
+
+    assert AgentConfigOptions.EVENT_LOG_LEVEL.get_key() == "event-log.level"
+    assert AgentConfigOptions.EVENT_LOG_LEVEL.get_type() is EventLogLevel
+    assert (
+        AgentConfigOptions.EVENT_LOG_LEVEL.get_default_value() is EventLogLevel.STANDARD
+    )
 
     assert (
         AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS.get_key()
