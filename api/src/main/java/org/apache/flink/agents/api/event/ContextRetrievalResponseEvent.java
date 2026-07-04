@@ -18,7 +18,9 @@
 
 package org.apache.flink.agents.api.event;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -43,7 +45,10 @@ public class ContextRetrievalResponseEvent extends Event {
         setAttr("documents", new ArrayList<>(documents));
     }
 
-    public ContextRetrievalResponseEvent(UUID id, Map<String, Object> attributes) {
+    @JsonCreator
+    public ContextRetrievalResponseEvent(
+            @JsonProperty("id") UUID id,
+            @JsonProperty("attributes") Map<String, Object> attributes) {
         super(id, EVENT_TYPE, attributes);
     }
 
