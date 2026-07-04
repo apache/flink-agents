@@ -16,6 +16,7 @@
 # limitations under the License.
 ################################################################################
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -57,3 +58,45 @@ def test_openai_embedding_model() -> None:
     assert isinstance(response, list)
     assert len(response) > 0
     assert all(isinstance(x, float) for x in response)  #
+
+
+def test_openai_embedding_model_records_token_metrics() -> None:
+    """Test OpenAI embedding usage is recorded as model token metrics."""
+    connection = OpenAIEmbeddingModelConnection(name="openai", api_key="fake-key")
+    mock_client = MagicMock()
+    mock_client.embeddings.create.return_value = SimpleNamespace(
+        data=[SimpleNamespace(embedding=[0.1, 0.2, 0.3])],
+        usage=SimpleNamespace(prompt_tokens=5, total_tokens=5),
+    )
+    connection._OpenAIEmbeddingModelConnection__client = mock_client
+
+    def get_resource(name: str, type: ResourceType) -> Resource:
+        if type == ResourceType.EMBEDDING_MODEL_CONNECTION:
+            return connection
+        else:
+            msg = f"Unknown resource type: {type}"
+            raise ValueError(msg)
+
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+    embedding_model = OpenAIEmbeddingModelSetup(
+        name="openai", model=test_model, connection="openai", resource_context=mock_ctx
+    )
+    metric_group = MagicMock()
+    model_group = MagicMock()
+    prompt_counter = MagicMock()
+    total_counter = MagicMock()
+    metric_group.get_sub_group.return_value = model_group
+    model_group.get_counter.side_effect = {
+        "promptTokens": prompt_counter,
+        "totalTokens": total_counter,
+    }.__getitem__
+
+    embedding_model.open()
+    embedding_model.set_metric_group(metric_group)
+
+    assert embedding_model.embed("Hello, Flink Agent!") == [0.1, 0.2, 0.3]
+
+    metric_group.get_sub_group.assert_called_once_with("model", test_model)
+    prompt_counter.inc.assert_called_once_with(5)
+    total_counter.inc.assert_called_once_with(5)

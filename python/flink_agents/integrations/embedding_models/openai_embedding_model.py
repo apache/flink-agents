@@ -24,6 +24,8 @@ from typing_extensions import override
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
+    EmbeddingResult,
+    EmbeddingTokenUsage,
 )
 
 DEFAULT_REQUEST_TIMEOUT = 30.0
@@ -115,6 +117,12 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
         self, text: str | Sequence[str], **kwargs: Any
     ) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text query."""
+        return self.embed_with_usage(text, **kwargs).embeddings
+
+    def embed_with_usage(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        """Generate embeddings and return OpenAI token usage when available."""
         # Extract OpenAI specific parameters
         model = kwargs.pop("model")
         encoding_format = kwargs.pop("encoding_format", None)
@@ -132,8 +140,24 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
             user=user if user is not None else NOT_GIVEN,
         )
 
+        usage = getattr(response, "usage", None)
+        token_usage = None
+        if usage is not None:
+            prompt_tokens = getattr(usage, "prompt_tokens", None)
+            total_tokens = getattr(usage, "total_tokens", None)
+            if prompt_tokens is not None or total_tokens is not None:
+                token_usage = EmbeddingTokenUsage(
+                    prompt_tokens=int(prompt_tokens or 0),
+                    total_tokens=int(
+                        total_tokens if total_tokens is not None else prompt_tokens
+                    ),
+                )
+
         embeddings = [list(embedding.embedding) for embedding in response.data]
-        return embeddings[0] if isinstance(text, str) else embeddings
+        return EmbeddingResult(
+            embeddings=embeddings[0] if isinstance(text, str) else embeddings,
+            token_usage=token_usage,
+        )
 
     @override
     def close(self) -> None:

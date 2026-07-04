@@ -25,10 +25,25 @@ from pydantic import Field
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
+    EmbeddingResult,
+    EmbeddingTokenUsage,
 )
 
 DEFAULT_REQUEST_TIMEOUT = 30.0
 DEFAULT_MODEL = "text-embedding-v4"
+
+
+def _get_usage_value(obj: Any, *names: str) -> int | None:
+    """Read a token usage value from dict-like or object-like provider responses."""
+    if obj is None:
+        return None
+    for name in names:
+        if isinstance(obj, dict) and name in obj:
+            return int(obj[name])
+        value = getattr(obj, name, None)
+        if value is not None:
+            return int(value)
+    return None
 
 
 class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
@@ -78,6 +93,12 @@ class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
         self, text: str | Sequence[str], **kwargs: Any
     ) -> list[float] | list[list[float]]:
         """Generate embedding vector for text input."""
+        return self.embed_with_usage(text, **kwargs).embeddings
+
+    def embed_with_usage(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        """Generate embeddings and return DashScope token usage when available."""
         model = kwargs.pop("model", DEFAULT_MODEL)
         text_type = kwargs.pop("text_type", None)
         dimension = kwargs.pop("dimension", None)
@@ -103,8 +124,25 @@ class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
             msg = f"DashScope TextEmbedding call failed: {response.message}"
             raise RuntimeError(msg)
 
+        usage = getattr(response, "usage", None)
+        if usage is None and isinstance(response.output, dict):
+            usage = response.output.get("usage")
+        prompt_tokens = _get_usage_value(usage, "input_tokens", "prompt_tokens")
+        total_tokens = _get_usage_value(usage, "total_tokens")
+        token_usage = None
+        if prompt_tokens is not None or total_tokens is not None:
+            token_usage = EmbeddingTokenUsage(
+                prompt_tokens=int(prompt_tokens or 0),
+                total_tokens=int(
+                    total_tokens if total_tokens is not None else prompt_tokens
+                ),
+            )
+
         embeddings = [e["embedding"] for e in response.output["embeddings"]]
-        return embeddings[0] if isinstance(text, str) else embeddings
+        return EmbeddingResult(
+            embeddings=embeddings[0] if isinstance(text, str) else embeddings,
+            token_usage=token_usage,
+        )
 
 
 class TongyiEmbeddingModelSetup(BaseEmbeddingModelSetup):

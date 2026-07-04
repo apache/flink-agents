@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.embedding.model;
 
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -106,7 +107,10 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
     public float[] embed(String text, Map<String, Object> parameters) {
         Map<String, Object> params = this.getParameters();
         params.putAll(parameters);
-        return getConnection().embed(text, params);
+        BaseEmbeddingModelConnection currentConnection = getConnection();
+        EmbeddingResult<float[]> result = currentConnection.embedWithUsage(text, params);
+        recordTokenMetrics(result.getTokenUsage());
+        return result.getEmbeddings();
     }
 
     /**
@@ -123,6 +127,23 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
     public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
         Map<String, Object> params = this.getParameters();
         params.putAll(parameters);
-        return getConnection().embed(texts, params);
+        BaseEmbeddingModelConnection currentConnection = getConnection();
+        EmbeddingResult<List<float[]>> result = currentConnection.embedWithUsage(texts, params);
+        recordTokenMetrics(result.getTokenUsage());
+        return result.getEmbeddings();
+    }
+
+    private void recordTokenMetrics(EmbeddingTokenUsage usage) {
+        if (usage == null) {
+            return;
+        }
+        FlinkAgentsMetricGroup metricGroup = getMetricGroup();
+        if (metricGroup == null) {
+            return;
+        }
+
+        FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", model);
+        modelGroup.getCounter("promptTokens").inc(usage.getPromptTokens());
+        modelGroup.getCounter("totalTokens").inc(usage.getTotalTokens());
     }
 }

@@ -155,6 +155,63 @@ def test_tongyi_embedding_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(response) == 5
 
 
+def test_tongyi_embedding_records_token_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test DashScope embedding usage is recorded as model token metrics."""
+    mock_embedding = [0.1, 0.2, 0.3]
+    mocked_response = SimpleNamespace(
+        status_code=HTTPStatus.OK,
+        output={
+            "embeddings": [{"embedding": mock_embedding}],
+            "usage": {"input_tokens": 6, "total_tokens": 6},
+        },
+        message="Success",
+    )
+    mock_call = MagicMock(return_value=mocked_response)
+    monkeypatch.setattr(
+        "flink_agents.integrations.embedding_models.tongyi_embedding_model.dashscope.TextEmbedding.call",
+        mock_call,
+    )
+
+    connection = TongyiEmbeddingModelConnection(
+        name="tongyi",
+        api_key="fake-key",
+    )
+
+    def get_resource(name: str, type: ResourceType) -> Resource:
+        if type == ResourceType.EMBEDDING_MODEL_CONNECTION:
+            return connection
+        else:
+            msg = f"Unknown resource type: {type}"
+            raise ValueError(msg)
+
+    embedding_model = TongyiEmbeddingModelSetup(
+        name="tongyi",
+        model=test_model,
+        connection="tongyi",
+        resource_context=_make_ctx(get_resource),
+    )
+    metric_group = MagicMock()
+    model_group = MagicMock()
+    prompt_counter = MagicMock()
+    total_counter = MagicMock()
+    metric_group.get_sub_group.return_value = model_group
+    model_group.get_counter.side_effect = {
+        "promptTokens": prompt_counter,
+        "totalTokens": total_counter,
+    }.__getitem__
+
+    embedding_model.open()
+    embedding_model.set_metric_group(metric_group)
+
+    assert embedding_model.embed("Test text") == mock_embedding
+
+    metric_group.get_sub_group.assert_called_once_with("model", test_model)
+    prompt_counter.inc.assert_called_once_with(6)
+    total_counter.inc.assert_called_once_with(6)
+
+
 def test_tongyi_embedding_batch_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test batch embedding functionality with mocked DashScope API."""
     mock_embeddings = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
