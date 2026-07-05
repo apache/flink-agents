@@ -19,16 +19,24 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.runtime.operator.ActionTask;
 
 import java.io.IOException;
+import java.util.Base64;
 
 /**
  * Backend-agnostic serializer/deserializer for {@link ActionState}.
@@ -38,6 +46,13 @@ import java.io.IOException;
  * ActionStateStore backends delegate to this class for consistent serialization format.
  */
 public final class ActionStateSerde {
+
+    /**
+     * Reserved envelope key marking a base64-encoded {@code byte[]} {@link MemoryUpdate} value. A
+     * namespaced key keeps the residual collision with a genuine single-entry user {@code Map}
+     * negligible and clearly framework-reserved.
+     */
+    private static final String MEMORY_UPDATE_BYTES_KEY = "__flink_agents_bytes__";
 
     private static final ObjectMapper OBJECT_MAPPER = createObjectMapper();
 
@@ -74,6 +89,9 @@ public final class ActionStateSerde {
         module.addSerializer(ActionTask.class, new ActionTaskSerializer());
         mapper.registerModule(module);
 
+        // Preserve byte[] MemoryUpdate values across the untyped Object round-trip
+        mapper.addMixIn(MemoryUpdate.class, MemoryUpdateValueMixin.class);
+
         return mapper;
     }
 
@@ -90,6 +108,63 @@ public final class ActionStateSerde {
         public void serialize(ActionTask value, JsonGenerator gen, SerializerProvider serializers)
                 throws IOException {
             gen.writeNull();
+        }
+    }
+
+    /** Binds the byte[]-preserving (de)serializer to {@link MemoryUpdate#getValue()} only. */
+    abstract static class MemoryUpdateValueMixin {
+        @JsonSerialize(using = MemoryUpdateValueSerializer.class)
+        @JsonDeserialize(using = MemoryUpdateValueDeserializer.class)
+        Object value;
+    }
+
+    /**
+     * Serializes a {@code byte[]} {@link MemoryUpdate} value as a one-key base64 envelope so it can
+     * be recovered as a {@code byte[]} rather than the base64 {@code String} that untyped {@code
+     * Object} serialization would yield; all other types delegate to default serialization and stay
+     * byte-identical on disk.
+     *
+     * <p>Only a top-level {@code byte[]} value is preserved; a {@code byte[]} nested inside a
+     * {@code List} or {@code Map} value goes through the default serializers and is not preserved.
+     */
+    static class MemoryUpdateValueSerializer extends JsonSerializer<Object> {
+        @Override
+        public void serialize(Object value, JsonGenerator gen, SerializerProvider provider)
+                throws IOException {
+            if (value instanceof byte[]) {
+                gen.writeStartObject();
+                gen.writeStringField(
+                        MEMORY_UPDATE_BYTES_KEY,
+                        Base64.getEncoder().encodeToString((byte[]) value));
+                gen.writeEndObject();
+            } else {
+                provider.defaultSerializeValue(value, gen);
+            }
+        }
+    }
+
+    /**
+     * Reverses the base64 envelope written by {@link MemoryUpdateValueSerializer} back to a {@code
+     * byte[]}; every other shape reproduces stock untyped {@code Object} binding.
+     *
+     * <p>Only a top-level {@code byte[]} value is recovered; a {@code byte[]} nested inside a
+     * {@code List} or {@code Map} value is not.
+     */
+    static class MemoryUpdateValueDeserializer extends JsonDeserializer<Object> {
+        @Override
+        public Object deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+            JsonNode node = ctxt.readTree(p);
+            if (node.isObject()
+                    && node.size() == 1
+                    && node.has(MEMORY_UPDATE_BYTES_KEY)
+                    && node.get(MEMORY_UPDATE_BYTES_KEY).isTextual()) {
+                try {
+                    return Base64.getDecoder().decode(node.get(MEMORY_UPDATE_BYTES_KEY).asText());
+                } catch (IllegalArgumentException notBase64) {
+                    // Not a real envelope - fall through to generic binding.
+                }
+            }
+            return ctxt.readTreeAsValue(node, Object.class);
         }
     }
 }

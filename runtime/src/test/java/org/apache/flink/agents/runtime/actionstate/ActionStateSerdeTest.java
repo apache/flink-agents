@@ -25,8 +25,10 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -134,6 +136,114 @@ public class ActionStateSerdeTest {
         assertNotNull(deserializedComplexAttr);
         assertEquals("value", deserializedComplexAttr.get("nested"));
         assertEquals(42, deserializedComplexAttr.get("number"));
+    }
+
+    @Test
+    public void testByteArrayShortTermMemoryValueRoundTrip() throws Exception {
+        // Verbatim issue repro: a byte[] short-term memory value must survive the durable serde
+        // round-trip as a byte[], not silently decay to a base64 String.
+        byte[] original = "hello".getBytes(StandardCharsets.UTF_8);
+        ActionState state = new ActionState(null, null, null, null, null, false);
+        state.addShortTermMemoryUpdate(new MemoryUpdate("stm.path", original));
+
+        ActionState recovered = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+
+        Object value = recovered.getShortTermMemoryUpdates().get(0).getValue();
+        assertInstanceOf(byte[].class, value);
+        assertArrayEquals(original, (byte[]) value);
+    }
+
+    @Test
+    public void testByteArraySensoryMemoryValueRoundTrip() throws Exception {
+        byte[] original = "hello".getBytes(StandardCharsets.UTF_8);
+        ActionState state = new ActionState(null, null, null, null, null, false);
+        state.addSensoryMemoryUpdate(new MemoryUpdate("sm.path", original));
+
+        ActionState recovered = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+
+        Object value = recovered.getSensoryMemoryUpdates().get(0).getValue();
+        assertInstanceOf(byte[].class, value);
+        assertArrayEquals(original, (byte[]) value);
+    }
+
+    @Test
+    public void testEmptyByteArrayValueRoundTrip() throws Exception {
+        byte[] original = new byte[0];
+        ActionState state = new ActionState(null, null, null, null, null, false);
+        state.addShortTermMemoryUpdate(new MemoryUpdate("stm.path", original));
+
+        ActionState recovered = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+
+        Object value = recovered.getShortTermMemoryUpdates().get(0).getValue();
+        assertInstanceOf(byte[].class, value);
+        assertEquals(0, ((byte[]) value).length);
+    }
+
+    @Test
+    public void testStringMemoryValueUnchanged() throws Exception {
+        // Guard: the envelope must not disturb the common String case.
+        ActionState state = new ActionState(null, null, null, null, null, false);
+        state.addShortTermMemoryUpdate(new MemoryUpdate("stm.path", "plain string value"));
+
+        ActionState recovered = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+
+        Object value = recovered.getShortTermMemoryUpdates().get(0).getValue();
+        assertInstanceOf(String.class, value);
+        assertEquals("plain string value", value);
+    }
+
+    @Test
+    public void testMapMemoryValueUnchanged() throws Exception {
+        // Guard: a Map value round-trips as a Map, not misread as a byte[] envelope.
+        Map<String, Object> original = new LinkedHashMap<>();
+        original.put("a", 1);
+        original.put("b", Arrays.asList(1, 2, 3));
+        ActionState state = new ActionState(null, null, null, null, null, false);
+        state.addShortTermMemoryUpdate(new MemoryUpdate("stm.path", original));
+
+        ActionState recovered = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+
+        Object value = recovered.getShortTermMemoryUpdates().get(0).getValue();
+        assertInstanceOf(Map.class, value);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> recoveredMap = (Map<String, Object>) value;
+        assertEquals(1, recoveredMap.get("a"));
+        assertEquals(Arrays.asList(1, 2, 3), recoveredMap.get("b"));
+    }
+
+    @Test
+    public void testReservedKeyMapNotByteArrayIsDocumentedResidual() throws Exception {
+        // Documented residual, not a bug: because the reserved key is the collision guard, a user
+        // Map that is EXACTLY {"__flink_agents_bytes__":"<valid-base64>"} is indistinguishable from
+        // a byte[] envelope and recovers as byte[]. A namespaced key makes this negligible. A map
+        // with any second key falls outside the single-key predicate and stays a Map.
+        String reservedKey = "__flink_agents_bytes__";
+
+        Map<String, Object> collidingMap = new LinkedHashMap<>();
+        collidingMap.put(reservedKey, "aGVsbG8="); // base64 of "hello"
+        ActionState collidingState = new ActionState(null, null, null, null, null, false);
+        collidingState.addShortTermMemoryUpdate(new MemoryUpdate("stm.path", collidingMap));
+
+        ActionState recoveredColliding =
+                ActionStateSerde.deserialize(ActionStateSerde.serialize(collidingState));
+        Object collidingValue = recoveredColliding.getShortTermMemoryUpdates().get(0).getValue();
+        assertInstanceOf(byte[].class, collidingValue);
+        assertArrayEquals("hello".getBytes(StandardCharsets.UTF_8), (byte[]) collidingValue);
+
+        Map<String, Object> twoKeyMap = new LinkedHashMap<>();
+        twoKeyMap.put(reservedKey, "aGVsbG8=");
+        twoKeyMap.put("x", 1);
+        ActionState twoKeyState = new ActionState(null, null, null, null, null, false);
+        twoKeyState.addShortTermMemoryUpdate(new MemoryUpdate("stm.path", twoKeyMap));
+
+        ActionState recoveredTwoKey =
+                ActionStateSerde.deserialize(ActionStateSerde.serialize(twoKeyState));
+        Object twoKeyValue = recoveredTwoKey.getShortTermMemoryUpdates().get(0).getValue();
+        assertInstanceOf(Map.class, twoKeyValue);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> recoveredTwoKeyMap = (Map<String, Object>) twoKeyValue;
+        assertEquals("aGVsbG8=", recoveredTwoKeyMap.get(reservedKey));
+        assertEquals(1, recoveredTwoKeyMap.get("x"));
     }
 
     @Test
