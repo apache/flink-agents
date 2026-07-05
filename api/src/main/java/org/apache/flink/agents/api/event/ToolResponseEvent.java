@@ -63,23 +63,17 @@ public class ToolResponseEvent extends Event {
     public ToolResponseEvent(
             @JsonProperty("id") UUID id,
             @JsonProperty("attributes") Map<String, Object> attributes) {
-        super(id, EVENT_TYPE, attributes);
+        super(id, EVENT_TYPE, normalizeAttributes(attributes));
     }
 
-    /**
-     * Reconstructs a typed ToolResponseEvent from a base Event, deserializing nested types.
-     *
-     * @param event the base event containing tool response data in attributes
-     * @return a typed ToolResponseEvent
-     */
+    /** Converts nested attributes back to their typed forms. */
     @SuppressWarnings("unchecked")
-    public static ToolResponseEvent fromEvent(Event event) {
-        Map<String, Object> attrs = new HashMap<>(event.getAttributes());
-        Object rawId = attrs.get("request_id");
+    private static Map<String, Object> normalizeAttributes(Map<String, Object> attributes) {
+        Object rawId = attributes.get("request_id");
         if (rawId instanceof String) {
-            attrs.put("request_id", UUID.fromString((String) rawId));
+            attributes.put("request_id", UUID.fromString((String) rawId));
         }
-        Map<String, ?> rawResponses = (Map<String, ?>) attrs.get("responses");
+        Map<String, ?> rawResponses = (Map<String, ?>) attributes.get("responses");
         if (rawResponses != null) {
             Map<String, ToolResponse> responses = new HashMap<>();
             for (Map.Entry<String, ?> entry : rawResponses.entrySet()) {
@@ -92,9 +86,20 @@ public class ToolResponseEvent extends Event {
                     responses.put(entry.getKey(), ToolResponse.success(v));
                 }
             }
-            attrs.put("responses", responses);
+            attributes.put("responses", responses);
         }
-        ToolResponseEvent result = new ToolResponseEvent(event.getId(), attrs);
+        return attributes;
+    }
+
+    /**
+     * Reconstructs a typed ToolResponseEvent from a base Event, deserializing nested types.
+     *
+     * @param event the base event containing tool response data in attributes
+     * @return a typed ToolResponseEvent
+     */
+    public static ToolResponseEvent fromEvent(Event event) {
+        ToolResponseEvent result =
+                new ToolResponseEvent(event.getId(), new HashMap<>(event.getAttributes()));
         if (event.hasSourceTimestamp()) {
             result.setSourceTimestamp(event.getSourceTimestamp());
         }

@@ -381,24 +381,21 @@ public class ActionStateSerdeTest {
         assertEquals(ContextRetrievalRequestEvent.class, outputEvents.get(4).getClass());
         assertEquals(ContextRetrievalResponseEvent.class, outputEvents.get(5).getClass());
 
-        // Replayed events are consumed through fromEvent() (see ChatModelAction,
-        // ToolCallAction, ContextRetrievalAction), which must restore nested
-        // attributes degraded to raw maps by the JSON round-trip back to their
-        // typed forms.
-        ChatRequestEvent chatRequest = ChatRequestEvent.fromEvent(outputEvents.get(0));
+        // Typed getters must return typed values directly on the deserialized events.
+        ChatRequestEvent chatRequest = (ChatRequestEvent) outputEvents.get(0);
         assertEquals("hello", chatRequest.getMessages().get(0).getContent());
         assertEquals(MessageRole.USER, chatRequest.getMessages().get(0).getRole());
 
-        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(outputEvents.get(1));
+        ChatResponseEvent chatResponse = (ChatResponseEvent) outputEvents.get(1);
         assertEquals(requestId, chatResponse.getRequestId());
         assertEquals("hello", chatResponse.getResponse().getContent());
 
-        ToolResponseEvent toolResponse = ToolResponseEvent.fromEvent(outputEvents.get(3));
+        ToolResponseEvent toolResponse = (ToolResponseEvent) outputEvents.get(3);
         assertEquals(requestId, toolResponse.getRequestId());
         assertEquals("result", toolResponse.getResponses().get("call-1").getResult());
 
         ContextRetrievalResponseEvent retrievalResponse =
-                ContextRetrievalResponseEvent.fromEvent(outputEvents.get(5));
+                (ContextRetrievalResponseEvent) outputEvents.get(5);
         assertEquals(requestId, retrievalResponse.getRequestId());
         assertEquals("doc content", retrievalResponse.getDocuments().get(0).getContent());
         assertEquals("doc-1", retrievalResponse.getDocuments().get(0).getId());

@@ -52,7 +52,20 @@ public class ChatResponseEvent extends Event {
     public ChatResponseEvent(
             @JsonProperty("id") UUID id,
             @JsonProperty("attributes") Map<String, Object> attributes) {
-        super(id, EVENT_TYPE, attributes);
+        super(id, EVENT_TYPE, normalizeAttributes(attributes));
+    }
+
+    /** Converts nested attributes back to their typed forms. */
+    private static Map<String, Object> normalizeAttributes(Map<String, Object> attributes) {
+        Object rawId = attributes.get("request_id");
+        if (rawId instanceof String) {
+            attributes.put("request_id", UUID.fromString((String) rawId));
+        }
+        Object rawResponse = attributes.get("response");
+        if (rawResponse instanceof Map) {
+            attributes.put("response", MAPPER.convertValue(rawResponse, ChatMessage.class));
+        }
+        return attributes;
     }
 
     /**
@@ -61,18 +74,9 @@ public class ChatResponseEvent extends Event {
      * @param event the base event containing chat response data in attributes
      * @return a typed ChatResponseEvent
      */
-    @SuppressWarnings("unchecked")
     public static ChatResponseEvent fromEvent(Event event) {
-        Map<String, Object> attrs = new HashMap<>(event.getAttributes());
-        Object rawId = attrs.get("request_id");
-        if (rawId instanceof String) {
-            attrs.put("request_id", UUID.fromString((String) rawId));
-        }
-        Object rawResponse = attrs.get("response");
-        if (rawResponse instanceof Map) {
-            attrs.put("response", MAPPER.convertValue(rawResponse, ChatMessage.class));
-        }
-        ChatResponseEvent result = new ChatResponseEvent(event.getId(), attrs);
+        ChatResponseEvent result =
+                new ChatResponseEvent(event.getId(), new HashMap<>(event.getAttributes()));
         if (event.hasSourceTimestamp()) {
             result.setSourceTimestamp(event.getSourceTimestamp());
         }
