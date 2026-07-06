@@ -43,17 +43,23 @@ from pyflink.datastream.connectors.file_system import (
 )
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+from flink_agents.e2e_tests.e2e_tests_integration.tool_parameter_injection_agent import (
+    OrderKeySelector,
+)
 from flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions import (
     YamlChatInput,
     YamlChatKeySelector,
     YamlChatOutput,
 )
-from flink_agents.e2e_tests.test_utils import pull_model
+from flink_agents.e2e_tests.test_utils import check_result, pull_model
 
 current_dir = Path(__file__).parent
 _RESOURCES = current_dir.parent / "resources"
+_PYTHON_PATH = os.pathsep.join(
+    [str(current_dir.parents[2]), sysconfig.get_paths()["purelib"]]
+)
 
-os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
+os.environ["PYTHONPATH"] = _PYTHON_PATH
 
 _OLLAMA_MODEL = "qwen3:1.7b"
 _client = pull_model(_OLLAMA_MODEL)
@@ -69,7 +75,7 @@ def test_single_yaml_agent(tmp_path: Path) -> None:
     plain creative chat model declared in the same YAML.
     """
     config = Configuration()
-    config.set_string("python.pythonpath", sysconfig.get_paths()["purelib"])
+    config.set_string("python.pythonpath", _PYTHON_PATH)
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
@@ -139,7 +145,7 @@ def test_chained_yaml_agents(tmp_path: Path) -> None:
     the second LLM hop.
     """
     config = Configuration()
-    config.set_string("python.pythonpath", sysconfig.get_paths()["purelib"])
+    config.set_string("python.pythonpath", _PYTHON_PATH)
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
@@ -198,6 +204,53 @@ def test_chained_yaml_agents(tmp_path: Path) -> None:
     final_answer = answers[1]
     assert "3" in final_answer, (
         f"math result missing from chained output: {final_answer!r}"
+    )
+
+
+def test_yaml_tool_parameter_injection_agent(tmp_path: Path) -> None:
+    """YAML ``injected_args`` hides tenant_id from schema and injects it at call time."""
+    config = Configuration()
+    config.set_string("python.pythonpath", _PYTHON_PATH)
+    env = StreamExecutionEnvironment.get_execution_environment(config)
+    env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
+    env.set_parallelism(1)
+
+    input_datastream = env.from_source(
+        source=FileSource.for_record_stream_format(
+            StreamFormat.text_line_format(),
+            f"file:///{_RESOURCES}/tool_parameter_injection_input",
+        ).build(),
+        watermark_strategy=WatermarkStrategy.no_watermarks(),
+        source_name="yaml_tool_parameter_injection_source",
+    ).map(lambda x: str(x))
+
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    agents_env.get_config().set_str("tenant_id", "tenant-yaml")
+    agents_env.load_yaml(_RESOURCES / "yaml_tool_parameter_injection_agent.yaml")
+
+    output_datastream = (
+        agents_env.from_datastream(input_datastream, key_selector=OrderKeySelector())
+        .apply("yaml_tool_parameter_injection_agent")
+        .to_datastream()
+    )
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir(parents=True, exist_ok=True)
+
+    output_datastream.map(lambda x: str(x), Types.STRING()).add_sink(
+        StreamingFileSink.for_row_format(
+            base_path=str(result_dir.absolute()),
+            encoder=Encoder.simple_string_encoder(),
+        ).build()
+    )
+
+    agents_env.execute()
+
+    check_result(
+        result_dir=result_dir,
+        ground_truth_dir=_RESOURCES
+        / "ground_truth"
+        / "test_yaml_tool_parameter_injection.txt",
     )
 
 

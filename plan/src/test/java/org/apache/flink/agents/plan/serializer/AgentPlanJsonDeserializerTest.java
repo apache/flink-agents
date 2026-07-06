@@ -22,15 +22,20 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -67,11 +72,62 @@ public class AgentPlanJsonDeserializerTest {
 
         // Check the flink agent config
         Map<String, Object> configData = agentPlan.getConfigData();
-        assertThat(configData.keySet()).hasSize(4);
+        assertEquals(4, configData.keySet().size());
         assertEquals(1, configData.get("key1"));
         assertEquals(1.5, configData.get("key2"));
         assertEquals(true, configData.get("key3"));
         assertEquals("v1", configData.get("key4"));
+    }
+
+    @Test
+    public void testDeserializeToolWithInjectedArgs() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        FunctionTool originalTool =
+                new FunctionTool(
+                        new ToolMetadata("query_order", "Query order.", "{}"),
+                        new JavaFunction(
+                                MyAction.class.getName(),
+                                "doNothing",
+                                new Class[] {Event.class, RunnerContext.class}),
+                        Map.of(
+                                "tenant_id",
+                                ToolParameterInjection.fromSensoryMemory("request.tenant_id")));
+
+        String json =
+                mapper.writeValueAsString(
+                        Map.of(
+                                "actions",
+                                Map.of(),
+                                "actions_by_event",
+                                Map.of(),
+                                "resource_providers",
+                                Map.of(
+                                        "tool",
+                                        Map.of(
+                                                "query_order",
+                                                Map.of(
+                                                        "name",
+                                                        "query_order",
+                                                        "type",
+                                                        "tool",
+                                                        "module",
+                                                        FunctionTool.class.getPackageName(),
+                                                        "clazz",
+                                                        FunctionTool.class.getName(),
+                                                        "serializedResource",
+                                                        mapper.writeValueAsString(originalTool),
+                                                        "__resource_provider_type__",
+                                                        "JavaSerializableResourceProvider")))));
+
+        AgentPlan agentPlan = mapper.readValue(json, AgentPlan.class);
+
+        ResourceProvider provider =
+                agentPlan.getResourceProviders().get(ResourceType.TOOL).get("query_order");
+        FunctionTool deserializedTool =
+                (FunctionTool) provider.provide(ResourceContext.fromGetResource((n, t) -> null));
+        assertEquals(
+                Map.of("tenant_id", ToolParameterInjection.fromSensoryMemory("request.tenant_id")),
+                deserializedTool.getInjectedArgs());
     }
 
     private static class MyEvent extends Event {

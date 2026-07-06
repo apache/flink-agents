@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from flink_agents.api.tools import InjectedArg
 from flink_agents.plan.function import JavaFunction, PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
@@ -43,6 +44,19 @@ def foo(bar: int, baz: str) -> str:
         Response string value.
     """
     raise NotImplementedError
+
+
+def tool_with_injected_arg(order_id: str, tenant_id: str) -> str:
+    """Query an order.
+
+    Parameters
+    ----------
+    order_id : str
+        The order id.
+    tenant_id : str
+        The tenant id.
+    """
+    return f"{tenant_id}:{order_id}"
 
 
 @pytest.fixture(scope="module")
@@ -80,6 +94,18 @@ def test_python_function_tool_metadata_filled_eagerly() -> None:
     tool = FunctionTool(func=PythonFunction.from_callable(foo))
     assert tool.metadata is not None
     assert tool.metadata.name == "foo"
+
+
+def test_python_function_tool_hides_injected_args_from_metadata() -> None:
+    tool = FunctionTool(
+        func=PythonFunction.from_callable(tool_with_injected_arg),
+        injected_args={"tenant_id": InjectedArg.from_config("tenant_id")},
+    )
+
+    schema = tool.metadata.args_schema.model_json_schema()
+
+    assert set(schema["properties"]) == {"order_id"}
+    assert schema.get("required") == ["order_id"]
 
 
 # ---- Java function tool path -------------------------------------------------
@@ -145,7 +171,7 @@ def test_java_function_tool_metadata_filled_on_adapter_injection() -> None:
     # stored in the regular ``metadata`` field. Subsequent accesses just read
     # the field, so the adapter is not hit again.
     adapter.getJavaToolMetadata.assert_called_once_with(
-        "com.example.Tools", "add", ["int", "int"]
+        "com.example.Tools", "add", ["int", "int"], []
     )
     assert tool.metadata is not None
     assert tool.metadata.name == "add"
@@ -153,6 +179,32 @@ def test_java_function_tool_metadata_filled_on_adapter_injection() -> None:
     assert set(tool.metadata.args_schema.model_fields) == {"a", "b"}
     _ = tool.metadata
     adapter.getJavaToolMetadata.assert_called_once()
+
+
+def test_java_function_tool_merges_adapter_injected_args() -> None:
+    tool = FunctionTool(
+        func=_java_func(),
+        injected_args={"request_id": InjectedArg.from_sensory_memory("request.id")},
+    )
+    adapter = _fake_adapter()
+    adapter.getJavaToolMetadata.return_value = {
+        "name": "add",
+        "description": "Add two ints.",
+        "inputSchema": _FAKE_JAVA_SCHEMA,
+        "injectedArgs": (
+            '{"tenant_id": {"source": "config", "key": "tenant.id"}}'
+        ),
+    }
+
+    tool.set_java_resource_adapter(adapter)
+
+    adapter.getJavaToolMetadata.assert_called_once_with(
+        "com.example.Tools", "add", ["int", "int"], ["request_id"]
+    )
+    assert tool.injected_args == {
+        "tenant_id": InjectedArg.from_config("tenant.id"),
+        "request_id": InjectedArg.from_sensory_memory("request.id"),
+    }
 
 
 def test_java_function_tool_metadata_is_none_without_adapter() -> None:

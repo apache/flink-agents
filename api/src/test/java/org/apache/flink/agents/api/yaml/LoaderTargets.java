@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.api.yaml;
 
+import org.apache.flink.agents.api.annotation.ToolParam;
+
 /** Static targets referenced by YAML fixtures. */
 public final class LoaderTargets {
     private LoaderTargets() {}
@@ -28,6 +30,12 @@ public final class LoaderTargets {
 
     public static String notify(String id, String message) {
         return "notified " + id + ": " + message;
+    }
+
+    public static String queryOrder(
+            @ToolParam(name = "order_id") String orderId,
+            @ToolParam(name = "tenant_id") String tenantId) {
+        return tenantId + ":" + orderId;
     }
 
     public static final class Counter {

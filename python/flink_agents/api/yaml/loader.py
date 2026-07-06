@@ -188,7 +188,7 @@ def _build_tool(spec: ToolSpec) -> FunctionTool:
         language=spec.type,
         parameter_types=spec.parameter_types,
     )
-    return FunctionTool(func=func)
+    return FunctionTool(func=func, injected_args=spec.injected_args)
 
 
 def _build_prompt(spec: PromptSpec) -> Prompt:

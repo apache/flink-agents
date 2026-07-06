@@ -18,16 +18,19 @@
 import json
 import typing
 from inspect import signature
-from typing import Any, Callable, Dict, Optional, Type, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Type, Union
 
 from docstring_parser import parse
 from pydantic import BaseModel, create_model
 from pydantic.fields import Field, FieldInfo
 
 
-def create_schema_from_function(name: str, func: Callable) -> Type[BaseModel]:
+def create_schema_from_function(
+    name: str, func: Callable, injected_args: Iterable[str] | None = None
+) -> Type[BaseModel]:
     """Create a pydantic schema from a function's signature."""
     docstr = func.__doc__
+    injected = set(injected_args or ())
 
     docstr = parse(docstr)
     doc_params = {}
@@ -37,6 +40,8 @@ def create_schema_from_function(name: str, func: Callable) -> Type[BaseModel]:
     fields = {}
     params = signature(func).parameters
     for param_name in params:
+        if param_name in injected:
+            continue
         param_type = params[param_name].annotation
         param_default = params[param_name].default
         description = doc_params.get(param_name)

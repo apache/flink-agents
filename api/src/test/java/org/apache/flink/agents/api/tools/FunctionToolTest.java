@@ -18,12 +18,15 @@
 
 package org.apache.flink.agents.api.tools;
 
+import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,6 +34,12 @@ class FunctionToolTest {
 
     public static int demo(int a) {
         return a;
+    }
+
+    public static String queryOrder(
+            @ToolParam(name = "order_id") String orderId,
+            @ToolParam(name = "tenant_id") String tenantId) {
+        return tenantId + ":" + orderId;
     }
 
     @Test
@@ -46,6 +55,46 @@ class FunctionToolTest {
         JavaFunction jf = new JavaFunction("X", "m", java.util.List.of("int"));
         FunctionTool tool = new FunctionTool(jf);
         assertThat(tool.getFunc()).isSameAs(jf);
+    }
+
+    @Test
+    void holdsInjectedArgs() {
+        PythonFunction pf = new PythonFunction("pkg.mod", "fn");
+        FunctionTool tool =
+                new FunctionTool(
+                        pf, Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant_id")));
+        assertThat(tool.getInjectedArgs())
+                .containsExactlyEntriesOf(
+                        Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant_id")));
+    }
+
+    @Test
+    void constructorDoesNotResolveJavaFunctionDescriptor() {
+        JavaFunction jf = new JavaFunction("missing.Clazz", "queryOrder", List.of("int"));
+
+        FunctionTool tool =
+                new FunctionTool(
+                        jf, Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant_id")));
+
+        assertThat(tool.getFunc()).isSameAs(jf);
+        assertThat(tool.getInjectedArgs())
+                .containsExactlyEntriesOf(
+                        Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant_id")));
+    }
+
+    @Test
+    void acceptsKnownInjectedArgNamesForManualJavaFunctionTool() throws Exception {
+        Method m =
+                FunctionToolTest.class.getDeclaredMethod("queryOrder", String.class, String.class);
+        JavaFunction jf = JavaFunction.fromMethod(m);
+
+        FunctionTool tool =
+                new FunctionTool(
+                        jf, Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant_id")));
+
+        assertThat(tool.getInjectedArgs())
+                .containsExactlyEntriesOf(
+                        Map.of("tenant_id", ToolParameterInjection.fromConfig("tenant_id")));
     }
 
     @Test

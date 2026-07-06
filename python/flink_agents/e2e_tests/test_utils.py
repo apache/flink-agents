@@ -164,20 +164,32 @@ def pull_model(ollama_model: str) -> Client:
     return client
 
 
-def check_result(*, result_dir: Path, groud_truth_dir: Path) -> None:
+def check_result(*, result_dir: Path, ground_truth_dir: Path) -> None:
     """Util function for checking flink job execution result."""
-    actual_result = []
+    actual_lines: list[str] = []
     for file in result_dir.iterdir():
         if file.is_dir():
             for child in file.iterdir():
                 with child.open() as f:
-                    actual_result.extend(f.readlines())
+                    actual_lines.extend(f.readlines())
         if file.is_file():
             with file.open() as f:
-                actual_result.extend(f.readlines())
+                actual_lines.extend(f.readlines())
 
-    with groud_truth_dir.open() as f:
-        expected = f.readlines().sort()
+    with ground_truth_dir.open() as f:
+        expected_lines = f.readlines()
 
-    actual_result = actual_result.sort()
-    assert actual_result == expected
+    def _normalize(line: str) -> str:
+        stripped = line.strip()
+        try:
+            return json.dumps(json.loads(stripped), sort_keys=True)
+        except (json.JSONDecodeError, ValueError):
+            return stripped
+
+    actual = sorted(_normalize(line) for line in actual_lines if line.strip())
+    expected = sorted(_normalize(line) for line in expected_lines if line.strip())
+    assert actual, "No actual results found in result_dir"
+    assert expected, "No expected results found in ground_truth_dir"
+    assert actual == expected, (
+        f"Result mismatch:\n  actual={actual}\n  expected={expected}"
+    )

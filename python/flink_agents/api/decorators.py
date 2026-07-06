@@ -18,6 +18,11 @@
 from typing import Callable, Type
 
 from flink_agents.api.function import Function, JavaFunction, PythonFunction
+from flink_agents.api.tools.tool_parameter_injection import (
+    InjectedArg,
+    normalize_injected_args,
+    validate_injected_arg_names,
+)
 
 
 def _validate_target(target: Function, owner: str) -> None:
@@ -162,21 +167,37 @@ def embedding_model_setup(func: Callable) -> Callable:
     return func
 
 
-def tool(func: Callable) -> Callable:
+def tool(
+    func: Callable | None = None,
+    *,
+    injected_args: dict[str, InjectedArg | dict] | None = None,
+) -> Callable:
     """Decorator for marking a function declaring a tool.
 
     Parameters
     ----------
     func : Callable
         Function to be decorated.
+    injected_args : dict, optional
+        Mapping from parameter name to its framework-owned value source.
+        These arguments are hidden from the model-facing tool schema.
 
     Returns:
     -------
     Callable
         Decorator function that marks the target function declare a tool.
     """
-    func._is_tool = True
-    return func
+    injected = normalize_injected_args(injected_args)
+
+    def decorator(target: Callable) -> Callable:
+        validate_injected_arg_names(target, injected)
+        target._is_tool = True
+        target._injected_args = injected
+        return target
+
+    if func is not None:
+        return decorator(func)
+    return decorator
 
 
 def prompt(func: Callable) -> Callable:

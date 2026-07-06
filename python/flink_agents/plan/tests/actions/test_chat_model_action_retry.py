@@ -344,3 +344,57 @@ class TestProcessToolResponsePromptArgsForwarding:
         assert captured_prompt_args[0] == saved_prompt_args
         assert len(sent_events) == 1
         assert isinstance(sent_events[0], ChatResponseEvent)
+
+    def test_failed_tool_response_uses_generic_response_message(self) -> None:
+        initial_request_id = uuid4()
+        tool_request_event_id = uuid4()
+        tool_call_id = "call-1"
+
+        captured_messages: list[Sequence[ChatMessage]] = []
+
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+            captured_messages.append(messages)
+            return ChatMessage(role=MessageRole.ASSISTANT, content="done")
+
+        chat_model = MagicMock()
+        chat_model.chat = mock_chat
+
+        ctx, _, _, sensory_memory = _create_mock_runner_context(
+            chat_model, max_retries=0, retry_wait_interval_sec=0
+        )
+        sensory_memory.set(
+            "_TOOL_REQUEST_EVENT_CONTEXT",
+            {
+                str(tool_request_event_id): {
+                    "initial_request_id": str(initial_request_id),
+                    "model": "test-model",
+                    "prompt_args": {},
+                    "output_schema": None,
+                }
+            },
+        )
+        sensory_memory.set(
+            "_TOOL_CALL_CONTEXT",
+            {
+                str(initial_request_id): [
+                    ChatMessage(
+                        role=MessageRole.USER, content="hi"
+                    ).model_dump(mode="json")
+                ]
+            },
+        )
+
+        tool_response_event = ToolResponseEvent(
+            request_id=tool_request_event_id,
+            responses={tool_call_id: "Tool `query_order` execute failed."},
+            external_ids={},
+            success={tool_call_id: False},
+            error={tool_call_id: "Missing config for injected tool parameter: tenant_id"},
+        )
+
+        asyncio.run(process_chat_request_or_tool_response(tool_response_event, ctx))
+
+        assert captured_messages
+        tool_message = captured_messages[0][-1]
+        assert tool_message.role == MessageRole.TOOL
+        assert tool_message.content == "Tool `query_order` execute failed."

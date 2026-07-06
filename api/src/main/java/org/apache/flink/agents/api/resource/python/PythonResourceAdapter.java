@@ -134,8 +134,9 @@ public interface PythonResourceAdapter {
      *
      * <p>The Java side asks the Python side to introspect a callable identified by {@code module} +
      * {@code qualName}, and returns a flat {@code Map<String, String>} with keys {@code "name"},
-     * {@code "description"}, and {@code "inputSchema"} (a JSON schema string compatible with {@code
-     * ToolMetadata.inputSchema}).
+     * {@code "description"}, {@code "inputSchema"} (a JSON schema string compatible with {@code
+     * ToolMetadata.inputSchema}), and optional {@code "injectedArgs"} (a JSON object string
+     * carrying callable-declared injected arguments).
      *
      * <p>The return shape is intentionally flat — pemja can SIGSEGV when returning arbitrary Python
      * objects to Java on non-main-interpreter threads.
@@ -143,9 +144,17 @@ public interface PythonResourceAdapter {
      * @param module the Python module containing the callable
      * @param qualName the qualified name of the callable inside the module (e.g. {@code "fn"} or
      *     {@code "MyClass.method"})
-     * @return flat map with keys "name", "description", "inputSchema"
+     * @return flat map with keys "name", "description", "inputSchema", and optional "injectedArgs"
      */
     Map<String, String> getPythonToolMetadata(String module, String qualName);
+
+    /**
+     * Look up Python function tool metadata while hiding framework-injected arguments from the
+     * model-facing schema. The returned flat map may also include callable-declared injected
+     * arguments under "injectedArgs" so the Java host can merge them before tool execution.
+     */
+    Map<String, String> getPythonToolMetadata(
+            String module, String qualName, List<String> injectedArgs);
 
     /**
      * Invoke a Python callable as a tool, passing keyword arguments. Used when a Java chat model's

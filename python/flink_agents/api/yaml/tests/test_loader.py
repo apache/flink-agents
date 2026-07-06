@@ -28,6 +28,7 @@ from flink_agents.api.function import JavaFunction, PythonFunction
 from flink_agents.api.prompts.prompt import LocalPrompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
 from flink_agents.api.skills import Skills, SkillSourceSpec
+from flink_agents.api.tools import InjectedArg
 from flink_agents.api.tools.function_tool import FunctionTool
 from flink_agents.api.yaml.loader import (
     _build_skills,
@@ -618,3 +619,58 @@ def test_build_agents_builds_java_tool_descriptor(tmp_path: Path) -> None:
     assert tool.func.qualname == "com.example.Tools"
     assert tool.func.method_name == "add"
     assert tool.func.parameter_types == ["int", "int"]
+
+
+def test_build_agents_builds_tool_injected_args(tmp_path: Path) -> None:
+    yaml_text = (
+        "agents:\n"
+        "  - name: a\n"
+        "    tools:\n"
+        "      - name: query_order\n"
+        f"        function: {_TARGETS_MODULE}:query_order\n"
+        "        injected_args:\n"
+        "          tenant_id:\n"
+        "            source: config\n"
+        "            key: tenant.id\n"
+        "    actions:\n"
+        "      - name: noop\n"
+        f"        function: {_TARGETS_MODULE}:increment\n"
+        "        trigger_conditions: [input]\n"
+    )
+    p = tmp_path / "tool_injection.yaml"
+    p.write_text(yaml_text)
+    agents, _, _ = build_agents(p)
+    agent = agents["a"]
+
+    tool = agent.resources[ResourceType.TOOL]["query_order"]
+    assert isinstance(tool, FunctionTool)
+    assert tool.injected_args == {"tenant_id": InjectedArg.from_config("tenant.id")}
+
+
+def test_build_agents_keeps_unknown_tool_injected_arg_for_plan_validation(
+    tmp_path: Path,
+) -> None:
+    yaml_text = (
+        "agents:\n"
+        "  - name: a\n"
+        "    tools:\n"
+        "      - name: query_order\n"
+        f"        function: {_TARGETS_MODULE}:query_order\n"
+        "        injected_args:\n"
+        "          tenent_id:\n"
+        "            source: config\n"
+        "            key: tenant.id\n"
+        "    actions:\n"
+        "      - name: noop\n"
+        f"        function: {_TARGETS_MODULE}:increment\n"
+        "        trigger_conditions: [input]\n"
+    )
+    p = tmp_path / "bad_tool_injection.yaml"
+    p.write_text(yaml_text)
+
+    agents, _, _ = build_agents(p)
+    agent = agents["a"]
+
+    tool = agent.resources[ResourceType.TOOL]["query_order"]
+    assert isinstance(tool, FunctionTool)
+    assert tool.injected_args == {"tenent_id": InjectedArg.from_config("tenant.id")}
