@@ -171,6 +171,9 @@ jobs:
           - os: 'ubuntu-latest'
             python-version: '3.12'
             flink-version: "2.2"
+          - os: 'ubuntu-latest'
+            python-version: '3.12'
+            flink-version: "2.3"
     steps:
       - uses: actions/checkout@v4
       - name: Install java
@@ -216,6 +219,9 @@ jobs:
           - os: 'ubuntu-latest'
             java-version: "21"
             flink-version: "2.2"
+          - os: 'ubuntu-latest'
+            java-version: "17"
+            flink-version: "2.3"
     steps:
       - uses: actions/checkout@v4
       - name: Install java

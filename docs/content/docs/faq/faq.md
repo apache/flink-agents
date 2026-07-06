@@ -87,7 +87,7 @@ This is important because:
 - **For Java users on JDK 21+**: Async execution is available.
 - **For Java users on JDK < 21**: Async execution is not available and falls back to synchronous execution.
 
-> **Cross-language async note**: Async execution for cross-language resources requires the pemja 0.5.7 fix, available in Flink 1.20.5+ / 2.0.2+ / 2.1.3+ / 2.2.1+. Current builds target Flink 2.2.0, so cross-language calls still run synchronously for now; this is resolved automatically once running on a Flink version that includes the fix.
+> **Cross-language async note**: Async execution for cross-language resources requires the pemja 0.5.7 fix, available in Flink 1.20.5+ / 2.0.2+ / 2.1.3+ / 2.2.1+ / 2.3+. Current builds target Flink 2.3.0, which includes the fix, so cross-language async is enabled by default; on older Flink versions it falls back to synchronous execution automatically.
 
 ### Native Integration Support Matrix
 

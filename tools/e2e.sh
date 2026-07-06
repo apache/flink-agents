@@ -15,7 +15,7 @@
 #  limitations under the License.
 #
 
-DEFAULT_FLINK_VERSION="2.2"
+DEFAULT_FLINK_VERSION="2.3"
 
 function run_test {
   local description="$1"

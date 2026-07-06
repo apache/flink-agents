@@ -180,6 +180,7 @@ def maven_server(tmp_path_factory) -> tuple[str, Path]:
         ("flink-agents-dist-flink-2.0", "thin"),
         ("flink-agents-dist-flink-2.1", "thin"),
         ("flink-agents-dist-flink-2.2", "thin"),
+        ("flink-agents-dist-flink-2.3", "thin"),
     ]
 
     for artifact_id, classifier in artifacts:
@@ -241,6 +242,12 @@ def test_download_jars_from_local_server(tmp_path, monkeypatch, maven_server) ->
                 "artifact_id": "flink-agents-dist-flink-2.2",
                 "classifier": "thin",
                 "dest": "flink_agents/lib/flink-2.2/",
+                "sha256": expected_sha,
+            },
+            {
+                "artifact_id": "flink-agents-dist-flink-2.3",
+                "classifier": "thin",
+                "dest": "flink_agents/lib/flink-2.3/",
                 "sha256": expected_sha,
             },
         ],
