@@ -24,11 +24,13 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
+import org.apache.flink.agents.api.annotation.MCPServer;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
@@ -506,6 +508,25 @@ public class AgentPlanTest {
     }
 
     @Test
+    public void testAddResourceDescriptorWithPythonClazzUsesPythonResourceProvider()
+            throws Exception {
+        Agent agent = new Agent();
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder(String.class.getName())
+                        .addInitialArgument("pythonClazz", "test.module.EmbeddingClazz")
+                        .build();
+        agent.addResource("myEmbedding", ResourceType.EMBEDDING_MODEL, descriptor);
+
+        AgentPlan plan = new AgentPlan(agent);
+
+        ResourceProvider provider =
+                plan.getResourceProviders().get(ResourceType.EMBEDDING_MODEL).get("myEmbedding");
+        assertThat(provider).isInstanceOf(PythonResourceProvider.class);
+        assertThat(((PythonResourceProvider) provider).getDescriptor().getClazz())
+                .isEqualTo(String.class.getName());
+    }
+
+    @Test
     public void testAddResourceRegistersVectorStoreJavaProvider() throws Exception {
         Agent agent = new Agent();
         // A non-Python-wrapper class triggers JavaResourceProvider — String is fine for this
@@ -533,6 +554,49 @@ public class AgentPlanTest {
                 new TestSerializableChatModel("badEmbedding"));
 
         Assertions.assertThrows(IllegalStateException.class, () -> new AgentPlan(agent));
+    }
+
+    /** Test agent with descriptor-based Python resource. */
+    public static class TestAgentWithDescriptorPythonResource extends Agent {
+        @ChatModelSetup
+        public static ResourceDescriptor pythonChatModelByDescriptor() {
+            return ResourceDescriptor.Builder.newBuilder(String.class.getName())
+                    .addInitialArgument("pythonClazz", "test.module.TestClazz")
+                    .build();
+        }
+    }
+
+    @Test
+    public void testDescriptorWithPythonClazzUsesPythonResourceProvider() throws Exception {
+        AgentPlan plan = new AgentPlan(new TestAgentWithDescriptorPythonResource());
+
+        ResourceProvider provider =
+                plan.getResourceProviders()
+                        .get(ResourceType.CHAT_MODEL)
+                        .get("pythonChatModelByDescriptor");
+        assertThat(provider).isInstanceOf(PythonResourceProvider.class);
+        assertThat(((PythonResourceProvider) provider).getDescriptor().getClazz())
+                .isEqualTo(String.class.getName());
+    }
+
+    /** Test agent with explicit Python MCP server declaration. */
+    public static class TestAgentWithPythonMCPServer extends Agent {
+        @MCPServer(lang = "python")
+        public static ResourceDescriptor testMcpServer() {
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
+                    .addInitialArgument("endpoint", "http://127.0.0.1:8000/mcp")
+                    .addInitialArgument("timeout", 30)
+                    .build();
+        }
+    }
+
+    @Test
+    public void testPythonMCPServerUsesPythonResourceProviderAtCompileTime() throws Exception {
+        AgentPlan plan = new AgentPlan(new TestAgentWithPythonMCPServer());
+
+        ResourceProvider provider =
+                plan.getResourceProviders().get(ResourceType.MCP_SERVER).get("testMcpServer");
+        assertThat(provider).isInstanceOf(PythonResourceProvider.class);
     }
 
     @Test

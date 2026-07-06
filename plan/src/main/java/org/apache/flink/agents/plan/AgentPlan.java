@@ -35,7 +35,6 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
-import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -316,31 +315,40 @@ public class AgentPlan implements Serializable {
     }
 
     private void extractResource(ResourceType type, Method method) throws Exception {
-        extractResource(type, method, null);
+        extractResource(type, method, null, false);
     }
 
     private void extractResource(
             ResourceType type,
             Method method,
-            Function<ResourceDescriptor, ResourceDescriptor> descriptorDecorator)
+            Function<ResourceDescriptor, ResourceDescriptor> descriptorDecorator,
+            boolean isPython)
             throws Exception {
         String name = method.getName();
-        ResourceProvider provider;
         ResourceDescriptor descriptor = (ResourceDescriptor) method.invoke(null);
 
         descriptor =
                 descriptorDecorator != null ? descriptorDecorator.apply(descriptor) : descriptor;
 
-        if (PythonResourceWrapper.class.isAssignableFrom(
-                Class.forName(
-                        descriptor.getClazz(),
-                        true,
-                        Thread.currentThread().getContextClassLoader()))) {
-            provider = new PythonResourceProvider(name, type, descriptor);
-        } else {
-            provider = new JavaResourceProvider(name, type, descriptor);
+        addResourceProvider(createDescriptorResourceProvider(name, type, descriptor, isPython));
+    }
+
+    private ResourceProvider createDescriptorResourceProvider(
+            String name, ResourceType type, ResourceDescriptor descriptor) {
+        return createDescriptorResourceProvider(name, type, descriptor, false);
+    }
+
+    private ResourceProvider createDescriptorResourceProvider(
+            String name, ResourceType type, ResourceDescriptor descriptor, boolean isPython) {
+        if (isPython || isPythonResource(descriptor)) {
+            return new PythonResourceProvider(name, type, descriptor);
         }
-        addResourceProvider(provider);
+        return new JavaResourceProvider(name, type, descriptor);
+    }
+
+    private boolean isPythonResource(ResourceDescriptor descriptor) {
+        String pythonClazz = descriptor.getArgument("pythonClazz");
+        return pythonClazz != null && !pythonClazz.isEmpty();
     }
 
     private void extractTool(Method method) throws Exception {
@@ -525,7 +533,8 @@ public class AgentPlan implements Serializable {
                                     new ResourceDescriptor(
                                             desc.getModule(),
                                             PythonMCPServer.class.getName(),
-                                            new HashMap<>(desc.getInitialArguments())));
+                                            new HashMap<>(desc.getInitialArguments())),
+                            true);
                 }
             }
         }
@@ -576,17 +585,8 @@ public class AgentPlan implements Serializable {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     ResourceDescriptor descriptor =
                             requireResourceDescriptor(kv.getKey(), type, kv.getValue());
-                    ResourceProvider provider;
-                    if (PythonResourceWrapper.class.isAssignableFrom(
-                            Class.forName(
-                                    descriptor.getClazz(),
-                                    true,
-                                    Thread.currentThread().getContextClassLoader()))) {
-                        provider = new PythonResourceProvider(kv.getKey(), type, descriptor);
-                    } else {
-                        provider = new JavaResourceProvider(kv.getKey(), type, descriptor);
-                    }
-                    addResourceProvider(provider);
+                    addResourceProvider(
+                            createDescriptorResourceProvider(kv.getKey(), type, descriptor));
                 }
             }
         }
