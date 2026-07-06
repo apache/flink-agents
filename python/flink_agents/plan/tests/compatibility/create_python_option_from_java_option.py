@@ -15,56 +15,42 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from flink_agents.api.core_options import (
-    AgentConfigOptions,
-    AgentExecutionOptions,
-    EventLogLevel,
-    ShortTermMemoryTtlUpdate,
-    ShortTermMemoryTtlVisibility,
+from pathlib import Path
+
+from pyflink.java_gateway import get_gateway
+from pyflink.util.java_utils import add_jars_to_context_class_loader
+
+from flink_agents.api.core_options import AgentConfigOptions, AgentExecutionOptions
+from flink_agents.plan.tests.compatibility.java_python_config_option_parity import (
+    assert_options_class_matches_java,
+    collect_config_options,
 )
 
-# This script verifies that Python configuration options stay aligned with the
-# Java AgentConfigOptions / AgentExecutionOptions definitions.
+# Client-side parity check: loads the Java API JAR into a PyFlink gateway process and
+# compares each explicitly declared Python ConfigOption against the Java definition.
+# This script is invoked by test_java_config_in_python.sh (not inside the Pemja worker),
+# so using get_gateway() here is intentional and separate from runtime import safety.
+#
+# The JAR file path is relative to this script and should be updated if the build
+# structure changes.
 if __name__ == "__main__":
-    assert AgentConfigOptions.BASE_LOG_DIR.get_key() == "baseLogDir"
-    assert AgentConfigOptions.BASE_LOG_DIR.get_type() is str
-    assert AgentConfigOptions.BASE_LOG_DIR.get_default_value() is None
+    current_dir = Path(__file__).parent
 
-    assert AgentConfigOptions.EVENT_LOG_LEVEL.get_key() == "event-log.level"
-    assert AgentConfigOptions.EVENT_LOG_LEVEL.get_type() is EventLogLevel
-    assert (
-        AgentConfigOptions.EVENT_LOG_LEVEL.get_default_value() is EventLogLevel.STANDARD
-    )
+    jars = Path(current_dir).glob("../../../../../api/target/flink-agents-api-*.jar")
+    jar_urls = [f"file:///{jar}" for jar in jars]
+    add_jars_to_context_class_loader(jar_urls)
 
-    assert (
-        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS.get_key()
-        == "short-term-memory.state-ttl.ms"
+    jvm = get_gateway().jvm
+    java_agent_config_options = (
+        jvm.org.apache.flink.agents.api.configuration.AgentConfigOptions
     )
-    assert AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS.get_type() is int
-    assert AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS.get_default_value() == 0
-
-    assert (
-        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE.get_key()
-        == "short-term-memory.state-ttl.update-type"
-    )
-    assert (
-        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE.get_type()
-        is ShortTermMemoryTtlUpdate
-    )
-    assert (
-        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE.get_default_value()
-        is ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE
+    java_agent_execution_options = (
+        jvm.org.apache.flink.agents.api.agents.AgentExecutionOptions
     )
 
-    assert (
-        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY.get_key()
-        == "short-term-memory.state-ttl.visibility"
+    assert_options_class_matches_java(AgentConfigOptions, java_agent_config_options)
+    assert_options_class_matches_java(
+        AgentExecutionOptions, java_agent_execution_options
     )
-    assert (
-        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY.get_type()
-        is ShortTermMemoryTtlVisibility
-    )
-    assert (
-        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY.get_default_value()
-        is ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED
-    )
+
+    assert len(collect_config_options(AgentConfigOptions)) == 23
