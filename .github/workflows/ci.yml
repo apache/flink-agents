@@ -36,7 +36,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: '17'
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -100,7 +100,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: ${{ matrix.java-version }}
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Install python
         uses: actions/setup-python@v4
         with:
@@ -136,7 +136,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: '17'
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Install python
         uses: actions/setup-python@v4
         with:
@@ -180,7 +180,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: '17'
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Install python
         uses: actions/setup-python@v4
         with:
@@ -228,7 +228,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: ${{ matrix.java-version }}
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Install flink-agents Java
         run: bash tools/build.sh -j
       - name: Install ollama
@@ -266,7 +266,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: ${{ matrix.java-version }}
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Install python
         uses: actions/setup-python@v4
         with:
