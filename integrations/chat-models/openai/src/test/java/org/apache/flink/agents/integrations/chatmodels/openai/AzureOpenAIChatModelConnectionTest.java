@@ -111,8 +111,7 @@ class AzureOpenAIChatModelConnectionTest {
 
         assertThat(conn.getTimeoutSeconds())
                 .isEqualTo(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS);
-        assertThat(conn.getMaxRetries())
-                .isEqualTo(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
+        assertThat(conn.getMaxRetries()).isEqualTo(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
     }
 
     @Test
