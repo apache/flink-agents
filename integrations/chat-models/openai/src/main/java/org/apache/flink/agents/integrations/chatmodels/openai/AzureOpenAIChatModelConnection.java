@@ -127,21 +127,21 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
                         .credential(AzureApiKeyCredential.create(apiKey))
                         .azureServiceVersion(AzureOpenAIServiceVersion.fromString(apiVersion));
 
-        this.timeoutSeconds =
+        int rawTimeout =
                 Optional.ofNullable(descriptor.<Number>getArgument("timeout"))
                         .map(Number::intValue)
                         .orElse(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS);
-        if (this.timeoutSeconds > 0) {
-            clientBuilder.timeout(Duration.ofSeconds(this.timeoutSeconds));
-        }
+        this.timeoutSeconds =
+                rawTimeout > 0 ? rawTimeout : OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS;
+        clientBuilder.timeout(Duration.ofSeconds(this.timeoutSeconds));
 
-        this.maxRetries =
+        int rawRetries =
                 Optional.ofNullable(descriptor.<Number>getArgument("max_retries"))
                         .map(Number::intValue)
                         .orElse(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
-        if (this.maxRetries >= 0) {
-            clientBuilder.maxRetries(this.maxRetries);
-        }
+        this.maxRetries =
+                rawRetries >= 0 ? rawRetries : OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES;
+        clientBuilder.maxRetries(this.maxRetries);
 
         String azureUrlPathMode = descriptor.getArgument("azure_url_path_mode");
         if (azureUrlPathMode != null && !azureUrlPathMode.isBlank()) {
