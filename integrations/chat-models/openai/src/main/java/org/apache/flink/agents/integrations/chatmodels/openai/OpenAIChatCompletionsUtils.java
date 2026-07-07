@@ -52,6 +52,12 @@ final class OpenAIChatCompletionsUtils {
 
     private OpenAIChatCompletionsUtils() {}
 
+    /** default timeout in seconds for openai api requests (aligned with python sdk). */
+    static final int DEFAULT_TIMEOUT_SECONDS = 60;
+
+    /** default max retries for openai api requests (aligned with python sdk). */
+    static final int DEFAULT_MAX_RETRIES = 3;
+
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
