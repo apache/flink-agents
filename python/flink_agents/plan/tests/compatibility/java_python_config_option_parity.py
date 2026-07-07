@@ -33,13 +33,31 @@ _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
 }
 
 
-def collect_config_options(options_class: type) -> dict[str, ConfigOption]:
+def collect_python_config_options(python_options_class: type) -> dict[str, ConfigOption]:
     """Return ``{FIELD_NAME: ConfigOption}`` declared on a Python options class."""
     return {
         name: value
-        for name, value in vars(options_class).items()
+        for name, value in vars(python_options_class).items()
         if not name.startswith("_") and isinstance(value, ConfigOption)
     }
+
+
+def collect_java_config_options(java_options_class: Any, jvm: Any) -> dict[str, Any]:
+    """Return ``{FIELD_NAME: ConfigOption}`` from Java static fields via reflection."""
+    modifier = jvm.java.lang.reflect.Modifier
+    class_loader = jvm.java.lang.Thread.currentThread().getContextClassLoader()
+    java_config_option_class = class_loader.loadClass(
+        "org.apache.flink.agents.api.configuration.ConfigOption"
+    )
+    options: dict[str, Any] = {}
+    for field in java_options_class.getDeclaredFields():
+        if not modifier.isStatic(field.getModifiers()):
+            continue
+        if not java_config_option_class.isAssignableFrom(field.getType()):
+            continue
+        field.setAccessible(True)
+        options[field.getName()] = field.get(None)
+    return options
 
 
 def _java_type_matches_python(java_type_name: str, python_config_type: type) -> bool:
@@ -50,9 +68,6 @@ def _java_type_matches_python(java_type_name: str, python_config_type: type) -> 
 
     if expected_primitive is not None:
         return python_config_type is expected_primitive
-
-    if isinstance(python_config_type, type) and issubclass(python_config_type, Enum):
-        return python_config_type.__name__ == java_simple_name
 
     return python_config_type.__name__ == java_simple_name
 
@@ -106,9 +121,23 @@ def assert_python_option_matches_java(
 def assert_options_class_matches_java(
     python_options_class: type,
     java_options_class: Any,
+    jvm: Any,
 ) -> None:
-    """Compare every Python ConfigOption on a class with the Java static field."""
-    python_options = collect_config_options(python_options_class)
-    for option_name, python_option in sorted(python_options.items()):
-        java_option = getattr(java_options_class, option_name)
-        assert_python_option_matches_java(option_name, python_option, java_option)
+    """Compare Python and Java ConfigOption declarations in both directions."""
+    python_options = collect_python_config_options(python_options_class)
+    java_options = collect_java_config_options(java_options_class, jvm)
+
+    python_names = set(python_options)
+    java_names = set(java_options)
+    assert python_names == java_names, (
+        f"{python_options_class.__name__}: option field name mismatch "
+        f"(python-only={sorted(python_names - java_names)!r}, "
+        f"java-only={sorted(java_names - python_names)!r})"
+    )
+
+    for option_name in sorted(python_names):
+        assert_python_option_matches_java(
+            option_name,
+            python_options[option_name],
+            java_options[option_name],
+        )

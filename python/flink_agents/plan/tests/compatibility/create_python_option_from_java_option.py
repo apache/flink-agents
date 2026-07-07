@@ -23,7 +23,6 @@ from pyflink.util.java_utils import add_jars_to_context_class_loader
 from flink_agents.api.core_options import AgentConfigOptions, AgentExecutionOptions
 from flink_agents.plan.tests.compatibility.java_python_config_option_parity import (
     assert_options_class_matches_java,
-    collect_config_options,
 )
 
 # Client-side parity check: loads the Java API JAR into a PyFlink gateway process and
@@ -37,20 +36,21 @@ if __name__ == "__main__":
     current_dir = Path(__file__).parent
 
     jars = Path(current_dir).glob("../../../../../api/target/flink-agents-api-*.jar")
-    jar_urls = [f"file:///{jar}" for jar in jars]
+    jar_urls = [f"file:///{jar.resolve()}" for jar in jars]
     add_jars_to_context_class_loader(jar_urls)
 
     jvm = get_gateway().jvm
-    java_agent_config_options = (
-        jvm.org.apache.flink.agents.api.configuration.AgentConfigOptions
+    class_loader = jvm.java.lang.Thread.currentThread().getContextClassLoader()
+    java_agent_config_options = class_loader.loadClass(
+        "org.apache.flink.agents.api.configuration.AgentConfigOptions"
     )
-    java_agent_execution_options = (
-        jvm.org.apache.flink.agents.api.agents.AgentExecutionOptions
+    java_agent_execution_options = class_loader.loadClass(
+        "org.apache.flink.agents.api.agents.AgentExecutionOptions"
     )
 
-    assert_options_class_matches_java(AgentConfigOptions, java_agent_config_options)
     assert_options_class_matches_java(
-        AgentExecutionOptions, java_agent_execution_options
+        AgentConfigOptions, java_agent_config_options, jvm
     )
-
-    assert len(collect_config_options(AgentConfigOptions)) == 23
+    assert_options_class_matches_java(
+        AgentExecutionOptions, java_agent_execution_options, jvm
+    )

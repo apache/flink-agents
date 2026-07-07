@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from flink_agents.plan.tests.compatibility.java_python_config_option_parity import (
-    collect_config_options,
+    collect_python_config_options,
 )
 
 
@@ -94,7 +94,7 @@ def test_runtime_import_chain_does_not_call_get_gateway() -> None:
 def test_agent_config_options_are_explicitly_declared() -> None:
     from flink_agents.api.core_options import AgentConfigOptions, EventLogLevel
 
-    options = collect_config_options(AgentConfigOptions)
+    options = collect_python_config_options(AgentConfigOptions)
     assert len(options) == 23
     assert options["BASE_LOG_DIR"].get_key() == "baseLogDir"
     assert options["KAFKA_BOOTSTRAP_SERVERS"].get_default_value() == "localhost:9092"
