@@ -15,12 +15,24 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Helpers to compare Python ConfigOption declarations against Java ConfigOption."""
+"""Client-side Java/Python ConfigOption parity check.
+
+Loads the Java API JAR into a PyFlink gateway process and compares each
+explicitly declared Python ``ConfigOption`` against the Java definition.
+Invoked by ``test_java_config_in_python.sh`` (not inside the Pemja worker), so
+using ``get_gateway()`` here is intentional and separate from runtime import
+safety.
+"""
 
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
+from pyflink.java_gateway import get_gateway
+from pyflink.util.java_utils import add_jars_to_context_class_loader
+
 from flink_agents.api.configuration import ConfigOption
+from flink_agents.api.core_options import AgentConfigOptions, AgentExecutionOptions
 
 _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
     "java.lang.String": str,
@@ -141,3 +153,31 @@ def assert_options_class_matches_java(
             python_options[option_name],
             java_options[option_name],
         )
+
+
+def main() -> None:
+    current_dir = Path(__file__).parent
+
+    jars = Path(current_dir).glob("../../../../../api/target/flink-agents-api-*.jar")
+    jar_urls = [f"file:///{jar.resolve()}" for jar in jars]
+    add_jars_to_context_class_loader(jar_urls)
+
+    jvm = get_gateway().jvm
+    class_loader = jvm.java.lang.Thread.currentThread().getContextClassLoader()
+    java_agent_config_options = class_loader.loadClass(
+        "org.apache.flink.agents.api.configuration.AgentConfigOptions"
+    )
+    java_agent_execution_options = class_loader.loadClass(
+        "org.apache.flink.agents.api.agents.AgentExecutionOptions"
+    )
+
+    assert_options_class_matches_java(
+        AgentConfigOptions, java_agent_config_options, jvm
+    )
+    assert_options_class_matches_java(
+        AgentExecutionOptions, java_agent_execution_options, jvm
+    )
+
+
+if __name__ == "__main__":
+    main()
