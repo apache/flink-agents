@@ -15,53 +15,14 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Action-dispatch tests via Python's local runner."""
+"""Routing tests for the plan-side ``JavaFunction`` dispatch."""
 
 from typing import Any, List, Tuple
 
 import pytest
 
-from flink_agents.api.agents.agent import Agent
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
-from flink_agents.api.function import JavaFunction as ApiJavaFunction
-from flink_agents.api.runner_context import RunnerContext
-from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.api.events.event import InputEvent
 from flink_agents.plan.function import JavaFunction as PlanJavaFunction
-from flink_agents.runtime.local_runner import LocalRunner
-
-
-def echo_action(event: Event, ctx: RunnerContext) -> None:
-    value = InputEvent.from_event(event).input
-    ctx.send_event(OutputEvent(output=value))
-
-
-def _make_java_function_descriptor() -> ApiJavaFunction:
-    return ApiJavaFunction.for_action("com.example.Handlers", "handle")
-
-
-def test_local_runner_dispatches_python_function_action() -> None:
-    agent = Agent()
-    agent.add_action(
-        name="echo", trigger_conditions=[InputEvent.EVENT_TYPE], func=echo_action
-    )
-
-    runner = LocalRunner(agent, AgentConfiguration())
-    runner.run(key="k1", value="hello")
-
-    assert runner.get_outputs() == [{"k1": "hello"}]
-
-
-def test_local_runner_dispatch_of_java_function_action_fails_without_jvm_bridge() -> None:
-    agent = Agent()
-    agent.add_action(
-        name="handle",
-        trigger_conditions=[InputEvent.EVENT_TYPE],
-        func=_make_java_function_descriptor(),
-    )
-
-    runner = LocalRunner(agent, AgentConfiguration())
-    with pytest.raises(RuntimeError, match="JVM resource adapter"):
-        runner.run(key="k1", value="hello")
 
 
 class _RecordingJavaAdapter:

@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,7 +24,6 @@ from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import MessageRole
 from flink_agents.api.events.chat_event import ChatResponseEvent
 from flink_agents.api.events.event import InputEvent
-from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.function import JavaFunction, PythonFunction
 from flink_agents.api.prompts.prompt import LocalPrompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
@@ -38,10 +38,26 @@ from flink_agents.api.yaml.loader import (
 )
 from flink_agents.api.yaml.specs import SkillsSpec
 from flink_agents.api.yaml.tests.fixtures import loader_targets
+from flink_agents.runtime.remote_execution_environment import (
+    RemoteExecutionEnvironment,
+)
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
 _TARGETS_MODULE = "flink_agents.api.yaml.tests.fixtures.loader_targets"
+
+
+def _registration_env() -> RemoteExecutionEnvironment:
+    """Return an env for registering and inspecting YAML-loaded agents.
+
+    These tests only call ``load_yaml`` and read back ``_agents`` / ``resources``;
+    they never submit a job, so the Flink environment is mocked and no cluster or
+    ``flink_agents.lib`` jar is needed.
+    """
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+    ):
+        return RemoteExecutionEnvironment(env=MagicMock())
 
 
 def test_resolve_function_python_with_module_attr() -> None:
@@ -206,19 +222,19 @@ def test_build_agents_handles_shared_resources_and_actions() -> None:
 
 
 def test_load_yaml_registers_single_agent_on_env() -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     load_yaml(env, _FIXTURES / "single_agent.yaml")
     assert "incrementer" in env._agents
 
 
 def test_load_yaml_registers_multiple_agents() -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     load_yaml(env, _FIXTURES / "multi_agent.yaml")
     assert set(env._agents.keys()) == {"a1", "a2"}
 
 
 def test_load_yaml_merges_shared_action_into_agents() -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     load_yaml(env, _FIXTURES / "with_shared.yaml")
     a1 = env._agents["a1"]
     a2 = env._agents["a2"]
@@ -235,13 +251,13 @@ def test_load_yaml_merges_shared_action_into_agents() -> None:
 
 
 def test_load_yaml_registers_shared_resources_on_env() -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     load_yaml(env, _FIXTURES / "with_shared.yaml")
     assert "shared_conn" in env.resources[ResourceType.CHAT_MODEL_CONNECTION]
 
 
 def test_load_yaml_string_ref_to_missing_shared_action_errors(tmp_path: Path) -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     bad = tmp_path / "bad_missing_shared_action.yaml"
     bad.write_text("agents:\n  - name: a\n    actions:\n      - undefined_action\n")
     with pytest.raises(ValueError, match="undefined_action"):
@@ -249,7 +265,7 @@ def test_load_yaml_string_ref_to_missing_shared_action_errors(tmp_path: Path) ->
 
 
 def test_load_yaml_multi_call_merges() -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     load_yaml(env, _FIXTURES / "multi_file_a.yaml")
     load_yaml(env, _FIXTURES / "multi_file_b.yaml")
     assert {"file_a_agent", "file_b_agent"} <= set(env._agents.keys())
@@ -258,13 +274,13 @@ def test_load_yaml_multi_call_merges() -> None:
 
 
 def test_load_yaml_accepts_list_of_paths() -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     load_yaml(env, [_FIXTURES / "multi_file_a.yaml", _FIXTURES / "multi_file_b.yaml"])
     assert {"file_a_agent", "file_b_agent"} <= set(env._agents.keys())
 
 
 def test_load_yaml_duplicate_agent_across_calls_errors() -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     load_yaml(env, _FIXTURES / "multi_file_a.yaml")
     with pytest.raises(ValueError, match="file_a_agent"):
         load_yaml(env, _FIXTURES / "multi_file_a.yaml")
@@ -284,7 +300,7 @@ def test_load_yaml_duplicate_shared_resource_within_file_errors(tmp_path) -> Non
         "  - name: conn\n"
         "    clazz: x.Z\n"
     )
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     with pytest.raises(ValueError, match="Duplicate shared resource name 'conn'"):
         load_yaml(env, bad)
 
@@ -300,13 +316,13 @@ def test_load_yaml_duplicate_shared_action_within_file_errors(tmp_path) -> None:
         "  - name: shared\n"
         "    trigger_conditions: [input]\n"
     )
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     with pytest.raises(ValueError, match="Duplicate shared action name 'shared'"):
         load_yaml(env, bad)
 
 
 def test_load_yaml_duplicate_shared_resource_across_calls_errors(tmp_path) -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     load_yaml(env, _FIXTURES / "multi_file_a.yaml")
     dup = tmp_path / "dup.yaml"
     dup.write_text(
@@ -317,24 +333,6 @@ def test_load_yaml_duplicate_shared_resource_across_calls_errors(tmp_path) -> No
     )
     with pytest.raises(ValueError, match="conn_from_a"):
         load_yaml(env, dup)
-
-
-def test_apply_by_agent_name_runs_yaml_loaded_agent() -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
-    load_yaml(env, _FIXTURES / "single_agent.yaml")
-
-    input_list = []
-    output_list = env.from_list(input_list).apply("incrementer").to_list()
-    input_list.append({"key": "bob", "value": 1})
-    input_list.append({"key": "john", "value": 2})
-    env.execute()
-    assert output_list == [{"bob": 2}, {"john": 3}]
-
-
-def test_apply_by_unknown_name_errors() -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
-    with pytest.raises(ValueError, match="ghost"):
-        env.from_list([]).apply("ghost")
 
 
 def test_build_agents_loads_skills_per_agent_and_shared() -> None:
@@ -377,7 +375,7 @@ def test_build_skills_merges_all_schemes() -> None:
 
 
 def test_load_yaml_registers_shared_skills_on_env() -> None:
-    env = AgentsExecutionEnvironment.get_execution_environment()
+    env = _registration_env()
     load_yaml(env, _FIXTURES / "with_skills.yaml")
     shared = env.resources[ResourceType.SKILLS]["shared_skills"]
     assert isinstance(shared, Skills)

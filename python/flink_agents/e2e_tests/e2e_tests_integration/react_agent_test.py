@@ -21,7 +21,6 @@ import sysconfig
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
 from pyflink.common import Row
 from pyflink.common.typeinfo import BasicTypeInfo, ExternalTypeInfo, RowTypeInfo
 from pyflink.datastream import KeySelector, StreamExecutionEnvironment
@@ -48,7 +47,6 @@ from flink_agents.e2e_tests.test_utils import (
     assert_tool_invoked,
     collect_tool_invocations,
     pull_model,
-    tool_invocations_from_events,
 )
 
 current_dir = Path(__file__).parent
@@ -56,16 +54,6 @@ current_dir = Path(__file__).parent
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
 OLLAMA_MODEL = os.environ.get("REACT_OLLAMA_MODEL", "qwen3:1.7b")
-
-
-class InputData(BaseModel):
-    a: int
-    b: int
-    c: int
-
-
-class OutputData(BaseModel):
-    result: int
 
 
 class MyKeySelector(KeySelector):
@@ -77,73 +65,6 @@ class MyKeySelector(KeySelector):
 
 
 client = pull_model(OLLAMA_MODEL)
-
-
-@pytest.mark.skipif(
-    client is None, reason="Ollama client is not available or test model is missing"
-)
-def test_react_agent_on_local_runner(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OLLAMA_CHAT_MODEL", OLLAMA_MODEL)
-    env = AgentsExecutionEnvironment.get_execution_environment()
-    env.get_config().set(
-        AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
-    )
-    env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
-
-    # register resource to execution environment
-    (
-        env.add_resource(
-            "ollama",
-            ResourceType.CHAT_MODEL_CONNECTION,
-            ResourceDescriptor(
-                clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=240.0
-            ),
-        )
-        .add_resource("add", ResourceType.TOOL, Tool.from_callable(add))
-        .add_resource("multiply", ResourceType.TOOL, Tool.from_callable(multiply))
-    )
-
-    # prepare prompt
-    prompt = Prompt.from_messages(
-        messages=[
-            ChatMessage(
-                role=MessageRole.SYSTEM,
-                content='An example of output is {"result": 30.32}.',
-            ),
-            ChatMessage(role=MessageRole.USER, content="What is ({a} + {b}) * {c}"),
-        ],
-    )
-
-    # create ReAct agent.
-    agent = ReActAgent(
-        chat_model=ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
-            connection="ollama",
-            model=OLLAMA_MODEL,
-            tools=["add", "multiply"],
-        ),
-        prompt=prompt,
-        output_schema=OutputData,
-    )
-
-    # execute agent
-    input_list = []
-
-    output_list = env.from_list(input_list).apply(agent).to_list()
-    input_list.append({"key": "0001", "value": InputData(a=2123, b=2321, c=312)})
-
-    env.execute()
-
-    assert len(output_list) == 1, (
-        "This may be caused by the LLM response does not match the output schema, you can rerun this case."
-    )
-    assert int(output_list[0]["0001"].result) == 1386528
-
-    # multiply's first arg (4444 = 2123 + 2321) proves the addition was computed
-    # correctly and the multiply tool was used; the model often does the addition
-    # without the add tool, so add is not a reliable signal to assert on.
-    invocations = tool_invocations_from_events(env.get_tool_request_events())
-    assert_tool_invoked(invocations, "multiply", {"a": 4444, "b": 312})
 
 
 @pytest.mark.skipif(
