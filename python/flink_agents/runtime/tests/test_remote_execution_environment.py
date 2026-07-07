@@ -20,6 +20,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 from flink_agents.plan.configuration import AgentConfiguration
@@ -197,6 +198,27 @@ def test_execute_without_job_name() -> None:
         remote_env.execute()
 
     mock_stream_env.execute.assert_called_once_with(job_name=None)
+
+
+def test_apply_by_unknown_name_errors() -> None:
+    """Applying an unregistered agent name raises ValueError before execution.
+
+    The guard fires at apply() time on the remote builder, so no cluster is
+    started and no job is submitted. The Flink environment and input datastream
+    are never exercised to reach the guard, so both are mocked. Mirrors the same
+    contract on the from_list builder.
+    """
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+    ):
+        remote_env = RemoteExecutionEnvironment(env=MagicMock())
+
+    builder = remote_env.from_datastream(
+        input=MagicMock(), key_selector=lambda record: record["key"]
+    )
+
+    with pytest.raises(ValueError, match="ghost"):
+        builder.apply("ghost")
 
 
 def _verify_config(config: AgentConfiguration) -> None:
