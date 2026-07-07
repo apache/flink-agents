@@ -1,0 +1,2 @@
+{"id": 1, "result": "calculate the sum of 1 and 2.\nPlease call the appropriate tool to do the following task: calculate the sum of 1 and 2.\n3"}
+{"id": 2, "result": "calculate the sum of 1 and 2.\nPlease call the appropriate tool to do the following task: calculate the sum of 1 and 2.\n3"}
