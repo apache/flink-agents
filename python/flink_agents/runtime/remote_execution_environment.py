@@ -18,7 +18,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict
 
 import cloudpickle
 from pyflink.common import TypeInformation
@@ -161,14 +161,6 @@ class RemoteAgentBuilder(AgentBuilder):
         """
         return self.t_env.from_data_stream(self.to_datastream(output_type), schema)
 
-    def to_list(self) -> List[Dict[str, Any]]:
-        """Get output list of agent execution.
-
-        This method is not supported for remote execution environments.
-        """
-        msg = "RemoteAgentBuilder does not support to_list."
-        raise NotImplementedError(msg)
-
 
 class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
     """Implementation of AgentsExecutionEnvironment for execution with DataStream."""
@@ -270,14 +262,6 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
             resources=self.resources,
             agents=self._agents,
         )
-
-    def from_list(self, input: List[Dict[str, Any]]) -> "AgentsExecutionEnvironment":
-        """Set input list of agent execution.
-
-        This method is not supported for remote execution environments.
-        """
-        msg = "RemoteExecutionEnvironment does not support from_list."
-        raise NotImplementedError(msg)
 
     def execute(self, job_name: str | None = None) -> None:
         """Execute agent."""

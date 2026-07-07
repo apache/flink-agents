@@ -24,88 +24,11 @@ under the License.
 
 ## Overview
 
-We provide two options to run the job:
+Flink Agents jobs run on Flink:
 
-- **Run without Flink**
-    - **Language Support**: Only Python
-    - **Input and Output**: Python List
-    - **Suitable Use Case**: Local Testing and Debugging
-
-- **Run in Flink**
-    - **Language Support**: Python & Java
-    - **Input and Output**: DataStream or Table
-    - **Suitable Use Case**: Production
-
-These deployment modes differ in supported languages and data formats, allowing you to choose the one that best fits your use case.
-
-## Run without Flink
-
-After completing the [installation of flink-agents]({{< ref "docs/get-started/installation" >}}) and building your [ReAct Agent]({{< ref "docs/development/react_agent" >}}) or [Workflow Agent]({{< ref "docs/development/workflow_agent" >}}), you can test and execute your agent locally using a simple Python script. This allows you to validate logic without requiring a Flink cluster.
-
-### Example for Local Run with Test Data
-
-```python
-from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from my_module.agents import MyAgent  # Replace with your actual agent path
-
-if __name__ == "__main__":
-    # 1. Initialize environment
-    env = AgentsExecutionEnvironment.get_execution_environment()
-    
-    # 2. Prepare test data
-    input_data = [
-        {"key": "0001", "value": "Calculate the sum of 1 and 2."},
-        {"key": "0002", "value": "Tell me a joke about cats."}
-    ]
-    
-    # 3. Create agent instance
-    agent = MyAgent()
-    
-    # 4. Build pipeline
-    output_data = env.from_list(input_data) \
-                     .apply(agent) \
-                     .to_list()
-    
-    # 5. Execute and show results
-    env.execute()
-    
-    print("\nExecution Results:")
-    for record in output_data:
-        for key, value in record.items():
-            print(f"{key}: {value}")
-
-```
-
-#### Input Data Format
-
-The input data should be a list of dictionaries `List[Dict[str, Any]]` with the following structure:
-
-```python
-[
-    {
-        # Optional field: Input key. 
-        # The key is randomly generated if not provided.
-        "key": "key_1",
-        
-        # Required field: Input content
-        # This becomes the `input` field in InputEvent
-        "value": "Calculate the sum of 1 and 2.",
-    },
-    ...
-]
-```
-
-#### Output Data Format
-
-The output data is a list of dictionaries `List[Dict[str, Any]]` where each dictionary contains a single key-value pair representing the processed result. The structure is generated from `OutputEvent` objects:
-
-```python
-[
-    {key_1: output_1},  # From first OutputEvent
-    {key_2: output_2},  # From second OutputEvent
-    ...
-]
-```
+- **Language Support**: Python & Java
+- **Input and Output**: DataStream or Table
+- **Suitable Use Case**: Production
 
 ## Run in Flink
 

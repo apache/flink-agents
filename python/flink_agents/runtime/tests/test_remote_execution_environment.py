@@ -205,8 +205,7 @@ def test_apply_by_unknown_name_errors() -> None:
 
     The guard fires at apply() time on the remote builder, so no cluster is
     started and no job is submitted. The Flink environment and input datastream
-    are never exercised to reach the guard, so both are mocked. Mirrors the same
-    contract on the from_list builder.
+    are never exercised to reach the guard, so both are mocked.
     """
     with patch(
         "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"

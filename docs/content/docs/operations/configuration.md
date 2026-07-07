@@ -44,7 +44,8 @@ Users can explicitly modify the configuration when defining the `AgentsExecution
 
 ```python
 # Get Flink Agents execution environment
-agents_env = AgentsExecutionEnvironment.get_execution_environment()
+env = StreamExecutionEnvironment.get_execution_environment()
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
 # Get configuration object from the environment
 config = agents_env.get_configuration()

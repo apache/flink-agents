@@ -62,11 +62,12 @@ class ReActAgent(Agent):
                 result: int
 
 
-            env = AgentsExecutionEnvironment.get_execution_environment()
+            env = StreamExecutionEnvironment.get_execution_environment()
+            agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
             # register resource to execution environment
             (
-                env.add_resource(
+                agents_env.add_resource(
                     "ollama",
                     ResourceDescriptor(clazz=OllamaChatModelConnection, model=model),
                 )
