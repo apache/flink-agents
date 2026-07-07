@@ -18,7 +18,9 @@
 
 package org.apache.flink.agents.api.event;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.Event;
 
 import java.util.HashMap;
@@ -43,7 +45,10 @@ public class ContextRetrievalRequestEvent extends Event {
         setAttr("max_results", maxResults);
     }
 
-    public ContextRetrievalRequestEvent(UUID id, Map<String, Object> attributes) {
+    @JsonCreator
+    public ContextRetrievalRequestEvent(
+            @JsonProperty("id") UUID id,
+            @JsonProperty("attributes") Map<String, Object> attributes) {
         super(id, EVENT_TYPE, attributes);
     }
 

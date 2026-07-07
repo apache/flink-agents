@@ -722,6 +722,34 @@ built-in events:
 All attribute values must be JSON-serializable. In Python, this means `BaseModel`-serializable or primitive types. In Java, values must be Jackson-serializable.
 {{< /hint >}}
 
+{{< hint warning >}}
+When defining a custom `Event` subclass in Java, annotate its `(UUID id, Map<String, Object> attributes)` constructor with `@JsonCreator`, and annotate both parameters with `@JsonProperty`. Durable execution stores events in `ActionState` and uses Jackson to restore concrete event subclasses during recovery. Without these annotations, recovery deserialization fails because the base `Event` constructor's `@JsonCreator` is not inherited by subclasses.
+
+If the subclass stores typed objects in `attributes`, convert them back to their typed forms inside this constructor too, as the built-in events do. For example, `ChatResponseEvent` restores its typed attributes like this:
+
+```java
+@JsonCreator
+public ChatResponseEvent(
+        @JsonProperty("id") UUID id,
+        @JsonProperty("attributes") Map<String, Object> attributes) {
+    super(id, EVENT_TYPE, normalizeAttributes(attributes));
+}
+
+/** Converts nested attributes back to their typed forms. */
+private static Map<String, Object> normalizeAttributes(Map<String, Object> attributes) {
+    Object rawId = attributes.get("request_id");
+    if (rawId instanceof String) {
+        attributes.put("request_id", UUID.fromString((String) rawId));
+    }
+    Object rawResponse = attributes.get("response");
+    if (rawResponse instanceof Map) {
+        attributes.put("response", MAPPER.convertValue(rawResponse, ChatMessage.class));
+    }
+    return attributes;
+}
+```
+{{< /hint >}}
+
 ## Built-in Events and Actions
 
 There are several built-in `Event` and `Action` in Flink-Agents:

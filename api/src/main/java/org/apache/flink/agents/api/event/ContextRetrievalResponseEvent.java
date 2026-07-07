@@ -18,7 +18,9 @@
 
 package org.apache.flink.agents.api.event;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -43,25 +45,21 @@ public class ContextRetrievalResponseEvent extends Event {
         setAttr("documents", new ArrayList<>(documents));
     }
 
-    public ContextRetrievalResponseEvent(UUID id, Map<String, Object> attributes) {
-        super(id, EVENT_TYPE, attributes);
+    @JsonCreator
+    public ContextRetrievalResponseEvent(
+            @JsonProperty("id") UUID id,
+            @JsonProperty("attributes") Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, normalizeAttributes(attributes));
     }
 
-    /**
-     * Reconstructs a typed ContextRetrievalResponseEvent from a base Event, deserializing nested
-     * types.
-     *
-     * @param event the base event containing context retrieval response data in attributes
-     * @return a typed ContextRetrievalResponseEvent
-     */
+    /** Converts nested attributes back to their typed forms. */
     @SuppressWarnings("unchecked")
-    public static ContextRetrievalResponseEvent fromEvent(Event event) {
-        Map<String, Object> attrs = new HashMap<>(event.getAttributes());
-        Object rawId = attrs.get("request_id");
+    private static Map<String, Object> normalizeAttributes(Map<String, Object> attributes) {
+        Object rawId = attributes.get("request_id");
         if (rawId instanceof String) {
-            attrs.put("request_id", UUID.fromString((String) rawId));
+            attributes.put("request_id", UUID.fromString((String) rawId));
         }
-        List<?> rawDocs = (List<?>) attrs.get("documents");
+        List<?> rawDocs = (List<?>) attributes.get("documents");
         if (rawDocs != null) {
             List<Document> documents = new ArrayList<>();
             for (Object d : rawDocs) {
@@ -71,10 +69,22 @@ public class ContextRetrievalResponseEvent extends Event {
                     documents.add(MAPPER.convertValue(d, Document.class));
                 }
             }
-            attrs.put("documents", documents);
+            attributes.put("documents", documents);
         }
+        return attributes;
+    }
+
+    /**
+     * Reconstructs a typed ContextRetrievalResponseEvent from a base Event, deserializing nested
+     * types.
+     *
+     * @param event the base event containing context retrieval response data in attributes
+     * @return a typed ContextRetrievalResponseEvent
+     */
+    public static ContextRetrievalResponseEvent fromEvent(Event event) {
         ContextRetrievalResponseEvent result =
-                new ContextRetrievalResponseEvent(event.getId(), attrs);
+                new ContextRetrievalResponseEvent(
+                        event.getId(), new HashMap<>(event.getAttributes()));
         if (event.hasSourceTimestamp()) {
             result.setSourceTimestamp(event.getSourceTimestamp());
         }
