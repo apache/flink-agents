@@ -283,12 +283,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void tryProcessActionTaskForKey(Object key) {
         try {
             processActionTaskForKey(key);
-        } catch (Exception e) {
+        } catch (Throwable t) {
+            // MailboxExecutor.submit() stores task failures in its Future. Catch Throwable and
+            // rethrow via execute() so Errors fail the task instead of leaving the key in-flight.
             mailboxExecutor.execute(
                     () ->
                             ExceptionUtils.rethrow(
                                     new ActionTaskExecutionException(
-                                            "Failed to execute action task", e)),
+                                            "Failed to execute action task", t)),
                     "throw exception in mailbox");
         }
     }
