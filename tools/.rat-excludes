@@ -23,3 +23,5 @@ PULL_REQUEST_TEMPLATE.md
 licenses/*
 skills/*
 .*\.yaml$
+AGENTS.md
+code_review.md
