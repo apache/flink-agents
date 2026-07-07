@@ -18,7 +18,9 @@
 
 package org.apache.flink.agents.api.event;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -62,20 +64,17 @@ public class ChatRequestEvent extends Event {
         this(model, messages, null, null);
     }
 
-    public ChatRequestEvent(UUID id, Map<String, Object> attributes) {
-        super(id, EVENT_TYPE, attributes);
+    @JsonCreator
+    public ChatRequestEvent(
+            @JsonProperty("id") UUID id,
+            @JsonProperty("attributes") Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, normalizeAttributes(attributes));
     }
 
-    /**
-     * Reconstructs a typed ChatRequestEvent from a base Event, deserializing nested types.
-     *
-     * @param event the base event containing chat request data in attributes
-     * @return a typed ChatRequestEvent
-     */
+    /** Converts nested attributes back to their typed forms. */
     @SuppressWarnings("unchecked")
-    public static ChatRequestEvent fromEvent(Event event) {
-        Map<String, Object> attrs = new HashMap<>(event.getAttributes());
-        List<?> rawMessages = (List<?>) attrs.get("messages");
+    private static Map<String, Object> normalizeAttributes(Map<String, Object> attributes) {
+        List<?> rawMessages = (List<?>) attributes.get("messages");
         if (rawMessages != null) {
             List<ChatMessage> messages = new ArrayList<>();
             for (Object m : rawMessages) {
@@ -85,9 +84,20 @@ public class ChatRequestEvent extends Event {
                     messages.add(MAPPER.convertValue(m, ChatMessage.class));
                 }
             }
-            attrs.put("messages", messages);
+            attributes.put("messages", messages);
         }
-        ChatRequestEvent result = new ChatRequestEvent(event.getId(), attrs);
+        return attributes;
+    }
+
+    /**
+     * Reconstructs a typed ChatRequestEvent from a base Event, deserializing nested types.
+     *
+     * @param event the base event containing chat request data in attributes
+     * @return a typed ChatRequestEvent
+     */
+    public static ChatRequestEvent fromEvent(Event event) {
+        ChatRequestEvent result =
+                new ChatRequestEvent(event.getId(), new HashMap<>(event.getAttributes()));
         if (event.hasSourceTimestamp()) {
             result.setSourceTimestamp(event.getSourceTimestamp());
         }

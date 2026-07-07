@@ -24,8 +24,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.runtime.operator.ActionTask;
 
 import java.io.IOException;
@@ -66,8 +64,6 @@ public final class ActionStateSerde {
 
         // Add type information for polymorphic Event deserialization
         mapper.addMixIn(Event.class, EventTypeInfoMixin.class);
-        mapper.addMixIn(InputEvent.class, EventTypeInfoMixin.class);
-        mapper.addMixIn(OutputEvent.class, EventTypeInfoMixin.class);
 
         // Custom serializer for ActionTask - always serialize as null
         SimpleModule module = new SimpleModule();

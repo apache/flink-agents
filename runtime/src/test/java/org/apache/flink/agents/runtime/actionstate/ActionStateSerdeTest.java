@@ -20,7 +20,17 @@ package org.apache.flink.agents.runtime.actionstate;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
+import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
+import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.ToolRequestEvent;
+import org.apache.flink.agents.api.event.ToolResponseEvent;
+import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.vectorstores.Document;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -29,6 +39,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -332,5 +343,61 @@ public class ActionStateSerdeTest {
         // Kafka seder should handle nulls
         assertNull(kafkaSeder.serialize("test-topic", null));
         assertNull(kafkaSeder.deserialize("test-topic", null));
+    }
+
+    @Test
+    public void testBuiltInEventSerDeRoundTrip() throws Exception {
+        ChatMessage msg = new ChatMessage(MessageRole.USER, "hello");
+        UUID requestId = UUID.randomUUID();
+        Document doc = new Document("doc content", Map.of("source", "unit-test"), "doc-1");
+
+        // Built-in events are persisted both as the triggering taskEvent and as
+        // outputEvents; cover both paths.
+        ActionState originalState = new ActionState(new ChatRequestEvent("myModel", List.of(msg)));
+        originalState.addEvent(new ChatRequestEvent("myModel", List.of(msg)));
+        originalState.addEvent(new ChatResponseEvent(requestId, msg));
+        originalState.addEvent(new ToolRequestEvent("myModel", List.of(Map.of("name", "myTool"))));
+        originalState.addEvent(
+                new ToolResponseEvent(
+                        requestId,
+                        Map.of("call-1", ToolResponse.success("result")),
+                        Map.of("call-1", true),
+                        Map.of()));
+        originalState.addEvent(new ContextRetrievalRequestEvent("query text", "myVectorStore", 5));
+        originalState.addEvent(
+                new ContextRetrievalResponseEvent(requestId, "query text", List.of(doc)));
+
+        byte[] serialized = ActionStateSerde.serialize(originalState);
+        ActionState deserializedState = ActionStateSerde.deserialize(serialized);
+
+        assertEquals(ChatRequestEvent.class, deserializedState.getTaskEvent().getClass());
+
+        List<Event> outputEvents = deserializedState.getOutputEvents();
+        assertEquals(6, outputEvents.size());
+        assertEquals(ChatRequestEvent.class, outputEvents.get(0).getClass());
+        assertEquals(ChatResponseEvent.class, outputEvents.get(1).getClass());
+        assertEquals(ToolRequestEvent.class, outputEvents.get(2).getClass());
+        assertEquals(ToolResponseEvent.class, outputEvents.get(3).getClass());
+        assertEquals(ContextRetrievalRequestEvent.class, outputEvents.get(4).getClass());
+        assertEquals(ContextRetrievalResponseEvent.class, outputEvents.get(5).getClass());
+
+        // Typed getters must return typed values directly on the deserialized events.
+        ChatRequestEvent chatRequest = (ChatRequestEvent) outputEvents.get(0);
+        assertEquals("hello", chatRequest.getMessages().get(0).getContent());
+        assertEquals(MessageRole.USER, chatRequest.getMessages().get(0).getRole());
+
+        ChatResponseEvent chatResponse = (ChatResponseEvent) outputEvents.get(1);
+        assertEquals(requestId, chatResponse.getRequestId());
+        assertEquals("hello", chatResponse.getResponse().getContent());
+
+        ToolResponseEvent toolResponse = (ToolResponseEvent) outputEvents.get(3);
+        assertEquals(requestId, toolResponse.getRequestId());
+        assertEquals("result", toolResponse.getResponses().get("call-1").getResult());
+
+        ContextRetrievalResponseEvent retrievalResponse =
+                (ContextRetrievalResponseEvent) outputEvents.get(5);
+        assertEquals(requestId, retrievalResponse.getRequestId());
+        assertEquals("doc content", retrievalResponse.getDocuments().get(0).getContent());
+        assertEquals("doc-1", retrievalResponse.getDocuments().get(0).getId());
     }
 }
