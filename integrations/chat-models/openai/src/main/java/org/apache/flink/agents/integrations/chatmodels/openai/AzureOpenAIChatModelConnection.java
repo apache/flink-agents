@@ -46,6 +46,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -66,10 +67,9 @@ import java.util.Set;
  * <p>Optional connection arguments:
  *
  * <ul>
- *   <li><b>timeout</b> (Number): seconds before an API call times out; must be greater than 0,
- *       otherwise ignored (SDK default applies)
- *   <li><b>max_retries</b> (Number): retry attempts on failure; must be non-negative, otherwise
- *       ignored (SDK default applies)
+ *   <li><b>timeout</b> (Number): seconds before an API call times out; must be greater than 0
+ *       (default: 60)
+ *   <li><b>max_retries</b> (Number): retry attempts on failure; must be non-negative (default: 3)
  *   <li><b>azure_url_path_mode</b> (String): one of {@code "AUTO"}, {@code "LEGACY"}, or {@code
  *       "UNIFIED"} (default {@code "AUTO"}). Controls how the SDK constructs Azure OpenAI request
  *       URLs. In {@code AUTO} mode the SDK only treats the endpoint as Azure when its hostname
@@ -99,6 +99,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
             Set.of("model", "model_of_azure_deployment", "temperature", "max_tokens", "logprobs");
 
     private final OpenAIClient client;
+    private final int timeoutSeconds;
+    private final int maxRetries;
 
     public AzureOpenAIChatModelConnection(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
@@ -125,14 +127,20 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
                         .credential(AzureApiKeyCredential.create(apiKey))
                         .azureServiceVersion(AzureOpenAIServiceVersion.fromString(apiVersion));
 
-        Integer timeoutSeconds = descriptor.getArgument("timeout");
-        if (timeoutSeconds != null && timeoutSeconds > 0) {
-            clientBuilder.timeout(Duration.ofSeconds(timeoutSeconds));
+        this.timeoutSeconds =
+                Optional.ofNullable(descriptor.<Number>getArgument("timeout"))
+                        .map(Number::intValue)
+                        .orElse(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS);
+        if (this.timeoutSeconds > 0) {
+            clientBuilder.timeout(Duration.ofSeconds(this.timeoutSeconds));
         }
 
-        Integer maxRetries = descriptor.getArgument("max_retries");
-        if (maxRetries != null && maxRetries >= 0) {
-            clientBuilder.maxRetries(maxRetries);
+        this.maxRetries =
+                Optional.ofNullable(descriptor.<Number>getArgument("max_retries"))
+                        .map(Number::intValue)
+                        .orElse(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
+        if (this.maxRetries >= 0) {
+            clientBuilder.maxRetries(this.maxRetries);
         }
 
         String azureUrlPathMode = descriptor.getArgument("azure_url_path_mode");
@@ -149,6 +157,16 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         }
 
         this.client = clientBuilder.build();
+    }
+
+    // visible for testing
+    int getTimeoutSeconds() {
+        return timeoutSeconds;
+    }
+
+    // visible for testing
+    int getMaxRetries() {
+        return maxRetries;
     }
 
     @Override
