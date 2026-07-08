@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.python.utils;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -52,6 +53,8 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     static final String GET_RESOURCE_CONTEXT = PYTHON_MODULE_PREFIX + "get_resource_context";
 
     static final String CALL_METHOD = PYTHON_MODULE_PREFIX + "call_method";
+
+    static final String SET_METRIC_GROUP = PYTHON_MODULE_PREFIX + "set_metric_group";
 
     static final String CREATE_RESOURCE = PYTHON_MODULE_PREFIX + "create_resource";
 
@@ -198,6 +201,11 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     @Override
     public Object callMethod(Object obj, String methodName, Map<String, Object> kwargs) {
         return interpreter.invoke(CALL_METHOD, obj, methodName, kwargs);
+    }
+
+    @Override
+    public void setMetricGroup(Object pythonResource, FlinkAgentsMetricGroup metricGroup) {
+        interpreter.invoke(SET_METRIC_GROUP, pythonResource, metricGroup);
     }
 
     @Override
