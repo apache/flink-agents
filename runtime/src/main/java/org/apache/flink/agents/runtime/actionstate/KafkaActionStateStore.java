@@ -254,11 +254,17 @@ public class KafkaActionStateStore implements ActionStateStore {
 
                 for (ConsumerRecord<String, ActionState> record : records) {
                     try {
-                        actionStates.put(record.key(), record.value());
+                        if (record.value() == null) {
+                            // tombstone record — remove the key from cache
+                            actionStates.remove(record.key());
+                        } else {
+                            actionStates.put(record.key(), record.value());
+                        }
                     } catch (Exception e) {
                         LOG.warn(
-                                "Failed to deserialize action state record: {}",
-                                record.value().toString(),
+                                "Failed to deserialize action state record: key={}, value={}",
+                                record.key(),
+                                record.value(),
                                 e);
                     }
                 }
