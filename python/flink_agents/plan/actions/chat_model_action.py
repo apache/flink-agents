@@ -327,7 +327,8 @@ async def chat(
                 )
 
             if (
-                response.extra_args.get("model_name")
+                request_metric_group is not None
+                and response.extra_args.get("model_name")
                 and response.extra_args.get("promptTokens")
                 and response.extra_args.get("completionTokens")
             ):

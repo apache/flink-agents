@@ -266,7 +266,7 @@ class BaseChatModelSetup(Resource):
         model_name: str,
         prompt_tokens: int,
         completion_tokens: int,
-        metric_group: MetricGroup | None = None,
+        metric_group: MetricGroup | None,
     ) -> None:
         """Record token usage metrics for the given model.
 
@@ -279,11 +279,9 @@ class BaseChatModelSetup(Resource):
         completion_tokens : int
             The number of completion tokens
         metric_group : MetricGroup | None
-            The metric group captured when the request was initiated. If not provided,
-            this resource's currently bound metric group is used.
+            The metric group captured when the request was initiated. If None, token
+            metrics are skipped.
         """
-        if metric_group is None:
-            metric_group = self.metric_group
         if metric_group is None:
             return
 

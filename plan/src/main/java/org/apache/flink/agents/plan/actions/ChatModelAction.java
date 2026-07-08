@@ -185,7 +185,10 @@ public class ChatModelAction {
     static void recordChatTokenMetrics(
             BaseChatModelSetup chatModel,
             ChatMessage response,
-            FlinkAgentsMetricGroup requestMetricGroup) {
+            @Nullable FlinkAgentsMetricGroup requestMetricGroup) {
+        if (requestMetricGroup == null) {
+            return;
+        }
         Map<String, Object> extraArgs = response.getExtraArgs();
         Object modelName = extraArgs.get("model_name");
         Object promptTokens = extraArgs.get("promptTokens");

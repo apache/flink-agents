@@ -33,6 +33,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /** Tests for {@link ChatModelAction}. */
 class ChatModelActionTest {
@@ -67,6 +68,19 @@ class ChatModelActionTest {
         ChatModelAction.recordChatTokenMetrics(setup, responseWith(extraArgs), requestMetricGroup);
 
         verify(setup).recordTokenMetrics(requestMetricGroup, "m", 100L, 50L);
+    }
+
+    @Test
+    void testRecordChatTokenMetricsSkipsWhenMetricGroupMissing() {
+        BaseChatModelSetup setup = mock(BaseChatModelSetup.class);
+        Map<String, Object> extraArgs = new HashMap<>();
+        extraArgs.put("model_name", "m");
+        extraArgs.put("promptTokens", 100L);
+        extraArgs.put("completionTokens", 50L);
+
+        ChatModelAction.recordChatTokenMetrics(setup, responseWith(extraArgs), null);
+
+        verifyNoInteractions(setup);
     }
 
     @Test

@@ -109,33 +109,21 @@ public abstract class BaseChatModelSetup extends Resource {
     public abstract Map<String, Object> getParameters();
 
     /**
-     * Record token usage metrics for the given model on this setup's bound metric group.
-     *
-     * @param modelName the name of the model used
-     * @param promptTokens the number of prompt tokens
-     * @param completionTokens the number of completion tokens
-     */
-    public void recordTokenMetrics(String modelName, long promptTokens, long completionTokens) {
-        recordTokenMetrics(getMetricGroup(), modelName, promptTokens, completionTokens);
-    }
-
-    /**
      * Record token usage metrics for the given model on the provided metric group.
      *
-     * @param metricGroup the metric group captured when the request was initiated
+     * @param metricGroup the non-null metric group captured when the request was initiated
      * @param modelName the name of the model used
      * @param promptTokens the number of prompt tokens
      * @param completionTokens the number of completion tokens
      */
     public void recordTokenMetrics(
-            @Nullable FlinkAgentsMetricGroup metricGroup,
+            FlinkAgentsMetricGroup metricGroup,
             String modelName,
             long promptTokens,
             long completionTokens) {
-        if (metricGroup == null) {
-            return;
-        }
-        FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", modelName);
+        FlinkAgentsMetricGroup modelGroup =
+                Preconditions.checkNotNull(metricGroup, "Metric group must not be null.")
+                        .getSubGroup("model", modelName);
         modelGroup.getCounter("promptTokens").inc(promptTokens);
         modelGroup.getCounter("completionTokens").inc(completionTokens);
     }
