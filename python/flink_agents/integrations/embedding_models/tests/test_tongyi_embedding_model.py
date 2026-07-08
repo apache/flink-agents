@@ -203,9 +203,10 @@ def test_tongyi_embedding_records_token_metrics(
     }.__getitem__
 
     embedding_model.open()
-    embedding_model.set_metric_group(metric_group)
 
-    assert embedding_model.embed("Test text") == mock_embedding
+    result = embedding_model.embed_with_usage("Test text")
+    embedding_model.record_token_metrics(metric_group, result.token_usage)
+    assert result.embeddings == mock_embedding
 
     metric_group.get_sub_group.assert_called_once_with("model", test_model)
     prompt_counter.inc.assert_called_once_with(6)

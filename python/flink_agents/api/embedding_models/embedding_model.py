@@ -22,6 +22,7 @@ from typing import Any, Dict, Generic, Sequence, TypeVar, cast
 from pydantic import Field
 from typing_extensions import override
 
+from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 
 EmbeddingValue = TypeVar("EmbeddingValue", list[float], list[list[float]])
@@ -145,18 +146,21 @@ class BaseEmbeddingModelSetup(Resource, ABC):
             A list of floating-point numbers representing the embedding vector.
             The dimension of the vector depends on the specific embedding model used.
         """
+        return self.embed_with_usage(text, **kwargs).embeddings
+
+    def embed_with_usage(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        """Generate embeddings and return provider token usage when available."""
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
-        result = self._get_connection().embed_with_usage(text, **merged_kwargs)
-        self._record_token_metrics(result.token_usage)
-        return result.embeddings
+        return self._get_connection().embed_with_usage(text, **merged_kwargs)
 
-    def _record_token_metrics(self, usage: EmbeddingTokenUsage | None) -> None:
-        """Record embedding token metrics under the current model metric group."""
-        if usage is None:
-            return
-        metric_group = self.metric_group
-        if metric_group is None:
+    def record_token_metrics(
+        self, metric_group: MetricGroup | None, usage: EmbeddingTokenUsage | None
+    ) -> None:
+        """Record embedding token metrics under the request-scoped metric group."""
+        if metric_group is None or usage is None:
             return
 
         model_group = metric_group.get_sub_group("model", self.model)

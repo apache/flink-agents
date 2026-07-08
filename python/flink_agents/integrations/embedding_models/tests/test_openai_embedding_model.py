@@ -93,9 +93,10 @@ def test_openai_embedding_model_records_token_metrics() -> None:
     }.__getitem__
 
     embedding_model.open()
-    embedding_model.set_metric_group(metric_group)
 
-    assert embedding_model.embed("Hello, Flink Agent!") == [0.1, 0.2, 0.3]
+    result = embedding_model.embed_with_usage("Hello, Flink Agent!")
+    embedding_model.record_token_metrics(metric_group, result.token_usage)
+    assert result.embeddings == [0.1, 0.2, 0.3]
 
     metric_group.get_sub_group.assert_called_once_with("model", test_model)
     prompt_counter.inc.assert_called_once_with(5)

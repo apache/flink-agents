@@ -105,12 +105,27 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
     }
 
     public float[] embed(String text, Map<String, Object> parameters) {
+        return embedWithUsage(text, parameters).getEmbeddings();
+    }
+
+    public float[] embed(
+            String text,
+            Map<String, Object> parameters,
+            @Nullable FlinkAgentsMetricGroup requestMetricGroup) {
+        EmbeddingResult<float[]> result = embedWithUsage(text, parameters);
+        recordTokenMetrics(requestMetricGroup, result.getTokenUsage());
+        return result.getEmbeddings();
+    }
+
+    public EmbeddingResult<float[]> embedWithUsage(String text) {
+        return embedWithUsage(text, Collections.emptyMap());
+    }
+
+    public EmbeddingResult<float[]> embedWithUsage(String text, Map<String, Object> parameters) {
         Map<String, Object> params = this.getParameters();
         params.putAll(parameters);
         BaseEmbeddingModelConnection currentConnection = getConnection();
-        EmbeddingResult<float[]> result = currentConnection.embedWithUsage(text, params);
-        recordTokenMetrics(result.getTokenUsage());
-        return result.getEmbeddings();
+        return currentConnection.embedWithUsage(text, params);
     }
 
     /**
@@ -125,24 +140,38 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
     }
 
     public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
-        Map<String, Object> params = this.getParameters();
-        params.putAll(parameters);
-        BaseEmbeddingModelConnection currentConnection = getConnection();
-        EmbeddingResult<List<float[]>> result = currentConnection.embedWithUsage(texts, params);
-        recordTokenMetrics(result.getTokenUsage());
+        return embedWithUsage(texts, parameters).getEmbeddings();
+    }
+
+    public List<float[]> embed(
+            List<String> texts,
+            Map<String, Object> parameters,
+            @Nullable FlinkAgentsMetricGroup requestMetricGroup) {
+        EmbeddingResult<List<float[]>> result = embedWithUsage(texts, parameters);
+        recordTokenMetrics(requestMetricGroup, result.getTokenUsage());
         return result.getEmbeddings();
     }
 
-    private void recordTokenMetrics(EmbeddingTokenUsage usage) {
-        if (usage == null) {
-            return;
-        }
-        FlinkAgentsMetricGroup metricGroup = getMetricGroup();
-        if (metricGroup == null) {
+    public EmbeddingResult<List<float[]>> embedWithUsage(List<String> texts) {
+        return embedWithUsage(texts, Collections.emptyMap());
+    }
+
+    public EmbeddingResult<List<float[]>> embedWithUsage(
+            List<String> texts, Map<String, Object> parameters) {
+        Map<String, Object> params = this.getParameters();
+        params.putAll(parameters);
+        BaseEmbeddingModelConnection currentConnection = getConnection();
+        return currentConnection.embedWithUsage(texts, params);
+    }
+
+    public void recordTokenMetrics(
+            @Nullable FlinkAgentsMetricGroup requestMetricGroup,
+            @Nullable EmbeddingTokenUsage usage) {
+        if (requestMetricGroup == null || usage == null) {
             return;
         }
 
-        FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", model);
+        FlinkAgentsMetricGroup modelGroup = requestMetricGroup.getSubGroup("model", model);
         modelGroup.getCounter("promptTokens").inc(usage.getPromptTokens());
         modelGroup.getCounter("totalTokens").inc(usage.getTotalTokens());
     }

@@ -163,9 +163,10 @@ class BaseEmbeddingModelSetupTokenMetricsTest {
         TestEmbeddingModelSetup setup =
                 new TestEmbeddingModelSetup(new TestEmbeddingModelConnection());
         TestMetricGroup metricGroup = new TestMetricGroup();
-        setup.setMetricGroup(metricGroup);
 
-        assertArrayEquals(new float[] {0.1f, 0.2f}, setup.embed("hello"));
+        assertArrayEquals(
+                new float[] {0.1f, 0.2f},
+                setup.embed("hello", Collections.emptyMap(), metricGroup));
 
         TestMetricGroup modelGroup =
                 (TestMetricGroup) metricGroup.getSubGroup("model", "mock-model");
@@ -178,11 +179,45 @@ class BaseEmbeddingModelSetupTokenMetricsTest {
         TestEmbeddingModelSetup setup =
                 new TestEmbeddingModelSetup(new TestEmbeddingModelConnectionWithoutUsage());
         FlinkAgentsMetricGroup metricGroup = mock(FlinkAgentsMetricGroup.class);
-        setup.setMetricGroup(metricGroup);
 
-        setup.embed("hello");
+        setup.embed("hello", Collections.emptyMap(), metricGroup);
 
         verifyNoInteractions(metricGroup);
+    }
+
+    @Test
+    void testEmbeddingTokenMetricsAreNoopWhenMetricGroupIsAbsent() {
+        TestEmbeddingModelSetup setup =
+                new TestEmbeddingModelSetup(new TestEmbeddingModelConnection());
+        FlinkAgentsMetricGroup boundMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        setup.setMetricGroup(boundMetricGroup);
+
+        setup.embed("hello", Collections.emptyMap(), null);
+
+        verifyNoInteractions(boundMetricGroup);
+    }
+
+    @Test
+    void testEmbeddingTokenMetricsUseRequestScopedMetricGroup() {
+        TestEmbeddingModelSetup setup =
+                new TestEmbeddingModelSetup(new TestEmbeddingModelConnection());
+        TestMetricGroup actionA = new TestMetricGroup();
+        TestMetricGroup actionB = new TestMetricGroup();
+
+        setup.setMetricGroup(actionB);
+
+        assertArrayEquals(
+                new float[] {0.1f, 0.2f}, setup.embed("hello", Collections.emptyMap(), actionA));
+
+        TestMetricGroup actionAModelGroup =
+                (TestMetricGroup) actionA.getSubGroup("model", "mock-model");
+        assertEquals(7L, actionAModelGroup.counters.get("promptTokens").getCount());
+        assertEquals(9L, actionAModelGroup.counters.get("totalTokens").getCount());
+
+        TestMetricGroup actionBModelGroup =
+                (TestMetricGroup) actionB.getSubGroup("model", "mock-model");
+        assertEquals(0L, actionBModelGroup.getCounter("promptTokens").getCount());
+        assertEquals(0L, actionBModelGroup.getCounter("totalTokens").getCount());
     }
 
     @Test
@@ -190,10 +225,9 @@ class BaseEmbeddingModelSetupTokenMetricsTest {
         TestEmbeddingModelSetup setup =
                 new TestEmbeddingModelSetup(new TestEmbeddingModelConnection());
         TestMetricGroup metricGroup = new TestMetricGroup();
-        setup.setMetricGroup(metricGroup);
 
-        setup.embed("hello");
-        setup.embed(List.of("hello", "flink"));
+        setup.embed("hello", Collections.emptyMap(), metricGroup);
+        setup.embed(List.of("hello", "flink"), Collections.emptyMap(), metricGroup);
 
         TestMetricGroup modelGroup =
                 (TestMetricGroup) metricGroup.getSubGroup("model", "mock-model");
@@ -206,15 +240,30 @@ class BaseEmbeddingModelSetupTokenMetricsTest {
         TestEmbeddingModelSetup setup =
                 new TestEmbeddingModelSetup(new ThrowThenReportUsageConnection());
         TestMetricGroup metricGroup = new TestMetricGroup();
-        setup.setMetricGroup(metricGroup);
 
-        assertThrows(RuntimeException.class, () -> setup.embed("first"));
-        assertArrayEquals(new float[] {0.1f, 0.2f}, setup.embed("second"));
+        assertThrows(
+                RuntimeException.class,
+                () -> setup.embed("first", Collections.emptyMap(), metricGroup));
+        assertArrayEquals(
+                new float[] {0.1f, 0.2f},
+                setup.embed("second", Collections.emptyMap(), metricGroup));
 
         TestMetricGroup modelGroup =
                 (TestMetricGroup) metricGroup.getSubGroup("model", "mock-model");
         assertEquals(3L, modelGroup.counters.get("promptTokens").getCount());
         assertEquals(4L, modelGroup.counters.get("totalTokens").getCount());
+    }
+
+    @Test
+    void testEmbeddingWithoutExplicitMetricGroupDoesNotReadBoundMetricGroup() {
+        TestEmbeddingModelSetup setup =
+                new TestEmbeddingModelSetup(new TestEmbeddingModelConnection());
+        FlinkAgentsMetricGroup boundMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        setup.setMetricGroup(boundMetricGroup);
+
+        assertArrayEquals(new float[] {0.1f, 0.2f}, setup.embed("hello"));
+
+        verifyNoInteractions(boundMetricGroup);
     }
 
     private static class TestMetricGroup implements FlinkAgentsMetricGroup {

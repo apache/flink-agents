@@ -287,7 +287,12 @@ class BaseVectorStore(Resource, ABC):
             VectorStoreQueryResult containing the retrieved documents
         """
         # Generate embedding from the query text
-        query_embedding = self._get_embedding_model().embed(query.query_text)
+        embedding_model = self._get_embedding_model()
+        embedding_result = embedding_model.embed_with_usage(query.query_text)
+        embedding_model.record_token_metrics(
+            self.metric_group, embedding_result.token_usage
+        )
+        query_embedding = embedding_result.embeddings
 
         # Merge setup kwargs with query-specific args
         merged_kwargs = self.store_kwargs.copy()
@@ -344,9 +349,15 @@ class BaseVectorStore(Resource, ABC):
 
     def _ensure_embeddings(self, documents: List[Document]) -> None:
         """Auto-embed any documents whose ``embedding`` field is ``None``."""
+        embedding_model = self._get_embedding_model()
+        request_metric_group = self.metric_group
         for doc in documents:
             if doc.embedding is None:
-                doc.embedding = self._get_embedding_model().embed(doc.content)
+                result = embedding_model.embed_with_usage(doc.content)
+                embedding_model.record_token_metrics(
+                    request_metric_group, result.token_usage
+                )
+                doc.embedding = result.embeddings
 
     @abstractmethod
     def get(

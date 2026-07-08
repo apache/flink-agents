@@ -149,9 +149,10 @@ def _make_setup(connection: BaseEmbeddingModelConnection) -> FakeEmbeddingModelS
 def test_embedding_token_metrics_are_recorded_when_usage_is_reported() -> None:
     setup = _make_setup(FakeEmbeddingModelConnection(name="connection"))
     metric_group = _MockMetricGroup()
-    setup.set_metric_group(metric_group)
 
-    assert setup.embed("hello") == [0.1, 0.2]
+    result = setup.embed_with_usage("hello")
+    setup.record_token_metrics(metric_group, result.token_usage)
+    assert result.embeddings == [0.1, 0.2]
 
     model_group = metric_group.get_sub_group("model", "mock-model")
     assert model_group.get_counter("promptTokens").get_count() == 7
@@ -161,22 +162,56 @@ def test_embedding_token_metrics_are_recorded_when_usage_is_reported() -> None:
 def test_embedding_token_metrics_are_noop_when_usage_is_absent() -> None:
     setup = _make_setup(FakeEmbeddingModelConnectionWithoutUsage(name="connection"))
     metric_group = _MockMetricGroup()
-    setup.set_metric_group(metric_group)
 
-    assert setup.embed("hello") == [0.1, 0.2]
+    result = setup.embed_with_usage("hello")
+    setup.record_token_metrics(metric_group, result.token_usage)
+    assert result.embeddings == [0.1, 0.2]
 
     model_group = metric_group.get_sub_group("model", "mock-model")
     assert "promptTokens" not in model_group._counters
     assert "totalTokens" not in model_group._counters
 
 
+def test_embedding_token_metrics_are_noop_when_metric_group_is_absent() -> None:
+    setup = _make_setup(FakeEmbeddingModelConnection(name="connection"))
+    bound_metric_group = _MockMetricGroup()
+    setup.set_metric_group(bound_metric_group)
+
+    result = setup.embed_with_usage("hello")
+    setup.record_token_metrics(None, result.token_usage)
+
+    model_group = bound_metric_group.get_sub_group("model", "mock-model")
+    assert model_group.get_counter("promptTokens").get_count() == 0
+    assert model_group.get_counter("totalTokens").get_count() == 0
+
+
+def test_embedding_token_metrics_use_request_scoped_metric_group() -> None:
+    setup = _make_setup(FakeEmbeddingModelConnection(name="connection"))
+    action_a_metric_group = _MockMetricGroup()
+    action_b_metric_group = _MockMetricGroup()
+    setup.set_metric_group(action_b_metric_group)
+
+    result = setup.embed_with_usage("hello")
+    setup.record_token_metrics(action_a_metric_group, result.token_usage)
+    assert result.embeddings == [0.1, 0.2]
+
+    action_a_model_group = action_a_metric_group.get_sub_group("model", "mock-model")
+    assert action_a_model_group.get_counter("promptTokens").get_count() == 7
+    assert action_a_model_group.get_counter("totalTokens").get_count() == 9
+
+    action_b_model_group = action_b_metric_group.get_sub_group("model", "mock-model")
+    assert action_b_model_group.get_counter("promptTokens").get_count() == 0
+    assert action_b_model_group.get_counter("totalTokens").get_count() == 0
+
+
 def test_embedding_token_metrics_accumulate_across_requests() -> None:
     setup = _make_setup(FakeEmbeddingModelConnection(name="connection"))
     metric_group = _MockMetricGroup()
-    setup.set_metric_group(metric_group)
 
-    setup.embed("hello")
-    setup.embed(["hello", "flink"])
+    first = setup.embed_with_usage("hello")
+    setup.record_token_metrics(metric_group, first.token_usage)
+    second = setup.embed_with_usage(["hello", "flink"])
+    setup.record_token_metrics(metric_group, second.token_usage)
 
     model_group = metric_group.get_sub_group("model", "mock-model")
     assert model_group.get_counter("promptTokens").get_count() == 14
@@ -186,13 +221,26 @@ def test_embedding_token_metrics_accumulate_across_requests() -> None:
 def test_embedding_token_metrics_do_not_leak_after_provider_failure() -> None:
     setup = _make_setup(ThrowThenReportUsageConnection(name="connection"))
     metric_group = _MockMetricGroup()
-    setup.set_metric_group(metric_group)
 
     with pytest.raises(RuntimeError, match="provider failure"):
-        setup.embed("first")
+        setup.embed_with_usage("first")
 
-    assert setup.embed("second") == [0.1, 0.2]
+    result = setup.embed_with_usage("second")
+    setup.record_token_metrics(metric_group, result.token_usage)
+    assert result.embeddings == [0.1, 0.2]
 
     model_group = metric_group.get_sub_group("model", "mock-model")
     assert model_group.get_counter("promptTokens").get_count() == 3
     assert model_group.get_counter("totalTokens").get_count() == 4
+
+
+def test_embedding_without_explicit_metric_group_does_not_read_bound_group() -> None:
+    setup = _make_setup(FakeEmbeddingModelConnection(name="connection"))
+    bound_metric_group = _MockMetricGroup()
+    setup.set_metric_group(bound_metric_group)
+
+    assert setup.embed("hello") == [0.1, 0.2]
+
+    model_group = bound_metric_group.get_sub_group("model", "mock-model")
+    assert model_group.get_counter("promptTokens").get_count() == 0
+    assert model_group.get_counter("totalTokens").get_count() == 0
