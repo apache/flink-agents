@@ -388,6 +388,36 @@ public class ActionStateSerdeTest {
     }
 
     @Test
+    public void testNullMemoryValuePreserved() throws Exception {
+        ActionState originalState = new ActionState(new InputEvent("in"));
+        originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.null", null));
+
+        ActionState deserializedState =
+                ActionStateSerde.deserialize(ActionStateSerde.serialize(originalState));
+
+        assertEquals(1, deserializedState.getShortTermMemoryUpdates().size());
+        assertNull(deserializedState.getShortTermMemoryUpdates().get(0).getValue());
+    }
+
+    @Test
+    public void testNonEnvelopeMemoryValueRejected() throws Exception {
+        ActionState originalState = new ActionState(new InputEvent("in"));
+        originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.raw", "some value"));
+
+        byte[] serialized = ActionStateSerde.serialize(originalState);
+        String json = new String(serialized, StandardCharsets.UTF_8);
+        // Replace the whole envelope object with a bare JSON value, as a legacy pre-envelope
+        // journal would have stored it.
+        int start = json.indexOf("{\"serde\":");
+        int end = json.indexOf('}', start) + 1;
+        byte[] patched =
+                (json.substring(0, start) + "\"some value\"" + json.substring(end))
+                        .getBytes(StandardCharsets.UTF_8);
+
+        assertThrows(RuntimeException.class, () -> ActionStateSerde.deserialize(patched));
+    }
+
+    @Test
     public void testUnknownEnvelopeVersionRejected() throws Exception {
         ActionState originalState = new ActionState(new InputEvent("in"));
         originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.version", "some value"));

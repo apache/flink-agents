@@ -177,28 +177,27 @@ public final class ActionStateSerde {
         }
     }
 
-    /**
-     * Reads the Kryo envelope back to the concrete value; version-checks; falls back for a
-     * non-envelope node.
-     */
+    /** Reads the Kryo envelope back to the concrete value and version-checks it. */
     static class MemoryUpdateValueDeserializer extends JsonDeserializer<Object> {
         @Override
         public Object deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
             JsonNode node = ctxt.readTree(p);
-            if (isEnvelope(node)) {
-                int version = node.get(ENVELOPE_VERSION_FIELD).asInt();
-                if (version != MEMORY_UPDATE_VERSION) {
-                    throw new IOException(
-                            "Unsupported MemoryUpdate value envelope version: " + version);
-                }
-                return kryoDeserialize(
-                        Base64.getDecoder().decode(node.get(ENVELOPE_PAYLOAD_FIELD).asText()));
+            // Every non-null value this serializer writes is an envelope, and the durable journal
+            // never outlives the code that wrote it (see the recovery-compat contract above), so a
+            // non-envelope node is an unsupported cross-version restore rather than legacy data to
+            // tolerate. Reject it instead of silently binding it to a wrong-typed stock value.
+            if (!isEnvelope(node)) {
+                throw new IOException(
+                        "Expected a Kryo-envelope MemoryUpdate value but found: "
+                                + node.getNodeType());
             }
-            // Not a recognized envelope: fall back to stock untyped-Object binding. This dispatches
-            // to the UntypedObjectDeserializer, not back into this deserializer, because the
-            // binding
-            // is per-property (MemoryUpdate.value), not on the Object type.
-            return ctxt.readTreeAsValue(node, Object.class);
+            int version = node.get(ENVELOPE_VERSION_FIELD).asInt();
+            if (version != MEMORY_UPDATE_VERSION) {
+                throw new IOException(
+                        "Unsupported MemoryUpdate value envelope version: " + version);
+            }
+            return kryoDeserialize(
+                    Base64.getDecoder().decode(node.get(ENVELOPE_PAYLOAD_FIELD).asText()));
         }
 
         private static boolean isEnvelope(JsonNode n) {
