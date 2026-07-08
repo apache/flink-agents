@@ -1,2 +1,0 @@
-{"key": "calc1", "sum": 3, "prompt": "Calculate the sum of 1 and 2 by using the add tool"}
-{"key": "calc2", "sum": 46, "prompt": "Calculate the sum of 12 and 34 by using the add tool"}
