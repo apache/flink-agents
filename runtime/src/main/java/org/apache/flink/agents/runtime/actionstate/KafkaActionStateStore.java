@@ -282,30 +282,47 @@ public class KafkaActionStateStore implements ActionStateStore {
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning state for key: {} up to sequence number: {}", key, seqNum);
 
-        // Remove states from in-memory cache for this key up to the specified sequence
-        // number
-        actionStates
-                .entrySet()
-                .removeIf(
-                        entry -> {
-                            String stateKey = entry.getKey();
-                            // Extract key and sequence number from the state key
-                            // State key format: "key_seqNum_action_event"
-                            if (stateKey.startsWith(key.toString() + "_")) {
-                                try {
-                                    List<String> parts = ActionStateUtil.parseKey(stateKey);
-                                    if (parts.size() >= 2) {
-                                        long stateSeqNum = Long.parseLong(parts.get(1));
-                                        return stateSeqNum <= seqNum;
-                                    }
-                                } catch (NumberFormatException e) {
-                                    LOG.warn(
-                                            "Failed to parse sequence number from state key: {}",
-                                            stateKey);
-                                }
-                            }
-                            return false;
-                        });
+        // collect keys that match the prune predicate
+        List<String> keysToPrune = new ArrayList<>();
+        for (Map.Entry<String, ActionState> entry : actionStates.entrySet()) {
+            String stateKey = entry.getKey();
+            if (stateKey.startsWith(key.toString() + "_")) {
+                try {
+                    List<String> parts = ActionStateUtil.parseKey(stateKey);
+                    if (parts.size() >= 2) {
+                        long stateSeqNum = Long.parseLong(parts.get(1));
+                        if (stateSeqNum <= seqNum) {
+                            keysToPrune.add(stateKey);
+                        }
+                    }
+                } catch (Exception e) {
+                    LOG.warn("Failed to parse state key: {}", stateKey, e);
+                }
+            }
+        }
+
+        // send tombstones to kafka so log compaction can reclaim storage
+        if (producer != null && !keysToPrune.isEmpty()) {
+            try {
+                for (String stateKey : keysToPrune) {
+                    producer.send(new ProducerRecord<>(topic, stateKey, null));
+                }
+                producer.flush();
+                LOG.debug(
+                        "Sent {} tombstone records to Kafka for key: {}", keysToPrune.size(), key);
+            } catch (Exception e) {
+                LOG.warn(
+                        "Failed to send tombstone records to Kafka for key: {}. "
+                                + "Records will persist in the topic until manual cleanup.",
+                        key,
+                        e);
+            }
+        }
+
+        // remove from in-memory cache (always, regardless of tombstone success)
+        for (String stateKey : keysToPrune) {
+            actionStates.remove(stateKey);
+        }
 
         LOG.debug("Pruned state for key: {} up to sequence number: {}", key, seqNum);
     }

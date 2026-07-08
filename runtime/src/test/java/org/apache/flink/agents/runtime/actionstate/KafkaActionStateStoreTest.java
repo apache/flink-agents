@@ -34,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy.EARLIEST;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -196,6 +197,71 @@ public class KafkaActionStateStoreTest {
         assertNull(
                 actionStates.get(ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent)));
         assertNotNull(actionStateStore.get(TEST_KEY, 3L, testAction, testEvent));
+
+        // Assert - tombstones should have been sent to Kafka
+        var history = mockProducer.history();
+        assertThat(history).hasSize(2);
+        for (ProducerRecord<String, ActionState> record : history) {
+            assertThat(record.topic()).isEqualTo(TEST_TOPIC);
+            assertThat(record.key()).startsWith(TEST_KEY + "_");
+            assertThat(record.value()).isNull();
+        }
+    }
+
+    @Test
+    void testPruneStateSendsTombstonesWithCorrectKeys() throws Exception {
+        // Arrange
+        String key1 = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
+        String key2 = ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent);
+        String key3 = ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent);
+        actionStates.put(key1, testActionState);
+        actionStates.put(key2, testActionState);
+        actionStates.put(key3, testActionState);
+
+        // Act
+        actionStateStore.pruneState(TEST_KEY, 2L);
+
+        // Assert - exactly keys for seqNum 1 and 2 appear as tombstones
+        var history = mockProducer.history();
+        assertThat(history).hasSize(2);
+        List<String> tombstoneKeys =
+                history.stream().map(ProducerRecord::key).sorted().collect(Collectors.toList());
+        List<String> expectedKeys =
+                List.of(key1, key2).stream().sorted().collect(Collectors.toList());
+        assertThat(tombstoneKeys).isEqualTo(expectedKeys);
+        assertThat(history).allMatch(r -> r.value() == null);
+    }
+
+    @Test
+    void testPruneStateNoMatchingKeys() throws Exception {
+        // Arrange - add states for a different key
+        actionStates.put(
+                ActionStateUtil.generateKey("other-key", 1L, testAction, testEvent),
+                testActionState);
+
+        // Act
+        actionStateStore.pruneState(TEST_KEY, 2L);
+
+        // Assert - no tombstones sent, other key's state remains
+        assertThat(mockProducer.history()).isEmpty();
+        assertThat(actionStates).hasSize(1);
+    }
+
+    @Test
+    void testPruneStateWithNullProducer() throws Exception {
+        // Arrange - store with null producer
+        Map<String, ActionState> localStates = new HashMap<>();
+        KafkaActionStateStore nullProducerStore =
+                new KafkaActionStateStore(
+                        localStates, new AgentConfiguration(), null, mockConsumer, TEST_TOPIC);
+        localStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+
+        // Act - should not throw
+        nullProducerStore.pruneState(TEST_KEY, 1L);
+
+        // Assert - in-memory removal still works
+        assertThat(localStates).isEmpty();
     }
 
     @Test
