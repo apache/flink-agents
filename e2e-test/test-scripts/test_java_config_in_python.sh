@@ -28,13 +28,13 @@ echo $root_dir
 
 python_script_path=$root_dir/python/flink_agents/plan/tests/compatibility
 
-function test_create_python_option_from_java_option {
-  python $python_script_path/create_python_option_from_java_option.py
+function test_java_python_config_options_parity {
+  python $python_script_path/check_java_python_config_options_parity.py
 
   ret=$?
   if [ "$ret" != "0" ]
   then
-    echo "There is failure when create python option from java option, please check the log for details."
+    echo "Java/Python ConfigOption parity check failed, please check the log for details."
     rm -f $json_path
     exit $ret
   fi
@@ -42,4 +42,4 @@ function test_create_python_option_from_java_option {
   rm -f $json_path
 }
 
-test_create_python_option_from_java_option
+test_java_python_config_options_parity
