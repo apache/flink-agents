@@ -290,6 +290,27 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
+    void testMailboxSubmittedActionTaskPropagatesError() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getLinkageErrorAgentPlan(), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(0L));
+            assertThatThrownBy(() -> operator.waitInFlightEventsFinished())
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
+                    .rootCause()
+                    .isInstanceOf(NoClassDefFoundError.class)
+                    .hasMessageContaining("synthetic missing runtime dependency");
+        }
+    }
+
+    @Test
     void testInMemoryActionStateStoreIntegration() throws Exception {
         AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
 
@@ -1711,6 +1732,20 @@ public class ActionExecutionOperatorTest {
             }
         }
 
+        public static class LinkageErrorAction {
+            static {
+                if (shouldThrowLinkageError()) {
+                    throw new NoClassDefFoundError("synthetic missing runtime dependency");
+                }
+            }
+
+            private static boolean shouldThrowLinkageError() {
+                return true;
+            }
+
+            public static void action(Event event, RunnerContext context) {}
+        }
+
         public static void resetReconcilableRecoveryFixture() {
             RECONCILABLE_CALL_COUNTER.set(0);
             RECONCILABLE_RECONCILE_COUNTER.set(0);
@@ -1929,6 +1964,29 @@ public class ActionExecutionOperatorTest {
                 actionsByEvent.put(
                         InputEvent.EVENT_TYPE, Collections.singletonList(exceptionAction));
                 actions.put(exceptionAction.getName(), exceptionAction);
+
+                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getLinkageErrorAgentPlan() {
+            try {
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                Map<String, Action> actions = new HashMap<>();
+
+                Action errorAction =
+                        new Action(
+                                "linkageErrorAction",
+                                new JavaFunction(
+                                        LinkageErrorAction.class,
+                                        "action",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                actionsByEvent.put(InputEvent.EVENT_TYPE, Collections.singletonList(errorAction));
+                actions.put(errorAction.getName(), errorAction);
 
                 return new AgentPlan(actions, actionsByEvent, new HashMap<>());
             } catch (Exception e) {
