@@ -445,7 +445,7 @@ mark_explicit INSTALL_DIR
 mark_explicit VENV_DIR
 
 FLINK_VERSION="${FLINK_VERSION:-2.2.1}"
-FLINK_AGENTS_VERSION="${FLINK_AGENTS_VERSION:-0.2.1}"
+FLINK_AGENTS_VERSION="${FLINK_AGENTS_VERSION:-0.3.0}"
 FLINK_SCALA_VERSION="${FLINK_SCALA_VERSION:-2.12}"
 FLINK_BASE_URL="${FLINK_BASE_URL:-https://dlcdn.apache.org/flink}"
 # Flink Agents JARs live next to Flink on the ASF mirror network. Override
@@ -460,10 +460,10 @@ FLINK_RECOMMENDED_VERSION="2.2.1"
 
 # Mirrors https://flink.apache.org/downloads/#apache-flink-agents
 # (latest first). Note: 0.1.x only ships JARs for Flink 1.20, while 0.2.x
-# ships JARs for Flink 1.20 / 2.0 / 2.1 / 2.2 — see the download page for
-# the exact compatibility matrix.
-FLINK_AGENTS_SUPPORTED_VERSIONS=("0.2.1" "0.2.0" "0.1.1" "0.1.0")
-FLINK_AGENTS_RECOMMENDED_VERSION="0.2.1"
+# and 0.3.x ship JARs for Flink 1.20 / 2.0 / 2.1 / 2.2 — see the download
+# page for the exact compatibility matrix.
+FLINK_AGENTS_SUPPORTED_VERSIONS=("0.3.0" "0.2.1" "0.2.0" "0.1.1" "0.1.0")
+FLINK_AGENTS_RECOMMENDED_VERSION="0.3.0"
 
 INSTALL_FLINK="${INSTALL_FLINK:-Ask}"
 ENABLE_PYFLINK="${ENABLE_PYFLINK:-Ask}"
@@ -1563,6 +1563,16 @@ check_java() {
     return 0
 }
 
+# Upper bound (exclusive) on the Python minor version for the selected
+# Flink Agents release: 0.1.x / 0.2.x publish requires-python >=3.10,<3.12,
+# while 0.3.0+ publishes >=3.10,<3.13 (adds Python 3.12 support).
+python_minor_ceiling() {
+    case "$FLINK_AGENTS_VERSION" in
+        0.1.*|0.2.*) printf '12' ;;
+        *) printf '13' ;;
+    esac
+}
+
 validate_python_bin() {
     local bin="$1"
     [[ -n "$bin" ]] || return 1
@@ -1576,7 +1586,7 @@ validate_python_bin() {
     py_major="${py_version_output%%.*}"
     py_minor="${py_version_output##*.}"
 
-    if [[ "$py_major" -ne 3 ]] || [[ "$py_minor" -lt 10 ]] || [[ "$py_minor" -ge 12 ]]; then
+    if [[ "$py_major" -ne 3 ]] || [[ "$py_minor" -lt 10 ]] || [[ "$py_minor" -ge "$(python_minor_ceiling)" ]]; then
         return 1
     fi
     return 0
@@ -1588,7 +1598,7 @@ resolve_python() {
             ui_success "Using Python: $PYTHON_BIN"
             return 0
         fi
-        die "PYTHON_BIN is invalid or unsupported (need >=3.10 and <3.12): $PYTHON_BIN"
+        die "PYTHON_BIN is invalid or unsupported (need >=3.10 and <3.$(python_minor_ceiling)): $PYTHON_BIN"
     fi
 
     if validate_python_bin python3; then
@@ -1600,7 +1610,7 @@ resolve_python() {
     fi
 
     if command -v python3 >/dev/null 2>&1; then
-        ui_warn "python3 on PATH is incompatible (Flink Agents requires Python >=3.10 and <3.12)"
+        ui_warn "python3 on PATH is incompatible (Flink Agents ${FLINK_AGENTS_VERSION} requires Python >=3.10 and <3.$(python_minor_ceiling))"
     else
         ui_warn "python3 not found on PATH"
     fi
@@ -1615,7 +1625,7 @@ resolve_python() {
         die "No Python interpreter provided."
     fi
     if ! validate_python_bin "$input"; then
-        die "Provided Python is invalid or unsupported (need >=3.10 and <3.12): $input"
+        die "Provided Python is invalid or unsupported (need >=3.10 and <3.$(python_minor_ceiling)): $input"
     fi
     PYTHON_BIN="$input"
     ui_success "Using Python: $PYTHON_BIN"
