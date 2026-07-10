@@ -14,29 +14,53 @@ design, clarify contracts, or prevent old bug paths from remaining available.
 Do not keep an API, fallback, or mutable state channel only for compatibility
 when it conflicts with the new design.
 
+## Review Lenses
+
+Do not limit the review to bug-focused correctness checks. For non-trivial
+changes, review through at least these lenses:
+
+- Bug-focused review: check whether the change can fail at runtime, produce
+  incorrect behavior, violate compatibility, miss required tests, or break
+  documented contracts.
+- Design-focused review: check whether the new or changed design is simple,
+  coherent, maintainable, and aligned with module boundaries and user-facing
+  concepts.
+
+Keep these findings separate. A design-focused comment does not need to prove an
+immediate runtime bug, but it must explain the concrete complexity, ambiguity,
+or maintenance risk introduced by the change.
+
 ## Required Review Passes
 
 1. Understand the issue or feature goal.
-2. For GitHub PRs, read existing unresolved human review threads before
+2. Verify that the implementation matches the PR's stated goal. Trace the goal
+   to the changed code, tests, docs, and runtime behavior, and call out gaps
+   where the PR only partially addresses the goal or validates an adjacent
+   behavior instead of the intended contract.
+3. For GitHub PRs, read existing unresolved human review threads before
    finalizing findings.
-3. Read the diff, then trace the full runtime call path outside the diff.
-4. Search all call sites of changed public, protected, and cross-language APIs.
-5. Decide whether changed APIs should be kept, documented, deprecated, or
+4. Read the diff, then trace the full runtime call path outside the diff.
+5. Search all call sites of changed public, protected, and cross-language APIs.
+6. Decide whether changed APIs should be kept, documented, deprecated, or
    deleted.
-6. Check user-facing names, docs, and error messages for implementation leaks,
+7. Run a design-focused pass for non-trivial changes. Look for unclear API
+   shape, ambiguous contracts, unnecessary lifecycle state, duplicated
+   abstractions, implementation details leaking into user-facing names or docs,
+   avoidable fallback paths, and module-boundary violations.
+8. Check user-facing names, docs, and error messages for implementation leaks,
    stale comments, or ambiguous contracts.
-7. Check whether the root cause channel still exists through old APIs,
+9. Check whether the root cause channel still exists through old APIs,
    defaults, fallback behavior, or mutable shared state.
-8. Compare equivalent Java, Python, and YAML-facing behavior.
-9. Check cross-language wrappers, adapters, serializers, and runtime bridge
+10. Compare equivalent Java, Python, and YAML-facing behavior.
+11. Check cross-language wrappers, adapters, serializers, and runtime bridge
    code when the change crosses Java/Python boundaries.
-10. Check dependency, license, NOTICE, and shared-fixture changes when new
+12. Check dependency, license, NOTICE, and shared-fixture changes when new
     libraries or generated/bundled artifacts are introduced.
-11. Verify tests cover the behavior at the level where the bug happened.
-12. Run targeted tests or clearly state why they could not be run.
-13. Separate findings into blockers, non-blocking risks, and test gaps. Include
-    relevant human-raised issues in the conclusion, marked as already raised by
-    a human reviewer.
+13. Verify tests cover the behavior at the level where the bug happened.
+14. Run targeted tests or clearly state why they could not be run.
+15. Separate findings into blockers, non-blocking design or compatibility risks,
+    and test gaps. Include relevant human-raised issues in the conclusion,
+    marked as already raised by a human reviewer.
 
 ## Root-Cause Checklist
 
@@ -70,6 +94,9 @@ For public APIs, configuration, and common runtime extension points, ask:
 
 Because the project is beta, reviewers should actively recommend deleting
 unsafe or misleading APIs when doing so simplifies the contract.
+Do not preserve compatibility by default. Compatibility paths must have a
+concrete obligation; otherwise prefer removing or rejecting them, especially
+when they keep old bugs or ambiguous contracts alive.
 
 When reviewing a public API change:
 

@@ -21,6 +21,8 @@ Java targets Java 11 and is formatted by Spotless using google-java-format AOSP 
 
 Java tests use JUnit 5 with AssertJ and Mockito. Python tests use pytest; integration tests are marked with `integration` and can require external services such as Ollama, OpenAI, Chroma, or mem0. Before Python-facing tests, including cross-language suites, export `PYTHONPATH=$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')` or the equivalent path from the active Python environment. Prefer focused tests near the changed module, then run `./tools/ut.sh` or the relevant narrowed variant before opening a PR.
 
+- If verification may be using stale generated, built, or installed artifacts, rebuild with `./tools/build.sh` or document an equivalent targeted rebuild before attributing the failure to source changes.
+
 ## Commit & Pull Request Guidelines
 
 Use concise subjects with bracketed components, matching existing history, such as `[python] Admit bytes in memory values` or `[api][java] Add event constants`. For nontrivial behavior changes, open or link a GitHub issue before the PR. PR titles should include relevant components like `[api]`, `[runtime]`, `[java]`, `[python]`, or `[hotfix]`; describe the change, test evidence, and any compatibility impact.
