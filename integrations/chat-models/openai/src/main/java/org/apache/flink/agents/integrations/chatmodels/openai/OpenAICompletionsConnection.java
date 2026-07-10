@@ -115,8 +115,7 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
                         .map(Number::intValue)
                         .orElse(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
         if (this.maxRetries < 0) {
-            throw new IllegalArgumentException(
-                    "max_retries must be >= 0, got: " + this.maxRetries);
+            throw new IllegalArgumentException("max_retries must be >= 0, got: " + this.maxRetries);
         }
         builder.maxRetries(this.maxRetries);
 

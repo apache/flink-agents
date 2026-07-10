@@ -36,7 +36,8 @@ class OpenAIResponsesModelConnectionTest {
     private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
     private static ResourceDescriptor.Builder connectionDescriptor() {
-        return ResourceDescriptor.Builder.newBuilder(OpenAIResponsesModelConnection.class.getName());
+        return ResourceDescriptor.Builder.newBuilder(
+                OpenAIResponsesModelConnection.class.getName());
     }
 
     @Test
