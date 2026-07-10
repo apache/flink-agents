@@ -51,15 +51,17 @@ public class ResourceDescriptor {
      *     <ul>
      *       <li><b>For Java resources:</b> The fully qualified Java class name (e.g.,
      *           "com.example.YourJavaClass"). The {@code module} parameter should be empty or null.
-     *       <li><b>For Python resources (when declaring from Java):</b> The Python class name
-     *           (simple name, not module path, e.g., "YourPythonClass"). The Python module path
-     *           must be specified in the {@code module} parameter (e.g., "your_module.submodule").
      *     </ul>
      *
      * @param module The Python module path for cross-platform compatibility. Defaults to empty
      *     string for Java resources. Example: "your_module.submodule"
      * @param initialArguments Additional arguments for resource initialization. Can be null or
      *     empty map if no initial arguments are needed.
+     *     <ul>
+     *       <li><b>For Python resources (when declaring from Java):</b> The Python class name
+     *           (e.g., "your_module.submodule.YourPythonClass"). the initialArguments should put
+     *           ("pythonClazz", "your_module.submodule.YourPythonClass").
+     *     </ul>
      */
     @JsonCreator
     public ResourceDescriptor(
