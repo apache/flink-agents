@@ -30,11 +30,20 @@ Prerequisites:
 import multiprocessing
 import os
 import runpy
+import sysconfig
 import time
 from pathlib import Path
 
 import pytest
 from pydantic import BaseModel
+from pyflink.common import Configuration, Encoder, WatermarkStrategy
+from pyflink.common.typeinfo import Types
+from pyflink.datastream import RuntimeExecutionMode, StreamExecutionEnvironment
+from pyflink.datastream.connectors.file_system import (
+    FileSource,
+    StreamFormat,
+    StreamingFileSink,
+)
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -54,6 +63,8 @@ from flink_agents.api.resource import (
 )
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.e2e_tests.test_utils import pull_model
+
+os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
 OLLAMA_MODEL = os.environ.get("MCP_OLLAMA_CHAT_MODEL", "qwen3:1.7b")
 MCP_SERVER_ENDPOINT = "http://127.0.0.1:8000/mcp"
@@ -170,42 +181,97 @@ client = pull_model(OLLAMA_MODEL)
 @pytest.mark.skipif(
     client is None, reason="Ollama client is not available or test model is missing"
 )
-def test_mcp(mcp_server_mode: str, server_file: str, server_endpoint: str) -> None:
-    """Test MCP integration with different server modes.
+def test_mcp(
+    mcp_server_mode: str,
+    server_file: str,
+    server_endpoint: str,
+    tmp_path: Path,
+) -> None:
+    """Test MCP integration with different server modes on a MiniCluster.
+
+    Drives ``MyMCPAgent`` (which binds the MCP ``add`` tool and ``ask_sum``
+    prompt into an Ollama chat model setup) through a real
+    ``StreamExecutionEnvironment`` with a FileSource and file sink. LLM output
+    is non-deterministic, so the assertion counts output records rather than
+    matching content.
 
     Args:
         mcp_server_mode: "with_prompts" or "without_prompts"
         server_file: Name of the MCP server file to run
         server_endpoint: Endpoint URL of the MCP server
+        tmp_path: pytest fixture providing the sink output directory
     """
     # Start MCP server in background
     print(f"Starting MCP server: {server_file}...")
     server_process = multiprocessing.Process(target=run_mcp_server, args=(server_file,))
     server_process.start()
-    time.sleep(5)
+    try:
+        time.sleep(5)
 
-    # Set environment variable to control agent behavior
-    os.environ["MCP_SERVER_MODE"] = mcp_server_mode
+        # Set environment variable to control agent behavior
+        os.environ["MCP_SERVER_MODE"] = mcp_server_mode
 
-    print(f"\nRunning MyMCPAgent with Ollama model: {OLLAMA_MODEL}")
-    print(f"MCP server mode: {mcp_server_mode}")
-    print(f"MCP server endpoint: {server_endpoint}\n")
+        print(f"\nRunning MyMCPAgent with Ollama model: {OLLAMA_MODEL}")
+        print(f"MCP server mode: {mcp_server_mode}")
+        print(f"MCP server endpoint: {server_endpoint}\n")
 
-    env = AgentsExecutionEnvironment.get_execution_environment()
-    input_list = []
-    agent = MyMCPAgent()
+        config = Configuration()
+        config.set_string("state.backend.type", "rocksdb")
+        config.set_string("checkpointing.interval", "1s")
+        config.set_string("restart-strategy.type", "disable")
+        env = StreamExecutionEnvironment.get_execution_environment(config)
+        env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
+        env.set_parallelism(1)
 
-    output_list = env.from_list(input_list).apply(agent).to_list()
+        # currently, bounded source is not supported due to runtime
+        # implementation, so we use a continuous file source here.
+        input_datastream = env.from_source(
+            source=FileSource.for_record_stream_format(
+                StreamFormat.text_line_format(),
+                f"file:///{current_dir}/../../resources/mcp_input",
+            ).build(),
+            watermark_strategy=WatermarkStrategy.no_watermarks(),
+            source_name="mcp_source",
+        )
 
-    # Add test inputs
-    input_list.append({"key": "calc1", "value": CalculationInput(a=1, b=2)})
-    input_list.append({"key": "calc2", "value": CalculationInput(a=12, b=34)})
+        deserialize_datastream = input_datastream.map(
+            lambda x: CalculationInput.model_validate_json(x)
+        )
 
-    env.execute()
+        agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+        output_datastream = (
+            agents_env.from_datastream(
+                input=deserialize_datastream, key_selector=lambda x: str(x.a)
+            )
+            .apply(MyMCPAgent())
+            .to_datastream()
+        )
 
-    print("Results:")
-    for output in output_list:
-        for key, value in output.items():
-            print(f"{key}: {value}")
-    assert len(output_list) == 2
-    server_process.kill()
+        result_dir = tmp_path / "results"
+        result_dir.mkdir(parents=True, exist_ok=True)
+
+        output_datastream.map(
+            lambda x: str(x).replace("\n", "").replace("\r", ""), Types.STRING()
+        ).add_sink(
+            StreamingFileSink.for_row_format(
+                base_path=str(result_dir.absolute()),
+                encoder=Encoder.simple_string_encoder(),
+            ).build()
+        )
+
+        agents_env.execute()
+
+        actual_result = []
+        for file in result_dir.iterdir():
+            if file.is_dir():
+                for child in file.iterdir():
+                    with child.open() as f:
+                        actual_result.extend(f.readlines())
+            if file.is_file():
+                with file.open() as f:
+                    actual_result.extend(f.readlines())
+
+        records = [line for line in actual_result if line.strip()]
+        assert len(records) == 2, f"expected 2 output records, got {records!r}"
+    finally:
+        server_process.kill()
