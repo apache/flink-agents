@@ -343,6 +343,9 @@ public class AgentPlan implements Serializable {
         if (isPython || isPythonResource(descriptor)) {
             return new PythonResourceProvider(name, type, descriptor);
         }
+        if (descriptor.getModule() != null && !descriptor.getModule().isEmpty() && descriptor.getInitialArguments().containsKey("java_clazz")) {
+            throw new IllegalArgumentException("python resource need pythonClazz param");
+        }
         return new JavaResourceProvider(name, type, descriptor);
     }
 
