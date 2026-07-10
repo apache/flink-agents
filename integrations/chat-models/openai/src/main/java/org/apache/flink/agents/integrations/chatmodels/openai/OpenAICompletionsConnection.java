@@ -101,20 +101,23 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             builder.baseUrl(apiBaseUrl);
         }
 
-        int rawTimeout =
+        this.timeoutSeconds =
                 Optional.ofNullable(descriptor.<Number>getArgument("timeout"))
                         .map(Number::intValue)
                         .orElse(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS);
-        this.timeoutSeconds =
-                rawTimeout > 0 ? rawTimeout : OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS;
+        if (this.timeoutSeconds < 0) {
+            throw new IllegalArgumentException("timeout must be >= 0, got: " + this.timeoutSeconds);
+        }
         builder.timeout(Duration.ofSeconds(this.timeoutSeconds));
 
-        int rawRetries =
+        this.maxRetries =
                 Optional.ofNullable(descriptor.<Number>getArgument("max_retries"))
                         .map(Number::intValue)
                         .orElse(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
-        this.maxRetries =
-                rawRetries >= 0 ? rawRetries : OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES;
+        if (this.maxRetries < 0) {
+            throw new IllegalArgumentException(
+                    "max_retries must be >= 0, got: " + this.maxRetries);
+        }
         builder.maxRetries(this.maxRetries);
 
         Map<String, String> defaultHeaders = descriptor.getArgument("default_headers");

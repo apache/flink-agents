@@ -67,7 +67,7 @@ import java.util.Set;
  * <p>Optional connection arguments:
  *
  * <ul>
- *   <li><b>timeout</b> (Number): seconds before an API call times out; must be greater than 0
+ *   <li><b>timeout</b> (Number): seconds before an API call times out; must be non-negative
  *       (default: 60)
  *   <li><b>max_retries</b> (Number): retry attempts on failure; must be non-negative (default: 3)
  *   <li><b>azure_url_path_mode</b> (String): one of {@code "AUTO"}, {@code "LEGACY"}, or {@code
@@ -127,20 +127,23 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
                         .credential(AzureApiKeyCredential.create(apiKey))
                         .azureServiceVersion(AzureOpenAIServiceVersion.fromString(apiVersion));
 
-        int rawTimeout =
+        this.timeoutSeconds =
                 Optional.ofNullable(descriptor.<Number>getArgument("timeout"))
                         .map(Number::intValue)
                         .orElse(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS);
-        this.timeoutSeconds =
-                rawTimeout > 0 ? rawTimeout : OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS;
+        if (this.timeoutSeconds < 0) {
+            throw new IllegalArgumentException("timeout must be >= 0, got: " + this.timeoutSeconds);
+        }
         clientBuilder.timeout(Duration.ofSeconds(this.timeoutSeconds));
 
-        int rawRetries =
+        this.maxRetries =
                 Optional.ofNullable(descriptor.<Number>getArgument("max_retries"))
                         .map(Number::intValue)
                         .orElse(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
-        this.maxRetries =
-                rawRetries >= 0 ? rawRetries : OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES;
+        if (this.maxRetries < 0) {
+            throw new IllegalArgumentException(
+                    "max_retries must be >= 0, got: " + this.maxRetries);
+        }
         clientBuilder.maxRetries(this.maxRetries);
 
         String azureUrlPathMode = descriptor.getArgument("azure_url_path_mode");
