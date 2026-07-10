@@ -1,0 +1,82 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# The integration-test jobs depend on a live local Ollama server whose llama-server
+# runner intermittently segfaults (~20% per job), and on a PyFlink py4j gateway that
+# occasionally dies on flink-1.20. Both are environmental, per-runner, and version-neutral
+# (the same job passes on ~80% of fresh runners), and both survive the in-suite test reruns
+# (--reruns 2 / rerunFailingTestsCount=2), because those retry into the same wedged process.
+#
+# When the CI run finishes in failure, re-run ONLY the failed integration-test jobs on a
+# fresh runner, which resets the whole job environment and clears the flake. Unit-test, lint,
+# and build failures are never re-run, so a real regression there stays red immediately.
+name: Auto-rerun flaky IT jobs
+
+on:
+  workflow_run:
+    workflows: ["Flink Agents CI"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun:
+    # Only on the upstream repo, only on failure, and cap the retries so a genuinely broken
+    # job (which fails on every fresh runner) still goes red instead of looping forever.
+    if: >
+      github.repository == 'apache/flink-agents' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-run failed integration-test jobs on a fresh runner
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -uo pipefail
+          # Retry only the live-LLM / external-service integration-test jobs. A failed
+          # unit-test, lint, or build job is left red so a real regression is not masked.
+          #
+          # Query the jobs REST endpoint with the repo pinned (this companion has no checkout,
+          # so `gh run view` cannot infer the repo). Poll until every job reports a conclusion,
+          # since the jobs list can briefly lag the workflow_run:completed event.
+          ids=()
+          for i in $(seq 1 15); do
+            jobs_json=$(gh api "repos/${GH_REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" 2>/dev/null || echo '{"jobs":[]}')
+            total=$(echo "$jobs_json" | jq '.jobs | length')
+            pending=$(echo "$jobs_json" | jq '[.jobs[] | select(.conclusion == null)] | length')
+            if [ "$total" -gt 0 ] && [ "$pending" -eq 0 ]; then
+              mapfile -t ids < <(echo "$jobs_json" | jq -r '.jobs[]
+                    | select(.conclusion == "failure")
+                    | select(.name | test("^(it-python|it-java|cross-language)"))
+                    | .id')
+              break
+            fi
+            sleep 4
+          done
+          if [ "${#ids[@]}" -eq 0 ]; then
+            echo "No failed integration-test jobs to re-run."
+            exit 0
+          fi
+          for id in "${ids[@]}"; do
+            echo "Re-running integration-test job $id on a fresh runner..."
+            gh run rerun --job "$id"
+          done
