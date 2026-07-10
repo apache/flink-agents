@@ -18,7 +18,6 @@
 
 package org.apache.flink.agents.api.embedding.model;
 
-import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -108,15 +107,6 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
         return embedWithUsage(text, parameters).getEmbeddings();
     }
 
-    public float[] embed(
-            String text,
-            Map<String, Object> parameters,
-            @Nullable FlinkAgentsMetricGroup requestMetricGroup) {
-        EmbeddingResult<float[]> result = embedWithUsage(text, parameters);
-        recordTokenMetrics(requestMetricGroup, result.getTokenUsage());
-        return result.getEmbeddings();
-    }
-
     public EmbeddingResult<float[]> embedWithUsage(String text) {
         return embedWithUsage(text, Collections.emptyMap());
     }
@@ -143,15 +133,6 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
         return embedWithUsage(texts, parameters).getEmbeddings();
     }
 
-    public List<float[]> embed(
-            List<String> texts,
-            Map<String, Object> parameters,
-            @Nullable FlinkAgentsMetricGroup requestMetricGroup) {
-        EmbeddingResult<List<float[]>> result = embedWithUsage(texts, parameters);
-        recordTokenMetrics(requestMetricGroup, result.getTokenUsage());
-        return result.getEmbeddings();
-    }
-
     public EmbeddingResult<List<float[]>> embedWithUsage(List<String> texts) {
         return embedWithUsage(texts, Collections.emptyMap());
     }
@@ -164,15 +145,4 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
         return currentConnection.embedWithUsage(texts, params);
     }
 
-    public void recordTokenMetrics(
-            @Nullable FlinkAgentsMetricGroup requestMetricGroup,
-            @Nullable EmbeddingTokenUsage usage) {
-        if (requestMetricGroup == null || usage == null) {
-            return;
-        }
-
-        FlinkAgentsMetricGroup modelGroup = requestMetricGroup.getSubGroup("model", model);
-        modelGroup.getCounter("promptTokens").inc(usage.getPromptTokens());
-        modelGroup.getCounter("totalTokens").inc(usage.getTotalTokens());
-    }
 }

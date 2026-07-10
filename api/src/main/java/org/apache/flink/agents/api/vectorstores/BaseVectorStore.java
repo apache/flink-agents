@@ -19,7 +19,6 @@
 package org.apache.flink.agents.api.vectorstores;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
-import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -28,7 +27,6 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import javax.annotation.Nullable;
 
 import java.io.IOException;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -178,10 +176,7 @@ public abstract class BaseVectorStore extends Resource {
      * @return VectorStoreQueryResult containing the retrieved documents
      */
     public VectorStoreQueryResult query(VectorStoreQuery query) {
-        final FlinkAgentsMetricGroup requestMetricGroup = getMetricGroup();
-        final float[] queryEmbedding =
-                getEmbeddingModel()
-                        .embed(query.getQueryText(), Collections.emptyMap(), requestMetricGroup);
+        final float[] queryEmbedding = getEmbeddingModel().embed(query.getQueryText());
 
         final Map<String, Object> storeKwargs = this.getStoreKwargs();
         storeKwargs.putAll(query.getExtraArgs());
@@ -337,15 +332,9 @@ public abstract class BaseVectorStore extends Resource {
 
     /** Auto-embed any documents whose {@code embedding} field is {@code null}. */
     protected void ensureEmbeddings(List<Document> documents) {
-        final FlinkAgentsMetricGroup requestMetricGroup = getMetricGroup();
         for (Document doc : documents) {
             if (doc.getEmbedding() == null) {
-                doc.setEmbedding(
-                        getEmbeddingModel()
-                                .embed(
-                                        doc.getContent(),
-                                        Collections.emptyMap(),
-                                        requestMetricGroup));
+                doc.setEmbedding(getEmbeddingModel().embed(doc.getContent()));
             }
         }
     }

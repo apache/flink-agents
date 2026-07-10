@@ -22,7 +22,6 @@ from typing import Any, Dict, Generic, Sequence, TypeVar, cast
 from pydantic import Field
 from typing_extensions import override
 
-from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 
 EmbeddingValue = TypeVar("EmbeddingValue", list[float], list[list[float]])
@@ -155,14 +154,3 @@ class BaseEmbeddingModelSetup(Resource, ABC):
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
         return self._get_connection().embed_with_usage(text, **merged_kwargs)
-
-    def record_token_metrics(
-        self, metric_group: MetricGroup | None, usage: EmbeddingTokenUsage | None
-    ) -> None:
-        """Record embedding token metrics under the request-scoped metric group."""
-        if metric_group is None or usage is None:
-            return
-
-        model_group = metric_group.get_sub_group("model", self.model)
-        model_group.get_counter("promptTokens").inc(usage.prompt_tokens)
-        model_group.get_counter("totalTokens").inc(usage.total_tokens)

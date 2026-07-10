@@ -60,8 +60,8 @@ def test_openai_embedding_model() -> None:
     assert all(isinstance(x, float) for x in response)  #
 
 
-def test_openai_embedding_model_records_token_metrics() -> None:
-    """Test OpenAI embedding usage is recorded as model token metrics."""
+def test_openai_embedding_model_returns_token_usage() -> None:
+    """Test OpenAI embedding usage is returned with the embedding result."""
     connection = OpenAIEmbeddingModelConnection(name="openai", api_key="fake-key")
     mock_client = MagicMock()
     mock_client.embeddings.create.return_value = SimpleNamespace(
@@ -82,22 +82,10 @@ def test_openai_embedding_model_records_token_metrics() -> None:
     embedding_model = OpenAIEmbeddingModelSetup(
         name="openai", model=test_model, connection="openai", resource_context=mock_ctx
     )
-    metric_group = MagicMock()
-    model_group = MagicMock()
-    prompt_counter = MagicMock()
-    total_counter = MagicMock()
-    metric_group.get_sub_group.return_value = model_group
-    model_group.get_counter.side_effect = {
-        "promptTokens": prompt_counter,
-        "totalTokens": total_counter,
-    }.__getitem__
-
     embedding_model.open()
 
     result = embedding_model.embed_with_usage("Hello, Flink Agent!")
-    embedding_model.record_token_metrics(metric_group, result.token_usage)
     assert result.embeddings == [0.1, 0.2, 0.3]
-
-    metric_group.get_sub_group.assert_called_once_with("model", test_model)
-    prompt_counter.inc.assert_called_once_with(5)
-    total_counter.inc.assert_called_once_with(5)
+    assert result.token_usage is not None
+    assert result.token_usage.prompt_tokens == 5
+    assert result.token_usage.total_tokens == 5

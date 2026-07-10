@@ -155,7 +155,7 @@ def test_tongyi_embedding_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(response) == 5
 
 
-def test_tongyi_embedding_records_token_metrics(
+def test_tongyi_embedding_returns_token_usage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test DashScope embedding usage is recorded as model token metrics."""
@@ -192,25 +192,13 @@ def test_tongyi_embedding_records_token_metrics(
         connection="tongyi",
         resource_context=_make_ctx(get_resource),
     )
-    metric_group = MagicMock()
-    model_group = MagicMock()
-    prompt_counter = MagicMock()
-    total_counter = MagicMock()
-    metric_group.get_sub_group.return_value = model_group
-    model_group.get_counter.side_effect = {
-        "promptTokens": prompt_counter,
-        "totalTokens": total_counter,
-    }.__getitem__
-
     embedding_model.open()
 
     result = embedding_model.embed_with_usage("Test text")
-    embedding_model.record_token_metrics(metric_group, result.token_usage)
     assert result.embeddings == mock_embedding
-
-    metric_group.get_sub_group.assert_called_once_with("model", test_model)
-    prompt_counter.inc.assert_called_once_with(6)
-    total_counter.inc.assert_called_once_with(6)
+    assert result.token_usage is not None
+    assert result.token_usage.prompt_tokens == 6
+    assert result.token_usage.total_tokens == 6
 
 
 def test_tongyi_embedding_batch_mock(monkeypatch: pytest.MonkeyPatch) -> None:
