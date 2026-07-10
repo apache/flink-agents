@@ -1111,6 +1111,7 @@ edit_plan_interactive() {
         case "$action" in
             flink_agents_version)
                 prompt_flink_agents_version_interactive || true
+                revalidate_python_for_agents_version
                 ;;
             install_flink)
                 if choose_install_method_interactive "Install Flink?"; then
@@ -1630,6 +1631,24 @@ resolve_python() {
     PYTHON_BIN="$input"
     ui_success "Using Python: $PYTHON_BIN"
     return 0
+}
+
+# The Python ceiling depends on the selected Flink Agents release (see
+# python_minor_ceiling), so editing the version at the confirm screen can
+# invalidate an interpreter that resolve_python already accepted — e.g.
+# Python 3.12 passes for 0.3.0 but pip install of 0.2.x requires <3.12.
+# Called after a version edit; re-resolves PYTHON_BIN when it no longer
+# satisfies the new release, mirroring the enable_pyflink edit arm.
+revalidate_python_for_agents_version() {
+    if [[ "$ENABLE_PYFLINK" != "Yes" ]] || [[ -z "${PYTHON_BIN:-}" ]]; then
+        return 0
+    fi
+    if validate_python_bin "$PYTHON_BIN"; then
+        return 0
+    fi
+    ui_warn "The selected Python (${PYTHON_BIN}) is incompatible with Flink Agents ${FLINK_AGENTS_VERSION} (requires Python >=3.10 and <3.$(python_minor_ceiling))"
+    PYTHON_BIN=""
+    resolve_python
 }
 
 show_install_plan() {
