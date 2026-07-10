@@ -83,4 +83,54 @@ class OpenAICompletionsConnectionTest {
         assertThat(conn.getTimeoutSeconds()).isEqualTo(120);
         assertThat(conn.getMaxRetries()).isEqualTo(5);
     }
+
+    @Test
+    @DisplayName("Negative timeout throws IllegalArgumentException")
+    void testNegativeTimeoutThrows() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("timeout", -5)
+                        .build();
+        assertThatThrownBy(() -> new OpenAICompletionsConnection(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("timeout");
+    }
+
+    @Test
+    @DisplayName("Negative max_retries throws IllegalArgumentException")
+    void testNegativeMaxRetriesThrows() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("max_retries", -1)
+                        .build();
+        assertThatThrownBy(() -> new OpenAICompletionsConnection(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max_retries");
+    }
+
+    @Test
+    @DisplayName("Zero timeout is accepted as valid")
+    void testZeroTimeoutAccepted() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("timeout", 0)
+                        .build();
+        OpenAICompletionsConnection conn = new OpenAICompletionsConnection(desc, NOOP);
+        assertThat(conn.getTimeoutSeconds()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("Zero max_retries is accepted as valid")
+    void testZeroMaxRetriesAccepted() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("max_retries", 0)
+                        .build();
+        OpenAICompletionsConnection conn = new OpenAICompletionsConnection(desc, NOOP);
+        assertThat(conn.getMaxRetries()).isEqualTo(0);
+    }
 }
