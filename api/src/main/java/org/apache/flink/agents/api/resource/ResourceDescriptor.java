@@ -58,9 +58,10 @@ public class ResourceDescriptor {
      * @param initialArguments Additional arguments for resource initialization. Can be null or
      *     empty map if no initial arguments are needed.
      *     <ul>
-     *       <li><b>For Python resources (when declaring from Java):</b> The Python class name
-     *           (e.g., "your_module.submodule.YourPythonClass"). the initialArguments should put
-     *           ("pythonClazz", "your_module.submodule.YourPythonClass").
+     *       <li><b>For Python resources (when declaring from Java): put the fully-qualified Python
+     *           class under the pythonClazz key in initialArguments (e.g. ("pythonClazz",
+     *           "your_module.submodule.YourPythonClass")). The clazz argument is unused in this
+     *           case.
      *     </ul>
      */
     @JsonCreator
