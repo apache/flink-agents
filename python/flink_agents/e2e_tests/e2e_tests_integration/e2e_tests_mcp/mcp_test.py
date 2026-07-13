@@ -27,9 +27,9 @@ Prerequisites:
 - Run the MCP server first: mcp_server.py or mcp_server_without_prompts.py
 """
 
-import multiprocessing
 import os
-import runpy
+import subprocess
+import sys
 import sysconfig
 import time
 from pathlib import Path
@@ -157,11 +157,6 @@ class MyMCPAgent(Agent):
             ctx.send_event(OutputEvent(output=response.content))
 
 
-def run_mcp_server(server_file: str) -> None:
-    """Run the MCP server in a separate process."""
-    runpy.run_path(f"{current_dir}/{server_file}")
-
-
 current_dir = Path(__file__).parent
 
 client = pull_model(OLLAMA_MODEL)
@@ -203,8 +198,7 @@ def test_mcp(
     """
     # Start MCP server in background
     print(f"Starting MCP server: {server_file}...")
-    server_process = multiprocessing.Process(target=run_mcp_server, args=(server_file,))
-    server_process.start()
+    server_process = subprocess.Popen([sys.executable, str(current_dir / server_file)])
     try:
         time.sleep(5)
 
@@ -274,4 +268,9 @@ def test_mcp(
         records = [line for line in actual_result if line.strip()]
         assert len(records) == 2, f"expected 2 output records, got {records!r}"
     finally:
-        server_process.kill()
+        server_process.terminate()
+        try:
+            server_process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            server_process.kill()
+            server_process.wait()
