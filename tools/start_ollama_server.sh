@@ -17,12 +17,29 @@
 #################################################################################
 
 # only works on linux
-os=$(uname -s)
-echo $os
+set -euo pipefail
 
-curl -fsSL https://ollama.com/install.sh | sh
-ret=$?
-if [ "$ret" != "0" ]
-then
-  exit $ret
-fi
+os=$(uname -s)
+echo "$os"
+
+install_script=$(mktemp)
+trap 'rm -f "$install_script"' EXIT
+
+# The upstream installer probes for the .tar.zst asset with a silent HEAD request, and on
+# any failure of that probe falls back to a .tgz that current releases no longer publish.
+# A single transient network error therefore turns into a hard 404, so retry the install.
+attempts=3
+for attempt in $(seq 1 "$attempts"); do
+  if curl -fsSL https://ollama.com/install.sh -o "$install_script" && sh "$install_script"; then
+    exit 0
+  fi
+
+  if [ "$attempt" -lt "$attempts" ]; then
+    delay=$((attempt * 10))
+    echo "ollama install attempt ${attempt}/${attempts} failed; retrying in ${delay}s" >&2
+    sleep "$delay"
+  fi
+done
+
+echo "ollama install failed after ${attempts} attempts" >&2
+exit 1
