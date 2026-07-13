@@ -475,6 +475,9 @@ VERBOSE="${FLINK_AGENTS_VERBOSE:-0}"
 DRY_RUN="${FLINK_AGENTS_DRY_RUN:-0}"
 HELP=0
 PYFLINK_ACTUALLY_ENABLED=0
+# Set to 1 when a version edit leaves an existing venv on an incompatible
+# interpreter and the user opts to recreate it; setup_python_env honors it.
+RECREATE_VENV=0
 
 print_usage() {
     cat <<EOF
@@ -1015,6 +1018,7 @@ edit_plan_dump_state() {
         printf 'VENV_DIR=%s\n'                  "$(edit_plan_quote "$VENV_DIR")"
         printf 'PYTHON_BIN=%s\n'                "$(edit_plan_quote "${PYTHON_BIN:-}")"
         printf 'FLINK_AGENTS_VERSION=%s\n'      "$(edit_plan_quote "$FLINK_AGENTS_VERSION")"
+        printf 'RECREATE_VENV=%s\n'             "$(edit_plan_quote "${RECREATE_VENV:-0}")"
     } > "$out"
 }
 
@@ -1111,7 +1115,7 @@ edit_plan_interactive() {
         case "$action" in
             flink_agents_version)
                 prompt_flink_agents_version_interactive || true
-                revalidate_python_for_agents_version
+                revalidate_python_constraint
                 ;;
             install_flink)
                 if choose_install_method_interactive "Install Flink?"; then
@@ -1134,11 +1138,13 @@ edit_plan_interactive() {
                     detect_flink_version_from_home || ui_warn "Could not auto-detect Flink version; keeping ${FLINK_VERSION}"
                 fi
                 FLINK_MAJOR_MINOR="$(flink_major_minor "$FLINK_VERSION")"
+                revalidate_python_constraint
                 ;;
             flink_version)
                 prompt_flink_version_interactive || true
                 FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
                 FLINK_MAJOR_MINOR="$(flink_major_minor "$FLINK_VERSION")"
+                revalidate_python_constraint
                 ;;
             install_dir)
                 INSTALL_DIR="$(prompt_path_choice_interactive \
@@ -1405,10 +1411,25 @@ pip_install_quiet() {
 }
 
 setup_python_env() {
+    # A venv the user opted to recreate (incompatible interpreter, see
+    # revalidate_existing_venv) is deleted here, not at plan time, so a later
+    # cancel never destroys it. Guard the rm to a real venv marker.
+    if [[ "${RECREATE_VENV:-0}" == "1" && -f "$VENV_DIR/pyvenv.cfg" ]]; then
+        ui_info "Recreating virtual environment: $VENV_DIR"
+        rm -rf "$VENV_DIR"
+    fi
+
     if [[ ! -d "$VENV_DIR" ]]; then
         ui_info "Creating virtual environment: $VENV_DIR"
         create_venv
     else
+        # Reused venvs keep their own interpreter; make sure it still fits the
+        # selected versions before pip runs under it (belt-and-suspenders for
+        # any path that bypassed the plan-time revalidation, e.g. an explicit
+        # VENV_DIR in non-interactive mode).
+        if [[ -x "$VENV_DIR/bin/python" ]] && ! validate_python_bin "$VENV_DIR/bin/python"; then
+            die "Existing venv ${VENV_DIR} uses an interpreter incompatible with Flink Agents ${FLINK_AGENTS_VERSION} + Flink ${FLINK_VERSION} (needs >=3.10 and <3.$(python_minor_ceiling)). Remove it or set VENV_DIR to a different path."
+        fi
         ui_info "Reusing existing virtual environment: $VENV_DIR"
     fi
 
@@ -1564,14 +1585,36 @@ check_java() {
     return 0
 }
 
-# Upper bound (exclusive) on the Python minor version for the selected
-# Flink Agents release: 0.1.x / 0.2.x publish requires-python >=3.10,<3.12,
-# while 0.3.0+ publishes >=3.10,<3.13 (adds Python 3.12 support).
+# Upper bound (exclusive) on the Python minor version, derived from BOTH
+# selected versions and returning the stricter (lower) of the two:
+#   - Flink Agents: 0.1.x / 0.2.x publish requires-python >=3.10,<3.12,
+#     while 0.3.0+ publishes >=3.10,<3.13 (adds Python 3.12 support).
+#   - Apache Flink: Python 3.12 requires Flink 2.1+; Flink <2.1 caps at <3.12.
+# An unparseable FLINK_VERSION leaves the Flink axis unrestricted (fail open),
+# so only the Flink Agents ceiling applies in that case.
 python_minor_ceiling() {
+    local agents_ceiling flink_ceiling
     case "$FLINK_AGENTS_VERSION" in
-        0.1.*|0.2.*) printf '12' ;;
-        *) printf '13' ;;
+        0.1.*|0.2.*) agents_ceiling=12 ;;
+        *) agents_ceiling=13 ;;
     esac
+
+    flink_ceiling=13
+    local mm major minor
+    mm="$(flink_major_minor "${FLINK_VERSION:-}")"
+    if [[ -n "$mm" ]]; then
+        major="${mm%%.*}"
+        minor="${mm##*.}"
+        if (( major < 2 || (major == 2 && minor < 1) )); then
+            flink_ceiling=12
+        fi
+    fi
+
+    if (( agents_ceiling < flink_ceiling )); then
+        printf '%s' "$agents_ceiling"
+    else
+        printf '%s' "$flink_ceiling"
+    fi
 }
 
 validate_python_bin() {
@@ -1633,22 +1676,65 @@ resolve_python() {
     return 0
 }
 
-# The Python ceiling depends on the selected Flink Agents release (see
-# python_minor_ceiling), so editing the version at the confirm screen can
-# invalidate an interpreter that resolve_python already accepted — e.g.
-# Python 3.12 passes for 0.3.0 but pip install of 0.2.x requires <3.12.
-# Called after a version edit; re-resolves PYTHON_BIN when it no longer
-# satisfies the new release, mirroring the enable_pyflink edit arm.
-revalidate_python_for_agents_version() {
-    if [[ "$ENABLE_PYFLINK" != "Yes" ]] || [[ -z "${PYTHON_BIN:-}" ]]; then
+# The Python ceiling depends on BOTH the Flink Agents and the Flink version
+# (see python_minor_ceiling), so editing either at the confirm screen can
+# invalidate a Python setup that was already accepted — e.g. Python 3.12
+# passes for 0.3.0 + Flink 2.2 but not after editing down to 0.2.1 or to
+# Flink 2.0. Called after a version edit; mirrors the enable_pyflink arm.
+# No-op unless PyFlink is enabled. Two independent checks:
+#   1. PYTHON_BIN — the resolved interpreter; re-resolve if it no longer fits.
+#   2. VENV_DIR   — see revalidate_existing_venv; a reused venv keeps its own
+#      interpreter, which re-resolving PYTHON_BIN does not change.
+revalidate_python_constraint() {
+    if [[ "$ENABLE_PYFLINK" != "Yes" ]]; then
         return 0
     fi
-    if validate_python_bin "$PYTHON_BIN"; then
+
+    if [[ -n "${PYTHON_BIN:-}" ]] && ! validate_python_bin "$PYTHON_BIN"; then
+        ui_warn "The selected Python (${PYTHON_BIN}) is incompatible with Flink Agents ${FLINK_AGENTS_VERSION} + Flink ${FLINK_VERSION} (requires Python >=3.10 and <3.$(python_minor_ceiling))"
+        PYTHON_BIN=""
+        resolve_python
+    fi
+
+    revalidate_existing_venv
+}
+
+# setup_python_env reuses an existing venv as-is (it only creates one when
+# VENV_DIR is absent), so the venv's own interpreter — not the re-resolved
+# PYTHON_BIN — is what pip runs under. After a version edit that lowers the
+# Python ceiling, an existing venv built on a now-too-new interpreter would
+# still be reused and fail at `pip install` time. Catch it at plan time:
+# offer to recreate it (deferred to setup_python_env via RECREATE_VENV, which
+# only ever deletes a directory carrying a pyvenv.cfg marker) or point at a
+# different path. Non-interactive callers get an actionable error instead of a
+# mid-install failure. No-op unless VENV_DIR is an existing venv.
+revalidate_existing_venv() {
+    RECREATE_VENV=0
+    [[ "$ENABLE_PYFLINK" == "Yes" && -n "${VENV_DIR:-}" ]] || return 0
+
+    local kind
+    kind="$(validate_venv_dir "$VENV_DIR")" || true
+    [[ "$kind" == "venv" ]] || return 0
+
+    if validate_python_bin "$VENV_DIR/bin/python"; then
         return 0
     fi
-    ui_warn "The selected Python (${PYTHON_BIN}) is incompatible with Flink Agents ${FLINK_AGENTS_VERSION} (requires Python >=3.10 and <3.$(python_minor_ceiling))"
-    PYTHON_BIN=""
-    resolve_python
+
+    local venv_pv
+    venv_pv="$("$VENV_DIR/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || printf 'unknown')"
+    ui_warn "Existing venv ${VENV_DIR} uses Python ${venv_pv}, incompatible with Flink Agents ${FLINK_AGENTS_VERSION} + Flink ${FLINK_VERSION} (needs >=3.10 and <3.$(python_minor_ceiling))"
+
+    if ! is_promptable; then
+        die "Recreate ${VENV_DIR} or set VENV_DIR to a different path (its interpreter ${venv_pv} is unsupported for this version selection)."
+    fi
+
+    if choose_install_method_interactive "Recreate ${VENV_DIR} with a compatible interpreter?"; then
+        RECREATE_VENV=1
+    else
+        prompt_and_validate_venv_dir "$VENV_DIR"
+        # The newly chosen path may itself be an incompatible venv.
+        revalidate_existing_venv
+    fi
 }
 
 show_install_plan() {
