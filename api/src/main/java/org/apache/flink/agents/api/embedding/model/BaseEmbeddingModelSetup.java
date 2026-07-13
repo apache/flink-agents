@@ -144,5 +144,4 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
         BaseEmbeddingModelConnection currentConnection = getConnection();
         return currentConnection.embedWithUsage(texts, params);
     }
-
 }
