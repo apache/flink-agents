@@ -17,6 +17,8 @@
 ################################################################################
 import os
 
+from pyflink.datastream import StreamExecutionEnvironment
+
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.decorators import (
@@ -165,17 +167,9 @@ if __name__ == "__main__":
 
     agent = MyRAGAgent()
 
-    # Prepare example queries
-    input_list = []
-    test_queries = [
-        {"key": "001", "value": "What is Apache Flink?"},
-        {"key": "002", "value": "What is Apache Flink Agents?"},
-        {"key": "003", "value": "What is Python?"},
-    ]
-    input_list.extend(test_queries)
-
-    # Setup the Agents execution environment
-    agents_env = AgentsExecutionEnvironment.get_execution_environment()
+    # Set up the Flink streaming environment and the Agents execution environment.
+    env = StreamExecutionEnvironment.get_execution_environment()
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
     # Setup Ollama embedding and chat model connections
     agents_env.add_resource(
@@ -189,15 +183,22 @@ if __name__ == "__main__":
         ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION),
     )
 
-    output_list = agents_env.from_list(input_list).apply(agent).to_list()
+    # A small stream of example queries, keyed by the query text.
+    query_stream = env.from_collection(
+        [
+            "What is Apache Flink?",
+            "What is Apache Flink Agents?",
+            "What is Python?",
+        ],
+    )
 
-    agents_env.execute()
+    # Use the RAG agent to answer each query and print the responses to stdout.
+    response_stream = (
+        agents_env.from_datastream(input=query_stream, key_selector=lambda x: x)
+        .apply(agent)
+        .to_datastream()
+    )
+    response_stream.print()
 
-    print("\n" + "=" * 50)
-    print("RAG Example Results:")
-    print("=" * 50)
-
-    for output in output_list:
-        for key, value in output.items():
-            print(f"\n[{key}] Response: {value}")
-            print("-" * 40)
+    # Execute the Flink pipeline.
+    agents_env.execute("RAG Agent Example Job")

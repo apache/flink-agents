@@ -56,12 +56,15 @@ When all three options are configured, the framework automatically creates a Mem
 {{< tab "Python" >}}
 
 ```python
+from pyflink.datastream import StreamExecutionEnvironment
+
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.core_options import AgentConfigOptions
 from flink_agents.api.memory.long_term_memory import LongTermMemoryOptions
 
-env = AgentsExecutionEnvironment.get_execution_environment()
-agents_config = env.get_config()
+env = StreamExecutionEnvironment.get_execution_environment()
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
+agents_config = agents_env.get_config()
 
 # Set job identifier (maps to Mem0 user_id)
 agents_config.set(AgentConfigOptions.JOB_IDENTIFIER, "my_job")
@@ -455,6 +458,8 @@ The snippets below show how to read from and write to Long-Term Memory inside an
 {{< tab "Python" >}}
 
 ```python
+from pyflink.datastream import StreamExecutionEnvironment
+
 from flink_agents.api.decorators import action
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.core_options import AgentConfigOptions
@@ -488,8 +493,9 @@ class PersonalizedAssistant:
         ctx.send_event(OutputEvent(output=response))
 
 # Setup
-env = AgentsExecutionEnvironment.get_execution_environment()
-agents_config = env.get_config()
+env = StreamExecutionEnvironment.get_execution_environment()
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
+agents_config = agents_env.get_config()
 agents_config.set(AgentConfigOptions.JOB_IDENTIFIER, "personalized_assistant")
 agents_config.set(LongTermMemoryOptions.Mem0.CHAT_MODEL_SETUP, "my_chat_model")
 agents_config.set(LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP, "my_embedding_model")

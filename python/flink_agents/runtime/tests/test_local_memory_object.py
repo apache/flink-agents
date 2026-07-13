@@ -18,7 +18,7 @@
 from typing import Dict, List
 
 from flink_agents.api.memory_object import MemoryType
-from flink_agents.runtime.local_memory_object import LocalMemoryObject
+from flink_agents.runtime.tests.local_memory_object import LocalMemoryObject
 
 
 def create_memory() -> LocalMemoryObject:

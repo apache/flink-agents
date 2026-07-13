@@ -44,7 +44,8 @@ Users can explicitly modify the configuration when defining the `AgentsExecution
 
 ```python
 # Get Flink Agents execution environment
-agents_env = AgentsExecutionEnvironment.get_execution_environment()
+env = StreamExecutionEnvironment.get_execution_environment()
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
 # Get configuration object from the environment
 config = agents_env.get_configuration()
@@ -104,7 +105,7 @@ By default, the configuration is automatically loaded from `$FLINK_HOME/conf/con
 
 **Special Condition**
 
-In the following two cases, Flink Agents may not locate the corresponding configuration file, necessitating manual configuration. If the files are not set, no configuration files will be loaded, potentially resulting in unexpected behavior or failures.
+In the following case, Flink Agents may not locate the corresponding configuration file, necessitating manual configuration. If the file is not set, no configuration file will be loaded, potentially resulting in unexpected behavior or failures.
 
 - **For MiniCluster**:
   Manual setup is **required** — always export the environment variable before running the job:
@@ -114,13 +115,6 @@ In the following two cases, Flink Agents may not locate the corresponding config
   ```
 
   This ensures that Flink can locate and load the configuration file correctly.
-
-- **Local mode**: When [run without flink]({{< ref "docs/operations/deployment">}}), use the `AgentsExecutionEnvironment.get_configuration()` API to load the YAML file directly:
-
-  ```python
-  config = agents_env.get_configuration("path/to/your/config.yaml")
-  ```
-  
 
 ## Built-in configuration options
 

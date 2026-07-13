@@ -36,8 +36,7 @@ class WorkflowData(BaseModel):
         Payload echoed back in the output.
     key : str | None
         Routing key. A record that arrives without a key is assigned an
-        auto-generated one during deserialization, mirroring the key
-        auto-generation the from_list runner performs for keyless records.
+        auto-generated one during deserialization.
     """
 
     value: str

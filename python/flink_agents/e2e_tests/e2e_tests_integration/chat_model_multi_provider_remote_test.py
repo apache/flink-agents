@@ -81,10 +81,9 @@ def test_chat_model_integration_remote(
 ) -> None:
     """Non-Ollama providers answer math and creative prompts on the remote path.
 
-    Mirrors the from_list ``chat_model_integration_test`` for the three
-    credential-gated providers (Tongyi/OpenAI/AzureOpenAI), but drives the agent
-    through a real StreamExecutionEnvironment with a FileSource and file sink.
-    Each parameter skips cleanly when its credential is absent.
+    Covers the three credential-gated providers (Tongyi/OpenAI/AzureOpenAI) and
+    drives the agent through a real StreamExecutionEnvironment with a FileSource
+    and file sink. Each parameter skips cleanly when its credential is absent.
     """
     monkeypatch.setenv("TONGYI_CHAT_MODEL", TONGYI_MODEL)
     monkeypatch.setenv("OPENAI_CHAT_MODEL", OPENAI_MODEL)
