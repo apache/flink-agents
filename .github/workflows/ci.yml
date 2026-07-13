@@ -153,6 +153,7 @@ jobs:
   python_it_tests:
     name: it-python [${{ matrix.os }}] [java-17] [python-${{ matrix.python-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env:
       SKIP_SPOTLESS_CHECK: true
     strategy:
@@ -201,6 +202,7 @@ jobs:
   java_it_tests:
     name: it-java [${{ matrix.os }}] [java-${{ matrix.java-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     env:
       SKIP_SPOTLESS_CHECK: true
     strategy:
@@ -241,6 +243,7 @@ jobs:
   cross_language_tests:
     name: cross-language [${{ matrix.os }}] [python-${{ matrix.python-version}}] [java-${{ matrix.java-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env:
       SKIP_SPOTLESS_CHECK: true
     strategy:
