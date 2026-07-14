@@ -63,6 +63,7 @@ setup() {
     VENV_DIR="/tmp/venv with space"
     PYTHON_BIN="/usr/bin/python3"
     FLINK_AGENTS_VERSION="0.2.0"
+    RECREATE_VENV_PATH="/tmp/venv with space"
 
     local f="$BATS_TEST_TMPDIR/state"
     edit_plan_dump_state "$f"
@@ -71,6 +72,7 @@ setup() {
     INSTALL_FLINK=""; FLINK_VERSION=""; INSTALL_DIR=""; FLINK_HOME=""
     FLINK_MAJOR_MINOR=""; ENABLE_PYFLINK=""; PYFLINK_ACTUALLY_ENABLED=0
     VENV_DIR=""; PYTHON_BIN=""; FLINK_AGENTS_VERSION=""
+    RECREATE_VENV_PATH=""
 
     # shellcheck disable=SC1090
     source "$f"
@@ -85,4 +87,5 @@ setup() {
     [ "$VENV_DIR" = "/tmp/venv with space" ]
     [ "$PYTHON_BIN" = "/usr/bin/python3" ]
     [ "$FLINK_AGENTS_VERSION" = "0.2.0" ]
+    [ "$RECREATE_VENV_PATH" = "/tmp/venv with space" ]
 }
