@@ -19,11 +19,13 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
 import org.apache.kafka.clients.producer.MockProducer;
+import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
@@ -34,7 +36,6 @@ import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import static org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy.EARLIEST;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -78,6 +79,14 @@ public class KafkaActionStateStoreTest {
         testAction = new NoOpAction("test-action");
         testEvent = new InputEvent("test data");
         testActionState = new ActionState(testEvent);
+    }
+
+    /** Builds a store sharing this test's mock consumer but with tombstone emission enabled. */
+    private KafkaActionStateStore tombstoneEnabledStore(
+            Map<String, ActionState> states, Producer<String, ActionState> producer) {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.KAFKA_ACTION_STATE_TOMBSTONE_ENABLED, true);
+        return new KafkaActionStateStore(states, config, producer, mockConsumer, TEST_TOPIC);
     }
 
     @Test
@@ -176,6 +185,7 @@ public class KafkaActionStateStoreTest {
     @Test
     void testPruneState() throws Exception {
         // Arrange
+        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
         actionStates.put(
                 ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
         actionStates.put(
@@ -211,6 +221,7 @@ public class KafkaActionStateStoreTest {
     @Test
     void testPruneStateSendsTombstonesWithCorrectKeys() throws Exception {
         // Arrange
+        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
         String key1 = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
         String key2 = ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent);
         String key3 = ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent);
@@ -223,18 +234,46 @@ public class KafkaActionStateStoreTest {
 
         // Assert - exactly keys for seqNum 1 and 2 appear as tombstones
         var history = mockProducer.history();
-        assertThat(history).hasSize(2);
-        List<String> tombstoneKeys =
-                history.stream().map(ProducerRecord::key).sorted().collect(Collectors.toList());
-        List<String> expectedKeys =
-                List.of(key1, key2).stream().sorted().collect(Collectors.toList());
-        assertThat(tombstoneKeys).isEqualTo(expectedKeys);
-        assertThat(history).allMatch(r -> r.value() == null);
+        assertThat(history).extracting(ProducerRecord::key).containsExactlyInAnyOrder(key1, key2);
+        assertThat(history).extracting(ProducerRecord::value).containsOnlyNulls();
+    }
+
+    @Test
+    void testPruneStateDoesNotPruneOtherKeysWithMatchingPrefix() throws Exception {
+        // Arrange - agent key "a" seq 1 yields state key "a_1_<uuid>_<uuid>", which is a
+        // prefix match for pruning agent key "a_1"
+        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
+        String otherKeyState = ActionStateUtil.generateKey("a", 1L, testAction, testEvent);
+        actionStates.put(otherKeyState, testActionState);
+
+        // Act - prune a DIFFERENT agent key whose name collides with "a"'s key prefix
+        actionStateStore.pruneState("a_1", 10L);
+
+        // Assert - agent key "a"'s state is untouched and no tombstones were sent
+        assertThat(actionStates).containsKey(otherKeyState);
+        assertThat(mockProducer.history()).isEmpty();
+    }
+
+    @Test
+    void testPruneStateNoTombstonesByDefault() throws Exception {
+        // Arrange - setUp store uses a default AgentConfiguration (tombstones disabled)
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
+
+        // Act
+        actionStateStore.pruneState(TEST_KEY, 2L);
+
+        // Assert - no tombstones sent, but in-memory entries are still evicted
+        assertThat(mockProducer.history()).isEmpty();
+        assertThat(actionStates).isEmpty();
     }
 
     @Test
     void testPruneStateNoMatchingKeys() throws Exception {
         // Arrange - add states for a different key
+        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
         actionStates.put(
                 ActionStateUtil.generateKey("other-key", 1L, testAction, testEvent),
                 testActionState);
@@ -249,11 +288,9 @@ public class KafkaActionStateStoreTest {
 
     @Test
     void testPruneStateWithNullProducer() throws Exception {
-        // Arrange - store with null producer
+        // Arrange - tombstones enabled but producer is null
         Map<String, ActionState> localStates = new HashMap<>();
-        KafkaActionStateStore nullProducerStore =
-                new KafkaActionStateStore(
-                        localStates, new AgentConfiguration(), null, mockConsumer, TEST_TOPIC);
+        KafkaActionStateStore nullProducerStore = tombstoneEnabledStore(localStates, null);
         localStates.put(
                 ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
 
@@ -319,5 +356,23 @@ public class KafkaActionStateStoreTest {
                         actionStates.get(
                                 ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent)))
                 .isEqualTo(thirdState);
+    }
+
+    @Test
+    void testRebuildStateRemovesTombstonedKeys() throws Exception {
+        // Arrange - two state records followed by a tombstone for the first key
+        List<Object> recoveryMarkers = List.of(Map.of(0, 0L));
+        String key1 = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
+        String key2 = ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent);
+        mockConsumer.addRecord(new ConsumerRecord<>(TEST_TOPIC, 0, 0L, key1, testActionState));
+        mockConsumer.addRecord(new ConsumerRecord<>(TEST_TOPIC, 0, 1L, key2, testActionState));
+        mockConsumer.addRecord(new ConsumerRecord<>(TEST_TOPIC, 0, 2L, key1, null));
+
+        // Act
+        actionStateStore.rebuildState(recoveryMarkers);
+
+        // Assert - the tombstoned key is removed, the other key is restored
+        assertThat(actionStates).doesNotContainKey(key1);
+        assertThat(actionStates.get(key2)).isEqualTo(testActionState);
     }
 }
