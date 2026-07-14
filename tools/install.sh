@@ -475,9 +475,10 @@ VERBOSE="${FLINK_AGENTS_VERBOSE:-0}"
 DRY_RUN="${FLINK_AGENTS_DRY_RUN:-0}"
 HELP=0
 PYFLINK_ACTUALLY_ENABLED=0
-# Set to 1 when a version edit leaves an existing venv on an incompatible
-# interpreter and the user opts to recreate it; setup_python_env honors it.
-RECREATE_VENV=0
+# Exact venv path the user approved for recreation after an edit made its
+# interpreter incompatible. Keeping the path, rather than a boolean, prevents
+# a later VENV_DIR edit from transferring that destructive intent elsewhere.
+RECREATE_VENV_PATH=""
 
 print_usage() {
     cat <<EOF
@@ -992,6 +993,29 @@ edit_prompt_flink_home() {
     export FLINK_HOME
 }
 
+# Recompute derived values and constraints once after every successful edit.
+# Flink detection is limited to Flink-related actions because invoking
+# bin/flink may start a JVM; Python and venv validation is cheap and applies
+# after every action so path-bound recreation state cannot become stale.
+reconcile_plan_after_edit() {
+    local action="$1"
+    case "$action" in
+        install_flink|flink_version|install_dir|flink_home)
+            if [[ "$INSTALL_FLINK" == "Yes" ]]; then
+                FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
+            else
+                if detect_flink_version_from_home; then
+                    ui_success "Detected Flink version: $FLINK_VERSION"
+                else
+                    ui_warn "Could not auto-detect Flink version; keeping ${FLINK_VERSION}"
+                fi
+            fi
+            FLINK_MAJOR_MINOR="$(flink_major_minor "$FLINK_VERSION")"
+            ;;
+    esac
+    revalidate_python_constraint
+}
+
 # Show a menu of currently-applicable plan fields and re-prompt for the
 # selected one. After the edit, recomputes FLINK_HOME / FLINK_MAJOR_MINOR
 # so the next show_install_plan reflects the change.
@@ -1018,7 +1042,7 @@ edit_plan_dump_state() {
         printf 'VENV_DIR=%s\n'                  "$(edit_plan_quote "$VENV_DIR")"
         printf 'PYTHON_BIN=%s\n'                "$(edit_plan_quote "${PYTHON_BIN:-}")"
         printf 'FLINK_AGENTS_VERSION=%s\n'      "$(edit_plan_quote "$FLINK_AGENTS_VERSION")"
-        printf 'RECREATE_VENV=%s\n'             "$(edit_plan_quote "${RECREATE_VENV:-0}")"
+        printf 'RECREATE_VENV_PATH=%s\n'        "$(edit_plan_quote "${RECREATE_VENV_PATH:-}")"
     } > "$out"
 }
 
@@ -1115,7 +1139,6 @@ edit_plan_interactive() {
         case "$action" in
             flink_agents_version)
                 prompt_flink_agents_version_interactive || true
-                revalidate_python_constraint
                 ;;
             install_flink)
                 if choose_install_method_interactive "Install Flink?"; then
@@ -1131,20 +1154,13 @@ edit_plan_interactive() {
                             "/path/to/flink-install-dir")"
                         INSTALL_DIR="$(normalize_path "$INSTALL_DIR")"
                     fi
-                    FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
                 else
                     INSTALL_FLINK=No
                     edit_prompt_flink_home
-                    detect_flink_version_from_home || ui_warn "Could not auto-detect Flink version; keeping ${FLINK_VERSION}"
                 fi
-                FLINK_MAJOR_MINOR="$(flink_major_minor "$FLINK_VERSION")"
-                revalidate_python_constraint
                 ;;
             flink_version)
                 prompt_flink_version_interactive || true
-                FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
-                FLINK_MAJOR_MINOR="$(flink_major_minor "$FLINK_VERSION")"
-                revalidate_python_constraint
                 ;;
             install_dir)
                 INSTALL_DIR="$(prompt_path_choice_interactive \
@@ -1152,7 +1168,6 @@ edit_plan_interactive() {
                     "$INSTALL_DIR" \
                     "/path/to/flink-install-dir")"
                 INSTALL_DIR="$(normalize_path "$INSTALL_DIR")"
-                FLINK_HOME="${INSTALL_DIR}/flink-${FLINK_VERSION}"
                 ;;
             flink_home)
                 edit_prompt_flink_home
@@ -1173,6 +1188,8 @@ edit_plan_interactive() {
                 prompt_and_validate_venv_dir "$VENV_DIR"
                 ;;
         esac
+
+        reconcile_plan_after_edit "$action"
 
         edit_plan_dump_state "$state_file"
     ) || rc=$?
@@ -1411,12 +1428,15 @@ pip_install_quiet() {
 }
 
 setup_python_env() {
-    # A venv the user opted to recreate (incompatible interpreter, see
-    # revalidate_existing_venv) is deleted here, not at plan time, so a later
-    # cancel never destroys it. Guard the rm to a real venv marker.
-    if [[ "${RECREATE_VENV:-0}" == "1" && -f "$VENV_DIR/pyvenv.cfg" ]]; then
+    # Recreation is deferred until install time so cancelling the plan never
+    # destroys data. Require both the exact approved path and a real venv
+    # marker before removing anything.
+    if [[ -n "${RECREATE_VENV_PATH:-}" \
+        && "$VENV_DIR" == "$RECREATE_VENV_PATH" \
+        && -f "$VENV_DIR/pyvenv.cfg" ]]; then
         ui_info "Recreating virtual environment: $VENV_DIR"
         rm -rf "$VENV_DIR"
+        RECREATE_VENV_PATH=""
     fi
 
     if [[ ! -d "$VENV_DIR" ]]; then
@@ -1680,13 +1700,14 @@ resolve_python() {
 # (see python_minor_ceiling), so editing either at the confirm screen can
 # invalidate a Python setup that was already accepted — e.g. Python 3.12
 # passes for 0.3.0 + Flink 2.2 but not after editing down to 0.2.1 or to
-# Flink 2.0. Called after a version edit; mirrors the enable_pyflink arm.
+# Flink 2.0. Called by reconcile_plan_after_edit after every menu edit.
 # No-op unless PyFlink is enabled. Two independent checks:
 #   1. PYTHON_BIN — the resolved interpreter; re-resolve if it no longer fits.
 #   2. VENV_DIR   — see revalidate_existing_venv; a reused venv keeps its own
 #      interpreter, which re-resolving PYTHON_BIN does not change.
 revalidate_python_constraint() {
     if [[ "$ENABLE_PYFLINK" != "Yes" ]]; then
+        RECREATE_VENV_PATH=""
         return 0
     fi
 
@@ -1704,21 +1725,34 @@ revalidate_python_constraint() {
 # PYTHON_BIN — is what pip runs under. After a version edit that lowers the
 # Python ceiling, an existing venv built on a now-too-new interpreter would
 # still be reused and fail at `pip install` time. Catch it at plan time:
-# offer to recreate it (deferred to setup_python_env via RECREATE_VENV, which
-# only ever deletes a directory carrying a pyvenv.cfg marker) or point at a
-# different path. Non-interactive callers get an actionable error instead of a
-# mid-install failure. No-op unless VENV_DIR is an existing venv.
+# offer to recreate it (deferred to setup_python_env via RECREATE_VENV_PATH,
+# which binds approval to this exact venv) or point at a different path.
+# Non-interactive callers get an actionable error instead of a mid-install
+# failure. No-op unless VENV_DIR is an existing venv.
 revalidate_existing_venv() {
-    RECREATE_VENV=0
-    [[ "$ENABLE_PYFLINK" == "Yes" && -n "${VENV_DIR:-}" ]] || return 0
+    if [[ "$ENABLE_PYFLINK" != "Yes" || -z "${VENV_DIR:-}" ]]; then
+        RECREATE_VENV_PATH=""
+        return 0
+    fi
 
     local kind
     kind="$(validate_venv_dir "$VENV_DIR")" || true
-    [[ "$kind" == "venv" ]] || return 0
-
-    if validate_python_bin "$VENV_DIR/bin/python"; then
+    if [[ "$kind" != "venv" ]]; then
+        RECREATE_VENV_PATH=""
         return 0
     fi
+
+    if validate_python_bin "$VENV_DIR/bin/python"; then
+        RECREATE_VENV_PATH=""
+        return 0
+    fi
+
+    # A previous edit may re-run plan validation. Preserve an approval only
+    # while it still refers to this same incompatible venv.
+    if [[ "${RECREATE_VENV_PATH:-}" == "$VENV_DIR" ]]; then
+        return 0
+    fi
+    RECREATE_VENV_PATH=""
 
     local venv_pv
     venv_pv="$("$VENV_DIR/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || printf 'unknown')"
@@ -1729,7 +1763,7 @@ revalidate_existing_venv() {
     fi
 
     if choose_install_method_interactive "Recreate ${VENV_DIR} with a compatible interpreter?"; then
-        RECREATE_VENV=1
+        RECREATE_VENV_PATH="$VENV_DIR"
     else
         prompt_and_validate_venv_dir "$VENV_DIR"
         # The newly chosen path may itself be an incompatible venv.
@@ -1991,4 +2025,3 @@ if [[ "${FLINK_AGENTS_INSTALL_SH_NO_RUN:-0}" != "1" ]]; then
     configure_verbose
     main
 fi
-

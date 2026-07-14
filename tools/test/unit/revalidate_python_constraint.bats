@@ -158,11 +158,11 @@ EOF
     ENABLE_PYFLINK="Yes"
     FLINK_AGENTS_VERSION="0.2.1"
     VENV_DIR="$BATS_TEST_TMPDIR/venv311"
-    RECREATE_VENV=0
+    RECREATE_VENV_PATH=""
 
     run revalidate_existing_venv
     [ "$status" -eq 0 ]
-    [ "$RECREATE_VENV" = "0" ]
+    [ "$RECREATE_VENV_PATH" = "" ]
 }
 
 @test "revalidate_existing_venv: no-op when VENV_DIR is not an existing venv" {
@@ -172,4 +172,73 @@ EOF
 
     run revalidate_existing_venv
     [ "$status" -eq 0 ]
+}
+
+@test "revalidate_existing_venv: binds recreation approval to the current venv path" {
+    local old_venv="$BATS_TEST_TMPDIR/venv312"
+    fake_venv "$old_venv" "3.12"
+
+    ENABLE_PYFLINK="Yes"
+    FLINK_AGENTS_VERSION="0.2.1"
+    VENV_DIR="$old_venv"
+    is_promptable() { return 0; }
+    choose_install_method_interactive() { return 0; }
+
+    revalidate_existing_venv
+    [ "$RECREATE_VENV_PATH" = "$old_venv" ]
+}
+
+@test "revalidate_existing_venv: clears recreation approval after the venv path changes" {
+    local old_venv="$BATS_TEST_TMPDIR/venv312"
+    local new_venv="$BATS_TEST_TMPDIR/venv311"
+    fake_venv "$old_venv" "3.12"
+    fake_venv "$new_venv" "3.11"
+
+    ENABLE_PYFLINK="Yes"
+    FLINK_AGENTS_VERSION="0.2.1"
+    VENV_DIR="$new_venv"
+    RECREATE_VENV_PATH="$old_venv"
+
+    revalidate_existing_venv
+    [ "$RECREATE_VENV_PATH" = "" ]
+}
+
+@test "setup_python_env: does not apply recreation approval to a different venv" {
+    local approved_venv="$BATS_TEST_TMPDIR/approved-venv"
+    local selected_venv="$BATS_TEST_TMPDIR/selected-venv"
+    fake_venv "$approved_venv" "3.12"
+    fake_venv "$selected_venv" "3.11"
+    touch "$selected_venv/must-survive"
+
+    ENABLE_PYFLINK="Yes"
+    FLINK_AGENTS_VERSION="0.3.0"
+    FLINK_VERSION="2.0.2"
+    FLINK_MAJOR_MINOR="2.0"
+    VENV_DIR="$selected_venv"
+    RECREATE_VENV_PATH="$approved_venv"
+    create_venv() { fake_venv "$VENV_DIR" "3.11"; }
+    pip_install_quiet() { return 0; }
+
+    run setup_python_env
+    [ "$status" -eq 0 ]
+    [ -f "$selected_venv/must-survive" ]
+}
+
+@test "setup_python_env: recreates the exact venv path that was approved" {
+    local selected_venv="$BATS_TEST_TMPDIR/selected-venv"
+    fake_venv "$selected_venv" "3.12"
+    touch "$selected_venv/old-marker"
+
+    ENABLE_PYFLINK="Yes"
+    FLINK_AGENTS_VERSION="0.2.1"
+    FLINK_VERSION="2.0.2"
+    FLINK_MAJOR_MINOR="2.0"
+    VENV_DIR="$selected_venv"
+    RECREATE_VENV_PATH="$selected_venv"
+    create_venv() { fake_venv "$VENV_DIR" "3.11"; }
+    pip_install_quiet() { return 0; }
+
+    run setup_python_env
+    [ "$status" -eq 0 ]
+    [ ! -f "$selected_venv/old-marker" ]
 }
