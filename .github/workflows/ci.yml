@@ -47,6 +47,8 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Check code style
         run: ./tools/lint.sh -c
+      - name: Check AGENTS.md freshness
+        run: python3 tools/check-agents-md.py
 
   install_sh_tests:
     name: install.sh tests (${{ matrix.os }})
