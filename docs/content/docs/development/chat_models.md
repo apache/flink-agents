@@ -643,6 +643,98 @@ Some popular options include:
 Model availability depends on your Azure region and subscription. Always check the official Azure OpenAI documentation for regional availability before implementing in production.
 {{< /hint >}}
 
+### Gemini
+
+Google Gemini provides cloud-based chat models through the Gemini Developer API and Vertex AI. The Flink Agents Gemini integration uses the official Google Gen AI SDK and supports text conversations, system instructions, and tool calling.
+
+{{< hint info >}}
+Gemini is only supported in Java currently. To use Gemini from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. For the Gemini Developer API, create an API key in [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. For Vertex AI, enable Vertex AI in your Google Cloud project and configure Google Cloud credentials
+
+#### GeminiChatModelConnection Parameters
+
+{{< tabs "GeminiChatModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required unless `base_url` is set or `vertex_ai` is `true` | Gemini Developer API key |
+| `base_url` | String | None | Custom endpoint, such as a proxy that injects credentials |
+| `model` | String | None | Default model name, used when no model is supplied per setup |
+| `timeout` | int | None | API request timeout in seconds |
+| `vertex_ai` | boolean | `false` | Use Vertex AI instead of the Gemini Developer API |
+| `project` | String | None | Vertex AI project id |
+| `location` | String | None | Vertex AI location |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### GeminiChatModelSetup Parameters
+
+{{< tabs "GeminiChatModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"gemini-3.1-pro-preview"` | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_output_tokens` | long | `1024` | Maximum number of tokens to generate |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Gemini parameters (`top_k`, `top_p`, `stop_sequences`) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Gemini Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor geminiConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.GEMINI_CONNECTION)
+                .addInitialArgument("api_key", System.getenv("GEMINI_API_KEY"))
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor geminiChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.GEMINI_SETUP)
+                .addInitialArgument("connection", "geminiConnection")
+                .addInitialArgument("model", "gemini-3.1-pro-preview")
+                .addInitialArgument("temperature", 0.1d)
+                .addInitialArgument("max_output_tokens", 1024)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Visit the [Gemini models documentation](https://ai.google.dev/gemini-api/docs/models) for the complete and up-to-date list of available models.
+
+{{< hint warning >}}
+Model availability and names may differ between the Gemini Developer API and Vertex AI. Always check the official Gemini documentation before implementing in production.
+{{< /hint >}}
+
 ### Ollama
 
 Ollama provides local chat models that run on your machine, offering privacy, control, and no API costs.
