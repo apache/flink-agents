@@ -255,6 +255,38 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
+    void testPruneStateEvictsCacheEvenWhenTombstoneSendFails() throws Exception {
+        // Arrange - the next send() will fail asynchronously (e.g. broker unavailable)
+        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
+        String stateKey =
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
+        actionStates.put(stateKey, testActionState);
+        mockProducer.errorNext(new RuntimeException("simulated broker failure"));
+
+        // Act - should not throw despite the async send failure
+        actionStateStore.pruneState(TEST_KEY, 1L);
+
+        // Assert - in-memory entry is still evicted regardless of tombstone delivery
+        assertThat(actionStates).doesNotContainKey(stateKey);
+    }
+
+    @Test
+    void testPruneStateSkipsUnparseableKeys() throws Exception {
+        // Arrange - a state key with the right prefix but the wrong number of parts, which
+        // ActionStateUtil.parseKey cannot split into exactly 4 parts
+        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
+        String malformedKey = TEST_KEY + "_1_onlythreeparts";
+        actionStates.put(malformedKey, testActionState);
+
+        // Act - should not throw despite the unparseable key
+        actionStateStore.pruneState(TEST_KEY, 10L);
+
+        // Assert - the unparseable entry is retained, and no tombstone was sent for it
+        assertThat(actionStates).containsKey(malformedKey);
+        assertThat(mockProducer.history()).isEmpty();
+    }
+
+    @Test
     void testPruneStateNoTombstonesByDefault() throws Exception {
         // Arrange - setUp store uses a default AgentConfiguration (tombstones disabled)
         actionStates.put(
