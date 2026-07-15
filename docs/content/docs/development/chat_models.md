@@ -845,7 +845,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Reference to connection method name |
-| `model` | str | `"gpt-3.5-turbo"` | Name of the chat model to use |
+| `model` | str | `"gpt-4o-mini"` | Name of the chat model to use |
 | `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
 | `tools` | List[str] | None | List of tool names available to the model |
 | `temperature` | float | `0.1` | Sampling temperature (0.0 to 2.0) |
@@ -863,7 +863,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | String | Required | Reference to connection method name |
-| `model` | String | `"gpt-3.5-turbo"` | Name of the chat model to use |
+| `model` | String | `"gpt-4o-mini"` | Name of the chat model to use |
 | `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
 | `tools` | List<String> | None | List of tool names available to the model |
 | `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |

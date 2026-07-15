@@ -58,7 +58,7 @@ import java.util.Set;
  */
 public class OpenAICompletionsSetup extends BaseChatModelSetup {
 
-    private static final String DEFAULT_MODEL = "gpt-3.5-turbo";
+    private static final String DEFAULT_MODEL = "gpt-4o-mini";
     private static final double DEFAULT_TEMPERATURE = 0.1d;
     private static final int DEFAULT_TOP_LOGPROBS = 0;
     private static final boolean DEFAULT_STRICT = false;
