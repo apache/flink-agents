@@ -77,9 +77,9 @@ public interface ActionStateStore extends AutoCloseable {
     /**
      * Prune the state for a given key.
      *
-     * <p>Implementations must at least evict the matching entries from the in-memory cache.
-     * Whether the backend storage is also cleaned up is implementation-specific. Implementations
-     * that durably delete backend records must not let deletion outpace the oldest checkpoint or
+     * <p>Implementations must at least evict the matching entries from the in-memory cache. Whether
+     * the backend storage is also cleaned up is implementation-specific. Implementations that
+     * durably delete backend records must not let deletion outpace the oldest checkpoint or
      * savepoint that may still be restored: {@link #rebuildState(List)} replays the backend from
      * the restored checkpoint's recovery marker, so a durable deletion issued after that marker
      * erases state the replay still needs and causes already completed actions to re-execute.

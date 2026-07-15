@@ -258,8 +258,7 @@ public class KafkaActionStateStoreTest {
     void testPruneStateEvictsCacheEvenWhenTombstoneSendFails() throws Exception {
         // Arrange - the next send() will fail asynchronously (e.g. broker unavailable)
         actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
-        String stateKey =
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
+        String stateKey = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
         actionStates.put(stateKey, testActionState);
         mockProducer.errorNext(new RuntimeException("simulated broker failure"));
 
