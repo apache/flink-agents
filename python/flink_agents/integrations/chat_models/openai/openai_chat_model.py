@@ -35,7 +35,7 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
     resolve_openai_credentials,
 )
 
-DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 
 class OpenAIChatModelConnection(BaseChatModelConnection):
