@@ -46,7 +46,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -99,7 +98,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
             Set.of("model", "model_of_azure_deployment", "temperature", "max_tokens", "logprobs");
 
     private final OpenAIClient client;
-    private final int timeoutSeconds;
+    private final Duration timeout;
     private final int maxRetries;
 
     public AzureOpenAIChatModelConnection(
@@ -127,22 +126,10 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
                         .credential(AzureApiKeyCredential.create(apiKey))
                         .azureServiceVersion(AzureOpenAIServiceVersion.fromString(apiVersion));
 
-        this.timeoutSeconds =
-                Optional.ofNullable(descriptor.<Number>getArgument("timeout"))
-                        .map(Number::intValue)
-                        .orElse(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS);
-        if (this.timeoutSeconds < 0) {
-            throw new IllegalArgumentException("timeout must be >= 0, got: " + this.timeoutSeconds);
-        }
-        clientBuilder.timeout(Duration.ofSeconds(this.timeoutSeconds));
+        this.timeout = OpenAIChatCompletionsUtils.parseTimeout(descriptor);
+        clientBuilder.timeout(this.timeout);
 
-        this.maxRetries =
-                Optional.ofNullable(descriptor.<Number>getArgument("max_retries"))
-                        .map(Number::intValue)
-                        .orElse(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
-        if (this.maxRetries < 0) {
-            throw new IllegalArgumentException("max_retries must be >= 0, got: " + this.maxRetries);
-        }
+        this.maxRetries = OpenAIChatCompletionsUtils.parseMaxRetries(descriptor);
         clientBuilder.maxRetries(this.maxRetries);
 
         String azureUrlPathMode = descriptor.getArgument("azure_url_path_mode");
@@ -162,8 +149,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
     }
 
     // visible for testing
-    int getTimeoutSeconds() {
-        return timeoutSeconds;
+    Duration getTimeout() {
+        return timeout;
     }
 
     // visible for testing

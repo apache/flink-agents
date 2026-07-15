@@ -31,7 +31,9 @@ import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,8 +43,9 @@ import java.util.stream.Collectors;
 
 /**
  * Static helpers for converting between Flink Agents {@link ChatMessage} and OpenAI Chat
- * Completions API message types. Restricted to message conversion (no tool-definition conversion —
- * that stays per-connection).
+ * Completions API message types, plus shared parsing/validation of common connection arguments
+ * ({@code timeout}, {@code max_retries}). No tool-definition conversion — that stays
+ * per-connection.
  *
  * <p>Used by both {@code OpenAICompletionsConnection} (OpenAI / OpenAI-compatible providers) and
  * {@code AzureOpenAIChatModelConnection} (Azure OpenAI). Both rely on the same openai-java SDK
@@ -57,6 +60,45 @@ final class OpenAIChatCompletionsUtils {
     static final int DEFAULT_MAX_RETRIES = 3;
 
     private OpenAIChatCompletionsUtils() {}
+
+    /**
+     * Resolve and validate the {@code timeout} argument (in seconds). The raw value is validated
+     * before any numeric conversion so that e.g. {@code -0.5} cannot truncate to {@code 0} and
+     * bypass the non-negative check. Fractional values are preserved (matching the Python side,
+     * where {@code timeout} is a float).
+     */
+    static Duration parseTimeout(ResourceDescriptor descriptor) {
+        Number raw = descriptor.getArgument("timeout");
+        if (raw == null) {
+            return Duration.ofSeconds(DEFAULT_TIMEOUT_SECONDS);
+        }
+        double seconds = raw.doubleValue();
+        if (!Double.isFinite(seconds) || seconds < 0) {
+            throw new IllegalArgumentException("timeout must be >= 0, got: " + raw);
+        }
+        return Duration.ofMillis(Math.round(seconds * 1000));
+    }
+
+    /**
+     * Resolve and validate the {@code max_retries} argument. Requires an exact non-negative
+     * integer within int range, matching Python-side validation (pydantic rejects fractional
+     * values for int fields).
+     */
+    static int parseMaxRetries(ResourceDescriptor descriptor) {
+        Number raw = descriptor.getArgument("max_retries");
+        if (raw == null) {
+            return DEFAULT_MAX_RETRIES;
+        }
+        double value = raw.doubleValue();
+        if (!Double.isFinite(value)
+                || value != Math.rint(value)
+                || value < 0
+                || value > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException(
+                    "max_retries must be a non-negative integer, got: " + raw);
+        }
+        return (int) value;
+    }
 
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};

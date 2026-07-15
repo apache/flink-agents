@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -109,8 +110,8 @@ class AzureOpenAIChatModelConnectionTest {
                         .build();
         AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
 
-        assertThat(conn.getTimeoutSeconds())
-                .isEqualTo(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS);
+        assertThat(conn.getTimeout())
+                .isEqualTo(Duration.ofSeconds(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS));
         assertThat(conn.getMaxRetries()).isEqualTo(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
     }
 
@@ -127,7 +128,7 @@ class AzureOpenAIChatModelConnectionTest {
                         .build();
         AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
 
-        assertThat(conn.getTimeoutSeconds()).isEqualTo(120);
+        assertThat(conn.getTimeout()).isEqualTo(Duration.ofSeconds(120));
         assertThat(conn.getMaxRetries()).isEqualTo(5);
     }
 
@@ -162,6 +163,66 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName("Negative fractional timeout throws instead of truncating to zero")
+    void testNegativeFractionalTimeoutThrows() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .addInitialArgument("timeout", -0.5)
+                        .build();
+        assertThatThrownBy(() -> new AzureOpenAIChatModelConnection(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("timeout");
+    }
+
+    @Test
+    @DisplayName("Fractional max_retries throws instead of truncating")
+    void testFractionalMaxRetriesThrows() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .addInitialArgument("max_retries", 2.5)
+                        .build();
+        assertThatThrownBy(() -> new AzureOpenAIChatModelConnection(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max_retries");
+    }
+
+    @Test
+    @DisplayName("Negative fractional max_retries throws instead of truncating to zero")
+    void testNegativeFractionalMaxRetriesThrows() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .addInitialArgument("max_retries", -0.5)
+                        .build();
+        assertThatThrownBy(() -> new AzureOpenAIChatModelConnection(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max_retries");
+    }
+
+    @Test
+    @DisplayName("max_retries beyond int range throws instead of overflowing")
+    void testOverflowMaxRetriesThrows() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .addInitialArgument("max_retries", 4294967296L)
+                        .build();
+        assertThatThrownBy(() -> new AzureOpenAIChatModelConnection(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max_retries");
+    }
+
+    @Test
     @DisplayName("Zero timeout is accepted as valid")
     void testZeroTimeoutAccepted() {
         ResourceDescriptor desc =
@@ -172,7 +233,21 @@ class AzureOpenAIChatModelConnectionTest {
                         .addInitialArgument("timeout", 0)
                         .build();
         AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
-        assertThat(conn.getTimeoutSeconds()).isEqualTo(0);
+        assertThat(conn.getTimeout()).isEqualTo(Duration.ZERO);
+    }
+
+    @Test
+    @DisplayName("Fractional timeout is preserved rather than truncated")
+    void testFractionalTimeoutPreserved() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .addInitialArgument("timeout", 1.5)
+                        .build();
+        AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
+        assertThat(conn.getTimeout()).isEqualTo(Duration.ofMillis(1500));
     }
 
     @Test

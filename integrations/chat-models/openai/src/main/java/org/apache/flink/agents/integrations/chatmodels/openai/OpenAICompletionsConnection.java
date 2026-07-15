@@ -43,7 +43,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * A chat model integration for the OpenAI Chat Completions service using the official Java SDK.
@@ -82,7 +81,7 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
     private static final ObjectMapper mapper = new ObjectMapper();
     private final OpenAIClient client;
     private final String defaultModel;
-    private final int timeoutSeconds;
+    private final Duration timeout;
     private final int maxRetries;
 
     public OpenAICompletionsConnection(
@@ -101,22 +100,10 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             builder.baseUrl(apiBaseUrl);
         }
 
-        this.timeoutSeconds =
-                Optional.ofNullable(descriptor.<Number>getArgument("timeout"))
-                        .map(Number::intValue)
-                        .orElse(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS);
-        if (this.timeoutSeconds < 0) {
-            throw new IllegalArgumentException("timeout must be >= 0, got: " + this.timeoutSeconds);
-        }
-        builder.timeout(Duration.ofSeconds(this.timeoutSeconds));
+        this.timeout = OpenAIChatCompletionsUtils.parseTimeout(descriptor);
+        builder.timeout(this.timeout);
 
-        this.maxRetries =
-                Optional.ofNullable(descriptor.<Number>getArgument("max_retries"))
-                        .map(Number::intValue)
-                        .orElse(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
-        if (this.maxRetries < 0) {
-            throw new IllegalArgumentException("max_retries must be >= 0, got: " + this.maxRetries);
-        }
+        this.maxRetries = OpenAIChatCompletionsUtils.parseMaxRetries(descriptor);
         builder.maxRetries(this.maxRetries);
 
         Map<String, String> defaultHeaders = descriptor.getArgument("default_headers");
@@ -131,8 +118,8 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
     }
 
     // visible for testing
-    int getTimeoutSeconds() {
-        return timeoutSeconds;
+    Duration getTimeout() {
+        return timeout;
     }
 
     // visible for testing
