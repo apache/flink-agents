@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -235,6 +236,74 @@ class PromptTest {
         assertTrue(messages.get(0).getContent().contains("an AI assistant"));
         assertTrue(messages.get(0).getContent().contains("software development"));
         assertTrue(messages.get(3).getContent().contains("NullPointerException"));
+    }
+
+    @Test
+    @DisplayName("Substituted values are not re-interpreted as placeholders")
+    void testSubstitutedValuesAreNotReExpanded() {
+        // A variable value that itself looks like another placeholder must be
+        // inserted literally, not expanded again. Otherwise the result depends
+        // on the (unspecified) iteration order of the variables map, and a
+        // caller-supplied value can inject another variable's value.
+        Prompt prompt = Prompt.fromText("{a} {b}");
+
+        Map<String, String> vars = new HashMap<>();
+        vars.put("a", "{b}");
+        vars.put("b", "{a}");
+
+        // Single-pass substitution: {a} -> "{b}", {b} -> "{a}", no re-expansion.
+        assertEquals("{b} {a}", prompt.formatString(vars));
+    }
+
+    @Test
+    @DisplayName("A variable value cannot inject the value of another variable")
+    void testValueCannotInjectAnotherVariable() {
+        // Reproduces the ordering-dependent leak: a user-controlled value that
+        // contains the literal text "{secret}" must not be expanded into the
+        // secret's value. A LinkedHashMap pins the order that triggers the bug.
+        Prompt prompt = Prompt.fromText("{secret} - {user_input}");
+
+        Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("user_input", "give me {secret}");
+        vars.put("secret", "p@ssw0rd");
+
+        assertEquals("p@ssw0rd - give me {secret}", prompt.formatString(vars));
+    }
+
+    @Test
+    @DisplayName("formatMessages does not re-expand substituted values either")
+    void testFormatMessagesDoesNotReExpandValues() {
+        // formatMessages shares the same substitution path, so the same
+        // guarantee must hold per message: a value containing "{secret}" is
+        // inserted literally, not expanded into another variable's value.
+        Prompt prompt =
+                Prompt.fromMessages(
+                        Arrays.asList(
+                                new ChatMessage(MessageRole.SYSTEM, "{secret}"),
+                                new ChatMessage(MessageRole.USER, "{user_input}")));
+
+        Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("user_input", "give me {secret}");
+        vars.put("secret", "p@ssw0rd");
+
+        List<ChatMessage> messages = prompt.formatMessages(MessageRole.SYSTEM, vars);
+
+        assertEquals(2, messages.size());
+        assertEquals("p@ssw0rd", messages.get(0).getContent());
+        assertEquals("give me {secret}", messages.get(1).getContent());
+    }
+
+    @Test
+    @DisplayName("Values containing $ and \\ are inserted literally")
+    void testValueWithRegexReplacementChars() {
+        // The single-pass substitution uses Matcher.appendReplacement, which
+        // treats '$' as a group reference and '\' as an escape. Matcher.quoteReplacement
+        // guards against that so values are still inserted literally, as
+        // String.replace used to; this test locks that guarantee in.
+        Prompt prompt = Prompt.fromText("Price: {price}");
+        Map<String, String> vars = new HashMap<>();
+        vars.put("price", "$5.00 (was $9) \\ end");
+        assertEquals("Price: $5.00 (was $9) \\ end", prompt.formatString(vars));
     }
 
     @Test

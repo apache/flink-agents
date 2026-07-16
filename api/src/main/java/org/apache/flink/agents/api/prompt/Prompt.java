@@ -34,6 +34,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -205,19 +207,40 @@ public abstract class Prompt extends SerializableResource {
             return "LocalPrompt{" + "template=" + template + '}';
         }
 
-        /** Format template string with keyword arguments */
+        /** Matches a {placeholder}; the key may not itself contain braces. */
+        private static final Pattern PLACEHOLDER = Pattern.compile("\\{([^{}]+)\\}");
+
+        /**
+         * Format a template string with keyword arguments.
+         *
+         * <p>The template is scanned once and each {@code {key}} placeholder is replaced with its
+         * value (or left untouched if the key is absent). Substitution is single-pass: text
+         * introduced by a substituted value is never itself re-interpreted as a placeholder. This
+         * keeps the result independent of the {@code kwargs} iteration order and prevents a
+         * caller-supplied value from expanding into another variable's value. It mirrors the Python
+         * {@code SafeFormatter}.
+         */
         private static String format(String template, Map<String, String> kwargs) {
             if (template == null) {
                 return "";
             }
 
-            String result = template;
-            for (Map.Entry<String, String> entry : kwargs.entrySet()) {
-                String placeholder = "{" + entry.getKey() + "}";
-                String value = entry.getValue() != null ? entry.getValue() : "";
-                result = result.replace(placeholder, value);
+            Matcher matcher = PLACEHOLDER.matcher(template);
+            StringBuilder result = new StringBuilder();
+            while (matcher.find()) {
+                String key = matcher.group(1);
+                String replacement;
+                if (kwargs.containsKey(key)) {
+                    String value = kwargs.get(key);
+                    replacement = value != null ? value : "";
+                } else {
+                    // Unknown placeholder: leave it as-is.
+                    replacement = matcher.group(0);
+                }
+                matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
             }
-            return result;
+            matcher.appendTail(result);
+            return result.toString();
         }
 
         @JsonTypeInfo(use = JsonTypeInfo.Id.CLASS)
