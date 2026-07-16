@@ -25,3 +25,4 @@ skills/*
 .*\.yaml$
 AGENTS.md
 code_review.md
+CLAUDE.md
