@@ -22,11 +22,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.core.JsonSchemaLocalValidation;
 import com.openai.core.JsonValue;
 import com.openai.models.ChatModel;
 import com.openai.models.FunctionDefinition;
 import com.openai.models.FunctionParameters;
 import com.openai.models.ReasoningEffort;
+import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionFunctionTool;
@@ -43,6 +45,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * A chat model integration for the OpenAI Chat Completions service using the official Java SDK.
@@ -119,11 +122,53 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         this.client = builder.build();
     }
 
+    // Models for which OpenAI documents json_schema strict Structured Outputs support.
+    // Source of truth: https://platform.openai.com/docs/guides/structured-outputs — json_schema is
+    // supported on the gpt-4o-mini and gpt-4o-2024-08-06 snapshots "and later"; gpt-4-turbo,
+    // earlier models, and gpt-3.5-turbo get JSON mode only.
+    //
+    // "and later" is temporal, not a name prefix: gpt-4o-2024-05-13 predates the cutoff and does
+    // NOT support Structured Outputs, so matching a bare "gpt-4o" prefix would misclassify it as
+    // capable and fail silently at the provider. Prefix matching is therefore used only for the
+    // gpt-4o-mini family, whose entire lifetime post-dates the cutoff; every other capable model is
+    // matched exactly. An unrecognized model reports not-capable and degrades to the prompt
+    // fallback rather than failing at the provider.
+    private static final String NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIX = "gpt-4o-mini";
+    private static final Set<String> NATIVE_STRUCTURED_OUTPUT_MODELS =
+            Set.of("gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20");
+
+    @Override
+    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+        if (effectiveModel == null) {
+            return false;
+        }
+        return effectiveModel.startsWith(NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIX)
+                || NATIVE_STRUCTURED_OUTPUT_MODELS.contains(effectiveModel);
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        return doChat(messages, tools, modelParams, null);
+    }
+
+    @Override
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
+        return doChat(messages, tools, modelParams, outputSchema);
+    }
+
+    private ChatMessage doChat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
         try {
-            ChatCompletionCreateParams params = buildRequest(messages, tools, modelParams);
+            ChatCompletionCreateParams params =
+                    buildRequest(messages, tools, modelParams, outputSchema);
             ChatCompletion completion = client.chat().completions().create(params);
             ChatMessage response =
                     OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
@@ -150,8 +195,13 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         }
     }
 
-    private ChatCompletionCreateParams buildRequest(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> rawModelParams) {
+    // Package-private so the request body (including the native response_format) can be asserted
+    // without issuing a live API call through the final OpenAI client.
+    ChatCompletionCreateParams buildRequest(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> rawModelParams,
+            Object outputSchema) {
         Map<String, Object> modelParams =
                 rawModelParams != null ? new HashMap<>(rawModelParams) : new HashMap<>();
 
@@ -168,6 +218,13 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
 
         if (tools != null && !tools.isEmpty()) {
             builder.tools(convertTools(tools, strictMode));
+        }
+
+        // Native structured output applies only for a POJO Class schema on a model the provider
+        // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
+        // the prompt-engineering fallback.
+        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+            builder.responseFormat(toNativeResponseFormat((Class<?>) outputSchema));
         }
 
         Object temperature = modelParams.remove("temperature");
@@ -206,6 +263,26 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         }
 
         return builder.build();
+    }
+
+    // Derives the strict json_schema response format from a POJO class via the SDK's typed
+    // structured-output builder. The Kotlin-facade StructuredOutputsKt.responseFormatFromClass is
+    // not callable from Java, so the response format is extracted through the typed builder, which
+    // generates the same strict draft-2020-12 schema, and then reattached to the standard builder.
+    private static <T> ResponseFormatJsonSchema toNativeResponseFormat(Class<T> schemaClass) {
+        return ChatCompletionCreateParams.builder()
+                .model(ChatModel.of(""))
+                .addUserMessage("")
+                .responseFormat(schemaClass, JsonSchemaLocalValidation.NO)
+                .build()
+                .rawParams()
+                .responseFormat()
+                .orElseThrow(
+                        () ->
+                                new IllegalStateException(
+                                        "OpenAI SDK did not produce a response_format for schema "
+                                                + schemaClass.getName()))
+                .asJsonSchema();
     }
 
     private List<ChatCompletionTool> convertTools(List<Tool> tools, boolean strictMode) {
