@@ -19,7 +19,13 @@ from typing import Any, Dict, List, Literal, Sequence
 
 import httpx
 from openai import NOT_GIVEN, OpenAI
-from pydantic import Field, PrivateAttr
+
+# Private SDK module (leading underscore): the openai client itself uses this helper to
+# build the strict json_schema for response_format, and there is no public re-export. It
+# has existed at this path since the structured-output support in openai 1.66.3 (the
+# pinned minimum). A future openai bump that moves it will fail loudly on import here.
+from openai.lib._pydantic import to_strict_json_schema
+from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
@@ -37,6 +43,47 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
 )
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+
+# Models with documented json_schema strict Structured Outputs support. Source of
+# truth: https://platform.openai.com/docs/guides/structured-outputs
+#
+# json_schema is supported on the gpt-4o-mini and gpt-4o-2024-08-06 snapshots "and
+# later"; gpt-4-turbo, earlier models, and gpt-3.5-turbo get JSON mode only.
+#
+# "and later" is temporal, not a name prefix: gpt-4o-2024-05-13 predates the cutoff
+# and does NOT support Structured Outputs, so a bare "gpt-4o" prefix would misclassify
+# it as capable and fail silently. Prefix matching is therefore used only for the
+# gpt-4o-mini family, whose entire lifetime post-dates the cutoff; every other capable
+# model is matched exactly. An unrecognized model reports not-capable and degrades to
+# the prompt fallback rather than failing at the provider.
+_NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIX = "gpt-4o-mini"
+_NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
+    {"gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20"}
+)
+
+
+def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
+    """Build the OpenAI ``response_format`` for a native structured-output request.
+
+    Returns ``None`` (leaving behavior unchanged) unless the schema is a ``BaseModel``
+    subclass. A ``RowTypeInfo`` schema is skipped so it keeps the prompt-engineering
+    fallback.
+    """
+    if output_schema is None:
+        return None
+    model = (
+        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    )
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": model.__name__,
+            "schema": to_strict_json_schema(model),
+            "strict": True,
+        },
+    }
 
 
 class OpenAIChatModelConnection(BaseChatModelConnection):
@@ -135,6 +182,22 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             "http_client": self._http_client,
         }
 
+    @override
+    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+        """Whether OpenAI documents json_schema strict support for ``effective_model``.
+
+        See the module-level allowlist for the source of truth and the rationale for
+        matching the gpt-4o-mini family by prefix while matching other capable models
+        exactly. An unrecognized model reports ``False`` so it degrades to the
+        prompt-engineering fallback rather than failing at the provider.
+        """
+        if not effective_model:
+            return False
+        return (
+            effective_model.startswith(_NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIX)
+            or effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
+        )
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -151,10 +214,10 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         tools : Optional[List]
             List of tools that can be called by the model
         output_schema : OutputSchema | None
-            Accepted and ignored: this connection has no native structured-output
-            translation, so callers stay on the prompt-engineering fallback. Declaring
-            the parameter keeps a caller-supplied schema out of ``**kwargs``, which is
-            forwarded to the provider SDK.
+            The schema the response should conform to, or ``None`` for an unconstrained
+            response. Native structured output is applied only for a ``BaseModel``
+            schema on a model the provider documents as capable; a ``RowTypeInfo``
+            schema or an incapable model keeps the prompt-engineering fallback.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
@@ -172,6 +235,13 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
                 if tool_spec["type"] == "function":
                     tool_spec["function"]["strict"] = strict
                     tool_spec["function"]["parameters"]["additionalProperties"] = False
+
+        if output_schema is not None and self.supports_native_structured_output(
+            kwargs.get("model")
+        ):
+            response_format = _native_response_format(output_schema)
+            if response_format is not None:
+                kwargs["response_format"] = response_format
 
         response = self.client.chat.completions.create(
             messages=convert_to_openai_messages(messages),
