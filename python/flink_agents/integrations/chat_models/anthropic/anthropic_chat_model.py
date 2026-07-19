@@ -24,6 +24,7 @@ from anthropic.types import MessageParam, TextBlockParam, ToolParam
 from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -168,9 +169,16 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
-        """Direct communication with Anthropic model service for chat conversation."""
+        """Direct communication with Anthropic model service for chat conversation.
+
+        ``output_schema`` is accepted and ignored: this connection has no native
+        structured-output translation, so callers stay on the prompt-engineering
+        fallback. Declaring the parameter keeps a caller-supplied schema out of
+        ``**kwargs``, which is forwarded to the provider SDK.
+        """
         anthropic_tools = None
         if tools is not None:
             anthropic_tools = [

@@ -17,11 +17,13 @@
 #################################################################################
 import re
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Any, ClassVar, Dict, List, Mapping, Sequence, Tuple, cast
 
 from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import (
     ChatMessage,
     MessageRole,
@@ -31,6 +33,70 @@ from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL
 from flink_agents.api.tools.tool import Tool
+
+
+class StructuredOutputStrategy(str, Enum):
+    """User intent about how an output schema should be applied to a chat request.
+
+    This expresses *policy* only. Whether a connection *can* apply the provider's
+    native structured-output API is a separate, model-dependent *capability*
+    question. Policy and capability are combined at request-build time.
+
+    Inherits from ``str`` so the value survives the JSON-carried bridge to Java.
+    Java serializes this enum as its *name* ("NATIVE") while the value here is
+    lowercase, so ``_missing_`` accepts either form in any case — matching the
+    case-insensitive resolver on the Java side.
+
+    Attributes:
+    ----------
+    AUTO : str
+        Use the provider's native structured-output API when the effective model is
+        capable of it, and fall back to prompt engineering otherwise. The default.
+    NATIVE : str
+        Always use the provider's native structured-output API, without consulting
+        the capability predicate.
+    PROMPT : str
+        Never use the provider's native structured-output API; rely on prompt
+        engineering alone. Matches the behavior of connections that have no native
+        translation.
+    """
+
+    AUTO = "auto"
+    NATIVE = "native"
+    PROMPT = "prompt"
+
+    def resolves_to_native(self, model_capable: bool) -> bool:  # noqa: FBT001
+        """Resolve this policy against a model's capability into whether to go native.
+
+        ``AUTO`` defers to ``model_capable`` (native when the effective model can, else
+        the prompt-engineering fallback); ``NATIVE`` always resolves to native, ignoring
+        ``model_capable``, so an explicit user intent surfaces a provider error rather
+        than silently degrading; ``PROMPT`` never resolves to native.
+
+        Parameters
+        ----------
+        model_capable : bool
+            Whether the connection reports the effective model as natively capable.
+
+        Returns:
+        -------
+        bool
+            ``True`` if native structured output should be applied.
+        """
+        if self is StructuredOutputStrategy.NATIVE:
+            return True
+        if self is StructuredOutputStrategy.PROMPT:
+            return False
+        return model_capable
+
+    @classmethod
+    def _missing_(cls, value: object) -> "StructuredOutputStrategy | None":
+        if isinstance(value, str):
+            normalized = value.lower()
+            for member in cls:
+                if normalized in (member.value, member.name.lower()):
+                    return member
+        return None
 
 
 class BaseChatModelConnection(Resource, ABC):
@@ -53,6 +119,32 @@ class BaseChatModelConnection(Resource, ABC):
     def resource_type(cls) -> ResourceType:
         """Return resource type of class."""
         return ResourceType.CHAT_MODEL_CONNECTION
+
+    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+        """Whether this connection can natively structure output for a given model.
+
+        Capability is *model-dependent*, not connection-wide: a single provider
+        connection commonly serves both models that accept a native schema parameter and
+        models that do not, so it is evaluated against the *effective* model at
+        request-build time — the model actually being called, which per-request
+        parameters may override.
+
+        The default ``False`` keeps a connection on the prompt-engineering fallback. A
+        connection that translates a schema into a native provider parameter overrides
+        this; an unrecognized model must report ``False`` so it degrades to the fallback
+        rather than failing at the provider.
+
+        Parameters
+        ----------
+        effective_model : str | None
+            The model the request will be issued against, may be ``None``.
+
+        Returns:
+        -------
+        bool
+            ``True`` if a schema can be applied natively for ``effective_model``.
+        """
+        return False
 
     DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str], ...]] = (
         re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE),
@@ -106,6 +198,7 @@ class BaseChatModelConnection(Resource, ABC):
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
         """Direct communication with model service for chat conversation.
@@ -116,6 +209,14 @@ class BaseChatModelConnection(Resource, ABC):
             Input message sequence
         tools : Optional[List]
             List of tools that can be called by the model
+        output_schema : OutputSchema | None
+            The schema the response should conform to, or ``None`` for an
+            unconstrained response. This is framework-level execution metadata, and
+            every implementation must declare it as a named parameter rather than let
+            it fall into ``**kwargs``: ``**kwargs`` is forwarded to the provider SDK,
+            so a schema landing there would reach the request body. Implementations
+            without a native structured-output translation accept and ignore it,
+            leaving the caller on the prompt-engineering fallback.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
@@ -153,6 +254,14 @@ class BaseChatModelSetup(Resource):
     skill_discovery_prompt: str | None = None
     allowed_commands: List[str] = Field(default_factory=list)
     allowed_script_dirs: List[str] = Field(default_factory=list)
+    structured_output_strategy: StructuredOutputStrategy = Field(
+        default=StructuredOutputStrategy.AUTO,
+        description=(
+            "Intent about how an output schema should be applied. Whether native "
+            "structured output is actually used combines this policy with the "
+            "connection's model-dependent capability."
+        ),
+    )
 
     @property
     @abstractmethod
@@ -256,9 +365,8 @@ class BaseChatModelSetup(Resource):
         # Call chat model connection to execute chat
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
-        return self._get_connection().chat(
-            messages, tools=self._get_tools(), **merged_kwargs
-        )
+        connection = self._get_connection()
+        return connection.chat(messages, tools=self._get_tools(), **merged_kwargs)
 
     def _record_token_metrics(
         self, model_name: str, prompt_tokens: int, completion_tokens: int

@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Mapping, Sequence
 
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.java_chat_model import (
     JavaChatModelConnection,
@@ -56,6 +57,7 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
         """Chat method that throws UnsupportedOperationException.
@@ -63,6 +65,10 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
         This connection serves as a Java resource wrapper only.
         Chat operations should be performed on the Java side using the underlying Java
         chat model object.
+
+        ``output_schema`` is accepted and ignored. Declaring it keeps a caller-supplied
+        schema out of ``**kwargs``, which crosses to Java as ``modelParams`` — a
+        provider-facing map, not a channel for framework execution metadata.
         """
         java_messages = [
             self._j_resource_adapter.fromPythonChatMessage(message)

@@ -22,6 +22,7 @@ from openai import NOT_GIVEN, OpenAI
 from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -138,6 +139,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
         """Direct communication with model service for chat conversation.
@@ -148,6 +150,11 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             Input message sequence
         tools : Optional[List]
             List of tools that can be called by the model
+        output_schema : OutputSchema | None
+            Accepted and ignored: this connection has no native structured-output
+            translation, so callers stay on the prompt-engineering fallback. Declaring
+            the parameter keeps a caller-supplied schema out of ``**kwargs``, which is
+            forwarded to the provider SDK.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
