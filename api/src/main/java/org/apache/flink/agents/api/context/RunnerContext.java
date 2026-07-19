@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -145,6 +146,31 @@ public interface RunnerContext {
      * <p>Access to memory and sendEvent are prohibited within the callable.
      */
     <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception;
+
+    /**
+     * Executes multiple durable callables as one batch and returns outcomes in input order.
+     *
+     * <p>On JDK 21+, implementations may submit uncached calls concurrently and yield the current
+     * action execution until the batch completes. On JDK &lt; 21, this falls back to serial durable
+     * execution.
+     *
+     * <p>The callable list must be deterministic across recovery: same order and same {@link
+     * DurableCallable#getId()} values.
+     *
+     * <p>Access to memory and sendEvent are prohibited within the callables.
+     */
+    default <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+            throws Exception {
+        java.util.ArrayList<Outcome<T>> outcomes = new java.util.ArrayList<>(callables.size());
+        for (DurableCallable<T> callable : callables) {
+            try {
+                outcomes.add(Outcome.success(durableExecute(callable)));
+            } catch (Exception e) {
+                outcomes.add(Outcome.failure(e));
+            }
+        }
+        return outcomes;
+    }
 
     /** Clean up the resource. */
     void close() throws Exception;

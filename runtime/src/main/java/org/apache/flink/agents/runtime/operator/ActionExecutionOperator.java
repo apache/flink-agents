@@ -188,7 +188,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // init context manager for runner context creation and memory contexts
         contextManager =
                 new ActionTaskContextManager(
-                        agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS));
+                        agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS),
+                        agentPlan
+                                .getConfig()
+                                .get(AgentExecutionOptions.TOOL_CALL_NUM_ASYNC_THREADS));
 
         mailboxProcessor = getMailboxProcessor();
 

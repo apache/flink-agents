@@ -27,6 +27,7 @@ public class ContinuationContext {
 
     private Continuation currentContinuation;
     private volatile Future<?> pendingFuture;
+    private volatile Future<?> pendingBatchFuture;
     private final AtomicReference<Object> asyncResult = new AtomicReference<>();
     private final AtomicReference<Throwable> asyncException = new AtomicReference<>();
 
@@ -46,6 +47,22 @@ public class ContinuationContext {
         this.pendingFuture = pendingFuture;
     }
 
+    public Future<?> getPendingBatchFuture() {
+        return pendingBatchFuture;
+    }
+
+    public void setPendingBatchFuture(Future<?> pendingBatchFuture) {
+        this.pendingBatchFuture = pendingBatchFuture;
+    }
+
+    public boolean hasPendingAsync() {
+        return isPending(pendingFuture) || isPending(pendingBatchFuture);
+    }
+
+    private static boolean isPending(Future<?> future) {
+        return future != null && !future.isDone();
+    }
+
     public AtomicReference<Object> getAsyncResultRef() {
         return asyncResult;
     }
@@ -56,6 +73,7 @@ public class ContinuationContext {
 
     public void clearAsyncState() {
         pendingFuture = null;
+        pendingBatchFuture = null;
         asyncResult.set(null);
         asyncException.set(null);
     }

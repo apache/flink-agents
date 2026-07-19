@@ -17,12 +17,20 @@
  */
 package org.apache.flink.agents.runtime.async;
 
+import org.apache.flink.agents.api.context.Outcome;
+
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
 
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,15 +67,19 @@ public class ContinuationActionExecutor {
      */
     public boolean executeAction(ContinuationContext context, Runnable action) {
         // Check if we have a pending async Future from previous yield
+        if (context.hasPendingAsync()) {
+            return false;
+        }
+
         Future<?> pending = context.getPendingFuture();
         if (pending != null) {
-            if (!pending.isDone()) {
-                // Async task not done yet, return false to wait
-                return false;
-            }
-            // Async task done, clear the pending future and resume
             LOG.debug("Async task done...");
             context.setPendingFuture(null);
+        }
+        Future<?> pendingBatch = context.getPendingBatchFuture();
+        if (pendingBatch != null) {
+            LOG.debug("Async batch done...");
+            context.setPendingBatchFuture(null);
         }
 
         Continuation currentContinuation = context.getCurrentContinuation();
@@ -146,6 +158,74 @@ public class ContinuationActionExecutor {
         }
 
         return (T) context.getAsyncResultRef().get();
+    }
+
+    /**
+     * Executes all suppliers as one async batch and returns one {@link Outcome} per supplier.
+     * Supplier failures are captured in their own outcome so one failed supplier does not abort the
+     * whole batch.
+     *
+     * @param context the continuation context for this action
+     * @param suppliers the suppliers to execute
+     * @param timeout the timeout for the whole batch; null or non-positive means no timeout
+     * @param <T> the result type
+     * @return outcomes in supplier order
+     */
+    public <T> List<Outcome<T>> executeAllAsync(
+            ContinuationContext context, List<Callable<T>> suppliers, Duration timeout)
+            throws Exception {
+        context.clearAsyncState();
+
+        List<CompletableFuture<Outcome<T>>> futures = new ArrayList<>(suppliers.size());
+        for (Callable<T> supplier : suppliers) {
+            futures.add(
+                    CompletableFuture.supplyAsync(
+                            () -> {
+                                try {
+                                    return Outcome.success(supplier.call());
+                                } catch (Exception e) {
+                                    return Outcome.<T>failure(e);
+                                }
+                            },
+                            asyncExecutor));
+        }
+
+        CompletableFuture<Void> barrier =
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+        context.setPendingBatchFuture(barrier);
+
+        long deadlineNanos = getDeadlineNanos(timeout);
+        while (!barrier.isDone()) {
+            if (System.nanoTime() >= deadlineNanos) {
+                TimeoutException exception =
+                        new TimeoutException(
+                                "Async durable batch execution timed out after " + timeout);
+                for (CompletableFuture<Outcome<T>> future : futures) {
+                    future.cancel(true);
+                }
+                barrier.cancel(true);
+                context.setPendingBatchFuture(null);
+                List<Outcome<T>> results = new ArrayList<>(suppliers.size());
+                for (int i = 0; i < suppliers.size(); i++) {
+                    results.add(Outcome.failure(exception));
+                }
+                return results;
+            }
+            Continuation.yield(SCOPE);
+        }
+
+        context.setPendingBatchFuture(null);
+        List<Outcome<T>> results = new ArrayList<>(futures.size());
+        for (CompletableFuture<Outcome<T>> future : futures) {
+            results.add(future.join());
+        }
+        return results;
+    }
+
+    private long getDeadlineNanos(Duration timeout) {
+        return timeout == null || timeout.isZero() || timeout.isNegative()
+                ? Long.MAX_VALUE
+                : System.nanoTime() + timeout.toNanos();
     }
 
     public void close() {
