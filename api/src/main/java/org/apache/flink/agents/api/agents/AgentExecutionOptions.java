@@ -20,6 +20,8 @@ package org.apache.flink.agents.api.agents;
 
 import org.apache.flink.agents.api.configuration.ConfigOption;
 
+import java.time.Duration;
+
 public class AgentExecutionOptions {
     public static final ConfigOption<Agent.ErrorHandlingStrategy> ERROR_HANDLING_STRATEGY =
             new ConfigOption<>(
@@ -44,6 +46,21 @@ public class AgentExecutionOptions {
 
     public static final ConfigOption<Boolean> TOOL_CALL_ASYNC =
             new ConfigOption<>("tool-call.async", Boolean.class, true);
+
+    public static final ConfigOption<Boolean> TOOL_CALL_PARALLEL =
+            new ConfigOption<>("tool-call.parallel", Boolean.class, true);
+
+    public static final ConfigOption<Integer> TOOL_CALL_NUM_ASYNC_THREADS =
+            new ConfigOption<>(
+                    "tool-call.num-async-threads",
+                    Integer.class,
+                    Runtime.getRuntime().availableProcessors() * 2);
+
+    public static final ConfigOption<Integer> TOOL_CALL_MAX_PARALLELISM =
+            new ConfigOption<>("tool-call.max-parallelism", Integer.class, Integer.MAX_VALUE);
+
+    public static final ConfigOption<Duration> TOOL_CALL_BATCH_TIMEOUT =
+            new ConfigOption<>("tool-call.batch.timeout", Duration.class, Duration.ofMillis(-1));
 
     public static final ConfigOption<Boolean> RAG_ASYNC =
             new ConfigOption<>("rag.async", Boolean.class, true);

@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.resource.Resource;
@@ -68,7 +69,7 @@ import java.util.concurrent.Callable;
  */
 public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
-    private static final ObjectMapper OBJECT_MAPPER =
+    protected static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().registerModule(new JavaTimeModule());
 
     public static class MemoryContext {
@@ -532,6 +533,20 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return durableExecute(callable);
     }
 
+    @Override
+    public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+            throws Exception {
+        List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
+        for (DurableCallable<T> callable : callables) {
+            try {
+                outcomes.add(Outcome.success(durableExecute(callable)));
+            } catch (Exception e) {
+                outcomes.add(Outcome.failure(e));
+            }
+        }
+        return outcomes;
+    }
+
     /**
      * Executes a durable call using the completion-only state machine.
      *
@@ -684,6 +699,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         }
     }
 
+    public void reservePendingBatch(List<String> functionIds, String argsDigest) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null && !functionIds.isEmpty()) {
+            durableExecutionContext.reservePendingBatch(functionIds, argsDigest);
+        }
+    }
+
     /** Finalizes the pending durable call slot at the current call index. */
     public void finalizeCurrentCall(
             String functionId, String argsDigest, byte[] resultPayload, byte[] exceptionPayload) {
@@ -694,6 +716,26 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         }
     }
 
+    public void finalizeCallAt(
+            int index,
+            String functionId,
+            String argsDigest,
+            byte[] resultPayload,
+            byte[] exceptionPayload) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            durableExecutionContext.finalizeCallAt(
+                    index, functionId, argsDigest, resultPayload, exceptionPayload);
+        }
+    }
+
+    public void advanceCallIndexBy(int count) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            durableExecutionContext.advanceCallIndexBy(count);
+        }
+    }
+
     /**
      * Clears persisted call results from the current call index onward and persists immediately.
      */
@@ -701,6 +743,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         mailboxThreadChecker.run();
         if (durableExecutionContext != null) {
             durableExecutionContext.clearCallResultsFromCurrentIndexAndPersist();
+        }
+    }
+
+    public void clearCallResultsFromAndPersist(int index) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            durableExecutionContext.clearCallResultsFromAndPersist(index);
         }
     }
 
@@ -722,10 +771,41 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         };
     }
 
+    protected <T> Outcome<T> readTerminalOutcomeAt(
+            int index, String functionId, String argsDigest, Class<T> resultClass)
+            throws Exception {
+        CallResult callResult = getCallResultAt(index);
+        if (callResult == null || callResult.isPending()) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Expected a terminal durable call result at index %s for "
+                                    + "functionId=%s, argsDigest=%s",
+                            index, functionId, argsDigest));
+        }
+        if (callResult.getExceptionPayload() != null) {
+            DurableExecutionException exception =
+                    OBJECT_MAPPER.readValue(
+                            callResult.getExceptionPayload(), DurableExecutionException.class);
+            return Outcome.failure(exception.toException());
+        }
+        if (callResult.getResultPayload() == null) {
+            return Outcome.success(null);
+        }
+        return Outcome.success(OBJECT_MAPPER.readValue(callResult.getResultPayload(), resultClass));
+    }
+
     protected CallResult getCurrentCallResult() {
         mailboxThreadChecker.run();
         if (durableExecutionContext != null) {
             return durableExecutionContext.getCurrentCallResult();
+        }
+        return null;
+    }
+
+    protected CallResult getCallResultAt(int index) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            return durableExecutionContext.getCallResultAt(index);
         }
         return null;
     }
@@ -904,8 +984,12 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
          * yet have a persisted slot.
          */
         public CallResult getCurrentCallResult() {
-            if (currentCallIndex < recoveryCallResults.size()) {
-                return recoveryCallResults.get(currentCallIndex);
+            return getCallResultAt(currentCallIndex);
+        }
+
+        public CallResult getCallResultAt(int index) {
+            if (index < recoveryCallResults.size()) {
+                return recoveryCallResults.get(index);
             }
             return null;
         }
@@ -1005,6 +1089,15 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                     argsDigest);
         }
 
+        public void reservePendingBatch(List<String> functionIds, String argsDigest) {
+            for (String functionId : functionIds) {
+                CallResult pending = CallResult.pending(functionId, argsDigest);
+                actionState.addCallResult(pending);
+                recoveryCallResults.add(pending);
+            }
+            persistActionState();
+        }
+
         /**
          * Replaces the current persisted slot with a terminal call result and advances the current
          * call index.
@@ -1014,42 +1107,52 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 String argsDigest,
                 byte[] resultPayload,
                 byte[] exceptionPayload) {
-            CallResult current = getCurrentCallResult();
+            finalizeCallAt(
+                    currentCallIndex, functionId, argsDigest, resultPayload, exceptionPayload);
+            currentCallIndex++;
+        }
+
+        public void finalizeCallAt(
+                int index,
+                String functionId,
+                String argsDigest,
+                byte[] resultPayload,
+                byte[] exceptionPayload) {
+            CallResult current = getCallResultAt(index);
             if (current == null) {
                 throw new IllegalStateException(
                         String.format(
-                                "Cannot finalize current call at index %s because no persisted "
-                                        + "slot exists",
-                                currentCallIndex));
+                                "Cannot finalize call at index %s because no persisted slot exists",
+                                index));
             }
             if (!current.matches(functionId, argsDigest)) {
                 throw new IllegalStateException(
                         String.format(
-                                "Cannot finalize current call at index %s because the persisted "
-                                        + "slot does not match functionId=%s, argsDigest=%s",
-                                currentCallIndex, functionId, argsDigest));
+                                "Cannot finalize call at index %s because the persisted slot does not match functionId=%s, argsDigest=%s",
+                                index, functionId, argsDigest));
             }
             if (!current.isPending()) {
                 throw new IllegalStateException(
                         String.format(
-                                "Cannot finalize current call at index %s because the persisted "
-                                        + "slot is not pending",
-                                currentCallIndex));
+                                "Cannot finalize call at index %s because the persisted slot is not pending",
+                                index));
             }
 
             CallResult terminal =
                     new CallResult(functionId, argsDigest, resultPayload, exceptionPayload);
-            actionState.replaceCallResult(currentCallIndex, terminal);
-            recoveryCallResults.set(currentCallIndex, terminal);
+            actionState.replaceCallResult(index, terminal);
+            recoveryCallResults.set(index, terminal);
             persistActionState();
 
             LOG.debug(
                     "Finalized and persisted CallResult at index {}: functionId={}, argsDigest={}",
-                    currentCallIndex,
+                    index,
                     functionId,
                     argsDigest);
+        }
 
-            currentCallIndex++;
+        public void advanceCallIndexBy(int count) {
+            currentCallIndex += count;
         }
 
         /**
@@ -1061,12 +1164,21 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             persistActionState();
         }
 
-        private void clearCallResultsFromCurrentIndex() {
-            actionState.clearCallResultsFrom(currentCallIndex);
+        public void clearCallResultsFromAndPersist(int index) {
+            clearCallResultsFrom(index);
+            persistActionState();
+        }
+
+        public void clearCallResultsFrom(int index) {
+            actionState.clearCallResultsFrom(index);
             recoveryCallResults =
                     new ArrayList<>(
                             recoveryCallResults.subList(
-                                    0, Math.min(currentCallIndex, recoveryCallResults.size())));
+                                    0, Math.min(index, recoveryCallResults.size())));
+        }
+
+        private void clearCallResultsFromCurrentIndex() {
+            clearCallResultsFrom(currentCallIndex);
         }
 
         private void persistActionState() {

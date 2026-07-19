@@ -81,14 +81,20 @@ class ActionTaskContextManager implements AutoCloseable {
     private final Map<ActionTask, String> pythonAwaitableRefs;
     private final Map<String, Map<ReportedExecutionKey, ExecutionTraceContext>>
             activeReportedExecutionsByActionExecutionId;
-    private ContinuationActionExecutor continuationActionExecutor;
+    private final ContinuationActionExecutor actionContinuationExecutor;
+    private final ContinuationActionExecutor toolCallContinuationExecutor;
 
-    ActionTaskContextManager(int numAsyncThreads) {
+    ActionTaskContextManager(int numAsyncThreads, int numToolCallAsyncThreads) {
         this.actionTaskMemoryContexts = new HashMap<>();
         this.continuationContexts = new HashMap<>();
         this.pythonAwaitableRefs = new HashMap<>();
         this.activeReportedExecutionsByActionExecutionId = new HashMap<>();
-        this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
+        this.actionContinuationExecutor = new ContinuationActionExecutor(numAsyncThreads);
+        this.toolCallContinuationExecutor = new ContinuationActionExecutor(numToolCallAsyncThreads);
+    }
+
+    ActionTaskContextManager(int numAsyncThreads) {
+        this(numAsyncThreads, numToolCallAsyncThreads);
     }
 
     /**
@@ -120,7 +126,7 @@ class ActionTaskContextManager implements AutoCloseable {
             @Nullable InteranlBaseLongTermMemory longTermMemory) {
         if (isJava) {
             if (runnerContext == null) {
-                if (continuationActionExecutor == null) {
+                if (actionContinuationExecutor == null || toolCallContinuationExecutor == null) {
                     throw new IllegalStateException(
                             "ContinuationActionExecutor has not been initialized.");
                 }
@@ -131,7 +137,8 @@ class ActionTaskContextManager implements AutoCloseable {
                                 agentPlan,
                                 resourceCache,
                                 jobIdentifier,
-                                continuationActionExecutor);
+                                actionContinuationExecutor,
+                                toolCallContinuationExecutor);
                 if (longTermMemory != null) {
                     runnerContext.setLongTermMemory(longTermMemory);
                 }
@@ -369,9 +376,16 @@ class ActionTaskContextManager implements AutoCloseable {
                 runnerContext = null;
             }
         }
-        if (continuationActionExecutor != null) {
+        if (actionContinuationExecutor != null) {
             try {
-                continuationActionExecutor.close();
+                actionContinuationExecutor.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
+        }
+        if (toolCallContinuationExecutor != null) {
+            try {
+                toolCallContinuationExecutor.close();
             } catch (Throwable t) {
                 firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
             }
