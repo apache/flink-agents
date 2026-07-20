@@ -200,24 +200,52 @@ public class ContinuationActionExecutor {
                 TimeoutException exception =
                         new TimeoutException(
                                 "Async durable batch execution timed out after " + timeout);
-                for (CompletableFuture<Outcome<T>> future : futures) {
-                    future.cancel(true);
-                }
                 barrier.cancel(true);
                 context.setPendingBatchFuture(null);
-                List<Outcome<T>> results = new ArrayList<>(suppliers.size());
-                for (int i = 0; i < suppliers.size(); i++) {
-                    results.add(Outcome.failure(exception));
-                }
-                return results;
+                return collectBatchOutcomesOnTimeout(futures, exception);
             }
             Continuation.yield(SCOPE);
         }
 
         context.setPendingBatchFuture(null);
+        return collectBatchOutcomes(futures);
+    }
+
+    /**
+     * Collects per-slot outcomes after the batch barrier completes normally.
+     *
+     * <p>Each supplier already wraps success and failure into an {@link Outcome}, so {@code join()}
+     * returns that outcome rather than throwing for ordinary tool exceptions.
+     */
+    private static <T> List<Outcome<T>> collectBatchOutcomes(
+            List<CompletableFuture<Outcome<T>>> futures) {
         List<Outcome<T>> results = new ArrayList<>(futures.size());
         for (CompletableFuture<Outcome<T>> future : futures) {
             results.add(future.join());
+        }
+        return results;
+    }
+
+    /**
+     * Collects per-slot outcomes when the batch deadline elapses.
+     *
+     * <p>Completed slots keep their success or failure outcome. Only slots that are still running
+     * (or become cancelled) are finalized as timeout failures. {@code cancel(true)} is attempted
+     * only for unfinished futures; a future that completes between the check and cancel stays
+     * non-cancelled and is collected as a normal outcome.
+     */
+    private static <T> List<Outcome<T>> collectBatchOutcomesOnTimeout(
+            List<CompletableFuture<Outcome<T>>> futures, TimeoutException timeoutException) {
+        List<Outcome<T>> results = new ArrayList<>(futures.size());
+        for (CompletableFuture<Outcome<T>> future : futures) {
+            if (!future.isDone()) {
+                future.cancel(true);
+            }
+            if (future.isDone() && !future.isCancelled()) {
+                results.add(future.join());
+            } else {
+                results.add(Outcome.failure(timeoutException));
+            }
         }
         return results;
     }

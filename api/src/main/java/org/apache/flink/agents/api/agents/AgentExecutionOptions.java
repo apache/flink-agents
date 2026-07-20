@@ -56,9 +56,6 @@ public class AgentExecutionOptions {
                     Integer.class,
                     Runtime.getRuntime().availableProcessors() * 2);
 
-    public static final ConfigOption<Integer> TOOL_CALL_MAX_PARALLELISM =
-            new ConfigOption<>("tool-call.max-parallelism", Integer.class, Integer.MAX_VALUE);
-
     public static final ConfigOption<Duration> TOOL_CALL_BATCH_TIMEOUT =
             new ConfigOption<>("tool-call.batch.timeout", Duration.class, Duration.ofMillis(-1));
 
