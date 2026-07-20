@@ -360,5 +360,17 @@ class ResourceName:
             # Milvus
             MILVUS_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.milvus.MilvusVectorStore"
 
+    class RoutingStrategy:
+        """RoutingStrategy resource names (for a ChatModelRouter's ``strategy``)."""
+
+        class Java:
+            """Java implementations of RoutingStrategy."""
+
+            # Rule-based (deterministic keyword/regex rules)
+            RULE_BASED = "org.apache.flink.agents.api.chat.model.routing.RuleBasedRoutingStrategy"
+
+            # LLM-as-router (a judge model picks the candidate)
+            LLM = "org.apache.flink.agents.api.chat.model.routing.LlmRoutingStrategy"
+
     # MCP resource names
     MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"
