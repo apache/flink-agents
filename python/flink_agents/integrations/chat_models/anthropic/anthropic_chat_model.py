@@ -195,6 +195,13 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             extra_args["promptTokens"] = message.usage.input_tokens
             extra_args["completionTokens"] = message.usage.output_tokens
 
+        # A response may lead with a non-text block (e.g. a tool_use block when
+        # the model calls a tool without any preface), so pick the first text
+        # block instead of assuming content[0] is text.
+        text = next(
+            (block.text for block in message.content if block.type == "text"), ""
+        )
+
         if message.stop_reason == "tool_use":
             tool_calls = [
                 {
@@ -213,7 +220,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             extra_args["anthropic_content_blocks"] = message.content
             return ChatMessage(
                 role=MessageRole(message.role),
-                content=message.content[0].text,
+                content=text,
                 tool_calls=tool_calls,
                 extra_args=extra_args,
             )
@@ -222,7 +229,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             #  https://docs.anthropic.com/en/api/messages#response-stop-reason
             return ChatMessage(
                 role=MessageRole(message.role),
-                content=message.content[0].text,
+                content=text,
             )
 
     @override
