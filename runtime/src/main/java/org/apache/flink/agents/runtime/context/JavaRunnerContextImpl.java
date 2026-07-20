@@ -253,19 +253,8 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
                     .collect(Collectors.toList());
         }
         Duration timeout = getConfig().get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT);
-        int maxParallelism = getConfig().get(AgentExecutionOptions.TOOL_CALL_MAX_PARALLELISM);
-        if (maxParallelism <= 0 || maxParallelism >= suppliers.size()) {
-            return toolCallContinuationExecutor.executeAllAsync(
-                    continuationContext, suppliers, timeout);
-        }
-        List<Outcome<T>> results = new ArrayList<>(suppliers.size());
-        for (int i = 0; i < suppliers.size(); i += maxParallelism) {
-            int end = Math.min(i + maxParallelism, suppliers.size());
-            results.addAll(
-                    toolCallContinuationExecutor.executeAllAsync(
-                            continuationContext, suppliers.subList(i, end), timeout));
-        }
-        return results;
+        return toolCallContinuationExecutor.executeAllAsync(
+                continuationContext, suppliers, timeout);
     }
 
     private <T> T executeAsyncCallable(DurableCallable<T> callable) throws Exception {
