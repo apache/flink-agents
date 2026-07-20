@@ -95,11 +95,11 @@ class Action(BaseModel):
                     self["config"][name] = value["value"]
             return self
         for name, value in config.items():
-            try:
+            if isinstance(value, list | tuple):
                 module = importlib.import_module(value[0])
                 clazz = getattr(module, value[1])
                 self["config"][name] = clazz.model_validate(value[2])
-            except Exception:  # noqa : PERF203
+            else:
                 self["config"][name] = value
         return self
 
