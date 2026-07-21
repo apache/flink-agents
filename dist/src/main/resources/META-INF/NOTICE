@@ -192,6 +192,7 @@ See bundled license files for details.
 - com.google.re2j:re2j:1.8
 - org.antlr:antlr4-runtime:4.13.2
 - org.ow2.asm:asm:9.3
+- org.threeten:threeten-extra:1.8.0
 
 This project bundles the following dependencies under the EPL2 license.
 See bundled license files for details.

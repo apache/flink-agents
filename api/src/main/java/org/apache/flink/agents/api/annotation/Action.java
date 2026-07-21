@@ -32,10 +32,9 @@ import java.lang.annotation.Target;
  * restriction and an attribute predicate using AND, place both in a single expression, for example
  * {@code type == EventType.InputEvent && score > 5}.
  *
- * <p>The event-type syntax is a bare or dotted identifier, such as {@code order.created}. Boolean
- * attribute conditions must therefore be explicit, for example {@code ready == true}. Event types
- * containing characters not supported by the bare form, such as hyphens, can use the quoted
- * compatibility form, such as {@code 'order-created'}.
+ * <p>The event-type syntax is a bare or dotted name, such as {@code order.created} or {@code
+ * order-created}; each segment may contain hyphens. Boolean attribute conditions must therefore be
+ * explicit, for example {@code ready == true}.
  *
  * <p>The API preserves entries as raw strings. Entries are classified and condition expressions are
  * validated when the agent plan is built.

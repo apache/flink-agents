@@ -23,9 +23,9 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.Function;
-import org.apache.flink.agents.plan.condition.ActionSelector;
-import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
 import org.apache.flink.agents.plan.condition.ConditionExpressionValidator;
+import org.apache.flink.agents.plan.condition.TriggerCondition;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 import org.apache.flink.agents.plan.serializer.ActionJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.ActionJsonSerializer;
 
@@ -37,14 +37,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/** Representation of an agent action with raw trigger conditions and Plan-derived selectors. */
+/** Representation of an agent action with raw and Plan-classified trigger conditions. */
 @JsonSerialize(using = ActionJsonSerializer.class)
 @JsonDeserialize(using = ActionJsonDeserializer.class)
 public class Action {
     private final String name;
     private final Function exec;
-    private final ArrayList<String> triggerConditions;
-    private transient volatile List<ActionSelector> selectors;
+    private final List<String> triggerConditions;
+    private transient volatile List<TriggerCondition> classifiedTriggerConditions;
 
     // TODO: support nested map/list with non primitive type value.
     @Nullable private final Map<String, Object> config;
@@ -62,7 +62,7 @@ public class Action {
                     "Action '" + name + "' must have at least one trigger condition");
         }
         this.triggerConditions = new ArrayList<>(triggerConditions);
-        this.selectors = buildSelectors();
+        this.classifiedTriggerConditions = buildClassifiedTriggerConditions();
         this.config = config;
 
         exec.checkSignature(new Class[] {Event.class, RunnerContext.class});
@@ -85,12 +85,12 @@ public class Action {
         return Collections.unmodifiableList(triggerConditions);
     }
 
-    /** Returns immutable, validated selectors in raw declaration order. */
-    public List<ActionSelector> getSelectors() {
-        if (selectors == null) {
-            selectors = buildSelectors();
+    /** Returns immutable, validated trigger conditions in raw declaration order. */
+    public List<TriggerCondition> getClassifiedTriggerConditions() {
+        if (classifiedTriggerConditions == null) {
+            classifiedTriggerConditions = buildClassifiedTriggerConditions();
         }
-        return selectors;
+        return classifiedTriggerConditions;
     }
 
     @Nullable
@@ -113,16 +113,16 @@ public class Action {
         return Objects.hash(name, exec, triggerConditions);
     }
 
-    private List<ActionSelector> buildSelectors() {
-        List<ActionSelector> builtSelectors = new ArrayList<>(triggerConditions.size());
+    private List<TriggerCondition> buildClassifiedTriggerConditions() {
+        List<TriggerCondition> builtConditions = new ArrayList<>(triggerConditions.size());
         for (int index = 0; index < triggerConditions.size(); index++) {
             String rawSource = triggerConditions.get(index);
             try {
-                ActionSelector selector = ActionSelector.classify(rawSource);
-                if (selector instanceof ConditionExpression) {
-                    ConditionExpressionValidator.validate((ConditionExpression) selector);
+                TriggerCondition condition = TriggerCondition.classify(rawSource);
+                if (condition instanceof ExpressionCondition) {
+                    ConditionExpressionValidator.validate((ExpressionCondition) condition);
                 }
-                builtSelectors.add(selector);
+                builtConditions.add(condition);
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException(
                         "Invalid trigger condition #"
@@ -136,6 +136,6 @@ public class Action {
                         e);
             }
         }
-        return Collections.unmodifiableList(builtSelectors);
+        return Collections.unmodifiableList(builtConditions);
     }
 }

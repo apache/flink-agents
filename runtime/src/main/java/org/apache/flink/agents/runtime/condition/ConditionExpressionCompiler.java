@@ -33,8 +33,8 @@ import dev.cel.compiler.CelCompilerFactory;
 import dev.cel.runtime.CelEvaluationException;
 import dev.cel.runtime.CelRuntime;
 import dev.cel.runtime.CelRuntimeFactory;
-import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
-import org.apache.flink.agents.plan.condition.ConditionSyntaxPolicy;
+import org.apache.flink.agents.plan.condition.ConditionExpressionDialect;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 
 import java.util.HashSet;
 import java.util.Map;
@@ -57,19 +57,19 @@ final class ConditionExpressionCompiler {
 
     private static final CelRuntime CEL_RUNTIME =
             CelRuntimeFactory.standardCelRuntimeBuilder()
-                    .setOptions(ConditionSyntaxPolicy.CEL_OPTIONS)
+                    .setOptions(ConditionExpressionDialect.options())
                     .build();
 
     private ConditionExpressionCompiler() {}
 
     /** Re-parses and compiles a Plan-classified expression during Runtime initialization. */
-    static CompiledCondition compile(ConditionExpression condition) {
+    static CompiledCondition compile(ExpressionCondition condition) {
         Objects.requireNonNull(condition, "condition");
         String source = condition.text();
 
         CelAbstractSyntaxTree parsed;
         try {
-            parsed = ConditionSyntaxPolicy.PARSER.parse(source).getAst();
+            parsed = ConditionExpressionDialect.parse(source);
         } catch (CelValidationException e) {
             throw new IllegalArgumentException(
                     "Plan-validated trigger condition could not be reparsed at Runtime: \""
@@ -110,7 +110,7 @@ final class ConditionExpressionCompiler {
     private static CelAbstractSyntaxTree typeCheck(String source, CelAbstractSyntaxTree parsed) {
         CelCompilerBuilder builder =
                 CelCompilerFactory.standardCelCompilerBuilder()
-                        .setOptions(ConditionSyntaxPolicy.CEL_OPTIONS);
+                        .setOptions(ConditionExpressionDialect.options());
         FRAMEWORK_VARIABLE_TYPES.forEach(builder::addVar);
         CelNavigableAst.fromAst(parsed)
                 .getRoot()

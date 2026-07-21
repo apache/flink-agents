@@ -19,7 +19,9 @@
 package org.apache.flink.agents.plan.condition;
 
 import com.google.common.collect.ImmutableList;
+import dev.cel.common.CelAbstractSyntaxTree;
 import dev.cel.common.CelOptions;
+import dev.cel.common.CelValidationException;
 import dev.cel.common.ast.CelExpr;
 import dev.cel.parser.CelMacro;
 import dev.cel.parser.CelMacroExprFactory;
@@ -31,27 +33,21 @@ import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 
-/** Shared syntax configuration for trigger conditions. */
-public final class ConditionSyntaxPolicy {
+/** Shared parsing and evaluation dialect for trigger-condition expressions. */
+public final class ConditionExpressionDialect {
 
-    /** Shared limits used by Plan validation and Runtime compilation and evaluation. */
-    public static final CelOptions CEL_OPTIONS =
+    private static final CelOptions OPTIONS =
             CelOptions.current()
                     .maxParseRecursionDepth(32)
                     .maxExpressionCodePointSize(8_192)
                     .comprehensionMaxIterations(1_000)
                     .build();
 
-    /** The custom presence helper supported by trigger conditions. */
-    public static final CelMacro HAS =
-            CelMacro.newGlobalMacro("has", 1, ConditionSyntaxPolicy::expandHas);
+    private static final CelMacro HAS =
+            CelMacro.newGlobalMacro("has", 1, ConditionExpressionDialect::expandHas);
 
-    /** Parser configured with the trigger-condition syntax policy and custom has() macro. */
-    public static final CelParser PARSER =
-            CelParserFactory.standardCelParserBuilder()
-                    .setOptions(CEL_OPTIONS)
-                    .addMacros(HAS)
-                    .build();
+    private static final CelParser PARSER =
+            CelParserFactory.standardCelParserBuilder().setOptions(OPTIONS).addMacros(HAS).build();
 
     private static final String LOGICAL_AND_FUNCTION = "_&&_";
     private static final Set<String> CEL_STANDARD_MACROS =
@@ -79,6 +75,16 @@ public final class ConditionSyntaxPolicy {
                                 "list"));
         reserved.addAll(CEL_STANDARD_MACROS);
         RESERVED_IDENTIFIERS = Collections.unmodifiableSet(reserved);
+    }
+
+    /** Returns the shared parse and evaluation limits for this dialect. */
+    public static CelOptions options() {
+        return OPTIONS;
+    }
+
+    /** Parses one expression with the shared limits and custom presence helper. */
+    public static CelAbstractSyntaxTree parse(String source) throws CelValidationException {
+        return PARSER.parse(source).getAst();
     }
 
     private static Optional<CelExpr> expandHas(
@@ -126,5 +132,5 @@ public final class ConditionSyntaxPolicy {
         return presence;
     }
 
-    private ConditionSyntaxPolicy() {}
+    private ConditionExpressionDialect() {}
 }

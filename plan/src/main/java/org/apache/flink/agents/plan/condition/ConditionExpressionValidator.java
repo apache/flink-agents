@@ -23,7 +23,7 @@ import dev.cel.common.CelValidationException;
 import dev.cel.common.ast.CelExpr;
 import dev.cel.common.navigation.CelNavigableAst;
 import org.apache.flink.agents.api.EventType;
-import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 
 import java.util.Set;
 import java.util.TreeSet;
@@ -55,11 +55,11 @@ public final class ConditionExpressionValidator {
         }
     }
 
-    public static void validate(ConditionExpression condition) {
+    public static void validate(ExpressionCondition condition) {
         String source = condition.text();
         CelAbstractSyntaxTree parsed;
         try {
-            parsed = ConditionSyntaxPolicy.PARSER.parse(source).getAst();
+            parsed = ConditionExpressionDialect.parse(source);
         } catch (CelValidationException e) {
             throw new ValidationException(
                     ErrorCategory.SYNTAX,

@@ -22,9 +22,9 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
-import org.apache.flink.agents.plan.condition.ActionSelector;
-import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
-import org.apache.flink.agents.plan.condition.ActionSelector.EventTypeMatch;
+import org.apache.flink.agents.plan.condition.TriggerCondition;
+import org.apache.flink.agents.plan.condition.TriggerCondition.EventTypeCondition;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -52,18 +52,22 @@ public final class ActionMatcher {
         for (Action action : agentPlan.getActions().values()) {
             List<ConditionExpressionCompiler.CompiledCondition> actionConditions =
                     new ArrayList<>();
-            for (ActionSelector selector : action.getSelectors()) {
-                if (selector instanceof EventTypeMatch) {
-                    String eventType = ((EventTypeMatch) selector).eventType();
-                    // Raw selectors preserve duplicates; the runtime index keeps each action once.
+            for (TriggerCondition condition : action.getClassifiedTriggerConditions()) {
+                if (condition instanceof EventTypeCondition) {
+                    String eventType = ((EventTypeCondition) condition).eventType();
+                    // Raw trigger conditions preserve duplicates; the runtime index keeps each
+                    // action once.
                     eventTypeIndex
                             .computeIfAbsent(eventType, ignored -> new LinkedHashSet<>())
                             .add(action);
-                    continue;
+                } else if (condition instanceof ExpressionCondition) {
+                    actionConditions.add(
+                            ConditionExpressionCompiler.compile((ExpressionCondition) condition));
+                } else {
+                    throw new IllegalStateException(
+                            "Unsupported trigger condition type: "
+                                    + condition.getClass().getName());
                 }
-
-                ConditionExpression condition = (ConditionExpression) selector;
-                actionConditions.add(ConditionExpressionCompiler.compile(condition));
             }
             if (!actionConditions.isEmpty()) {
                 conditionIndex.put(action, actionConditions);

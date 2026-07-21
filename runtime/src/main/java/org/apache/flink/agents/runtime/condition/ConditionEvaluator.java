@@ -23,8 +23,6 @@ import dev.cel.common.values.NullValue;
 import dev.cel.runtime.CelEvaluationException;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventType;
-import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,7 +96,6 @@ final class ConditionEvaluator {
      * {@code attributes["www.andriod.com"].ip}; simple keys are also promoted for bare-identifier
      * access.
      */
-    @SuppressWarnings("unchecked")
     Map<String, Object> buildConditionVariables(
             Event event, ConditionExpressionCompiler.CompiledCondition condition) {
         Set<String> referencedTopLevelAttributeKeys = condition.referencedTopLevelAttributeKeys();
@@ -107,40 +104,22 @@ final class ConditionEvaluator {
         conditionVariables.put("type", event.getType());
         conditionVariables.put("EventType", EventType.allConstants());
 
-        String eventType = event.getType();
         Map<String, Object> attrs = event.getAttributes();
-        Object output = attrs.get("output");
-        Map<String, Object> outputAttrs =
-                OutputEvent.EVENT_TYPE.equals(eventType) && output instanceof Map
-                        ? (Map<String, Object>) output
-                        : Map.of();
-        Object input = attrs.get("input");
-        Map<String, Object> inputAttrs =
-                InputEvent.EVENT_TYPE.equals(eventType) && input instanceof Map
-                        ? (Map<String, Object>) input
-                        : Map.of();
-        Map<String, Object> merged = new HashMap<>();
+        Map<String, Object> normalizedAttributes = new HashMap<>();
         for (String key : referencedTopLevelAttributeKeys) {
-            mergeAttributeIfAbsent(merged, outputAttrs, key);
-            mergeAttributeIfAbsent(merged, attrs, key);
-            mergeAttributeIfAbsent(merged, inputAttrs, key);
+            if (attrs.containsKey(key)) {
+                normalizedAttributes.put(key, normalizeValue(attrs.get(key)));
+            }
         }
 
-        conditionVariables.put("attributes", merged);
+        conditionVariables.put("attributes", normalizedAttributes);
         // Promote to top level for bare-identifier access; framework keys win on collision.
-        merged.forEach(conditionVariables::putIfAbsent);
+        normalizedAttributes.forEach(conditionVariables::putIfAbsent);
         // Event UUID only as fallback — a user-supplied id attribute takes precedence.
         if (event.getId() != null) {
             conditionVariables.putIfAbsent("id", event.getId().toString());
         }
         return conditionVariables;
-    }
-
-    private static void mergeAttributeIfAbsent(
-            Map<String, Object> merged, Map<String, Object> sourceAttributes, String key) {
-        if (!merged.containsKey(key) && sourceAttributes.containsKey(key)) {
-            merged.put(key, normalizeValue(sourceAttributes.get(key)));
-        }
     }
 
     /**

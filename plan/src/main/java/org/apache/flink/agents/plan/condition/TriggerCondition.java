@@ -1,10 +1,11 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,20 +23,21 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public abstract class ActionSelector {
+/** One classified entry from an action's {@code trigger_conditions}. */
+public abstract class TriggerCondition {
 
     private static final Pattern EVENT_TYPE =
             Pattern.compile(
                     "^(?:"
-                            + "([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)"
+                            + "([A-Za-z_][A-Za-z0-9_-]*(?:\\.[A-Za-z_][A-Za-z0-9_-]*)*)"
                             + "|(['\"])([^\\s'\"\\\\\\p{Cntrl}]+)\\2"
                             + ")$");
     private static final Set<String> EXPRESSION_LITERALS = Set.of("true", "false", "null");
 
-    ActionSelector() {}
+    TriggerCondition() {}
 
-    /** Classifies an entry as an event type or a condition expression based on its text. */
-    public static ActionSelector classify(String source) {
+    /** Classifies an entry as an event-type condition or an expression condition. */
+    public static TriggerCondition classify(String source) {
         if (source == null || source.trim().isEmpty()) {
             throw new IllegalArgumentException("Trigger condition must be non-null and non-blank");
         }
@@ -48,17 +50,18 @@ public abstract class ActionSelector {
                     eventType.startsWith("EventType.")
                             || (bareType != null && EXPRESSION_LITERALS.contains(bareType));
             if (!reservedExpression) {
-                return new EventTypeMatch(eventType);
+                return new EventTypeCondition(eventType);
             }
         }
-        return new ConditionExpression(entry);
+        return new ExpressionCondition(entry);
     }
 
-    public static final class EventTypeMatch extends ActionSelector {
+    /** A trigger condition that matches one exact event type. */
+    public static final class EventTypeCondition extends TriggerCondition {
 
         private final String eventType;
 
-        private EventTypeMatch(String eventType) {
+        private EventTypeCondition(String eventType) {
             this.eventType = eventType;
         }
 
@@ -68,8 +71,8 @@ public abstract class ActionSelector {
 
         @Override
         public boolean equals(Object other) {
-            return other instanceof EventTypeMatch
-                    && eventType.equals(((EventTypeMatch) other).eventType);
+            return other instanceof EventTypeCondition
+                    && eventType.equals(((EventTypeCondition) other).eventType);
         }
 
         @Override
@@ -79,15 +82,16 @@ public abstract class ActionSelector {
 
         @Override
         public String toString() {
-            return "EventTypeMatch{eventType='" + eventType + "'}";
+            return "EventTypeCondition{eventType='" + eventType + "'}";
         }
     }
 
-    public static final class ConditionExpression extends ActionSelector {
+    /** A trigger condition expressed as a Boolean expression. */
+    public static final class ExpressionCondition extends TriggerCondition {
 
         private final String text;
 
-        private ConditionExpression(String text) {
+        private ExpressionCondition(String text) {
             this.text = text;
         }
 
@@ -97,8 +101,8 @@ public abstract class ActionSelector {
 
         @Override
         public boolean equals(Object other) {
-            return other instanceof ConditionExpression
-                    && text.equals(((ConditionExpression) other).text);
+            return other instanceof ExpressionCondition
+                    && text.equals(((ExpressionCondition) other).text);
         }
 
         @Override
@@ -108,7 +112,7 @@ public abstract class ActionSelector {
 
         @Override
         public String toString() {
-            return "ConditionExpression{text='" + text + "'}";
+            return "ExpressionCondition{text='" + text + "'}";
         }
     }
 }

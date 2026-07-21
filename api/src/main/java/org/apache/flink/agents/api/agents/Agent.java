@@ -29,6 +29,7 @@ import javax.annotation.Nullable;
 
 import java.lang.reflect.Method;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /** Base class for defining agent logic. */
@@ -42,7 +43,7 @@ public class Agent {
         for (ResourceType type : ResourceType.values()) {
             this.resources.put(type, new HashMap<>());
         }
-        this.actions = new HashMap<>();
+        this.actions = new LinkedHashMap<>();
     }
 
     public Map<String, Tuple3<String[], Function, Map<String, Object>>> getActions() {
