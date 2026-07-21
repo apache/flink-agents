@@ -54,6 +54,25 @@ class FakeEmbeddingModelConnectionWithoutUsage(BaseEmbeddingModelConnection):
         return [[0.1, 0.2] for _ in text]
 
 
+class DispatchAwareEmbeddingModelConnection(BaseEmbeddingModelConnection):
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> list[float] | list[list[float]]:
+        if isinstance(text, str):
+            return [0.1, 0.2]
+        return [[0.1, 0.2] for _ in text]
+
+    def embed_with_usage(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        return EmbeddingResult(
+            embeddings=[0.3, 0.4]
+            if isinstance(text, str)
+            else [[0.3, 0.4] for _ in text],
+            token_usage=EmbeddingTokenUsage(prompt_tokens=7, total_tokens=9),
+        )
+
+
 class FakeEmbeddingModelSetup(BaseEmbeddingModelSetup):
     @property
     def model_kwargs(self) -> Dict[str, Any]:
@@ -98,5 +117,11 @@ def test_embedding_result_defaults_to_no_usage() -> None:
 
 def test_embed_preserves_existing_embedding_only_api() -> None:
     setup = _make_setup(FakeEmbeddingModelConnection(name="connection"))
+
+    assert setup.embed("hello") == [0.1, 0.2]
+
+
+def test_embed_preserves_connection_embed_dispatch() -> None:
+    setup = _make_setup(DispatchAwareEmbeddingModelConnection(name="connection"))
 
     assert setup.embed("hello") == [0.1, 0.2]

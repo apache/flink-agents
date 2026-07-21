@@ -145,7 +145,9 @@ class BaseEmbeddingModelSetup(Resource, ABC):
             A list of floating-point numbers representing the embedding vector.
             The dimension of the vector depends on the specific embedding model used.
         """
-        return self.embed_with_usage(text, **kwargs).embeddings
+        merged_kwargs = self.model_kwargs.copy()
+        merged_kwargs.update(kwargs)
+        return self._get_connection().embed(text, **merged_kwargs)
 
     def embed_with_usage(
         self, text: str | Sequence[str], **kwargs: Any

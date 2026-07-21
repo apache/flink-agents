@@ -18,8 +18,15 @@
 import json
 
 from flink_agents.api.decorators import tool
+from flink_agents.api.embedding_models.embedding_model import (
+    EmbeddingResult,
+    EmbeddingTokenUsage,
+)
 from flink_agents.api.tools import InjectedArg
-from flink_agents.runtime.python_java_utils import get_python_tool_metadata
+from flink_agents.runtime.python_java_utils import (
+    call_embedding_with_usage,
+    get_python_tool_metadata,
+)
 
 
 @tool(injected_args={"tenant_id": InjectedArg.from_config("tenant.id")})
@@ -36,6 +43,27 @@ def test_get_python_tool_metadata_merges_callable_injected_args() -> None:
     schema = json.loads(flat["inputSchema"])
     assert set(schema["properties"]) == {"order_id"}
     injected_args = json.loads(flat["injectedArgs"])
-    assert injected_args == {
-        "tenant_id": {"source": "config", "key": "tenant.id"}
+    assert injected_args == {"tenant_id": {"source": "config", "key": "tenant.id"}}
+
+
+class _UsageAwareEmbeddingModel:
+    def embed_with_usage(
+        self, text: str, **kwargs: object
+    ) -> EmbeddingResult[list[float]]:
+        assert text == "hello"
+        assert kwargs == {"model": "test-model"}
+        return EmbeddingResult(
+            embeddings=[0.1, 0.2],
+            token_usage=EmbeddingTokenUsage(prompt_tokens=7, total_tokens=9),
+        )
+
+
+def test_call_embedding_with_usage_returns_pemja_safe_primitives() -> None:
+    result = call_embedding_with_usage(
+        _UsageAwareEmbeddingModel(), {"text": "hello", "model": "test-model"}
+    )
+
+    assert result == {
+        "embeddings": [0.1, 0.2],
+        "token_usage": {"prompt_tokens": 7, "total_tokens": 9},
     }

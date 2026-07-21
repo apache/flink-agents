@@ -73,4 +73,42 @@ class BaseEmbeddingModelSetupEmbeddingResultTest {
         assertEquals(7L, result.getTokenUsage().getPromptTokens());
         assertEquals(9L, result.getTokenUsage().getTotalTokens());
     }
+
+    @Test
+    void testEmbedDelegatesToExistingConnectionMethod() {
+        BaseEmbeddingModelSetup setup =
+                new BaseEmbeddingModelSetup(
+                        new ResourceDescriptor(
+                                "test", Map.of("connection", "connection", "model", "model")),
+                        mock(ResourceContext.class)) {
+                    @Override
+                    public Map<String, Object> getParameters() {
+                        return Collections.emptyMap();
+                    }
+                };
+        setup.connection =
+                new BaseEmbeddingModelConnection(
+                        new ResourceDescriptor("connection", Collections.emptyMap()),
+                        mock(ResourceContext.class)) {
+                    @Override
+                    public float[] embed(String text, Map<String, Object> parameters) {
+                        return new float[] {0.1f, 0.2f};
+                    }
+
+                    @Override
+                    public java.util.List<float[]> embed(
+                            java.util.List<String> texts, Map<String, Object> parameters) {
+                        throw new UnsupportedOperationException();
+                    }
+
+                    @Override
+                    public EmbeddingResult<float[]> embedWithUsage(
+                            String text, Map<String, Object> parameters) {
+                        return new EmbeddingResult<>(
+                                new float[] {0.3f, 0.4f}, new EmbeddingTokenUsage(7L, 9L));
+                    }
+                };
+
+        assertArrayEquals(new float[] {0.1f, 0.2f}, setup.embed("hello"));
+    }
 }

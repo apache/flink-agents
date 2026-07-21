@@ -164,8 +164,8 @@ def test_tongyi_embedding_returns_token_usage(
         status_code=HTTPStatus.OK,
         output={
             "embeddings": [{"embedding": mock_embedding}],
-            "usage": {"input_tokens": 6, "total_tokens": 6},
         },
+        usage={"total_tokens": 6},
         message="Success",
     )
     mock_call = MagicMock(return_value=mocked_response)

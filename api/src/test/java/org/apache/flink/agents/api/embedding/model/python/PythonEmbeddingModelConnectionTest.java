@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.api.embedding.model.python;
 
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
@@ -134,6 +135,42 @@ public class PythonEmbeddingModelConnectionTest {
 
         assertThat(result).isNotNull();
         assertThat(result).hasSize(2);
+    }
+
+    @Test
+    void testEmbedWithUsageMultipleTexts() {
+        List<String> texts = List.of("first", "second");
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.call_embedding_with_usage"),
+                        eq(mockEmbeddingModel),
+                        any(Map.class)))
+                .thenReturn(
+                        Map.of(
+                                "embeddings",
+                                List.of(List.of(0.1, 0.2), List.of(0.3, 0.4)),
+                                "token_usage",
+                                Map.of("prompt_tokens", 7, "total_tokens", 9)));
+
+        EmbeddingResult<List<float[]>> result =
+                pythonEmbeddingModelConnection.embedWithUsage(texts, Map.of("batch_size", 2));
+
+        assertThat(result.getEmbeddings()).hasSize(2);
+        assertThat(result.getEmbeddings().get(0)).containsExactly(0.1f, 0.2f);
+        assertThat(result.getEmbeddings().get(1)).containsExactly(0.3f, 0.4f);
+        assertThat(result.getTokenUsage()).isNotNull();
+        assertThat(result.getTokenUsage().getPromptTokens()).isEqualTo(7L);
+        assertThat(result.getTokenUsage().getTotalTokens()).isEqualTo(9L);
+        verify(mockAdapter)
+                .invoke(
+                        eq("python_java_utils.call_embedding_with_usage"),
+                        eq(mockEmbeddingModel),
+                        argThat(
+                                kwargs -> {
+                                    Map<String, Object> values = (Map<String, Object>) kwargs;
+                                    assertThat(values).containsEntry("text", texts);
+                                    assertThat(values).containsEntry("batch_size", 2);
+                                    return true;
+                                }));
     }
 
     @Test

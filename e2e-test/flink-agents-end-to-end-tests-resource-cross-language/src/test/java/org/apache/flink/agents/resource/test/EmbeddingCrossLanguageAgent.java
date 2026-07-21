@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
 import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 
@@ -105,11 +106,14 @@ public class EmbeddingCrossLanguageAgent extends Agent {
                                     org.apache.flink.agents.api.resource.ResourceType
                                             .EMBEDDING_MODEL);
 
-            float[] embedding = embeddingModel.embed(text);
+            EmbeddingResult<float[]> embeddingResult = embeddingModel.embedWithUsage(text);
+            float[] embedding = embeddingResult.getEmbeddings();
             System.out.printf("[TEST] Generated embedding with dimension: %d%n", embedding.length);
             validateEmbeddingResult(id, text, embedding);
 
-            List<float[]> embeddings = embeddingModel.embed(List.of(text));
+            EmbeddingResult<List<float[]>> embeddingsResult =
+                    embeddingModel.embedWithUsage(List.of(text));
+            List<float[]> embeddings = embeddingsResult.getEmbeddings();
             validateEmbeddingResults(id, List.of(text), embeddings);
 
             // Create a minimal test result to avoid serialization issues

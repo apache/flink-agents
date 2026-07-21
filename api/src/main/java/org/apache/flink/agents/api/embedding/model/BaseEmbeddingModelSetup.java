@@ -104,7 +104,9 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
     }
 
     public float[] embed(String text, Map<String, Object> parameters) {
-        return embedWithUsage(text, parameters).getEmbeddings();
+        Map<String, Object> params = this.getParameters();
+        params.putAll(parameters);
+        return getConnection().embed(text, params);
     }
 
     public EmbeddingResult<float[]> embedWithUsage(String text) {
@@ -130,7 +132,9 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
     }
 
     public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
-        return embedWithUsage(texts, parameters).getEmbeddings();
+        Map<String, Object> params = this.getParameters();
+        params.putAll(parameters);
+        return getConnection().embed(texts, params);
     }
 
     public EmbeddingResult<List<float[]>> embedWithUsage(List<String> texts) {

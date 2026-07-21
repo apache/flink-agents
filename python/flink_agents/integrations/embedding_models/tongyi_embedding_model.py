@@ -129,6 +129,8 @@ class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
             usage = response.output.get("usage")
         prompt_tokens = _get_usage_value(usage, "input_tokens", "prompt_tokens")
         total_tokens = _get_usage_value(usage, "total_tokens")
+        if prompt_tokens is None:
+            prompt_tokens = total_tokens
         token_usage = None
         if prompt_tokens is not None or total_tokens is not None:
             token_usage = EmbeddingTokenUsage(
