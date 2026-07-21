@@ -21,9 +21,9 @@ package org.apache.flink.agents.runtime.condition;
 import dev.cel.runtime.CelEvaluationException;
 import dev.cel.runtime.CelRuntime;
 import org.apache.flink.agents.api.EventType;
-import org.apache.flink.agents.plan.condition.ActionSelector;
-import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
 import org.apache.flink.agents.plan.condition.ConditionExpressionValidator;
+import org.apache.flink.agents.plan.condition.TriggerCondition;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -42,7 +42,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ConditionExpressionCompilerTest {
 
     private static ConditionExpressionCompiler.CompiledCondition compileValidated(String source) {
-        ConditionExpression condition = conditionExpression(source);
+        ExpressionCondition condition = conditionExpression(source);
         ConditionExpressionValidator.validate(condition);
         return ConditionExpressionCompiler.compile(condition);
     }
@@ -51,10 +51,10 @@ class ConditionExpressionCompilerTest {
         return ConditionExpressionCompiler.compile(conditionExpression(source));
     }
 
-    private static ConditionExpression conditionExpression(String source) {
-        ActionSelector selector = ActionSelector.classify(source);
-        assertThat(selector).isInstanceOf(ConditionExpression.class);
-        return (ConditionExpression) selector;
+    private static ExpressionCondition conditionExpression(String source) {
+        TriggerCondition triggerCondition = TriggerCondition.classify(source);
+        assertThat(triggerCondition).isInstanceOf(ExpressionCondition.class);
+        return (ExpressionCondition) triggerCondition;
     }
 
     @Test

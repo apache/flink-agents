@@ -1,10 +1,10 @@
 # Trigger-condition conformance corpus, owned by runtime; consumed by ConditionEvaluatorTest.
 # Each case is evaluated end-to-end: parse → validate → check → eval (no AST rewriting).
 #
-# Activation contract: type/EventType are framework-owned; attributes is an event-type-scoped
-# single-level merge (output.* > root for OutputEvent, root > input.* for InputEvent, root only
-# otherwise); only referenced merged keys are materialized and promoted to the top level; id is the
-# user attribute when present, else the event UUID.
+# Activation contract: type/EventType are framework-owned. Every event promotes only referenced
+# top-level entries from Event.attributes; nested values remain under their attribute path, such as
+# input.status or output.status. The explicit attributes namespace preserves the same envelope. A
+# top-level user id wins when present; otherwise id falls back to the event UUID.
 
 - name: filter_by_type_match
   condition: 'type == "_input_event"'
@@ -187,7 +187,7 @@
   event: { id: abc, type: test, attributes: { x: 9223372036854775807 } }
   expected: true
 
-# ----- Flattened-activation contract (Method D) -----
+# ----- Unified top-level attribute activation contract -----
 
 - name: bare_root_attribute_access
   condition: 'score >= 3'
@@ -204,25 +204,25 @@
   event: { id: abc, type: test, attributes: {} }
   expected: false
 
-- name: output_subkey_wins_over_root_attribute
-  condition: 'k == "out"'
-  event: { id: abc, type: _output_event, attributes: { k: root, output: { k: out } } }
+- name: input_payload_access_uses_input_path
+  condition: 'input.k == "in"'
+  event: { id: abc, type: _input_event, attributes: { input: { k: in } } }
   expected: true
 
-- name: root_attribute_wins_over_input_subkey
-  condition: 'k == "root"'
-  event: { id: abc, type: _input_event, attributes: { k: root, input: { k: in } } }
-  expected: true
-
-- name: output_event_does_not_promote_input_subkey
+- name: input_payload_child_is_not_promoted
   condition: 'has(k)'
-  event: { id: abc, type: _output_event, attributes: { input: { k: in } } }
+  event: { id: abc, type: _input_event, attributes: { input: { k: in } } }
   expected: false
 
-- name: output_subkey_wins_over_root_with_input_present
-  condition: 'k == "out"'
-  event: { id: abc, type: _output_event, attributes: { k: root, output: { k: out }, input: { k: in } } }
+- name: output_payload_access_uses_output_path
+  condition: 'output.k == "out"'
+  event: { id: abc, type: _output_event, attributes: { output: { k: out } } }
   expected: true
+
+- name: output_payload_child_is_not_promoted
+  condition: 'has(k)'
+  event: { id: abc, type: _output_event, attributes: { output: { k: out } } }
+  expected: false
 
 - name: user_id_attribute_overrides_event_uuid
   condition: 'id == "tenant-42"'

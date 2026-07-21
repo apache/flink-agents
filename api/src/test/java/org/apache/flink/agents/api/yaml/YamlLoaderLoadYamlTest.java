@@ -53,7 +53,7 @@ class YamlLoaderLoadYamlTest {
     }
 
     @Test
-    void mergesSharedActionIntoEachReferencingAgent() {
+    void mergesSharedActionIntoAgents() {
         AgentsExecutionEnvironment env = new TestEnv();
         env.loadYaml(FIXTURES.resolve("with_shared.yaml"));
 
@@ -63,6 +63,7 @@ class YamlLoaderLoadYamlTest {
         var a1Actions = a1.getActions();
         var a2Actions = a2.getActions();
         assertThat(a1Actions).containsKey("shared_inc").containsKey("own_dec");
+        assertThat(a1Actions.keySet()).containsExactly("shared_inc", "own_dec");
         assertThat(a2Actions).containsKey("shared_inc");
 
         assertThat(a1Actions.get("shared_inc").f1).isInstanceOf(JavaFunction.class);

@@ -20,8 +20,8 @@ package org.apache.flink.agents.plan.condition;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
-import org.apache.flink.agents.plan.condition.ActionSelector.EventTypeMatch;
+import org.apache.flink.agents.plan.condition.TriggerCondition.EventTypeCondition;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -38,11 +38,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
-/** Plan-layer consumer of the shared action-selector behavior matrix. */
-class ActionSelectorConformanceTest {
+/** Plan-layer consumer of the shared trigger-condition behavior matrix. */
+class TriggerConditionConformanceTest {
 
     private static final String FIXTURE_PATH =
-            "e2e-test/cross-language-action-selector-fixtures/action_selector_conformance.json";
+            "e2e-test/cross-language-trigger-condition-fixtures/trigger_condition_conformance.json";
     private static final JsonNode FIXTURE = loadFixture();
 
     static Stream<Arguments> fixtureCases() {
@@ -69,15 +69,15 @@ class ActionSelectorConformanceTest {
             String expectedClassification,
             String expectedValidation,
             String expectedErrorCategory) {
-        ActionSelector selector = ActionSelector.classify(source);
+        TriggerCondition condition = TriggerCondition.classify(source);
         if ("event_type".equals(expectedClassification)) {
-            assertThat(selector).isInstanceOf(EventTypeMatch.class);
+            assertThat(condition).isInstanceOf(EventTypeCondition.class);
             assertThat(expectedValidation).isEqualTo("pass");
             return;
         }
 
-        assertThat(selector).isInstanceOf(ConditionExpression.class);
-        ConditionExpression expression = (ConditionExpression) selector;
+        assertThat(condition).isInstanceOf(ExpressionCondition.class);
+        ExpressionCondition expression = (ExpressionCondition) condition;
         if ("pass".equals(expectedValidation)) {
             assertThatCode(() -> ConditionExpressionValidator.validate(expression))
                     .doesNotThrowAnyException();
@@ -101,11 +101,11 @@ class ActionSelectorConformanceTest {
                     return new ObjectMapper().readTree(candidate.toFile());
                 } catch (IOException e) {
                     throw new IllegalStateException(
-                            "Failed to read action-selector fixture " + candidate, e);
+                            "Failed to read trigger-condition fixture " + candidate, e);
                 }
             }
             directory = directory.getParent();
         }
-        throw new IllegalStateException("Could not find action-selector fixture " + FIXTURE_PATH);
+        throw new IllegalStateException("Could not find trigger-condition fixture " + FIXTURE_PATH);
     }
 }

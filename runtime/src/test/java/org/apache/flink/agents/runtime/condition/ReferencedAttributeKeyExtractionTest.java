@@ -18,8 +18,8 @@
 
 package org.apache.flink.agents.runtime.condition;
 
-import org.apache.flink.agents.plan.condition.ActionSelector;
-import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
+import org.apache.flink.agents.plan.condition.TriggerCondition;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -35,9 +35,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ReferencedAttributeKeyExtractionTest {
 
     private static Set<String> referencedAttributeKeys(String source) {
-        ActionSelector selector = ActionSelector.classify(source);
-        assertThat(selector).isInstanceOf(ConditionExpression.class);
-        return ConditionExpressionCompiler.compile((ConditionExpression) selector)
+        TriggerCondition triggerCondition = TriggerCondition.classify(source);
+        assertThat(triggerCondition).isInstanceOf(ExpressionCondition.class);
+        return ConditionExpressionCompiler.compile((ExpressionCondition) triggerCondition)
                 .referencedTopLevelAttributeKeys();
     }
 

@@ -18,24 +18,25 @@
 
 package org.apache.flink.agents.plan.condition;
 
-import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
-import org.apache.flink.agents.plan.condition.ActionSelector.EventTypeMatch;
+import org.apache.flink.agents.plan.condition.TriggerCondition.EventTypeCondition;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class ActionSelectorTest {
+class TriggerConditionTest {
 
     @Test
-    void classifiesDottedEventType() {
+    void classifiesBareEventTypes() {
         assertEventType("  a.b.c  ", "a.b.c");
+        assertEventType("order-created.v1", "order-created.v1");
     }
 
     @Test
     void classifiesQuotedEventTypes() {
-        ActionSelector singleQuoted = assertEventType("'order-created.v1'", "order-created.v1");
-        ActionSelector doubleQuoted = assertEventType("\"order-created.v1\"", "order-created.v1");
+        TriggerCondition singleQuoted = assertEventType("'order-created.v1'", "order-created.v1");
+        TriggerCondition doubleQuoted = assertEventType("\"order-created.v1\"", "order-created.v1");
 
         assertThat(singleQuoted).isEqualTo(doubleQuoted);
     }
@@ -64,10 +65,10 @@ class ActionSelectorTest {
 
     @Test
     void rejectsNullOrBlankEntries() {
-        assertThatThrownBy(() -> ActionSelector.classify(null))
+        assertThatThrownBy(() -> TriggerCondition.classify(null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("non-null and non-blank");
-        assertThatThrownBy(() -> ActionSelector.classify("  \t\n"))
+        assertThatThrownBy(() -> TriggerCondition.classify("  \t\n"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("non-null and non-blank");
     }
@@ -77,17 +78,17 @@ class ActionSelectorTest {
         assertConditionExpression("  score > 1  ", "score > 1");
     }
 
-    private static ActionSelector assertEventType(String source, String expectedEventType) {
-        ActionSelector selector = ActionSelector.classify(source);
-        assertThat(selector).isInstanceOf(EventTypeMatch.class);
-        assertThat(((EventTypeMatch) selector).eventType()).isEqualTo(expectedEventType);
-        return selector;
+    private static TriggerCondition assertEventType(String source, String expectedEventType) {
+        TriggerCondition condition = TriggerCondition.classify(source);
+        assertThat(condition).isInstanceOf(EventTypeCondition.class);
+        assertThat(((EventTypeCondition) condition).eventType()).isEqualTo(expectedEventType);
+        return condition;
     }
 
-    private static ActionSelector assertConditionExpression(String source, String expectedText) {
-        ActionSelector selector = ActionSelector.classify(source);
-        assertThat(selector).isInstanceOf(ConditionExpression.class);
-        assertThat(((ConditionExpression) selector).text()).isEqualTo(expectedText);
-        return selector;
+    private static TriggerCondition assertConditionExpression(String source, String expectedText) {
+        TriggerCondition condition = TriggerCondition.classify(source);
+        assertThat(condition).isInstanceOf(ExpressionCondition.class);
+        assertThat(((ExpressionCondition) condition).text()).isEqualTo(expectedText);
+        return condition;
     }
 }

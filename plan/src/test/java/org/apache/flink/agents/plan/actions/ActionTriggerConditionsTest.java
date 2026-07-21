@@ -21,7 +21,7 @@ package org.apache.flink.agents.plan.actions;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.JavaFunction;
-import org.apache.flink.agents.plan.condition.ActionSelector;
+import org.apache.flink.agents.plan.condition.TriggerCondition;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -30,26 +30,30 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class ActionSelectorsTest {
+class ActionTriggerConditionsTest {
 
     public static void handler(Event event, RunnerContext context) {}
 
     @Test
-    void preservesRawEntriesAndBuildsImmutableSelectors() throws Exception {
+    void keepsRawAndClassifiedConditions() throws Exception {
         List<String> rawEntries = new ArrayList<>(List.of(" a.b.c ", " score > 1 "));
         Action action = new Action("mixed", function(), rawEntries, null);
         rawEntries.clear();
 
         assertThat(action.getTriggerConditions()).containsExactly(" a.b.c ", " score > 1 ");
-        assertThat(action.getSelectors())
+        assertThatThrownBy(() -> action.getTriggerConditions().clear())
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> action.getTriggerConditions().add("late.condition"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThat(action.getClassifiedTriggerConditions())
                 .containsExactly(
-                        ActionSelector.classify("a.b.c"), ActionSelector.classify("score > 1"));
-        assertThatThrownBy(() -> action.getSelectors().clear())
+                        TriggerCondition.classify("a.b.c"), TriggerCondition.classify("score > 1"));
+        assertThatThrownBy(() -> action.getClassifiedTriggerConditions().clear())
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
-    void reportsInvalidSelectorContext() throws Exception {
+    void reportsInvalidConditionContext() throws Exception {
         assertThatThrownBy(
                         () ->
                                 new Action(
@@ -65,7 +69,7 @@ class ActionSelectorsTest {
 
     private static JavaFunction function() throws Exception {
         return new JavaFunction(
-                ActionSelectorsTest.class.getName(),
+                ActionTriggerConditionsTest.class.getName(),
                 "handler",
                 new Class[] {Event.class, RunnerContext.class});
     }

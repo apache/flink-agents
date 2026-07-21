@@ -242,12 +242,12 @@
     {
       "name": "unquoted_extended_name",
       "entry": "order-created",
-      "classification": "expression",
+      "classification": "event_type",
       "plan_validation": "pass",
-      "runtime_compilation": "pass",
-      "probe_event_type": "other",
-      "probe_attributes": {"order": 10, "created": 3},
-      "matches_probe": false
+      "runtime_compilation": "not_applicable",
+      "probe_event_type": "order-created",
+      "probe_attributes": {},
+      "matches_probe": true
     }
   ],
   "ordering_dedupe_type_first": {

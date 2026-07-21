@@ -155,8 +155,8 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
-    void preservesRawSelectorEntries(@TempDir Path tmp) throws Exception {
-        Path file = tmp.resolve("raw_selectors.yaml");
+    void preservesRawTriggerEntries(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("raw_trigger_conditions.yaml");
         Files.writeString(
                 file,
                 "agents:\n"
@@ -202,7 +202,7 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
-    void defersSelectorValidationToPlan(@TempDir Path tmp) throws Exception {
+    void rejectsMissingOrEmptyConditions(@TempDir Path tmp) throws Exception {
         Path file = tmp.resolve("deferred_trigger_validation.yaml");
         Files.writeString(
                 file,
@@ -211,12 +211,84 @@ class YamlLoaderBuildAgentsTest {
                         + "    actions:\n"
                         + "      - name: missing\n"
                         + "        function: pkg.mod:fn\n"
+                        + "        type: python\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .rootCause()
+                .hasMessageContaining("trigger_conditions");
+
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: empty\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: []\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .rootCause()
+                .hasMessageContaining("trigger_conditions")
+                .hasMessageContaining("at least one");
+    }
+
+    @Test
+    void defersEntryValidationToPlan(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("deferred_trigger_validation.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
                         + "      - name: invalid_entries\n"
                         + "        function: pkg.mod:fn\n"
                         + "        trigger_conditions: ['  ', null]\n");
 
         Agent agent = YamlLoader.buildAgents(file).getAgents().get("a");
-        assertThat(agent.getActions().get("missing").f0).isEmpty();
         assertThat(agent.getActions().get("invalid_entries").f0).containsExactly("  ", null);
+    }
+
+    @Test
+    void rejectsNonStringCondition(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("non_string_trigger_condition.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: invalid\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [true]\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .rootCause()
+                .hasMessageContaining("trigger_conditions")
+                .hasMessageContaining("entry #1")
+                .hasMessageContaining("string");
+    }
+
+    @Test
+    void preservesYamlActionOrder(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("ordered_actions.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: first\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n"
+                        + "      - name: second\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n"
+                        + "      - name: third\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n"
+                        + "      - name: fourth\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n");
+
+        assertThat(YamlLoader.buildAgents(file).getAgents().get("a").getActions().keySet())
+                .containsExactly("first", "second", "third", "fourth");
     }
 }

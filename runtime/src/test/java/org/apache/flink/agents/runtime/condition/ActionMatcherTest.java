@@ -32,6 +32,7 @@ import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.condition.TriggerCondition;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -57,12 +58,14 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /** Runtime matching contract for unified trigger-condition entries. */
 class ActionMatcherTest {
 
     private static final String FIXTURE_PATH =
-            "e2e-test/cross-language-action-selector-fixtures/action_selector_conformance.json";
+            "e2e-test/cross-language-trigger-condition-fixtures/trigger_condition_conformance.json";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final JsonNode FIXTURE = loadFixture();
 
@@ -73,6 +76,21 @@ class ActionMatcherTest {
         assertThatThrownBy(() -> new ActionMatcher(null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("agentPlan");
+    }
+
+    @Test
+    void rejectsUnknownConditionSubtype() {
+        TriggerCondition unknownCondition = mock(TriggerCondition.class);
+        Action action = mock(Action.class);
+        when(action.getClassifiedTriggerConditions()).thenReturn(List.of(unknownCondition));
+        AgentPlan agentPlan = mock(AgentPlan.class);
+        when(agentPlan.getActions()).thenReturn(Map.of("unknown", action));
+
+        assertThatThrownBy(() -> new ActionMatcher(agentPlan))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(
+                        "Unsupported trigger condition type: "
+                                + unknownCondition.getClass().getName());
     }
 
     static Stream<Arguments> runtimeSuccessCases() {
@@ -252,7 +270,7 @@ class ActionMatcherTest {
     }
 
     @Test
-    void serializedPlanRebuildsSelectors() throws Exception {
+    void restoredPlanRebuildsConditions() throws Exception {
         Action mixed = action("mixed", "'custom.type'", "score == 7");
         AgentPlan restored = javaRoundTrip(plan(mixed));
         Action restoredAction = restored.getActions().get("mixed");
@@ -261,6 +279,18 @@ class ActionMatcherTest {
         assertThat(matcher.match(new Event("custom.type"))).containsExactly(restoredAction);
         assertThat(matcher.match(new Event("other", Map.of("score", 7))))
                 .containsExactly(restoredAction);
+    }
+
+    @Test
+    void pojoAndJsonUseSameCondition() throws Exception {
+        Action nested = action("nested", "input.status == 'ok'");
+        Action bare = action("bare", "has(status) && status == 'ok'");
+        ActionMatcher matcher = new ActionMatcher(plan(nested, bare));
+        InputEvent typed = new InputEvent(new ConditionInput("id", "ok", 9));
+        Event jsonShaped = Event.fromJson(OBJECT_MAPPER.writeValueAsString(typed));
+
+        assertThat(matcher.match(typed)).containsExactly(nested);
+        assertThat(matcher.match(jsonShaped)).containsExactly(nested);
     }
 
     private static Action action(String name, String... triggerConditions) throws Exception {
@@ -280,6 +310,20 @@ class ActionMatcherTest {
         @Override
         public Set<Entry<String, Object>> entrySet() {
             throw new IllegalStateException("bad attribute must not be normalized");
+        }
+    }
+
+    public static final class ConditionInput {
+        public String id;
+        public String status;
+        public int value;
+
+        public ConditionInput() {}
+
+        public ConditionInput(String id, String status, int value) {
+            this.id = id;
+            this.status = status;
+            this.value = value;
         }
     }
 
@@ -362,11 +406,11 @@ class ActionMatcherTest {
                     return OBJECT_MAPPER.readTree(candidate.toFile());
                 } catch (IOException e) {
                     throw new IllegalStateException(
-                            "Failed to read action-selector fixture " + candidate, e);
+                            "Failed to read trigger-condition fixture " + candidate, e);
                 }
             }
             directory = directory.getParent();
         }
-        throw new IllegalStateException("Could not find action-selector fixture " + FIXTURE_PATH);
+        throw new IllegalStateException("Could not find trigger-condition fixture " + FIXTURE_PATH);
     }
 }

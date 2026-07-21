@@ -20,7 +20,7 @@ package org.apache.flink.agents.plan.condition;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -102,7 +102,7 @@ class ConditionExpressionValidatorTest {
     }
 
     @Test
-    void defersResultTypeValidationToRuntime() {
+    void defersResultTypeCheckToRuntime() {
         for (String source :
                 new String[] {
                     "true",
@@ -115,8 +115,7 @@ class ConditionExpressionValidatorTest {
                     "1 + 2",
                     "size(attributes)",
                     "attributes['key']",
-                    "noSuchFn(1)",
-                    "order-created"
+                    "noSuchFn(1)"
                 }) {
             assertThatCode(() -> validateExpression(source)).doesNotThrowAnyException();
         }
@@ -164,9 +163,9 @@ class ConditionExpressionValidatorTest {
     }
 
     private static void validateExpression(String source) {
-        ActionSelector selector = ActionSelector.classify(source);
-        assertThat(selector).isInstanceOf(ConditionExpression.class);
-        ConditionExpressionValidator.validate((ConditionExpression) selector);
+        TriggerCondition triggerCondition = TriggerCondition.classify(source);
+        assertThat(triggerCondition).isInstanceOf(ExpressionCondition.class);
+        ConditionExpressionValidator.validate((ExpressionCondition) triggerCondition);
     }
 
     @SuppressWarnings("unchecked")

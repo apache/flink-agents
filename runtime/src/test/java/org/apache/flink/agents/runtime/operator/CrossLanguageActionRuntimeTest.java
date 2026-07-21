@@ -42,8 +42,9 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Layer F1 — feed Python-shaped JSON plans into the Java runtime and verify selector matching and
- * JavaFunction dispatch. Java→Python action dispatch goes through Pemja and is Layer F2 scope.
+ * Layer F1 — feed Python-shaped JSON plans into the Java runtime and verify trigger-condition
+ * matching and JavaFunction dispatch. Java→Python action dispatch goes through Pemja and is Layer
+ * F2 scope.
  */
 public class CrossLanguageActionRuntimeTest {
 
@@ -104,7 +105,7 @@ public class CrossLanguageActionRuntimeTest {
     }
 
     @Test
-    void pythonSerializedMixedSelectorsUseRuntimeOrSemantics() throws Exception {
+    void pythonPlanUsesRuntimeOrSemantics() throws Exception {
         Path repoRoot = Paths.get(System.getProperty("user.dir")).getParent();
         Path snapshot =
                 repoRoot.resolve(

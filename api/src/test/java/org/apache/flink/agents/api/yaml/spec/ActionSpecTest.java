@@ -44,18 +44,63 @@ class ActionSpecTest {
     }
 
     @Test
-    void preservesInvalidSelectorsForPlan() throws Exception {
-        ActionSpec missing = M.readValue("name: a\nfunction: x:y\n", ActionSpec.class);
-        ActionSpec empty =
-                M.readValue("name: a\nfunction: x:y\ntrigger_conditions: []\n", ActionSpec.class);
+    void rejectsMissingNullOrEmptyList() {
+        assertThatThrownBy(() -> M.readValue("name: a\nfunction: x:y\n", ActionSpec.class))
+                .hasMessageContaining("trigger_conditions");
+        assertThatThrownBy(
+                        () ->
+                                M.readValue(
+                                        "name: a\nfunction: x:y\ntrigger_conditions: null\n",
+                                        ActionSpec.class))
+                .hasMessageContaining("trigger_conditions")
+                .hasMessageContaining("at least one");
+        assertThatThrownBy(
+                        () ->
+                                M.readValue(
+                                        "name: a\nfunction: x:y\ntrigger_conditions: []\n",
+                                        ActionSpec.class))
+                .hasMessageContaining("trigger_conditions")
+                .hasMessageContaining("at least one");
+    }
+
+    @Test
+    void preservesInvalidEntriesForPlan() throws Exception {
         ActionSpec invalidEntries =
                 M.readValue(
                         "name: a\nfunction: x:y\ntrigger_conditions: ['  ', null]\n",
                         ActionSpec.class);
 
-        assertThat(missing.getTriggerConditions()).isEmpty();
-        assertThat(empty.getTriggerConditions()).isEmpty();
         assertThat(invalidEntries.getTriggerConditions()).containsExactly("  ", null);
+    }
+
+    @Test
+    void rejectsNonStringScalars() {
+        assertThatThrownBy(
+                        () ->
+                                M.readValue(
+                                        "name: a\nfunction: x:y\ntrigger_conditions: [true]\n",
+                                        ActionSpec.class))
+                .hasMessageContaining("trigger_conditions")
+                .hasMessageContaining("entry #1")
+                .hasMessageContaining("string");
+        assertThatThrownBy(
+                        () ->
+                                M.readValue(
+                                        "name: a\nfunction: x:y\ntrigger_conditions: [42]\n",
+                                        ActionSpec.class))
+                .hasMessageContaining("trigger_conditions")
+                .hasMessageContaining("entry #1")
+                .hasMessageContaining("string");
+    }
+
+    @Test
+    void acceptsQuotedStringScalars() throws Exception {
+        ActionSpec spec =
+                M.readValue(
+                        "name: a\nfunction: x:y\ntrigger_conditions: ['true', '42']\n",
+                        ActionSpec.class);
+
+        assertThat(spec.getTriggerConditions()).containsExactly("true", "42");
     }
 
     @Test

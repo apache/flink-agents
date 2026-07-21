@@ -23,7 +23,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.actions.Action;
-import org.apache.flink.agents.plan.condition.ActionSelector;
+import org.apache.flink.agents.plan.condition.TriggerCondition;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -37,20 +37,23 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class ActionSelectorContractTest {
+class TriggerConditionContractTest {
     public static void handler(Event event, RunnerContext context) {}
 
-    static class SelectorAgent extends Agent {
+    static class TriggerConditionAgent extends Agent {
         @org.apache.flink.agents.api.annotation.Action(" type == 'x' ")
         public void conditionOnly(Event event, RunnerContext context) {}
 
         @org.apache.flink.agents.api.annotation.Action({"x", " score > 1 ", "x"})
         public void mixedOr(Event event, RunnerContext context) {}
+
+        @org.apache.flink.agents.api.annotation.Action("order-created")
+        public void hyphenatedEventType(Event event, RunnerContext context) {}
     }
 
     private static JavaFunction function() throws Exception {
         return new JavaFunction(
-                ActionSelectorContractTest.class.getName(),
+                TriggerConditionContractTest.class.getName(),
                 "handler",
                 new Class[] {Event.class, RunnerContext.class});
     }
@@ -72,7 +75,7 @@ class ActionSelectorContractTest {
     }
 
     @Test
-    void javaRoundTripRebuildsImmutableSelectors() throws Exception {
+    void javaRoundTripRebuildsConditions() throws Exception {
         Action raw =
                 new Action(
                         "raw", function(), List.of("x", " score > 1 ", "x", "type == 'x'"), null);
@@ -80,12 +83,12 @@ class ActionSelectorContractTest {
 
         assertThat(restored.getActions().get("raw").getTriggerConditions())
                 .containsExactly("x", " score > 1 ", "x", "type == 'x'");
-        assertThat(restored.getActions().get("raw").getSelectors())
+        assertThat(restored.getActions().get("raw").getClassifiedTriggerConditions())
                 .containsExactly(
-                        ActionSelector.classify("x"),
-                        ActionSelector.classify("score > 1"),
-                        ActionSelector.classify("x"),
-                        ActionSelector.classify("type == 'x'"));
+                        TriggerCondition.classify("x"),
+                        TriggerCondition.classify("score > 1"),
+                        TriggerCondition.classify("x"),
+                        TriggerCondition.classify("type == 'x'"));
         assertThatThrownBy(() -> restored.getActions().clear())
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> restored.getActions().get("raw").getTriggerConditions().clear())
@@ -93,13 +96,15 @@ class ActionSelectorContractTest {
     }
 
     @Test
-    void annotationPreservesSelectorOrder() throws Exception {
-        AgentPlan plan = new AgentPlan(new SelectorAgent());
+    void annotationKeepsConditionOrder() throws Exception {
+        AgentPlan plan = new AgentPlan(new TriggerConditionAgent());
 
         assertThat(plan.getActions().get("conditionOnly").getTriggerConditions())
                 .containsExactly(" type == 'x' ");
         assertThat(plan.getActions().get("mixedOr").getTriggerConditions())
                 .containsExactly("x", " score > 1 ", "x");
+        assertThat(plan.getActions().get("hyphenatedEventType").getClassifiedTriggerConditions())
+                .containsExactly(TriggerCondition.classify("order-created"));
     }
 
     private static AgentPlan javaRoundTrip(AgentPlan plan) throws Exception {

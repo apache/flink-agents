@@ -36,6 +36,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
+import org.apache.flink.agents.api.yaml.YamlLoader;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
@@ -43,8 +44,11 @@ import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import pemja.core.object.PyObject;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -218,7 +222,7 @@ public class AgentPlanTest {
     }
 
     @Test
-    public void rejectsInvalidSelectorsDuringPlanConstruction() {
+    public void rejectsInvalidConditionsInPlan() {
         for (String[] invalidConditions :
                 List.<String[]>of(new String[0], new String[] {"  "}, new String[] {null})) {
             Agent agent = new Agent();
@@ -229,6 +233,39 @@ public class AgentPlanTest {
             assertThatThrownBy(() -> new AgentPlan(agent))
                     .isInstanceOf(IllegalArgumentException.class);
         }
+    }
+
+    @Test
+    public void preservesYamlActionOrder(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("ordered_actions.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    actions:\n"
+                        + "      - name: first\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n"
+                        + "      - name: second\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n"
+                        + "      - name: third\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n"
+                        + "      - name: fourth\n"
+                        + "        function: pkg.mod:fn\n"
+                        + "        trigger_conditions: [input]\n");
+        Agent agent = YamlLoader.buildAgents(file).getAgents().get("a");
+
+        assertThat(new AgentPlan(agent).getActions().keySet())
+                .containsExactly(
+                        "chat_model_action",
+                        "tool_call_action",
+                        "context_retrieval_action",
+                        "first",
+                        "second",
+                        "third",
+                        "fourth");
     }
 
     @Test

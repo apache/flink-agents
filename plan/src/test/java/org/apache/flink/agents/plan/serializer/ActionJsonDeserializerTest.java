@@ -26,7 +26,7 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
-import org.apache.flink.agents.plan.condition.ActionSelector;
+import org.apache.flink.agents.plan.condition.TriggerCondition;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -62,8 +62,8 @@ public class ActionJsonDeserializerTest {
         assertEquals(RunnerContext.class, javaFunction.getParameterTypes()[1]);
         assertEquals(1, action.getTriggerConditions().size());
         assertEquals(InputEvent.EVENT_TYPE, action.getTriggerConditions().get(0));
-        assertThat(action.getSelectors())
-                .containsExactly(ActionSelector.classify(InputEvent.EVENT_TYPE));
+        assertThat(action.getClassifiedTriggerConditions())
+                .containsExactly(TriggerCondition.classify(InputEvent.EVENT_TYPE));
     }
 
     @Test
@@ -83,12 +83,12 @@ public class ActionJsonDeserializerTest {
         assertEquals("test_function", pythonFunction.getQualName());
         assertEquals(1, action.getTriggerConditions().size());
         assertEquals(InputEvent.EVENT_TYPE, action.getTriggerConditions().get(0));
-        assertThat(action.getSelectors())
-                .containsExactly(ActionSelector.classify(InputEvent.EVENT_TYPE));
+        assertThat(action.getClassifiedTriggerConditions())
+                .containsExactly(TriggerCondition.classify(InputEvent.EVENT_TYPE));
     }
 
     @Test
-    public void testPythonActionJsonUsesPlanExpressionValidation() throws IOException {
+    public void pythonJsonUsesPlanValidation() throws IOException {
         String validJson =
                 "{\"name\":\"pythonCondition\","
                         + "\"exec\":{\"func_type\":\"PythonFunction\","
@@ -96,8 +96,8 @@ public class ActionJsonDeserializerTest {
                         + "\"trigger_conditions\":[\" type == '_input_event' \"],"
                         + "\"config\":null}";
         Action action = new ObjectMapper().readValue(validJson, Action.class);
-        assertThat(action.getSelectors())
-                .containsExactly(ActionSelector.classify("type == '_input_event'"));
+        assertThat(action.getClassifiedTriggerConditions())
+                .containsExactly(TriggerCondition.classify("type == '_input_event'"));
 
         String invalidJson = validJson.replace(" type == '_input_event' ", "type ==");
         assertThatThrownBy(() -> new ObjectMapper().readValue(invalidJson, Action.class))
@@ -128,7 +128,7 @@ public class ActionJsonDeserializerTest {
     }
 
     @Test
-    public void deserializesDottedRawSelector() throws IOException {
+    public void deserializesDottedCondition() throws IOException {
         String json = Utils.readJsonFromResource("actions/action_unquoted_dotted_event_type.json");
 
         ObjectMapper mapper = new ObjectMapper();
@@ -154,6 +154,22 @@ public class ActionJsonDeserializerTest {
 
         assertEquals(1, action.getTriggerConditions().size());
         assertEquals("'com.example.order-created'", action.getTriggerConditions().get(0));
+    }
+
+    @Test
+    public void rejectsLegacyListenTypesField() {
+        String json =
+                "{\"name\": \"legacyAction\","
+                        + " \"exec\": {\"func_type\": \"JavaFunction\","
+                        + " \"qualname\": \"org.apache.flink.agents.plan.TestAction\","
+                        + " \"method_name\": \"legal\","
+                        + " \"parameter_types\": [\"org.apache.flink.agents.api.Event\","
+                        + " \"org.apache.flink.agents.api.context.RunnerContext\"]},"
+                        + " \"listen_event_types\": [\"_input_event\"],"
+                        + " \"config\": null}";
+
+        assertThatThrownBy(() -> new ObjectMapper().readValue(json, Action.class))
+                .hasMessageContaining("trigger_conditions");
     }
 
     @Test

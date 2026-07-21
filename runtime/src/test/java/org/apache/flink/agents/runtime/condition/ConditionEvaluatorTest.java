@@ -28,8 +28,8 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
-import org.apache.flink.agents.plan.condition.ActionSelector;
-import org.apache.flink.agents.plan.condition.ActionSelector.ConditionExpression;
+import org.apache.flink.agents.plan.condition.TriggerCondition;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -118,10 +118,10 @@ class ConditionEvaluatorTest {
         }
     }
 
-    private static ConditionExpression conditionExpression(String source) {
-        ActionSelector selector = ActionSelector.classify(source);
-        assertThat(selector).isInstanceOf(ConditionExpression.class);
-        return (ConditionExpression) selector;
+    private static ExpressionCondition conditionExpression(String source) {
+        TriggerCondition triggerCondition = TriggerCondition.classify(source);
+        assertThat(triggerCondition).isInstanceOf(ExpressionCondition.class);
+        return (ExpressionCondition) triggerCondition;
     }
 
     @BeforeEach
@@ -412,42 +412,31 @@ class ConditionEvaluatorTest {
         assertThat(failEvaluator.evaluate(source, event)).isTrue();
     }
 
-    // ---- Trimmed condition variables preserve payload promotion and precedence ----
+    // ---- Trimmed condition variables preserve the Event.attributes envelope ----
 
     @Test
-    void baseEventTypeControlsPayloadPromotion() {
-        EvaluatorHarness testEvaluator = new EvaluatorHarness(List.of("region > 0"));
-        Map<String, Object> attributes =
-                Map.of(
-                        "input", Map.of("region", 1),
-                        "output", Map.of("region", 2));
+    void payloadChildrenNeedExplicitPaths() {
+        List<String> sources = List.of("input.region == 1", "output.region == 2", "has(region)");
+        EvaluatorHarness testEvaluator =
+                new EvaluatorHarness(sources, ConditionEvaluationFailureStrategy.FAIL);
+        Event inputEvent = new Event(InputEvent.EVENT_TYPE, Map.of("input", Map.of("region", 1)));
+        Event outputEvent =
+                new Event(OutputEvent.EVENT_TYPE, Map.of("output", Map.of("region", 2)));
 
-        Map<String, Object> inputVariables =
-                testEvaluator.buildConditionVariables(
-                        new Event(InputEvent.EVENT_TYPE, attributes), "region > 0");
-        Map<String, Object> outputVariables =
-                testEvaluator.buildConditionVariables(
-                        new Event(OutputEvent.EVENT_TYPE, attributes), "region > 0");
-        Map<String, Object> customVariables =
-                testEvaluator.buildConditionVariables(
-                        new Event("custom", attributes), "region > 0");
-
-        assertThat(inputVariables).containsEntry("region", 1L);
-        assertThat(outputVariables).containsEntry("region", 2L);
-        assertThat(customVariables).doesNotContainKey("region");
+        assertThat(testEvaluator.evaluate("input.region == 1", inputEvent)).isTrue();
+        assertThat(testEvaluator.evaluate("output.region == 2", outputEvent)).isTrue();
+        assertThat(testEvaluator.evaluate("has(region)", inputEvent)).isFalse();
+        assertThat(testEvaluator.evaluate("has(region)", outputEvent)).isFalse();
     }
 
     @Test
-    void presentNullWinsAndEvaluatesAsCelNull() {
+    void topLevelNullEvaluatesAsCelNull() {
         List<String> sources =
                 List.of("has(attributes.score)", "attributes.score == null", "score == null");
         EvaluatorHarness testEvaluator =
                 new EvaluatorHarness(sources, ConditionEvaluationFailureStrategy.FAIL);
-        Event event = new Event(OutputEvent.EVENT_TYPE);
-        Map<String, Object> output = new HashMap<>();
-        output.put("score", null);
-        event.getAttributes().put("output", output);
-        event.getAttributes().put("score", 99);
+        Event event = new Event("custom");
+        event.getAttributes().put("score", null);
 
         for (String source : sources) {
             Map<String, Object> conditionVariables =
@@ -461,11 +450,11 @@ class ConditionEvaluatorTest {
     }
 
     @Test
-    void missingKeyStaysAbsentAndHasReturnsFalse() {
+    void missingKeyMakesHasReturnFalse() {
         String source = "has(score)";
         EvaluatorHarness testEvaluator =
                 new EvaluatorHarness(List.of(source), ConditionEvaluationFailureStrategy.FAIL);
-        Event event = new Event(OutputEvent.EVENT_TYPE, Map.of("output", Map.of()));
+        Event event = new Event(OutputEvent.EVENT_TYPE, Map.of("output", Map.of("score", 99)));
 
         Map<String, Object> conditionVariables =
                 testEvaluator.buildConditionVariables(event, source);
@@ -494,41 +483,47 @@ class ConditionEvaluatorTest {
     }
 
     @Test
-    void threeSourcePrecedenceOutputWins() {
-        String source = "region == 5";
-        EvaluatorHarness testEvaluator = new EvaluatorHarness(List.of(source));
-        Event event = new Event(OutputEvent.EVENT_TYPE);
-        Map<String, Object> output = new HashMap<>();
-        output.put("region", 5);
-        Map<String, Object> input = new HashMap<>();
-        input.put("region", 1);
-        event.getAttributes().put("output", output);
-        event.getAttributes().put("region", 99);
-        event.getAttributes().put("input", input);
+    void pojoUsesExplicitAttributePath() {
+        List<String> sources =
+                List.of("input.status == 'ok'", "attributes.input.status == 'ok'", "has(status)");
+        EvaluatorHarness testEvaluator =
+                new EvaluatorHarness(sources, ConditionEvaluationFailureStrategy.FAIL);
+        Event event = new InputEvent(new ConditionInput("ok", 42));
 
         Map<String, Object> conditionVariables =
-                testEvaluator.buildConditionVariables(event, source);
-        assertThat(conditionVariables.get("region")).isEqualTo(5L); // output's 5 wins
-        assertThat(testEvaluator.evaluate(source, event)).isTrue();
+                testEvaluator.buildConditionVariables(event, "input.status == 'ok'");
+
+        assertThat(conditionVariables).containsKey("input").doesNotContainKey("status");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> attributes = (Map<String, Object>) conditionVariables.get("attributes");
+        assertThat(attributes).containsOnlyKeys("input").doesNotContainKey("status");
+        assertThat(testEvaluator.evaluate("input.status == 'ok'", event)).isTrue();
+        assertThat(testEvaluator.evaluate("attributes.input.status == 'ok'", event)).isTrue();
+        assertThat(testEvaluator.evaluate("has(status)", event)).isFalse();
     }
 
     @Test
-    void bareKeyFromInputResolves() {
-        String source = "region > 50";
-        EvaluatorHarness testEvaluator = new EvaluatorHarness(List.of(source));
-        Event event = new Event(InputEvent.EVENT_TYPE);
-        Map<String, Object> input = new HashMap<>();
-        input.put("region", 99);
-        event.getAttributes().put("input", input);
+    void scalarAndListAccessibleViaInput() {
+        List<String> sources = List.of("input == 'ready'", "input[0] == 'ready'");
+        EvaluatorHarness testEvaluator =
+                new EvaluatorHarness(sources, ConditionEvaluationFailureStrategy.FAIL);
 
-        Map<String, Object> conditionVariables =
-                testEvaluator.buildConditionVariables(event, source);
-        assertThat(conditionVariables.get("region")).isEqualTo(99L); // 99 from input
-        assertThat(testEvaluator.evaluate(source, event)).isTrue();
+        assertThat(testEvaluator.evaluate("input == 'ready'", new InputEvent("ready"))).isTrue();
+        assertThat(testEvaluator.evaluate("input[0] == 'ready'", new InputEvent(List.of("ready"))))
+                .isTrue();
     }
 
     @Test
-    void unreferencedLargeAttributeIsTrimmed() {
+    void typeOnlySkipsUnneededPayload() {
+        String source = "type == EventType.InputEvent";
+        EvaluatorHarness testEvaluator =
+                new EvaluatorHarness(List.of(source), ConditionEvaluationFailureStrategy.FAIL);
+
+        assertThat(testEvaluator.evaluate(source, new InputEvent(new BrokenAttribute()))).isTrue();
+    }
+
+    @Test
+    void trimsUnreferencedLargeAttribute() {
         String source = "score > 1";
         EvaluatorHarness testEvaluator = new EvaluatorHarness(List.of(source));
         Event event = new Event("t");
@@ -545,6 +540,18 @@ class ConditionEvaluatorTest {
     private static final class BrokenAttribute {
         public String getValue() {
             throw new IllegalStateException("broken attribute");
+        }
+    }
+
+    public static final class ConditionInput {
+        public String status;
+        public int value;
+
+        public ConditionInput() {}
+
+        public ConditionInput(String status, int value) {
+            this.status = status;
+            this.value = value;
         }
     }
 }
