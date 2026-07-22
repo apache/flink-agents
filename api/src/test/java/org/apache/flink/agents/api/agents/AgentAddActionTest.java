@@ -18,10 +18,9 @@
 
 package org.apache.flink.agents.api.agents;
 
-import org.apache.flink.agents.api.function.Function;
+import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.function.PythonFunction;
-import org.apache.flink.api.java.tuple.Tuple3;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
@@ -35,17 +34,19 @@ class AgentAddActionTest {
     public static void onInput(Object event, Object ctx) {}
 
     @Test
-    void newFunctionOverloadStoresApiFunction() {
+    void apiDefersSelectorValidation() {
         Agent agent = new Agent();
         PythonFunction pf = new PythonFunction("pkg", "fn");
-        agent.addAction("act", new String[] {"_input_event"}, pf, Map.of("k", "v"));
+        String[] rawEntries = {
+            InputEvent.EVENT_TYPE, "\"order-created\"", "ready == true", "type =="
+        };
+        Map<String, Object> config = Map.of("k", "v");
+        agent.addAction("act", rawEntries, pf, config);
 
-        Map<String, Tuple3<String[], Function, Map<String, Object>>> actions = agent.getActions();
-        Tuple3<String[], Function, Map<String, Object>> entry = actions.get("act");
-        assertThat(entry).isNotNull();
-        assertThat(entry.f0).containsExactly("_input_event");
-        assertThat(entry.f1).isSameAs(pf);
-        assertThat(entry.f2).containsEntry("k", "v");
+        var definition = agent.getActions().get("act");
+        assertThat(definition.f0).containsExactly(rawEntries);
+        assertThat(definition.f1).isSameAs(pf);
+        assertThat(definition.f2).isEqualTo(config);
     }
 
     @Test
@@ -55,9 +56,9 @@ class AgentAddActionTest {
         Agent agent = new Agent();
         agent.addAction(new String[] {"_input_event"}, m);
 
-        Tuple3<String[], Function, Map<String, Object>> entry = agent.getActions().get("onInput");
-        assertThat(entry.f1).isInstanceOf(JavaFunction.class);
-        JavaFunction jf = (JavaFunction) entry.f1;
+        var definition = agent.getActions().get("onInput");
+        assertThat(definition.f1).isInstanceOf(JavaFunction.class);
+        JavaFunction jf = (JavaFunction) definition.f1;
         assertThat(jf.getQualName()).isEqualTo(AgentAddActionTest.class.getName());
         assertThat(jf.getMethodName()).isEqualTo("onInput");
     }
@@ -90,9 +91,9 @@ class AgentAddActionTest {
 
         agent.addAction("act", new String[] {"_input_event"}, jf, null);
 
-        Tuple3<String[], Function, Map<String, Object>> entry = agent.getActions().get("act");
-        assertThat(entry).isNotNull();
-        assertThat(entry.f1).isSameAs(jf);
+        var definition = agent.getActions().get("act");
+        assertThat(definition).isNotNull();
+        assertThat(definition.f1).isSameAs(jf);
     }
 
     @Test

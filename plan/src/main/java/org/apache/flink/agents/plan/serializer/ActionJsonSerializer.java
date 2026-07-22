@@ -28,10 +28,7 @@ import org.apache.flink.agents.plan.actions.Action;
 import java.io.IOException;
 import java.util.Map;
 
-/**
- * Custom serializer for {@link Action} that handles the serialization of the function and event
- * types.
- */
+/** Custom serializer for {@link Action} that handles its function and raw trigger conditions. */
 public class ActionJsonSerializer extends StdSerializer<Action> {
     public static final String CONFIG_TYPE = "__config_type__";
     private static final String PYTHON_FUNC_TYPE = "PythonFunction";
@@ -62,7 +59,6 @@ public class ActionJsonSerializer extends StdSerializer<Action> {
                     "Unsupported function type: " + action.getExec().getClass().getName());
         }
 
-        // Write trigger_conditions field
         jsonGenerator.writeFieldName("trigger_conditions");
         jsonGenerator.writeStartArray();
         for (String entry : action.getTriggerConditions()) {
@@ -80,39 +76,34 @@ public class ActionJsonSerializer extends StdSerializer<Action> {
             String configType = (String) config.get(CONFIG_TYPE);
             if (configType == null) {
                 configType = "java";
-                config.put(CONFIG_TYPE, configType);
             }
             if (configType.equals("java")) {
-                action.getConfig()
-                        .forEach(
-                                (name, value) -> {
-                                    try {
-                                        if (CONFIG_TYPE.equals(name)) {
-                                            jsonGenerator.writeStringField(name, (String) value);
-                                        } else {
-                                            jsonGenerator.writeFieldName(name);
-                                            jsonGenerator.writeStartObject();
-                                            jsonGenerator.writeStringField(
-                                                    "@class", value.getClass().getName());
-                                            jsonGenerator.writeObjectField("value", value);
-                                            jsonGenerator.writeEndObject();
-                                        }
-                                    } catch (IOException e) {
-                                        throw new RuntimeException(
-                                                "Error writing action: " + name, e);
-                                    }
-                                });
+                jsonGenerator.writeStringField(CONFIG_TYPE, configType);
+                config.forEach(
+                        (name, value) -> {
+                            if (CONFIG_TYPE.equals(name)) {
+                                return;
+                            }
+                            try {
+                                jsonGenerator.writeFieldName(name);
+                                jsonGenerator.writeStartObject();
+                                jsonGenerator.writeStringField(
+                                        "@class", value.getClass().getName());
+                                jsonGenerator.writeObjectField("value", value);
+                                jsonGenerator.writeEndObject();
+                            } catch (IOException e) {
+                                throw new RuntimeException("Error writing action: " + name, e);
+                            }
+                        });
             } else if (configType.equals("python")) {
-                action.getConfig()
-                        .forEach(
-                                (name, value) -> {
-                                    try {
-                                        jsonGenerator.writeObjectField(name, value);
-                                    } catch (IOException e) {
-                                        throw new RuntimeException(
-                                                "Error writing action: " + name, e);
-                                    }
-                                });
+                config.forEach(
+                        (name, value) -> {
+                            try {
+                                jsonGenerator.writeObjectField(name, value);
+                            } catch (IOException e) {
+                                throw new RuntimeException("Error writing action: " + name, e);
+                            }
+                        });
             } else {
                 throw new IllegalArgumentException(
                         String.format("Unknown config type %s", configType));

@@ -21,7 +21,6 @@ package org.apache.flink.agents.plan.serializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -30,7 +29,6 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,7 +67,7 @@ public class ActionJsonSerializerTest {
                 json.contains("\"method_name\":\"legal\""), "JSON should contain the method name");
         assertTrue(
                 json.contains("\"trigger_conditions\":["),
-                "JSON should contain the trigger conditions");
+                "JSON should contain trigger conditions");
         assertTrue(
                 json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
                 "JSON should contain the event type string");
@@ -104,14 +102,14 @@ public class ActionJsonSerializerTest {
                 "JSON should contain the qualified name");
         assertTrue(
                 json.contains("\"trigger_conditions\":["),
-                "JSON should contain the trigger conditions");
+                "JSON should contain trigger conditions");
         assertTrue(
                 json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
                 "JSON should contain the event type string");
     }
 
     @Test
-    public void testSerializeMultipleEventTypes() throws Exception {
+    public void testSerializeMultipleTriggerConditions() throws Exception {
         // Create a JavaFunction
         JavaFunction function =
                 new JavaFunction(
@@ -119,10 +117,11 @@ public class ActionJsonSerializerTest {
                         "legal",
                         new Class[] {Event.class, RunnerContext.class});
 
-        // Create an Action with multiple trigger conditions
+        // Preserve raw type and condition entries, including whitespace and duplicates.
         List<String> triggerConditions = new ArrayList<>();
         triggerConditions.add(InputEvent.EVENT_TYPE);
-        triggerConditions.add(OutputEvent.EVENT_TYPE);
+        triggerConditions.add(" score > 1 ");
+        triggerConditions.add(InputEvent.EVENT_TYPE);
         Action action = new Action("multiEventAction", function, triggerConditions);
 
         // Serialize the action to JSON
@@ -134,40 +133,21 @@ public class ActionJsonSerializerTest {
                 "JSON should contain the action name");
         assertTrue(
                 json.contains("\"trigger_conditions\":["),
-                "JSON should contain the trigger conditions");
+                "JSON should contain trigger conditions");
         assertTrue(
                 json.contains("\"" + InputEvent.EVENT_TYPE + "\""),
                 "JSON should contain the InputEvent type string");
         assertTrue(
-                json.contains("\"" + OutputEvent.EVENT_TYPE + "\""),
-                "JSON should contain the OutputEvent type string");
+                json.contains("\" score > 1 \""), "JSON should contain the raw condition string");
         assertTrue(
                 json.contains("\"org.apache.flink.agents.api.context.RunnerContext\""),
                 "JSON should contain the runner context class name");
-    }
 
-    @Test
-    public void testSerializeEmptyEventTypes() throws Exception {
-        // Create a JavaFunction
-        JavaFunction function =
-                new JavaFunction(
-                        "org.apache.flink.agents.plan.TestAction",
-                        "legal",
-                        new Class[] {Event.class, RunnerContext.class});
-
-        // Create an Action with an empty event types list
-        Action action = new Action("emptyEventsAction", function, Collections.emptyList());
-
-        // Serialize the action to JSON
-        String json = new ObjectMapper().writeValueAsString(action);
-
-        // Verify the JSON contains the expected fields
-        assertTrue(
-                json.contains("\"name\":\"emptyEventsAction\""),
-                "JSON should contain the action name");
-        assertTrue(
-                json.contains("\"trigger_conditions\":[]"),
-                "JSON should contain an empty trigger conditions array");
+        // Pin the exact serialized trigger_conditions structure and order.
+        Action restored = new ObjectMapper().readValue(json, Action.class);
+        assertEquals(
+                List.of(InputEvent.EVENT_TYPE, " score > 1 ", InputEvent.EVENT_TYPE),
+                restored.getTriggerConditions());
     }
 
     @Test
@@ -199,8 +179,8 @@ public class ActionJsonSerializerTest {
         assertEquals(2, deserializedFunction.getParameterTypes().length);
         assertEquals(Event.class, deserializedFunction.getParameterTypes()[0]);
         assertEquals(RunnerContext.class, deserializedFunction.getParameterTypes()[1]);
-        assertEquals(1, deserializedAction.getListenEventTypes().size());
-        assertEquals(InputEvent.EVENT_TYPE, deserializedAction.getListenEventTypes().get(0));
+        assertEquals(1, deserializedAction.getTriggerConditions().size());
+        assertEquals(InputEvent.EVENT_TYPE, deserializedAction.getTriggerConditions().get(0));
     }
 
     @Test
@@ -233,5 +213,50 @@ public class ActionJsonSerializerTest {
         Assertions.assertEquals("123", ((InputEvent) deserializeConfig.get("arg0")).getInput());
         Assertions.assertEquals(arg1, deserializeConfig.get("arg1"));
         Assertions.assertEquals(arg2, deserializeConfig.get("arg2"));
+    }
+
+    @Test
+    public void testSerializeDeserializePythonConfig() throws Exception {
+        JavaFunction function =
+                new JavaFunction(
+                        "org.apache.flink.agents.plan.TestAction",
+                        "legal",
+                        new Class[] {Event.class, RunnerContext.class});
+
+        Map<String, Object> config = new HashMap<>();
+        config.put(ActionJsonSerializer.CONFIG_TYPE, "python");
+        config.put("list", List.of(1, 2, 3));
+        config.put("nested", Map.of("k1", 1, "k2", 2));
+
+        Action action =
+                new Action("pyConfigAction", function, List.of(InputEvent.EVENT_TYPE), config);
+
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(action);
+        Action actual = mapper.readValue(json, Action.class);
+
+        Map<String, Object> restored = actual.getConfig();
+        Assertions.assertNotNull(restored);
+        assertEquals("python", restored.get(ActionJsonSerializer.CONFIG_TYPE));
+        assertEquals(List.of(1, 2, 3), restored.get("list"));
+        assertEquals(Map.of("k1", 1, "k2", 2), restored.get("nested"));
+    }
+
+    @Test
+    public void testSerializeDeserializeNullConfig() throws Exception {
+        JavaFunction function =
+                new JavaFunction(
+                        "org.apache.flink.agents.plan.TestAction",
+                        "legal",
+                        new Class[] {Event.class, RunnerContext.class});
+
+        Action action = new Action("nullConfigAction", function, List.of(InputEvent.EVENT_TYPE));
+
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(action);
+        assertTrue(json.contains("\"config\":null"), "JSON should contain a null config field");
+
+        Action actual = mapper.readValue(json, Action.class);
+        Assertions.assertNull(actual.getConfig());
     }
 }

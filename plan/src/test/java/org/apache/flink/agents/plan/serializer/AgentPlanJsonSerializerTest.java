@@ -119,40 +119,11 @@ public class AgentPlanJsonSerializerTest {
         assertThat(json).contains("\"method_name\":\"legal\"");
         assertThat(json).contains("\"trigger_conditions\":[");
         assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\"");
-        assertThat(json).contains("\"actions_by_event\":{}");
+        assertThat(json).doesNotContain("actions_by_event");
     }
 
     @Test
-    public void testSerializeAgentPlanWithActionsByEvent() throws Exception {
-        // Create a JavaFunction
-        JavaFunction function =
-                new JavaFunction(
-                        "org.apache.flink.agents.plan.TestAction",
-                        "legal",
-                        new Class[] {Event.class, RunnerContext.class});
-
-        // Create an Action
-        Action action = new Action("testAction", function, List.of(InputEvent.EVENT_TYPE));
-
-        // Create a map of event trigger actions
-        Map<String, List<Action>> actionsByEvent = new HashMap<>();
-        actionsByEvent.put(InputEvent.EVENT_TYPE, List.of(action));
-
-        // Create a AgentPlan with event trigger actions but no regular actions
-        AgentPlan agentPlan = new AgentPlan(new HashMap<>(), actionsByEvent);
-
-        // Serialize the agent plan to JSON
-        String json = new ObjectMapper().writeValueAsString(agentPlan);
-
-        // Verify the JSON contains the expected fields
-        assertThat(json).contains("\"actions\":{}");
-        assertThat(json).contains("\"actions_by_event\":{");
-        assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\":[");
-        assertThat(json).contains("\"testAction\"");
-    }
-
-    @Test
-    public void testSerializeAgentPlanWithBothActionsAndActionsByEvent() throws Exception {
+    public void testSerializeAgentPlanWithMultipleActions() throws Exception {
         // Create JavaFunctions
         JavaFunction function1 =
                 new JavaFunction(
@@ -174,13 +145,8 @@ public class AgentPlanJsonSerializerTest {
         actions.put(action1.getName(), action1);
         actions.put(action2.getName(), action2);
 
-        // Create a map of event trigger actions
-        Map<String, List<Action>> actionsByEvent = new HashMap<>();
-        actionsByEvent.put(InputEvent.EVENT_TYPE, List.of(action1));
-        actionsByEvent.put(OutputEvent.EVENT_TYPE, List.of(action2));
-
-        // Create a AgentPlan with both actions and event trigger actions
-        AgentPlan agentPlan = new AgentPlan(actions, actionsByEvent);
+        // Create an AgentPlan; event indexes are derived and not serialized.
+        AgentPlan agentPlan = new AgentPlan(actions);
 
         // Serialize the agent plan to JSON
         String json = new ObjectMapper().writeValueAsString(agentPlan);
@@ -189,9 +155,7 @@ public class AgentPlanJsonSerializerTest {
         assertThat(json).contains("\"actions\":{");
         assertThat(json).contains("\"action1\":{");
         assertThat(json).contains("\"action2\":{");
-        assertThat(json).contains("\"actions_by_event\":{");
-        assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\":[");
-        assertThat(json).contains("\"" + OutputEvent.EVENT_TYPE + "\":[");
+        assertThat(json).doesNotContain("actions_by_event");
         assertThat(json).contains("\"action1\"");
         assertThat(json).contains("\"action2\"");
     }
@@ -206,7 +170,7 @@ public class AgentPlanJsonSerializerTest {
 
         // Verify the JSON contains the expected fields
         assertThat(json).contains("\"actions\":{}");
-        assertThat(json).contains("\"actions_by_event\":{}");
+        assertThat(json).doesNotContain("actions_by_event");
     }
 
     @Test
@@ -226,7 +190,7 @@ public class AgentPlanJsonSerializerTest {
 
         // Verify the JSON contains the expected fields
         assertThat(json).contains("\"actions\":{");
-        assertThat(json).contains("\"actions_by_event\":{");
+        assertThat(json).doesNotContain("actions_by_event");
         assertThat(json).contains("\"config\":{");
 
         // Verify that the actions from @Action annotated methods are present

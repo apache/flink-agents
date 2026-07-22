@@ -26,19 +26,25 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.condition.ActionMatcher;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Layer F1 — feed a Python-shaped JSON plan into the operator harness and confirm a JavaFunction
- * action body runs. Java→Python action dispatch goes through Pemja and is Layer F2 scope.
+ * Layer F1 — feed Python-shaped JSON plans into the Java runtime and verify trigger-condition
+ * matching and JavaFunction dispatch. Java→Python action dispatch goes through Pemja and is Layer
+ * F2 scope.
  */
 public class CrossLanguageActionRuntimeTest {
 
@@ -98,6 +104,24 @@ public class CrossLanguageActionRuntimeTest {
         assertThat(factory).isNotNull();
     }
 
+    @Test
+    void pythonPlanUsesRuntimeOrSemantics() throws Exception {
+        Path repoRoot = Paths.get(System.getProperty("user.dir")).getParent();
+        Path snapshot =
+                repoRoot.resolve(
+                        "e2e-test/cross-language-agent-plan-snapshots/python/agent_plan_with_java_action.json");
+        AgentPlan plan = MAPPER.readValue(Files.readString(snapshot), AgentPlan.class);
+        Action handle = plan.getActions().get("handle");
+        ActionMatcher matcher = new ActionMatcher(plan);
+
+        assertThat(handle.getTriggerConditions())
+                .containsExactly(InputEvent.EVENT_TYPE, "attributes.ready == true");
+        assertThat(matcher.match(new InputEvent("type-hit"))).containsExactly(handle);
+        assertThat(matcher.match(new Event("other", Map.of("ready", true))))
+                .containsExactly(handle);
+        assertThat(matcher.match(new Event("other", Map.of("ready", false)))).isEmpty();
+    }
+
     /**
      * Wire format Python emits via {@code AgentPlan.model_dump_json}; pinned symmetric in Layer B.
      */
@@ -122,16 +146,12 @@ public class CrossLanguageActionRuntimeTest {
                 + "    \"config\":null"
                 + "  }"
                 + "},"
-                + "\"actions_by_event\":{"
-                + "  \"_input_event\":[\"handle\"]"
-                + "},"
                 + "\"resource_providers\":{},"
                 + "\"config\":{\"conf_data\":{}}"
                 + "}";
     }
 
     private static AgentPlan planWithPythonAction() throws Exception {
-        java.util.Map<String, List<Action>> actionsByEvent = new java.util.HashMap<>();
         java.util.Map<String, Action> actions = new java.util.HashMap<>();
 
         PythonFunction pythonFn =
@@ -143,11 +163,8 @@ public class CrossLanguageActionRuntimeTest {
                         pythonFn,
                         java.util.Collections.singletonList(InputEvent.EVENT_TYPE));
         actions.put(act.getName(), act);
-        actionsByEvent.put(InputEvent.EVENT_TYPE, java.util.Collections.singletonList(act));
-
         return new AgentPlan(
                 actions,
-                actionsByEvent,
                 new java.util.HashMap<>(),
                 new org.apache.flink.agents.plan.AgentConfiguration());
     }

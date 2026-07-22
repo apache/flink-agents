@@ -29,6 +29,7 @@ import javax.annotation.Nullable;
 
 import java.lang.reflect.Method;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /** Base class for defining agent logic. */
@@ -42,7 +43,7 @@ public class Agent {
         for (ResourceType type : ResourceType.values()) {
             this.resources.put(type, new HashMap<>());
         }
-        this.actions = new HashMap<>();
+        this.actions = new LinkedHashMap<>();
     }
 
     public Map<String, Tuple3<String[], Function, Map<String, Object>>> getActions() {
@@ -56,8 +57,8 @@ public class Agent {
     /**
      * Add action to agent.
      *
-     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
-     *     future condition-expression form.
+     * @param triggerConditions Raw event-type names or Boolean conditions combined with OR
+     *     semantics. Shape and expression validation occur during {@code AgentPlan} construction.
      * @param method The method of this action, should be static method.
      * @param config The optional config can be used by this action.
      */
@@ -70,8 +71,8 @@ public class Agent {
     /**
      * Add action to agent.
      *
-     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
-     *     future condition-expression form.
+     * @param triggerConditions Raw event-type names or Boolean conditions combined with OR
+     *     semantics. Shape and expression validation occur during {@code AgentPlan} construction.
      * @param method The method of this action, should be static method.
      */
     public Agent addAction(String[] triggerConditions, Method method) {
@@ -82,8 +83,8 @@ public class Agent {
      * Add action to agent.
      *
      * @param name The action name. Must be unique within this agent.
-     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
-     *     future condition-expression form.
+     * @param triggerConditions Raw event-type names or Boolean conditions combined with OR
+     *     semantics. Shape and expression validation occur during {@code AgentPlan} construction.
      * @param function The api-layer function descriptor; will be promoted to a plan-layer
      *     executable at {@code AgentPlan} construction.
      * @param config Optional config for this action.

@@ -47,24 +47,6 @@
       ]
     }
   },
-  "actions_by_event": {
-    "_input_event": [
-      "first_action",
-      "second_action"
-    ],
-    "_my_event": [
-      "second_action"
-    ],
-    "_chat_request_event": [
-      "chat_model_action"
-    ],
-    "_tool_response_event": [
-      "chat_model_action"
-    ],
-    "_tool_request_event": [
-      "tool_call_action"
-    ]
-  },
   "resource_providers": {
     "chat_model": {
       "chat_model": {

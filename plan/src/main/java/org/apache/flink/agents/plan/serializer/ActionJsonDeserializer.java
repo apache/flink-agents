@@ -38,10 +38,7 @@ import java.util.Map;
 
 import static org.apache.flink.agents.plan.serializer.ActionJsonSerializer.CONFIG_TYPE;
 
-/**
- * Custom deserializer for {@link Action} that handles the deserialization of the function and event
- * types.
- */
+/** Custom deserializer for {@link Action} that handles its function and raw trigger conditions. */
 public class ActionJsonDeserializer extends StdDeserializer<Action> {
 
     public ActionJsonDeserializer() {
@@ -66,10 +63,27 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
             throw new IOException("Unsupported function type: " + funcType);
         }
 
-        // Deserialize trigger_conditions
+        JsonNode triggerConditionsNode = node.get("trigger_conditions");
+        if (triggerConditionsNode == null
+                || !triggerConditionsNode.isArray()
+                || triggerConditionsNode.isEmpty()) {
+            throw new IOException("Action field 'trigger_conditions' must be a non-empty array");
+        }
         List<String> triggerConditions = new ArrayList<>();
-        node.get("trigger_conditions")
-                .forEach(entryNode -> triggerConditions.add(entryNode.asText()));
+        for (int index = 0; index < triggerConditionsNode.size(); index++) {
+            JsonNode entryNode = triggerConditionsNode.get(index);
+            if (!entryNode.isTextual() && !entryNode.isNull()) {
+                throw new IOException(
+                        "Invalid trigger condition #"
+                                + (index + 1)
+                                + " for action '"
+                                + name
+                                + "' from source "
+                                + entryNode
+                                + ": entry must be a string");
+            }
+            triggerConditions.add(entryNode.isNull() ? null : entryNode.textValue());
+        }
 
         // Deserialize params
         Map<String, Object> config = null;
@@ -90,8 +104,7 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
         try {
             return new Action(name, func, triggerConditions, config);
         } catch (Exception e) {
-            throw new RuntimeException(
-                    String.format("Failed to create Action with name \"%s\"", name), e);
+            throw new IOException("Failed to create Action '" + name + "': " + e.getMessage(), e);
         }
     }
 
