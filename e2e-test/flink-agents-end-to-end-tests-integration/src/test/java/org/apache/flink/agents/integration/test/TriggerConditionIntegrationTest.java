@@ -38,6 +38,7 @@ import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -102,7 +103,7 @@ public class TriggerConditionIntegrationTest {
         List<Object> inputs =
                 List.of(
                         new ConditionInput("pojo", "ok", 9),
-                        Map.of("id", "map", "status", "ok", "value", 9));
+                        mutableMap(Map.of("id", "map", "status", "ok", "value", 9)));
 
         assertThat(runPayloads(inputs, new PojoMapParityAgent()))
                 .containsExactlyInAnyOrder("parity:pojo", "parity:map");
@@ -112,20 +113,22 @@ public class TriggerConditionIntegrationTest {
     public void doubleQuotedDottedKeyWorks() throws Exception {
         List<Object> inputs =
                 List.of(
-                        Map.of(
-                                "id",
-                                "dotted-match",
-                                "com.www.info",
-                                "ready",
-                                "status",
-                                Map.of("forward", true)),
-                        Map.of(
-                                "id",
-                                "dotted-miss",
-                                "com.www.info",
-                                "blocked",
-                                "status",
-                                Map.of("forward", true)));
+                        mutableMap(
+                                Map.of(
+                                        "id",
+                                        "dotted-match",
+                                        "com.www.info",
+                                        "ready",
+                                        "status",
+                                        mutableMap(Map.of("forward", true)))),
+                        mutableMap(
+                                Map.of(
+                                        "id",
+                                        "dotted-miss",
+                                        "com.www.info",
+                                        "blocked",
+                                        "status",
+                                        mutableMap(Map.of("forward", true)))));
 
         assertThat(runPayloads(inputs, new DoubleQuotedDottedMapKeyAgent()))
                 .containsExactly("double-quoted:dotted-match");
@@ -135,20 +138,22 @@ public class TriggerConditionIntegrationTest {
     public void singleQuotedDottedKeyWorks() throws Exception {
         List<Object> inputs =
                 List.of(
-                        Map.of(
-                                "id",
-                                "dotted-match",
-                                "com.www.info",
-                                "ready",
-                                "status",
-                                Map.of("forward", true)),
-                        Map.of(
-                                "id",
-                                "dotted-miss",
-                                "com.www.info",
-                                "blocked",
-                                "status",
-                                Map.of("forward", true)));
+                        mutableMap(
+                                Map.of(
+                                        "id",
+                                        "dotted-match",
+                                        "com.www.info",
+                                        "ready",
+                                        "status",
+                                        mutableMap(Map.of("forward", true)))),
+                        mutableMap(
+                                Map.of(
+                                        "id",
+                                        "dotted-miss",
+                                        "com.www.info",
+                                        "blocked",
+                                        "status",
+                                        mutableMap(Map.of("forward", true)))));
 
         assertThat(runPayloads(inputs, new SingleQuotedDottedMapKeyAgent()))
                 .containsExactly("single-quoted:dotted-match");
@@ -158,24 +163,34 @@ public class TriggerConditionIntegrationTest {
     public void nestedMapAndWorks() throws Exception {
         List<Object> inputs =
                 List.of(
-                        Map.of("id", "both", "status", Map.of("forward", true, "code", "ready")),
-                        Map.of(
-                                "id",
-                                "forward-only",
-                                "status",
-                                Map.of("forward", true, "code", "blocked")),
-                        Map.of(
-                                "id",
-                                "code-only",
-                                "status",
-                                Map.of("forward", false, "code", "ready")));
+                        mutableMap(
+                                Map.of(
+                                        "id",
+                                        "both",
+                                        "status",
+                                        mutableMap(Map.of("forward", true, "code", "ready")))),
+                        mutableMap(
+                                Map.of(
+                                        "id",
+                                        "forward-only",
+                                        "status",
+                                        mutableMap(Map.of("forward", true, "code", "blocked")))),
+                        mutableMap(
+                                Map.of(
+                                        "id",
+                                        "code-only",
+                                        "status",
+                                        mutableMap(Map.of("forward", false, "code", "ready")))));
 
         assertThat(runPayloads(inputs, new NestedMapAndAgent())).containsExactly("nested-map:both");
     }
 
     @Test
     public void scalarAndListPayloadsWork() throws Exception {
-        assertThat(runPayloads(List.of("ready", List.of("ready")), new ScalarListPayloadAgent()))
+        assertThat(
+                        runPayloads(
+                                List.of("ready", new ArrayList<>(List.of("ready"))),
+                                new ScalarListPayloadAgent()))
                 .containsExactlyInAnyOrder("scalar", "list");
     }
 
@@ -255,5 +270,9 @@ public class TriggerConditionIntegrationTest {
         }
         results.close();
         return outputs;
+    }
+
+    private static Map<String, Object> mutableMap(Map<String, Object> values) {
+        return new HashMap<>(values);
     }
 }
