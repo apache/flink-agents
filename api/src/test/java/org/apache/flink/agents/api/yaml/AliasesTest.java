@@ -60,6 +60,22 @@ class AliasesTest {
     }
 
     @Test
+    void watsonxAliasesResolveForJavaAndPython() {
+        assertThat(
+                        Aliases.resolveClazz(
+                                "watsonx", ResourceType.CHAT_MODEL_CONNECTION, Language.JAVA))
+                .isEqualTo(ResourceName.ChatModel.WATSONX_CONNECTION);
+        assertThat(Aliases.resolveClazz("watsonx", ResourceType.CHAT_MODEL, Language.JAVA))
+                .isEqualTo(ResourceName.ChatModel.WATSONX_SETUP);
+        assertThat(
+                        Aliases.resolveClazz(
+                                "watsonx", ResourceType.CHAT_MODEL_CONNECTION, Language.PYTHON))
+                .isEqualTo(ResourceName.ChatModel.Python.WATSONX_CONNECTION);
+        assertThat(Aliases.resolveClazz("watsonx", ResourceType.CHAT_MODEL, Language.PYTHON))
+                .isEqualTo(ResourceName.ChatModel.Python.WATSONX_SETUP);
+    }
+
+    @Test
     void clazzAliasMissPassesThrough() {
         String fqn =
                 Aliases.resolveClazz(

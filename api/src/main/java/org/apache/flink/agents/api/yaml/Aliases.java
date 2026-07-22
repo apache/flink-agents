@@ -88,12 +88,14 @@ public final class Aliases {
         chatConnJava.put("anthropic", ResourceName.ChatModel.ANTHROPIC_CONNECTION);
         chatConnJava.put("azure", ResourceName.ChatModel.AZURE_CONNECTION);
         chatConnJava.put("bedrock", ResourceName.ChatModel.BEDROCK_CONNECTION);
+        chatConnJava.put("watsonx", ResourceName.ChatModel.WATSONX_CONNECTION);
         Map<String, String> chatConnPython = new HashMap<>();
         chatConnPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_CONNECTION);
         chatConnPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_CONNECTION);
         chatConnPython.put("anthropic", ResourceName.ChatModel.Python.ANTHROPIC_CONNECTION);
         chatConnPython.put("tongyi", ResourceName.ChatModel.Python.TONGYI_CONNECTION);
         chatConnPython.put("azure_openai", ResourceName.ChatModel.Python.AZURE_OPENAI_CONNECTION);
+        chatConnPython.put("watsonx", ResourceName.ChatModel.Python.WATSONX_CONNECTION);
         ca.put(ResourceType.CHAT_MODEL_CONNECTION, buildLangBuckets(chatConnJava, chatConnPython));
 
         // CHAT_MODEL
@@ -104,12 +106,14 @@ public final class Aliases {
         chatJava.put("anthropic", ResourceName.ChatModel.ANTHROPIC_SETUP);
         chatJava.put("azure", ResourceName.ChatModel.AZURE_SETUP);
         chatJava.put("bedrock", ResourceName.ChatModel.BEDROCK_SETUP);
+        chatJava.put("watsonx", ResourceName.ChatModel.WATSONX_SETUP);
         Map<String, String> chatPython = new HashMap<>();
         chatPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_SETUP);
         chatPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_SETUP);
         chatPython.put("anthropic", ResourceName.ChatModel.Python.ANTHROPIC_SETUP);
         chatPython.put("tongyi", ResourceName.ChatModel.Python.TONGYI_SETUP);
         chatPython.put("azure_openai", ResourceName.ChatModel.Python.AZURE_OPENAI_SETUP);
+        chatPython.put("watsonx", ResourceName.ChatModel.Python.WATSONX_SETUP);
         ca.put(ResourceType.CHAT_MODEL, buildLangBuckets(chatJava, chatPython));
 
         // EMBEDDING_MODEL_CONNECTION
