@@ -647,6 +647,10 @@ Model availability depends on your Azure region and subscription. Always check t
 
 Google Gemini provides cloud-based chat models through the Gemini Developer API and Vertex AI. The Flink Agents Gemini integration uses the official Google Gen AI SDK and supports text conversations, system instructions, and tool calling.
 
+{{< hint warning >}}
+Vertex AI support is experimental. The connection path has been smoke-tested during construction but has not yet been verified end to end.
+{{< /hint >}}
+
 {{< hint info >}}
 Gemini is only supported in Java currently. To use Gemini from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
@@ -668,7 +672,7 @@ Gemini is only supported in Java currently. To use Gemini from Python agents, se
 | `base_url` | String | None | Custom endpoint, such as a proxy that injects credentials |
 | `model` | String | None | Default model name, used when no model is supplied per setup |
 | `timeout` | int | None | API request timeout in seconds |
-| `vertex_ai` | boolean | `false` | Use Vertex AI instead of the Gemini Developer API |
+| `vertex_ai` | boolean | `false` | Use the experimental Vertex AI backend; not yet verified end to end |
 | `project` | String | None | Vertex AI project id |
 | `location` | String | None | Vertex AI location |
 
