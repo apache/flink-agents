@@ -123,10 +123,10 @@ def test_action_deserialize_java_shape_config_unwraps_primitives() -> None:
 
 
 def test_action_deserialize_python_config_propagates_reconstruction_error() -> None:
-    """A serialized model whose module is missing must fail loudly.
+    """A tagged model whose module is missing must fail loudly.
 
-    The list-shaped entry is treated as a serialized model, so importing a
-    non-existent module raises instead of being silently swallowed.
+    The entry is marked as a serialized model, so importing a non-existent
+    module raises instead of being silently swallowed.
     """
     json_str = json.dumps(
         {
@@ -139,9 +139,35 @@ def test_action_deserialize_python_config_propagates_reconstruction_error() -> N
             "trigger_conditions": ["_input_event"],
             "config": {
                 "__config_type__": "python",
-                "broken": ["nonexistent_module_xyz", "SomeClass", {}],
+                "broken": {
+                    "__pydantic_model__": True,
+                    "module": "nonexistent_module_xyz",
+                    "class": "SomeClass",
+                    "value": {},
+                },
             },
         }
     )
     with pytest.raises(ModuleNotFoundError):
         Action.model_validate_json(json_str)
+
+
+def test_action_deserialize_python_config_preserves_plain_list() -> None:
+    """A plain user list must survive untouched, not be mistaken for a model."""
+    json_str = json.dumps(
+        {
+            "name": "legal",
+            "exec": {
+                "func_type": "PythonFunction",
+                "module": "flink_agents.plan.tests.test_action",
+                "qualname": "legal_signature",
+            },
+            "trigger_conditions": ["_input_event"],
+            "config": {
+                "__config_type__": "python",
+                "hosts": ["host-a", "host-b", "host-c"],
+            },
+        }
+    )
+    action = Action.model_validate_json(json_str)
+    assert action.config == {"hosts": ["host-a", "host-b", "host-c"]}

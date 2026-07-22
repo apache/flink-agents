@@ -26,6 +26,9 @@ from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.function import Function, JavaFunction, PythonFunction
 
 _CONFIG_TYPE = "__config_type__"
+# Tags a config entry that we serialized from a pydantic model, so on the way
+# back we only rebuild the ones we tagged and leave plain values alone.
+_PYDANTIC_MODEL_MARKER = "__pydantic_model__"
 
 
 class Action(BaseModel):
@@ -70,11 +73,12 @@ class Action(BaseModel):
         data[_CONFIG_TYPE] = "python"
         for name, value in config.items():
             if isinstance(value, BaseModel):
-                data[name] = (
-                    inspect.getmodule(value).__name__,
-                    value.__class__.__name__,
-                    value,
-                )
+                data[name] = {
+                    _PYDANTIC_MODEL_MARKER: True,
+                    "module": inspect.getmodule(value).__name__,
+                    "class": value.__class__.__name__,
+                    "value": value,
+                }
             else:
                 data[name] = value
         return data
@@ -95,10 +99,14 @@ class Action(BaseModel):
                     self["config"][name] = value["value"]
             return self
         for name, value in config.items():
-            if isinstance(value, list | tuple):
-                module = importlib.import_module(value[0])
-                clazz = getattr(module, value[1])
-                self["config"][name] = clazz.model_validate(value[2])
+            # Rebuild only entries with our marker, so a plain list or dict
+            # value is not treated as a model by mistake. Do not catch errors:
+            # if the class cannot be imported (e.g. missing on the worker),
+            # fail here with the real cause instead of a confusing error later.
+            if isinstance(value, dict) and value.get(_PYDANTIC_MODEL_MARKER):
+                module = importlib.import_module(value["module"])
+                clazz = getattr(module, value["class"])
+                self["config"][name] = clazz.model_validate(value["value"])
             else:
                 self["config"][name] = value
         return self
