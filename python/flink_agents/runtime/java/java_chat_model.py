@@ -26,6 +26,9 @@ from flink_agents.api.chat_models.java_chat_model import (
 )
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool import Tool
+from flink_agents.runtime.java.java_resource_wrapper import (
+    set_java_resource_metric_group,
+)
 
 
 class JavaChatModelConnectionImpl(JavaChatModelConnection):
@@ -50,6 +53,11 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
         super().__init__(**kwargs)
         self._j_resource = j_resource
         self._j_resource_adapter = j_resource_adapter
+
+    @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
 
     @override
     def chat(
@@ -113,6 +121,11 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
 
         self._j_resource = j_resource
         self._j_resource_adapter = j_resource_adapter
+
+    @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
 
     @property
     @override

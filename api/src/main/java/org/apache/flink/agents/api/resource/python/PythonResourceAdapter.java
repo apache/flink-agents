@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
@@ -119,6 +120,14 @@ public interface PythonResourceAdapter {
      * @return the result of the method invocation
      */
     Object callMethod(Object obj, String methodName, Map<String, Object> kwargs);
+
+    /**
+     * Binds a Java metric group to a Python resource.
+     *
+     * @param pythonResource the Python resource object
+     * @param metricGroup the Java metric group to expose through Python's metric group API
+     */
+    default void setMetricGroup(Object pythonResource, FlinkAgentsMetricGroup metricGroup) {}
 
     /**
      * Invokes a method with the specified name and arguments.
