@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from pyflink.datastream import KeySelector
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -95,6 +96,7 @@ class MockChatModelConnection(BaseChatModelConnection):
         self,
         messages: Sequence[ChatMessage],
         tools: List | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
         """Generate a tool call or a response according to input."""

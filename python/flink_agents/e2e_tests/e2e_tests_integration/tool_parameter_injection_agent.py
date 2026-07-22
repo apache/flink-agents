@@ -18,6 +18,7 @@
 from pyflink.datastream import KeySelector
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -113,6 +114,7 @@ class MockToolChatConnection(BaseChatModelConnection):
         self,
         messages: list[ChatMessage],
         tools: list[BaseTool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: object,
     ) -> ChatMessage:
         """Return a tool call for user input, or echo the tool response."""
