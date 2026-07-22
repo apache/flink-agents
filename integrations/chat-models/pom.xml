@@ -37,6 +37,7 @@ under the License.
         <module>gemini</module>
         <module>ollama</module>
         <module>openai</module>
+        <module>watsonx</module>
     </modules>
 
 </project>
