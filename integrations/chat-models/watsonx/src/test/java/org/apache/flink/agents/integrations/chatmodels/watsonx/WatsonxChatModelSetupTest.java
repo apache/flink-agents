@@ -37,14 +37,16 @@ class WatsonxChatModelSetupTest {
     void testDefaultModel() {
         WatsonxChatModelSetup setup =
                 new WatsonxChatModelSetup(
-                        ResourceDescriptor.Builder.newBuilder(WatsonxChatModelSetup.class.getName())
+                        ResourceDescriptor.Builder.newBuilder(
+                                        WatsonxChatModelSetup.class.getName())
                                 .addInitialArgument("connection", "watsonx")
                                 .build(),
                         NOOP);
 
         Map<String, Object> params = setup.getParameters();
         assertThat(params.get("model")).isEqualTo(WatsonxChatModelSetup.DEFAULT_MODEL);
-        assertThat(params.get("temperature")).isEqualTo(WatsonxChatModelSetup.DEFAULT_TEMPERATURE);
+        assertThat(params.get("temperature"))
+                .isEqualTo(WatsonxChatModelSetup.DEFAULT_TEMPERATURE);
         assertThat(params).doesNotContainKey("max_tokens");
     }
 
@@ -53,7 +55,8 @@ class WatsonxChatModelSetupTest {
     void testConfiguredParameters() {
         WatsonxChatModelSetup setup =
                 new WatsonxChatModelSetup(
-                        ResourceDescriptor.Builder.newBuilder(WatsonxChatModelSetup.class.getName())
+                        ResourceDescriptor.Builder.newBuilder(
+                                        WatsonxChatModelSetup.class.getName())
                                 .addInitialArgument("connection", "watsonx")
                                 .addInitialArgument("model", "ibm/granite-3-3-8b-instruct")
                                 .addInitialArgument("temperature", 0.2)
@@ -82,7 +85,7 @@ class WatsonxChatModelSetupTest {
                             () ->
                                     new WatsonxChatModelSetup(
                                             ResourceDescriptor.Builder.newBuilder(
-                                                            WatsonxChatModelSetup.class.getName())
+                                                                    WatsonxChatModelSetup.class.getName())
                                                     .addInitialArgument("connection", "watsonx")
                                                     .addInitialArgument(
                                                             "temperature", invalidTemperature)
@@ -102,7 +105,7 @@ class WatsonxChatModelSetupTest {
                             () ->
                                     new WatsonxChatModelSetup(
                                             ResourceDescriptor.Builder.newBuilder(
-                                                            WatsonxChatModelSetup.class.getName())
+                                                                    WatsonxChatModelSetup.class.getName())
                                                     .addInitialArgument("connection", "watsonx")
                                                     .addInitialArgument(
                                                             "max_tokens", invalidMaxTokens)
