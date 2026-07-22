@@ -28,7 +28,7 @@ from flink_agents.api.events.tool_event import (
     ToolRequestEvent,
     ToolResponseEvent,
 )
-from flink_agents.api.resource import ResourceType
+from flink_agents.api.resource import ResourceName, ResourceType
 from flink_agents.api.yaml.aliases import (
     CLAZZ_ALIASES,
     EVENT_ALIASES,
@@ -119,6 +119,25 @@ def test_resolve_clazz_dispatches_on_language() -> None:
     # Java FQN starts with `org.apache.flink.agents`
     assert java.startswith("org.apache.flink.agents")
     assert py.startswith("flink_agents")
+
+
+def test_watsonx_aliases_resolve_for_java_and_python() -> None:
+    assert (
+        resolve_clazz("watsonx", ResourceType.CHAT_MODEL_CONNECTION, "python")
+        == ResourceName.ChatModel.WATSONX_CONNECTION
+    )
+    assert (
+        resolve_clazz("watsonx", ResourceType.CHAT_MODEL, "python")
+        == ResourceName.ChatModel.WATSONX_SETUP
+    )
+    assert (
+        resolve_clazz("watsonx", ResourceType.CHAT_MODEL_CONNECTION, "java")
+        == ResourceName.ChatModel.Java.WATSONX_CONNECTION
+    )
+    assert (
+        resolve_clazz("watsonx", ResourceType.CHAT_MODEL, "java")
+        == ResourceName.ChatModel.Java.WATSONX_SETUP
+    )
 
 
 def test_resolve_clazz_default_language_is_python() -> None:
