@@ -76,17 +76,14 @@ class WatsonxChatModelConnectionTest {
         assertThatThrownBy(
                         () ->
                                 new WatsonxChatModelConnection(
-                                        descriptor(url, apiKey, projectId),
-                                        NOOP,
-                                        NO_ENVIRONMENT))
+                                        descriptor(url, apiKey, projectId), NOOP, NO_ENVIRONMENT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(expectedMessage);
     }
 
     private static Stream<Arguments> missingRequiredConfiguration() {
         return Stream.of(
-                Arguments.of(
-                        "missing url", null, "test-key", "test-project", "url"),
+                Arguments.of("missing url", null, "test-key", "test-project", "url"),
                 Arguments.of(
                         "missing credentials",
                         "https://us-south.ml.cloud.ibm.com",
@@ -128,8 +125,7 @@ class WatsonxChatModelConnectionTest {
 
         assertThatThrownBy(
                         () ->
-                                new WatsonxChatModelConnection(
-                                        descriptor, NOOP, NO_ENVIRONMENT))
+                                new WatsonxChatModelConnection(descriptor, NOOP, NO_ENVIRONMENT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("cannot both be provided")
                 .hasMessageContaining("exactly one");
@@ -143,8 +139,7 @@ class WatsonxChatModelConnectionTest {
                         .build();
         assertThatThrownBy(
                         () ->
-                                new WatsonxChatModelConnection(
-                                        credentials, NOOP, NO_ENVIRONMENT))
+                                new WatsonxChatModelConnection(credentials, NOOP, NO_ENVIRONMENT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("api_key and token")
                 .hasMessageContaining("exactly one");
@@ -172,7 +167,8 @@ class WatsonxChatModelConnectionTest {
                             .addInitialArgument("project_id", "test-project")
                             .addInitialArgument("request_timeout", invalidTimeout)
                             .build();
-            assertThatThrownBy(() -> new WatsonxChatModelConnection(invalid, NOOP, NO_ENVIRONMENT))
+            assertThatThrownBy(
+                            () -> new WatsonxChatModelConnection(invalid, NOOP, NO_ENVIRONMENT))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("request_timeout");
         }
@@ -193,8 +189,7 @@ class WatsonxChatModelConnectionTest {
                             .build();
             assertThatThrownBy(
                             () ->
-                                    new WatsonxChatModelConnection(
-                                            invalid, NOOP, NO_ENVIRONMENT))
+                                    new WatsonxChatModelConnection(invalid, NOOP, NO_ENVIRONMENT))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("max_retries");
         }
