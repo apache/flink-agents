@@ -103,6 +103,9 @@ final class ConditionEvaluator {
         Map<String, Object> conditionVariables = new HashMap<>();
         conditionVariables.put("type", event.getType());
         conditionVariables.put("EventType", EventType.allConstants());
+        if (event.getId() != null) {
+            conditionVariables.put("id", event.getId().toString());
+        }
 
         Map<String, Object> attrs = event.getAttributes();
         Map<String, Object> normalizedAttributes = new HashMap<>();
@@ -115,10 +118,6 @@ final class ConditionEvaluator {
         conditionVariables.put("attributes", normalizedAttributes);
         // Promote to top level for bare-identifier access; framework keys win on collision.
         normalizedAttributes.forEach(conditionVariables::putIfAbsent);
-        // Event UUID only as fallback — a user-supplied id attribute takes precedence.
-        if (event.getId() != null) {
-            conditionVariables.putIfAbsent("id", event.getId().toString());
-        }
         return conditionVariables;
     }
 

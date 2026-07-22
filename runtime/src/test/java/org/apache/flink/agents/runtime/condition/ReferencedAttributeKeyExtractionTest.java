@@ -52,7 +52,7 @@ class ReferencedAttributeKeyExtractionTest {
                 Arguments.of("score_name == {}", "score_name"),
                 Arguments.of("score_name['batch-3.12'].region > 10", "score_name"),
                 Arguments.of("has(a.b)", "a"),
-                Arguments.of("id == 'x'", "id"),
+                Arguments.of("attributes.id == 'x'", "id"),
                 Arguments.of("attributes['score'] > 1", "score"),
                 Arguments.of("attributes['a.b.c'] == 7", "a.b.c"),
                 Arguments.of("'a.b.c' in attributes", "a.b.c"));
@@ -62,6 +62,11 @@ class ReferencedAttributeKeyExtractionTest {
     @MethodSource("staticKeyCases")
     void extractsStaticKey(String source, String expectedKey) {
         assertThat(referencedAttributeKeys(source)).containsExactly(expectedKey);
+    }
+
+    @Test
+    void frameworkIdIsNotAnAttributeKey() {
+        assertThat(referencedAttributeKeys("id == 'x'")).isEmpty();
     }
 
     @Test

@@ -48,6 +48,8 @@ final class ConditionExpressionCompiler {
     /** Condition variables and the user-attribute namespace with their types at compile time. */
     private static final Map<String, CelType> FRAMEWORK_VARIABLE_TYPES =
             Map.of(
+                    "id",
+                    SimpleType.STRING,
                     "type",
                     SimpleType.STRING,
                     "EventType",
@@ -135,15 +137,15 @@ final class ConditionExpressionCompiler {
 
     private static void classifyIdent(CelNavigableExpr node, Set<String> keys, String source) {
         String name = node.expr().ident().name();
-        // type/EventType are framework-owned (put()), never attribute keys. Expression operators,
-        // type conversions and macros never appear as a bare IDENT, so no further skip list is
-        // needed.
-        if (name.equals("type") || name.equals("EventType")) {
+        // id/type/EventType are framework-owned (put()), never attribute keys. Expression
+        // operators, type conversions and macros never appear as a bare IDENT, so no further skip
+        // list is needed.
+        if (name.equals("id") || name.equals("type") || name.equals("EventType")) {
             return;
         }
         if (!name.equals("attributes")) {
-            // Bare key (includes id, which a user attribute may override). A dynamic index key
-            // such as attributes[region_id] also references region_id's value — keep it.
+            // A dynamic index key such as attributes[region_id] also references region_id's value
+            // — keep it.
             keys.add(name);
             return;
         }

@@ -1,10 +1,10 @@
 # Trigger-condition conformance corpus, owned by runtime; consumed by ConditionEvaluatorTest.
 # Each case is evaluated end-to-end: parse → validate → check → eval (no AST rewriting).
 #
-# Activation contract: type/EventType are framework-owned. Every event promotes only referenced
+# Activation contract: id/type/EventType are framework-owned. Every event promotes only referenced
 # top-level entries from Event.attributes; nested values remain under their attribute path, such as
-# input.status or output.status. The explicit attributes namespace preserves the same envelope. A
-# top-level user id wins when present; otherwise id falls back to the event UUID.
+# input.status or output.status. The explicit attributes namespace preserves the same envelope,
+# including user attributes whose names collide with framework variables.
 
 - name: filter_by_type_match
   condition: 'type == "_input_event"'
@@ -224,9 +224,14 @@
   event: { id: abc, type: _output_event, attributes: { output: { k: out } } }
   expected: false
 
-- name: user_id_attribute_overrides_event_uuid
-  condition: 'id == "tenant-42"'
-  event: { id: abc, type: test, attributes: { id: tenant-42 } }
+- name: framework_id_wins_over_attribute_id
+  condition: 'id == "550e8400-e29b-41d4-a716-446655440000"'
+  event: { id: '550e8400-e29b-41d4-a716-446655440000', type: test, attributes: { id: tenant-42 } }
+  expected: true
+
+- name: attribute_id_still_reachable_via_attributes
+  condition: 'attributes.id == "tenant-42"'
+  event: { id: '550e8400-e29b-41d4-a716-446655440000', type: test, attributes: { id: tenant-42 } }
   expected: true
 
 - name: framework_type_wins_over_attribute_type

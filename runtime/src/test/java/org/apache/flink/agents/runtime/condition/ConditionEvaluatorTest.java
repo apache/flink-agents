@@ -209,17 +209,23 @@ class ConditionEvaluatorTest {
     }
 
     @Test
-    void userIdWorksWithoutEventId() throws Exception {
-        String source = "id == 'tenant-42'";
-        Event event = Event.fromJson("{\"type\":\"test\",\"attributes\":{\"id\":\"tenant-42\"}}");
+    void eventIdWinsWhileAttributeIdRemainsExplicitlyAccessible() {
+        UUID eventId = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
+        List<String> sources =
+                List.of(
+                        "id == '550e8400-e29b-41d4-a716-446655440000'",
+                        "attributes.id == 'tenant-42'");
+        Event event = new Event(eventId, "test", Map.of("id", "tenant-42"));
         EvaluatorHarness testEvaluator =
-                new EvaluatorHarness(List.of(source), ConditionEvaluationFailureStrategy.FAIL);
+                new EvaluatorHarness(sources, ConditionEvaluationFailureStrategy.FAIL);
 
         Map<String, Object> conditionVariables =
-                testEvaluator.buildConditionVariables(event, source);
+                testEvaluator.buildConditionVariables(event, "attributes.id == 'tenant-42'");
 
-        assertThat(conditionVariables).isNotNull().containsEntry("id", "tenant-42");
-        assertThat(testEvaluator.evaluate(source, event)).isTrue();
+        assertThat(conditionVariables).containsEntry("id", eventId.toString());
+        assertThat(conditionVariables.get("attributes")).isEqualTo(Map.of("id", "tenant-42"));
+        assertThat(testEvaluator.evaluate(sources.get(0), event)).isTrue();
+        assertThat(testEvaluator.evaluate(sources.get(1), event)).isTrue();
     }
 
     @ParameterizedTest(name = "{0}")
