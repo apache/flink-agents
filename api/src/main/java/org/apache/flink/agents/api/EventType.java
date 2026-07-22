@@ -40,5 +40,23 @@ public final class EventType {
     public static final String ContextRetrievalResponseEvent =
             org.apache.flink.agents.api.event.ContextRetrievalResponseEvent.EVENT_TYPE;
 
+    public static final String ShortTermWriteEvent =
+            org.apache.flink.agents.api.event.ShortTermWriteEvent.EVENT_TYPE;
+    public static final String ShortTermReadEvent =
+            org.apache.flink.agents.api.event.ShortTermReadEvent.EVENT_TYPE;
+    public static final String SensoryWriteEvent =
+            org.apache.flink.agents.api.event.SensoryWriteEvent.EVENT_TYPE;
+    public static final String SensoryReadEvent =
+            org.apache.flink.agents.api.event.SensoryReadEvent.EVENT_TYPE;
+    public static final String LongTermUpdateEvent =
+            org.apache.flink.agents.api.event.LongTermUpdateEvent.EVENT_TYPE;
+    public static final String LongTermGetEvent =
+            org.apache.flink.agents.api.event.LongTermGetEvent.EVENT_TYPE;
+    public static final String LongTermSearchEvent =
+            org.apache.flink.agents.api.event.LongTermSearchEvent.EVENT_TYPE;
+
+    public static final String AgentRunBeginEvent =
+            org.apache.flink.agents.api.event.AgentRunBeginEvent.EVENT_TYPE;
+
     private EventType() {}
 }

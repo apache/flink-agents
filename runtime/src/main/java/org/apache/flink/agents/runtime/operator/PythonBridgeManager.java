@@ -235,6 +235,8 @@ class PythonBridgeManager implements AutoCloseable {
                             LongTermMemoryOptions.Mem0.VECTOR_STORE.getKey()));
         }
         longTermMemory = new Mem0LongTermMemory(pythonResourceAdapter, (PyObject) pyLtm);
+        // The Python runner context drains LTM observation records at action finish.
+        pythonRunnerContext.setLongTermMemory(longTermMemory);
     }
 
     private void initPythonActionExecutor(AgentPlan agentPlan, String jobIdentifier)

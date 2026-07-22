@@ -18,9 +18,12 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import queue
+from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List
 
 from pydantic import ConfigDict, Field, PrivateAttr, field_validator
@@ -44,6 +47,42 @@ logger = logging.getLogger(__name__)
 
 # Provider name registered with Mem0's factories.
 _PROVIDER_NAME = "flink_agents"
+
+
+class _LtmObservationOp(str, Enum):
+    ADD = "ADD"
+    UPDATE = "UPDATE"
+    DELETE = "DELETE"
+    DELETE_SET = "DELETE_SET"
+    GET = "GET"
+    SEARCH = "SEARCH"
+
+
+_MEM0_ADD_RESULT_OPERATIONS = {
+    "ADD": _LtmObservationOp.ADD,
+    "UPDATE": _LtmObservationOp.UPDATE,
+    "DELETE": _LtmObservationOp.DELETE,
+}
+
+
+@dataclass(frozen=True)
+class _LtmObservationRecord:
+    op: str
+    set: str
+    id: str | None = None
+    query: str | None = None
+    value: Any = None
+    version: int = 1
+
+    def to_wire(self) -> Dict[str, Any]:
+        return {
+            "op": self.op,
+            "set": self.set,
+            "id": self.id,
+            "query": self.query,
+            "value": self.value,
+            "version": self.version,
+        }
 
 
 def _create_flink_agents_config_classes() -> tuple:
@@ -127,6 +166,13 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
     )
 
     _mem0: Any = PrivateAttr(default=None)
+
+    _ltm_observation_records: queue.Queue[tuple[str, _LtmObservationRecord]] = (
+        PrivateAttr(default_factory=queue.Queue)
+    )
+    _update_observation_enabled: bool = PrivateAttr(default=False)
+    _get_observation_enabled: bool = PrivateAttr(default=False)
+    _search_observation_enabled: bool = PrivateAttr(default=False)
 
     def __init__(
         self,
@@ -224,7 +270,13 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         return Memory(mem0_config)
 
     @override
-    def switch_context(self, key: str) -> None:
+    def switch_context(
+        self,
+        key: str,
+        update_observation_enabled: bool | None = None,
+        get_observation_enabled: bool | None = None,
+        search_observation_enabled: bool | None = None,
+    ) -> None:
         """Switch the keyed partition context.
 
         This method is called on the mailbox thread before each action.
@@ -233,12 +285,126 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
 
         Args:
             key: The new key for partition isolation.
+            update_observation_enabled: Whether mutations should be recorded.
+            get_observation_enabled: Whether gets should be recorded.
+            search_observation_enabled: Whether searches should be recorded.
         """
         # Ensure Mem0 is initialized on the mailbox thread.
         _ = self._mem0_instance
         # Ensure report token usage on the mailbox thread
         self._report_token_metrics()
         self.key = key
+        if update_observation_enabled is not None:
+            self._update_observation_enabled = update_observation_enabled
+        if get_observation_enabled is not None:
+            self._get_observation_enabled = get_observation_enabled
+        if search_observation_enabled is not None:
+            self._search_observation_enabled = search_observation_enabled
+
+    def _record_ltm_op(
+        self,
+        op: _LtmObservationOp | str,
+        memory_set: str,
+        mem_id: str | None,
+        value: Any,
+        observation_key: str,
+        *,
+        enabled: bool = True,
+    ) -> None:
+        """Buffer one LTM operation for observation.
+
+        Args:
+            op: The operation kind.
+            memory_set: The name of the memory set operated on.
+            mem_id: The affected memory id, or None for whole-set ops.
+            value: The stored memory content, or None when not applicable.
+            observation_key: Partition key captured at operation entry.
+            enabled: Whether this operation type is configured for observation.
+        """
+        try:
+            if not enabled or getattr(self.ctx, "_j_runner_context", None) is None:
+                return
+            try:
+                operation = _LtmObservationOp(op)
+            except ValueError:
+                logger.warning("Skipping unknown LTM observation operation %r", op)
+                return
+            self._ltm_observation_records.put(
+                (
+                    observation_key,
+                    _LtmObservationRecord(
+                        op=operation.value,
+                        set=memory_set,
+                        id=mem_id,
+                        value=value,
+                    ),
+                )
+            )
+        except Exception:
+            logger.debug("LTM observation buffering failed; skipping", exc_info=True)
+
+    def _record_ltm_search(
+        self,
+        memory_set: str,
+        query: str,
+        hits: List[Dict[str, Any]],
+        observation_key: str,
+        *,
+        enabled: bool = True,
+    ) -> None:
+        """Buffer one LTM search call for observation.
+
+        Args:
+            memory_set: The set searched.
+            query: The search query string.
+            hits: The ordered matched records, each with id, value, and score.
+            observation_key: Partition key captured at operation entry.
+            enabled: Whether search observation is configured.
+        """
+        try:
+            if not enabled or getattr(self.ctx, "_j_runner_context", None) is None:
+                return
+            self._ltm_observation_records.put(
+                (
+                    observation_key,
+                    _LtmObservationRecord(
+                        op=_LtmObservationOp.SEARCH.value,
+                        set=memory_set,
+                        query=query,
+                        value=hits,
+                    ),
+                )
+            )
+        except Exception:
+            logger.debug("LTM observation buffering failed; skipping", exc_info=True)
+
+    def drain_ltm_observation_records(self, key: str) -> str:
+        """Pop buffered LTM records for one partition key as a JSON array.
+
+        Called from Java on the mailbox thread at action-finish flush. Records for
+        other partition keys are placed back in the shared queue.
+
+        Args:
+            key: Partition key whose records to drain.
+
+        Returns:
+            JSON array string of the drained records.
+        """
+        records: List[_LtmObservationRecord] = []
+        other_records: List[tuple[str, _LtmObservationRecord]] = []
+        while True:
+            try:
+                owner_key, record = self._ltm_observation_records.get_nowait()
+            except queue.Empty:
+                break
+            if owner_key == key:
+                records.append(record)
+            else:
+                other_records.append((owner_key, record))
+        for record in other_records:
+            self._ltm_observation_records.put(record)
+
+        return json.dumps([record.to_wire() for record in records], ensure_ascii=False)
 
     @override
     def get_memory_set(self, name: str) -> MemorySet:
@@ -262,10 +428,20 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         Returns:
             True if the memory set was deleted.
         """
+        observation_key = self.key
+        observation_enabled = self._update_observation_enabled
         self._mem0_instance.delete_all(
             user_id=self.job_id,
             agent_id=self.key,
             run_id=name,
+        )
+        self._record_ltm_op(
+            _LtmObservationOp.DELETE_SET,
+            name,
+            None,
+            None,
+            observation_key,
+            enabled=observation_enabled,
         )
         return True
 
@@ -286,6 +462,8 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         Returns:
             List of IDs of the added memories.
         """
+        observation_key = self.key
+        observation_enabled = self._update_observation_enabled
         if isinstance(memory_items, str):
             memory_items = [memory_items]
         if metadatas is not None and isinstance(metadatas, dict):
@@ -302,9 +480,27 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
                 metadata=metadata,
             )
             # Extract IDs from the result
-            all_ids.extend(
-                entry["id"] for entry in result.get("results", []) if "id" in entry
-            )
+            for entry in result.get("results", []):
+                if "id" in entry:
+                    all_ids.append(entry["id"])
+                    event_name = str(entry.get("event", "")).upper()
+                    operation = _MEM0_ADD_RESULT_OPERATIONS.get(event_name)
+                    if operation is None:
+                        logger.warning(
+                            "Skipping unsupported Mem0 add result operation %r",
+                            event_name,
+                        )
+                    else:
+                        self._record_ltm_op(
+                            operation,
+                            memory_set.name,
+                            entry["id"],
+                            None
+                            if operation == _LtmObservationOp.DELETE
+                            else entry.get("memory"),
+                            observation_key,
+                            enabled=observation_enabled,
+                        )
         return all_ids
 
     @override
@@ -327,6 +523,8 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         Returns:
             List of memory items.
         """
+        observation_key = self.key
+        observation_enabled = self._get_observation_enabled
         if ids is not None:
             if isinstance(ids, str):
                 ids = [ids]
@@ -334,6 +532,15 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             for memory_id in ids:
                 result = self._mem0_instance.get(memory_id=memory_id)
                 items.append(self._convert_mem0_result(memory_set.name, result))
+                item = items[-1]
+                self._record_ltm_op(
+                    _LtmObservationOp.GET,
+                    memory_set.name,
+                    item.id,
+                    item.value,
+                    observation_key,
+                    enabled=observation_enabled,
+                )
             return items
 
         result = self._mem0_instance.get_all(
@@ -343,10 +550,20 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             filters=filters,
             limit=limit,
         )
-        return [
+        items = [
             self._convert_mem0_result(memory_set.name, entry)
             for entry in result.get("results", [])
         ]
+        for item in items:
+            self._record_ltm_op(
+                _LtmObservationOp.GET,
+                memory_set.name,
+                item.id,
+                item.value,
+                observation_key,
+                enabled=observation_enabled,
+            )
+        return items
 
     @override
     def delete(self, memory_set: MemorySet, ids: str | List[str] | None = None) -> None:
@@ -356,11 +573,21 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             memory_set: The memory set to delete from.
             ids: Optional ID or list of IDs. If None, deletes all items.
         """
+        observation_key = self.key
+        observation_enabled = self._update_observation_enabled
         if ids is None:
             self._mem0_instance.delete_all(
                 user_id=self.job_id,
                 agent_id=self.key,
                 run_id=memory_set.name,
+            )
+            self._record_ltm_op(
+                _LtmObservationOp.DELETE_SET,
+                memory_set.name,
+                None,
+                None,
+                observation_key,
+                enabled=observation_enabled,
             )
             return
 
@@ -368,6 +595,14 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             ids = [ids]
         for memory_id in ids:
             self._mem0_instance.delete(memory_id=memory_id)
+            self._record_ltm_op(
+                _LtmObservationOp.DELETE,
+                memory_set.name,
+                memory_id,
+                None,
+                observation_key,
+                enabled=observation_enabled,
+            )
 
     @override
     def search(
@@ -390,6 +625,8 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         Returns:
             List of matching memory items.
         """
+        observation_key = self.key
+        observation_enabled = self._search_observation_enabled
         result = self._mem0_instance.search(
             query=query,
             user_id=self.job_id,
@@ -399,9 +636,20 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             filters=filters,
             **kwargs,
         )
+        raw_entries = result.get("results", [])
+        self._record_ltm_search(
+            memory_set.name,
+            query,
+            [
+                {"id": e.get("id"), "value": e.get("memory"), "score": e.get("score")}
+                for e in raw_entries
+                if "id" in e
+            ],
+            observation_key,
+            enabled=observation_enabled,
+        )
         return [
-            self._convert_mem0_result(memory_set.name, entry)
-            for entry in result.get("results", [])
+            self._convert_mem0_result(memory_set.name, entry) for entry in raw_entries
         ]
 
     @staticmethod
@@ -455,7 +703,9 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
                 and metric.get("promptTokens")
                 and metric.get("completionTokens")
             ):
-                model_group = self.metric_group.get_sub_group("model", metric["model_name"])
+                model_group = self.metric_group.get_sub_group(
+                    "model", metric["model_name"]
+                )
                 model_group.get_counter("promptTokens").inc(metric["promptTokens"])
                 model_group.get_counter("completionTokens").inc(
                     metric["completionTokens"]

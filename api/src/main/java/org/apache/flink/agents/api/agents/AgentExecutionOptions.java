@@ -48,6 +48,10 @@ public class AgentExecutionOptions {
     public static final ConfigOption<Boolean> RAG_ASYNC =
             new ConfigOption<>("rag.async", Boolean.class, true);
 
+    /** Opt-in lifecycle event emitted at the beginning of each agent run. */
+    public static final ConfigOption<Boolean> AGENT_RUN_BEGIN_EVENT =
+            new ConfigOption<>("agent-run.begin-event", Boolean.class, false);
+
     /** Set to a positive value in milliseconds to enable short-term memory TTL; 0 disables it. */
     public static final ConfigOption<Long> SHORT_TERM_MEMORY_STATE_TTL_MS =
             new ConfigOption<>("short-term-memory.state-ttl.ms", Long.class, 0L);

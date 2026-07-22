@@ -21,6 +21,8 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 
+import javax.annotation.Nullable;
+
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -44,13 +46,14 @@ public class MemoryObjectImpl implements MemoryObject {
 
     private final MemoryStore store;
     private final List<MemoryUpdate> memoryUpdates;
+    @Nullable private final List<MemoryValueObservation> memoryReads;
     private final String prefix;
     private final Runnable mailboxThreadChecker;
 
     public MemoryObjectImpl(
             MemoryType type, MemoryStore store, String prefix, List<MemoryUpdate> memoryUpdates)
             throws Exception {
-        this(type, store, prefix, () -> {}, memoryUpdates);
+        this(type, store, prefix, () -> {}, memoryUpdates, null);
     }
 
     public MemoryObjectImpl(
@@ -58,7 +61,8 @@ public class MemoryObjectImpl implements MemoryObject {
             MemoryStore store,
             String prefix,
             Runnable mailboxThreadChecker,
-            List<MemoryUpdate> memoryUpdates)
+            List<MemoryUpdate> memoryUpdates,
+            @Nullable List<MemoryValueObservation> memoryReads)
             throws Exception {
         this.type = type;
         this.store = store;
@@ -68,6 +72,7 @@ public class MemoryObjectImpl implements MemoryObject {
             store.put(ROOT_KEY, new MemoryItem());
         }
         this.memoryUpdates = memoryUpdates;
+        this.memoryReads = memoryReads;
     }
 
     @Override
@@ -75,7 +80,8 @@ public class MemoryObjectImpl implements MemoryObject {
         mailboxThreadChecker.run();
         String absPath = fullPath(path);
         if (store.contains(absPath)) {
-            return new MemoryObjectImpl(type, store, absPath, memoryUpdates);
+            return new MemoryObjectImpl(
+                    type, store, absPath, mailboxThreadChecker, memoryUpdates, memoryReads);
         }
         return null;
     }
@@ -142,7 +148,8 @@ public class MemoryObjectImpl implements MemoryObject {
         parentItem.getSubKeys().add(parts[parts.length - 1]);
         store.put(parent, parentItem);
 
-        return new MemoryObjectImpl(type, store, absPath, memoryUpdates);
+        return new MemoryObjectImpl(
+                type, store, absPath, mailboxThreadChecker, memoryUpdates, memoryReads);
     }
 
     @Override
@@ -176,6 +183,7 @@ public class MemoryObjectImpl implements MemoryObject {
                 result.put(name, "NestedObject");
             } else {
                 result.put(name, memItem.getValue());
+                recordValueRead(absPath, memItem.getValue());
             }
         }
         return result;
@@ -193,9 +201,16 @@ public class MemoryObjectImpl implements MemoryObject {
         mailboxThreadChecker.run();
         MemoryItem memItem = store.get(prefix);
         if (memItem != null && memItem.getType() == ItemType.VALUE) {
+            recordValueRead(prefix, memItem.getValue());
             return memItem.getValue();
         }
         return null;
+    }
+
+    private void recordValueRead(String path, Object value) {
+        if (memoryReads != null) {
+            memoryReads.add(new MemoryValueObservation(path, value));
+        }
     }
 
     private String fullPath(String path) {
@@ -246,6 +261,10 @@ public class MemoryObjectImpl implements MemoryObject {
 
         public ItemType getType() {
             return type;
+        }
+
+        public boolean isValue() {
+            return type == ItemType.VALUE;
         }
 
         public Object getValue() {

@@ -63,6 +63,6 @@ public class PythonActionTask extends ActionTask {
             return tempGeneratedActionTask.invoke(userCodeClassLoader, executor);
         }
         return new ActionTaskResult(
-                true, runnerContext.drainEvents(event.getSourceTimestamp()), null);
+                true, runnerContext.drainEventsAtActionFinish(event.getSourceTimestamp()), null);
     }
 }

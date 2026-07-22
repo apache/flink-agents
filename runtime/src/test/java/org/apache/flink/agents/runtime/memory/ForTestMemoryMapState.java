@@ -24,62 +24,62 @@ import java.util.Iterator;
 import java.util.Map;
 
 /** Simple, non-serialized HashMap implementation. */
-class ForTestMemoryMapState<V> implements MapState<String, V> {
+public class ForTestMemoryMapState<V> implements MapState<String, V> {
 
-    private final Map<String, V> fortest = new HashMap<>();
+    private final Map<String, V> delegate = new HashMap<>();
 
     @Override
     public V get(String key) {
-        return fortest.get(key);
+        return delegate.get(key);
     }
 
     @Override
     public void put(String key, V value) {
-        fortest.put(key, value);
+        delegate.put(key, value);
     }
 
     @Override
     public void putAll(Map<String, V> map) {
-        fortest.putAll(map);
+        delegate.putAll(map);
     }
 
     @Override
     public void remove(String key) {
-        fortest.remove(key);
+        delegate.remove(key);
     }
 
     @Override
     public boolean contains(String key) {
-        return fortest.containsKey(key);
+        return delegate.containsKey(key);
     }
 
     @Override
     public Iterable<Map.Entry<String, V>> entries() {
-        return fortest.entrySet();
+        return delegate.entrySet();
     }
 
     @Override
     public Iterable<String> keys() {
-        return fortest.keySet();
+        return delegate.keySet();
     }
 
     @Override
     public Iterable<V> values() {
-        return fortest.values();
+        return delegate.values();
     }
 
     @Override
     public Iterator<Map.Entry<String, V>> iterator() {
-        return fortest.entrySet().iterator();
+        return delegate.entrySet().iterator();
     }
 
     @Override
     public boolean isEmpty() {
-        return fortest.isEmpty();
+        return delegate.isEmpty();
     }
 
     @Override
     public void clear() {
-        fortest.clear();
+        delegate.clear();
     }
 }

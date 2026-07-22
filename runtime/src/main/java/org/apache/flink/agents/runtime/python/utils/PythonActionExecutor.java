@@ -24,8 +24,11 @@ import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.types.Row;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
+
+import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
@@ -64,6 +67,8 @@ public class PythonActionExecutor {
     // =========== PYTHON AND JAVA OBJECT CONVERT ===========
     private static final String CONVERT_JSON_TO_PYTHON_EVENT =
             "python_java_utils.convert_json_to_python_event";
+    private static final String CONVERT_TO_PYTHON_OBJECT =
+            "python_java_utils.convert_to_python_object";
     private static final String WRAP_TO_INPUT_EVENT = "python_java_utils.wrap_to_input_event";
     private static final String GET_OUTPUT_FROM_OUTPUT_EVENT =
             "python_java_utils.get_output_from_output_event";
@@ -159,6 +164,34 @@ public class PythonActionExecutor {
         Object result = interpreter.invoke(WRAP_TO_INPUT_EVENT, eventData);
         checkState(result instanceof String);
         return Event.fromJson((String) result);
+    }
+
+    /** Resolves a logical String key from PyFlink's keyed-stream representation. */
+    @Nullable
+    public String resolveStringKey(Object flinkKey) {
+        Object logicalKey = flinkKey;
+        if (flinkKey instanceof Row) {
+            Row row = (Row) flinkKey;
+            if (row.getArity() != 1) {
+                return null;
+            }
+            logicalKey = row.getField(0);
+        }
+
+        if (logicalKey instanceof String) {
+            return (String) logicalKey;
+        }
+        if (!(logicalKey instanceof byte[])) {
+            return null;
+        }
+
+        try {
+            Object decoded = interpreter.invoke(CONVERT_TO_PYTHON_OBJECT, logicalKey);
+            return decoded instanceof String ? (String) decoded : null;
+        } catch (RuntimeException e) {
+            // Framework observation is best-effort. Unsupported or malformed keys are skipped.
+            return null;
+        }
     }
 
     public Object getOutputFromOutputEvent(String eventJson) {

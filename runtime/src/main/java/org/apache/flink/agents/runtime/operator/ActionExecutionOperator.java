@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -29,9 +30,12 @@ import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
+import org.apache.flink.agents.runtime.memory.MemoryEventBuilder;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
@@ -54,10 +58,14 @@ import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
+
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -118,6 +126,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // Inspired by Apache Paimon.
     private transient String jobIdentifier;
 
+    private final boolean inputIsJava;
+    private final boolean agentRunBeginEventEnabled;
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
@@ -127,8 +138,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.agentPlan = agentPlan;
         this.processingTimeService = processingTimeService;
         this.mailboxExecutor = mailboxExecutor;
+        this.inputIsJava = inputIsJava;
         this.eventRouter = new EventRouter<>(agentPlan, inputIsJava);
         this.durableExecManager = new DurableExecutionManager(actionStateStore);
+        this.agentRunBeginEventEnabled =
+                Boolean.TRUE.equals(
+                        agentPlan.getConfig().get(AgentExecutionOptions.AGENT_RUN_BEGIN_EVENT));
         OperatorUtils.setChainStrategy(this, ChainingStrategy.ALWAYS);
     }
 
@@ -263,6 +278,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 // If the event is an InputEvent, we mark that the key is currently being processed.
                 stateManager.addProcessingKey(key);
                 stateManager.initOrIncSequenceNumber();
+                tryEmitAgentRunBeginEvent(key, event);
             }
             // We then obtain the triggered action and add ActionTasks to the waiting processing
             // queue.
@@ -278,6 +294,54 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // If the event is an InputEvent, we submit a new mail to try processing the actions.
             mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
         }
+    }
+
+    /**
+     * Attempts to emit an {@link AgentRunBeginEvent} for the input before any action triggered by
+     * that input executes.
+     */
+    private void tryEmitAgentRunBeginEvent(Object key, Event inputEvent) throws Exception {
+        if (!agentRunBeginEventEnabled) {
+            return;
+        }
+        String eventKeyText = resolveEventKeyText(key);
+        if (eventKeyText == null) {
+            LOG.warn(
+                    "Skipping AgentRunBeginEvent because framework observation requires a String Flink key");
+            return;
+        }
+        Map<String, Object> stm = new LinkedHashMap<>();
+        Iterable<Map.Entry<String, MemoryObjectImpl.MemoryItem>> entries =
+                stateManager.getShortTermMemState().entries();
+        if (entries != null) {
+            for (Map.Entry<String, MemoryObjectImpl.MemoryItem> entry : entries) {
+                MemoryObjectImpl.MemoryItem item = entry.getValue();
+                if (item != null
+                        && item.isValue()
+                        && !MemoryObjectImpl.ROOT_KEY.equals(entry.getKey())) {
+                    try {
+                        stm.put(entry.getKey(), MemoryEventBuilder.normalizeValue(item.getValue()));
+                    } catch (Exception | LinkageError e) {
+                        LOG.warn(
+                                "Skipping non-JSON-compatible STM value in AgentRunBeginEvent ({})",
+                                e.getClass().getSimpleName());
+                    }
+                }
+            }
+        }
+        final AgentRunBeginEvent beginEvent;
+        try {
+            beginEvent = new AgentRunBeginEvent(eventKeyText, stm);
+        } catch (RuntimeException | LinkageError e) {
+            LOG.warn(
+                    "Skipping AgentRunBeginEvent because its value snapshot is not JSON-compatible ({})",
+                    e.getClass().getSimpleName());
+            return;
+        }
+        if (inputEvent.hasSourceTimestamp()) {
+            beginEvent.setSourceTimestamp(inputEvent.getSourceTimestamp());
+        }
+        processEvent(key, beginEvent);
     }
 
     private void tryProcessActionTaskForKey(Object key) {
@@ -319,6 +383,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         contextManager.createAndSetRunnerContext(
                 actionTask,
                 key,
+                resolveEventKeyText(key),
                 agentPlan,
                 resourceCache,
                 metricGroup,
@@ -373,10 +438,23 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             durableExecManager.setupDurableExecutionContext(
                     actionTask, actionState, sequenceNumber);
 
-            ActionTask.ActionTaskResult actionTaskResult =
-                    actionTask.invoke(
-                            getRuntimeContext().getUserCodeClassLoader(),
-                            this.pythonBridge.getPythonActionExecutor());
+            ActionTask.ActionTaskResult actionTaskResult;
+            try {
+                actionTaskResult =
+                        actionTask.invoke(
+                                getRuntimeContext().getUserCodeClassLoader(),
+                                this.pythonBridge.getPythonActionExecutor());
+            } catch (Throwable actionFailure) {
+                try {
+                    actionTask.getRunnerContext().discardMemoryObservation();
+                } catch (Throwable discardFailure) {
+                    if (discardFailure != actionFailure) {
+                        actionFailure.addSuppressed(discardFailure);
+                    }
+                }
+                ExceptionUtils.rethrowException(actionFailure);
+                throw new AssertionError("Unreachable after rethrowing action failure");
+            }
 
             // We remove the contexts from the map after the task is processed. They will be added
             // back later if the action task has a generated action task, meaning it is not
@@ -553,6 +631,27 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             throw new IllegalStateException(
                     "Unsupported action type: " + action.getExec().getClass());
         }
+    }
+
+    /** Returns the logical String key for Java and PyFlink keyed streams, if supported. */
+    @Nullable
+    private String resolveEventKeyText(Object key) {
+        PythonActionExecutor pythonActionExecutor =
+                pythonBridge == null ? null : pythonBridge.getPythonActionExecutor();
+        return resolveEventKeyText(key, inputIsJava, pythonActionExecutor);
+    }
+
+    @VisibleForTesting
+    @Nullable
+    static String resolveEventKeyText(
+            Object key, boolean inputIsJava, @Nullable PythonActionExecutor pythonActionExecutor) {
+        if (key instanceof String) {
+            return (String) key;
+        }
+        if (inputIsJava || pythonActionExecutor == null) {
+            return null;
+        }
+        return pythonActionExecutor.resolveStringKey(key);
     }
 
     private void tryResumeProcessActionTasks() throws Exception {

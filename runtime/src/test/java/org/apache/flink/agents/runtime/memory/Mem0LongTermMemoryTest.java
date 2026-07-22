@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import pemja.core.object.PyObject;
@@ -32,7 +33,6 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -58,6 +58,13 @@ public class Mem0LongTermMemoryTest {
         if (mocks != null) {
             mocks.close();
         }
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private Map<String, Object> captureKwargs(String methodName) {
+        ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
+        verify(mockAdapter).callMethod(eq(mockPyMem0), eq(methodName), captor.capture());
+        return captor.getValue();
     }
 
     @Test
@@ -96,18 +103,9 @@ public class Mem0LongTermMemoryTest {
                 ltm.add(ms, List.of("hello", "world"), List.of(Map.of("k", "v"), Map.of()));
 
         assertThat(ids).containsExactly("a", "b");
-        verify(mockAdapter)
-                .callMethod(
-                        eq(mockPyMem0),
-                        eq("add"),
-                        argThat(
-                                kwargs -> {
-                                    assertThat(kwargs)
-                                            .containsKeys(
-                                                    "memory_set", "memory_items", "metadatas");
-                                    assertThat(kwargs.get("memory_set")).isEqualTo(mockPyMemorySet);
-                                    return true;
-                                }));
+        assertThat(captureKwargs("add"))
+                .containsKeys("memory_set", "memory_items", "metadatas")
+                .containsEntry("memory_set", mockPyMemorySet);
     }
 
     @Test
@@ -119,15 +117,7 @@ public class Mem0LongTermMemoryTest {
 
         ltm.get(ms, null, null, null);
 
-        verify(mockAdapter)
-                .callMethod(
-                        eq(mockPyMem0),
-                        eq("get"),
-                        argThat(
-                                kwargs -> {
-                                    assertThat(kwargs).containsOnlyKeys("memory_set");
-                                    return true;
-                                }));
+        assertThat(captureKwargs("get")).containsOnlyKeys("memory_set");
     }
 
     @Test
@@ -153,16 +143,9 @@ public class Mem0LongTermMemoryTest {
         assertThat(item.getAdditionalMetadata()).containsEntry("k", "v");
         assertThat(item.getCreatedAt()).isNull();
 
-        verify(mockAdapter)
-                .callMethod(
-                        eq(mockPyMem0),
-                        eq("get"),
-                        argThat(
-                                kwargs -> {
-                                    assertThat(kwargs).containsKeys("ids", "filters", "limit");
-                                    assertThat(kwargs.get("limit")).isEqualTo(50);
-                                    return true;
-                                }));
+        assertThat(captureKwargs("get"))
+                .containsKeys("ids", "filters", "limit")
+                .containsEntry("limit", 50);
     }
 
     @Test
@@ -171,15 +154,7 @@ public class Mem0LongTermMemoryTest {
 
         ltm.delete(ms, List.of("id1", "id2"));
 
-        verify(mockAdapter)
-                .callMethod(
-                        eq(mockPyMem0),
-                        eq("delete"),
-                        argThat(
-                                kwargs -> {
-                                    assertThat(kwargs).containsKeys("memory_set", "ids");
-                                    return true;
-                                }));
+        assertThat(captureKwargs("delete")).containsKeys("memory_set", "ids");
     }
 
     @Test
@@ -188,15 +163,7 @@ public class Mem0LongTermMemoryTest {
 
         ltm.delete(ms, null);
 
-        verify(mockAdapter)
-                .callMethod(
-                        eq(mockPyMem0),
-                        eq("delete"),
-                        argThat(
-                                kwargs -> {
-                                    assertThat(kwargs).containsOnlyKeys("memory_set");
-                                    return true;
-                                }));
+        assertThat(captureKwargs("delete")).containsOnlyKeys("memory_set");
     }
 
     @Test
@@ -208,33 +175,38 @@ public class Mem0LongTermMemoryTest {
 
         ltm.search(ms, "hi", 10, Map.of("user_id", "u1"), Map.of("threshold", 0.7));
 
-        verify(mockAdapter)
-                .callMethod(
-                        eq(mockPyMem0),
-                        eq("search"),
-                        argThat(
-                                kwargs -> {
-                                    assertThat(kwargs)
-                                            .containsKeys(
-                                                    "memory_set",
-                                                    "query",
-                                                    "limit",
-                                                    "filters",
-                                                    "threshold");
-                                    assertThat(kwargs.get("query")).isEqualTo("hi");
-                                    assertThat(kwargs.get("limit")).isEqualTo(10);
-                                    assertThat(kwargs.get("threshold")).isEqualTo(0.7);
-                                    return true;
-                                }));
+        assertThat(captureKwargs("search"))
+                .containsKeys("memory_set", "query", "limit", "filters", "threshold")
+                .containsEntry("query", "hi")
+                .containsEntry("limit", 10)
+                .containsEntry("threshold", 0.7);
     }
 
     @Test
     void testSwitchContextAndCloseForward() {
-        ltm.switchContext("k1");
+        ltm.switchContext("k1", true, false, true);
+        ltm.drainObservationRecordsJson("k1");
         ltm.close();
 
         verify(mockAdapter)
-                .callMethod(eq(mockPyMem0), eq("switch_context"), eq(Map.of("key", "k1")));
+                .callMethod(
+                        eq(mockPyMem0),
+                        eq("switch_context"),
+                        eq(
+                                Map.of(
+                                        "key",
+                                        "k1",
+                                        "update_observation_enabled",
+                                        true,
+                                        "get_observation_enabled",
+                                        false,
+                                        "search_observation_enabled",
+                                        true)));
+        verify(mockAdapter)
+                .callMethod(
+                        eq(mockPyMem0),
+                        eq("drain_ltm_observation_records"),
+                        eq(Map.of("key", "k1")));
         verify(mockAdapter).callMethod(eq(mockPyMem0), eq("close"), eq(Map.of()));
     }
 }

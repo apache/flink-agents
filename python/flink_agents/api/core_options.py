@@ -215,6 +215,39 @@ class AgentConfigOptions:
     )
 
 
+class MemoryEventOptions:
+    """Options controlling memory observation events.
+
+    Per-op resolution: sub-key explicit -> master switch explicit -> built-in default
+    (writes and long-term ops on; short-term/sensory reads off)
+    """
+
+    MEMORY_GENERATE_EVENT = ConfigOption(
+        key="memory.generate-event", config_type=bool, default=None
+    )
+    SHORT_TERM_WRITE = ConfigOption(
+        key="memory.generate-event.short-term-write", config_type=bool, default=None
+    )
+    SHORT_TERM_READ = ConfigOption(
+        key="memory.generate-event.short-term-read", config_type=bool, default=None
+    )
+    SENSORY_WRITE = ConfigOption(
+        key="memory.generate-event.sensory-write", config_type=bool, default=None
+    )
+    SENSORY_READ = ConfigOption(
+        key="memory.generate-event.sensory-read", config_type=bool, default=None
+    )
+    LONG_TERM_UPDATE = ConfigOption(
+        key="memory.generate-event.long-term-update", config_type=bool, default=None
+    )
+    LONG_TERM_GET = ConfigOption(
+        key="memory.generate-event.long-term-get", config_type=bool, default=None
+    )
+    LONG_TERM_SEARCH = ConfigOption(
+        key="memory.generate-event.long-term-search", config_type=bool, default=None
+    )
+
+
 class AgentExecutionOptions:
     """Execution options for Flink Agents."""
 
@@ -246,6 +279,10 @@ class AgentExecutionOptions:
         key="chat.async",
         config_type=bool,
         default=True,
+    )
+
+    AGENT_RUN_BEGIN_EVENT = ConfigOption(
+        key="agent-run.begin-event", config_type=bool, default=False
     )
 
     TOOL_CALL_ASYNC = ConfigOption(
