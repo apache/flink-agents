@@ -27,6 +27,7 @@ from flink_agents.api.chat_message import (
     MessageRole,
     find_first_system_message,
 )
+from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL
@@ -261,7 +262,11 @@ class BaseChatModelSetup(Resource):
         )
 
     def _record_token_metrics(
-        self, model_name: str, prompt_tokens: int, completion_tokens: int
+        self,
+        model_name: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        metric_group: MetricGroup | None,
     ) -> None:
         """Record token usage metrics for the given model.
 
@@ -273,8 +278,10 @@ class BaseChatModelSetup(Resource):
             The number of prompt tokens
         completion_tokens : int
             The number of completion tokens
+        metric_group : MetricGroup | None
+            The metric group captured when the request was initiated. If None, token
+            metrics are skipped.
         """
-        metric_group = self.metric_group
         if metric_group is None:
             return
 

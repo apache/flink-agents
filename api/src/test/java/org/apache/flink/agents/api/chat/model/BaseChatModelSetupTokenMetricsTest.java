@@ -35,11 +35,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** Test cases for BaseChatModelSetup token metrics functionality. */
@@ -85,9 +83,7 @@ class BaseChatModelSetupTokenMetricsTest {
     @Test
     @DisplayName("Test token metrics are recorded when metric group is set")
     void testRecordTokenMetricsWithMetricGroup() {
-        setup.setMetricGroup(mockMetricGroup);
-
-        setup.recordTokenMetrics("gpt-4", 100, 50);
+        setup.recordTokenMetrics(mockMetricGroup, "gpt-4", 100, 50);
 
         verify(mockMetricGroup).getSubGroup("model", "gpt-4");
         verify(mockModelGroup).getCounter("promptTokens");
@@ -97,18 +93,26 @@ class BaseChatModelSetupTokenMetricsTest {
     }
 
     @Test
-    @DisplayName("Test token metrics are not recorded when metric group is null")
-    void testRecordTokenMetricsWithoutMetricGroup() {
-        assertDoesNotThrow(() -> setup.recordTokenMetrics("gpt-4", 100, 50));
+    @DisplayName("Test token metrics use the request-scoped metric group")
+    void testRecordTokenMetricsWithRequestScopedMetricGroup() {
+        TestMetricGroup actionA = new TestMetricGroup();
+        TestMetricGroup actionB = new TestMetricGroup();
 
-        verifyNoInteractions(mockMetricGroup);
+        setup.setMetricGroup(actionB);
+        setup.recordTokenMetrics(actionA, "gpt-4", 100, 50);
+
+        TestMetricGroup actionAModelGroup = (TestMetricGroup) actionA.getSubGroup("model", "gpt-4");
+        assertEquals(100, actionAModelGroup.counters.get("promptTokens").getCount());
+        assertEquals(50, actionAModelGroup.counters.get("completionTokens").getCount());
+
+        TestMetricGroup actionBModelGroup = (TestMetricGroup) actionB.getSubGroup("model", "gpt-4");
+        assertEquals(0, actionBModelGroup.getCounter("promptTokens").getCount());
+        assertEquals(0, actionBModelGroup.getCounter("completionTokens").getCount());
     }
 
     @Test
     @DisplayName("Test token metrics hierarchy: metricGroup -> modelName -> counters")
     void testTokenMetricsHierarchy() {
-        setup.setMetricGroup(mockMetricGroup);
-
         FlinkAgentsMetricGroup mockGpt35Group = mock(FlinkAgentsMetricGroup.class);
         Counter mockGpt35PromptCounter = mock(Counter.class);
         Counter mockGpt35CompletionCounter = mock(Counter.class);
@@ -117,8 +121,8 @@ class BaseChatModelSetupTokenMetricsTest {
         when(mockGpt35Group.getCounter("promptTokens")).thenReturn(mockGpt35PromptCounter);
         when(mockGpt35Group.getCounter("completionTokens")).thenReturn(mockGpt35CompletionCounter);
 
-        setup.recordTokenMetrics("gpt-4", 100, 50);
-        setup.recordTokenMetrics("gpt-3.5-turbo", 200, 100);
+        setup.recordTokenMetrics(mockMetricGroup, "gpt-4", 100, 50);
+        setup.recordTokenMetrics(mockMetricGroup, "gpt-3.5-turbo", 200, 100);
 
         verify(mockMetricGroup).getSubGroup("model", "gpt-4");
         verify(mockMetricGroup).getSubGroup("model", "gpt-3.5-turbo");
@@ -187,9 +191,8 @@ class BaseChatModelSetupTokenMetricsTest {
     @DisplayName("Value-based: token counters are accessible under model key-value group")
     void testTokenMetricsUnderModelKeyValueGroup() {
         TestMetricGroup root = new TestMetricGroup();
-        setup.setMetricGroup(root);
 
-        setup.recordTokenMetrics("gpt-4", 100, 50);
+        setup.recordTokenMetrics(root, "gpt-4", 100, 50);
 
         TestMetricGroup modelGroup = (TestMetricGroup) root.getSubGroup("model", "gpt-4");
         assertEquals(100, modelGroup.counters.get("promptTokens").getCount());
@@ -200,10 +203,9 @@ class BaseChatModelSetupTokenMetricsTest {
     @DisplayName("Value-based: different models have independent counters")
     void testDifferentModelsHaveIndependentCounters() {
         TestMetricGroup root = new TestMetricGroup();
-        setup.setMetricGroup(root);
 
-        setup.recordTokenMetrics("gpt-4", 100, 50);
-        setup.recordTokenMetrics("gpt-3.5-turbo", 200, 80);
+        setup.recordTokenMetrics(root, "gpt-4", 100, 50);
+        setup.recordTokenMetrics(root, "gpt-3.5-turbo", 200, 80);
 
         TestMetricGroup gpt4 = (TestMetricGroup) root.getSubGroup("model", "gpt-4");
         TestMetricGroup gpt35 = (TestMetricGroup) root.getSubGroup("model", "gpt-3.5-turbo");
@@ -218,10 +220,9 @@ class BaseChatModelSetupTokenMetricsTest {
     @DisplayName("Value-based: counters accumulate across multiple calls")
     void testCountersAccumulate() {
         TestMetricGroup root = new TestMetricGroup();
-        setup.setMetricGroup(root);
 
-        setup.recordTokenMetrics("gpt-4", 100, 50);
-        setup.recordTokenMetrics("gpt-4", 150, 75);
+        setup.recordTokenMetrics(root, "gpt-4", 100, 50);
+        setup.recordTokenMetrics(root, "gpt-4", 150, 75);
 
         TestMetricGroup modelGroup = (TestMetricGroup) root.getSubGroup("model", "gpt-4");
         assertEquals(250, modelGroup.counters.get("promptTokens").getCount());
