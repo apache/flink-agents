@@ -266,6 +266,10 @@ class ResourceName:
         VLLM_CONNECTION = "flink_agents.integrations.chat_models.vllm.vllm_chat_model.VLLMChatModelConnection"
         VLLM_SETUP = "flink_agents.integrations.chat_models.vllm.vllm_chat_model.VLLMChatModelSetup"
 
+        # Watsonx
+        WATSONX_CONNECTION = "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelConnection"
+        WATSONX_SETUP = "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelSetup"
+
         # Java Wrapper
         JAVA_WRAPPER_CONNECTION = (
             "flink_agents.api.chat_models.java_chat_model.JavaChatModelConnection"
@@ -307,6 +311,10 @@ class ResourceName:
             # vLLM (OpenAI-compatible)
             VLLM_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.openai.VLLMChatModelConnection"
             VLLM_SETUP = "org.apache.flink.agents.integrations.chatmodels.openai.VLLMChatModelSetup"
+
+            # IBM watsonx.ai
+            WATSONX_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelConnection"
+            WATSONX_SETUP = "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelSetup"
 
     class EmbeddingModel:
         """EmbeddingModel resource names."""
