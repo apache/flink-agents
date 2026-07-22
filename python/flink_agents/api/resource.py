@@ -257,6 +257,10 @@ class ResourceName:
         TONGYI_CONNECTION = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelConnection"
         TONGYI_SETUP = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelSetup"
 
+        # Watsonx
+        WATSONX_CONNECTION = "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelConnection"
+        WATSONX_SETUP = "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelSetup"
+
         # Java Wrapper
         JAVA_WRAPPER_CONNECTION = (
             "flink_agents.api.chat_models.java_chat_model.JavaChatModelConnection"
@@ -298,6 +302,10 @@ class ResourceName:
             # Azure OpenAI
             AZURE_OPENAI_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.openai.AzureOpenAIChatModelConnection"
             AZURE_OPENAI_SETUP = "org.apache.flink.agents.integrations.chatmodels.openai.AzureOpenAIChatModelSetup"
+
+            # IBM watsonx.ai
+            WATSONX_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelConnection"
+            WATSONX_SETUP = "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelSetup"
 
     class EmbeddingModel:
         """EmbeddingModel resource names."""
