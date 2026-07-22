@@ -532,6 +532,7 @@ Common chat-model aliases:
 | `azure`              | —                           | Azure OpenAI (Java)         |
 | `bedrock`            | —                           | Bedrock (Java)              |
 | `tongyi`             | Tongyi (Python)             | —                           |
+| `watsonx`            | IBM watsonx.ai (Python)     | IBM watsonx.ai (Java)       |
 
 Embedding-model aliases (apply to both `embedding_model_connections` and `embedding_model_setups`):
 
