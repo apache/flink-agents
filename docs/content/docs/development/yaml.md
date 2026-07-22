@@ -558,6 +558,7 @@ Common chat-model aliases:
 | `bedrock`            | —                           | Bedrock (Java)              |
 | `tongyi`             | Tongyi (Python)             | —                           |
 | `vllm`               | vLLM (Python)               | vLLM (Java)                 |
+| `watsonx`            | IBM watsonx.ai (Python)     | IBM watsonx.ai (Java)       |
 
 Embedding-model aliases (apply to both `embedding_model_connections` and `embedding_model_setups`):
 
