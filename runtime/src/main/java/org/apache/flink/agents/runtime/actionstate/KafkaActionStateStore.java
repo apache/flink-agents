@@ -50,6 +50,7 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOMBSTONE_ENABLED;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_NUM_PARTITIONS;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR;
@@ -90,6 +91,9 @@ public class KafkaActionStateStore implements ActionStateStore {
     // Kafka topic that stores action states
     private final String topic;
 
+    // Whether pruning sends tombstone records for log compaction
+    private final boolean tombstoneEnabled;
+
     @VisibleForTesting
     KafkaActionStateStore(
             Map<String, ActionState> actionStates,
@@ -103,6 +107,7 @@ public class KafkaActionStateStore implements ActionStateStore {
         this.topic = topic;
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
+        this.tombstoneEnabled = agentConfiguration.get(KAFKA_ACTION_STATE_TOMBSTONE_ENABLED);
     }
 
     /** Constructs a new KafkaActionStateStore with custom Kafka configuration. */
@@ -110,6 +115,7 @@ public class KafkaActionStateStore implements ActionStateStore {
         this.actionStates = new HashMap<>();
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
+        this.tombstoneEnabled = agentConfiguration.get(KAFKA_ACTION_STATE_TOMBSTONE_ENABLED);
         this.topic =
                 Preconditions.checkArgumentNotNull(
                         agentConfiguration.get(KAFKA_ACTION_STATE_TOPIC),
@@ -252,14 +258,14 @@ public class KafkaActionStateStore implements ActionStateStore {
                     break;
                 }
 
+                // Deserialization failures throw from poll() itself and are handled by the
+                // outer catch, so records here are always fully deserialized.
                 for (ConsumerRecord<String, ActionState> record : records) {
-                    try {
+                    if (record.value() == null) {
+                        // Tombstone record - remove the key from cache
+                        actionStates.remove(record.key());
+                    } else {
                         actionStates.put(record.key(), record.value());
-                    } catch (Exception e) {
-                        LOG.warn(
-                                "Failed to deserialize action state record: {}",
-                                record.value().toString(),
-                                e);
                     }
                 }
 
@@ -276,30 +282,64 @@ public class KafkaActionStateStore implements ActionStateStore {
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning state for key: {} up to sequence number: {}", key, seqNum);
 
-        // Remove states from in-memory cache for this key up to the specified sequence
-        // number
-        actionStates
-                .entrySet()
-                .removeIf(
-                        entry -> {
-                            String stateKey = entry.getKey();
-                            // Extract key and sequence number from the state key
-                            // State key format: "key_seqNum_action_event"
-                            if (stateKey.startsWith(key.toString() + "_")) {
-                                try {
-                                    List<String> parts = ActionStateUtil.parseKey(stateKey);
-                                    if (parts.size() >= 2) {
-                                        long stateSeqNum = Long.parseLong(parts.get(1));
-                                        return stateSeqNum <= seqNum;
-                                    }
-                                } catch (NumberFormatException e) {
+        // Collect state keys belonging to this key with sequence number <= seqNum. The parsed
+        // key part must match exactly: prefix matching alone would let pruning key "a_1" match
+        // state keys of the distinct key "a" (whose keys also start with "a_1_").
+        String keyStr = key.toString();
+        String keyPrefix = keyStr + "_";
+        List<String> keysToPrune = new ArrayList<>();
+        for (String stateKey : actionStates.keySet()) {
+            if (!stateKey.startsWith(keyPrefix)) {
+                continue;
+            }
+            try {
+                List<String> parts = ActionStateUtil.parseKey(stateKey);
+                if (parts.get(0).equals(keyStr) && Long.parseLong(parts.get(1)) <= seqNum) {
+                    keysToPrune.add(stateKey);
+                }
+            } catch (IllegalArgumentException e) {
+                LOG.warn(
+                        "Cannot parse state key: {}. The entry cannot be pruned and will be "
+                                + "retained in memory and in the topic.",
+                        stateKey,
+                        e);
+            }
+        }
+
+        // Send tombstones to Kafka so log compaction can reclaim storage; opt-in because
+        // tombstones break replay when restoring a checkpoint/savepoint older than the prune
+        // (see KAFKA_ACTION_STATE_TOMBSTONE_ENABLED). Send failures surface asynchronously,
+        // so report them via callback; the records then persist until manual cleanup.
+        if (tombstoneEnabled && producer != null && !keysToPrune.isEmpty()) {
+            try {
+                for (String stateKey : keysToPrune) {
+                    producer.send(
+                            new ProducerRecord<>(topic, stateKey, null),
+                            (metadata, exception) -> {
+                                if (exception != null) {
                                     LOG.warn(
-                                            "Failed to parse sequence number from state key: {}",
-                                            stateKey);
+                                            "Failed to send tombstone record for state key: {}. "
+                                                    + "The record will persist in the topic "
+                                                    + "until manual cleanup.",
+                                            stateKey,
+                                            exception);
                                 }
-                            }
-                            return false;
-                        });
+                            });
+                }
+                producer.flush();
+                LOG.debug(
+                        "Sent {} tombstone records to Kafka for key: {}", keysToPrune.size(), key);
+            } catch (Exception e) {
+                LOG.warn(
+                        "Failed to send tombstone records to Kafka for key: {}. "
+                                + "Records will persist in the topic until manual cleanup.",
+                        key,
+                        e);
+            }
+        }
+
+        // Remove from in-memory cache (always, regardless of tombstone success)
+        actionStates.keySet().removeAll(keysToPrune);
 
         LOG.debug("Pruned state for key: {} up to sequence number: {}", key, seqNum);
     }
