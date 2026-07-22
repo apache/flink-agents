@@ -30,6 +30,21 @@ Keep these findings separate. A design-focused comment does not need to prove an
 immediate runtime bug, but it must explain the concrete complexity, ambiguity,
 or maintenance risk introduced by the change.
 
+## Change-Type Review Guides
+
+For common change types, start from the focused guide below as an on-ramp, then
+apply the full passes in this document. Each guide narrows the checklist to the
+concerns that matter most for that area and links examples from past reviews.
+Guides load on demand, so the general passes here stay short.
+
+| Change type | Focus | Guide |
+|---|---|---|
+| `runtime/` state and recovery | serde and replay type fidelity, real failure-path tests | [review-guides/runtime-state-recovery.md](review-guides/runtime-state-recovery.md) |
+| Python-Java bridge | cross-language parity, type mapping across Pemja | planned |
+| `api/` contract | API shape, compatibility policy, deprecation | planned |
+| `dist` and dependency | shading, LICENSE and NOTICE, dist registration | planned |
+| docs-only | facts match their source of truth | planned |
+
 ## Required Review Passes
 
 1. Understand the issue or feature goal.
