@@ -10,10 +10,11 @@
     ],
     "config": {
         "__config_type__": "python",
-        "output_schema": [
-            "flink_agents.api.agents.types",
-            "OutputSchema",
-            {
+        "output_schema": {
+            "__pydantic_model__": true,
+            "module": "flink_agents.api.agents.types",
+            "class": "OutputSchema",
+            "value": {
                 "output_schema": {
                     "names": [
                         "result"
@@ -23,6 +24,6 @@
                     ]
                 }
             }
-        ]
+        }
     }
 }
