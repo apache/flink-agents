@@ -99,6 +99,97 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName("Defaults resolve to timeout=60 and max_retries=3 when not specified")
+    void testDefaultTimeoutAndMaxRetries() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .build();
+        AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
+
+        assertThat(conn.getTimeoutSeconds())
+                .isEqualTo(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS);
+        assertThat(conn.getMaxRetries()).isEqualTo(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
+    }
+
+    @Test
+    @DisplayName("Explicit timeout and max_retries override the defaults")
+    void testExplicitTimeoutAndMaxRetriesOverride() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .addInitialArgument("timeout", 120)
+                        .addInitialArgument("max_retries", 5)
+                        .build();
+        AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
+
+        assertThat(conn.getTimeoutSeconds()).isEqualTo(120);
+        assertThat(conn.getMaxRetries()).isEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("Negative timeout throws IllegalArgumentException")
+    void testNegativeTimeoutThrows() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .addInitialArgument("timeout", -5)
+                        .build();
+        assertThatThrownBy(() -> new AzureOpenAIChatModelConnection(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("timeout");
+    }
+
+    @Test
+    @DisplayName("Negative max_retries throws IllegalArgumentException")
+    void testNegativeMaxRetriesThrows() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .addInitialArgument("max_retries", -1)
+                        .build();
+        assertThatThrownBy(() -> new AzureOpenAIChatModelConnection(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max_retries");
+    }
+
+    @Test
+    @DisplayName("Zero timeout is accepted as valid")
+    void testZeroTimeoutAccepted() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .addInitialArgument("timeout", 0)
+                        .build();
+        AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
+        assertThat(conn.getTimeoutSeconds()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("Zero max_retries is accepted as valid")
+    void testZeroMaxRetriesAccepted() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", "2024-02-01")
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .addInitialArgument("max_retries", 0)
+                        .build();
+        AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
+        assertThat(conn.getMaxRetries()).isEqualTo(0);
+    }
+
+    @Test
     @DisplayName("chat() rejects additional_kwargs that collide with reserved typed fields")
     void testChatRejectsReservedKeyInAdditionalKwargs() {
         ResourceDescriptor desc =
