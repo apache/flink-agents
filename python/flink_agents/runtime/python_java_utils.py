@@ -154,7 +154,9 @@ def get_python_tool_metadata(
     descriptor = PythonFunction(module=module, qualname=qual_name)
     callable_ = descriptor.as_callable()
     name = callable_.__name__
-    description = (parse(callable_.__doc__).description or "") if callable_.__doc__ else ""
+    description = (
+        (parse(callable_.__doc__).description or "") if callable_.__doc__ else ""
+    )
     callable_injected_args = normalize_injected_args(
         getattr(callable_, "_injected_args", None)
     )
@@ -177,9 +179,7 @@ def _dump_injected_args(injected_args: Dict[str, Any]) -> str:
     )
 
 
-def invoke_python_tool(
-    module: str, qual_name: str, kwargs: Dict[str, Any]
-) -> Any:
+def invoke_python_tool(module: str, qual_name: str, kwargs: Dict[str, Any]) -> Any:
     """Invoke a Python callable as a tool, passing the provided keyword arguments.
 
     Used by the Java-side ``PythonResourceAdapter.invokePythonTool`` so a Java host can
@@ -224,6 +224,32 @@ def from_java_resource(type_name: str, kwargs: Dict[str, Any]) -> Resource:
     cls = get_resource_class(module_path, class_name)
 
     return cls(**kwargs)
+
+
+def embedding_result_to_java(result: Any) -> Dict[str, Any]:
+    """Convert an embedding result into Pemja-safe Python primitives."""
+    usage = result.token_usage
+    return {
+        "embeddings": result.embeddings,
+        "token_usage": (
+            None
+            if usage is None
+            else {
+                "prompt_tokens": usage.prompt_tokens,
+                "total_tokens": usage.total_tokens,
+            }
+        ),
+    }
+
+
+def call_embedding_with_usage(
+    embedding_model: Any, kwargs: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Call ``embed_with_usage`` and return Java-safe primitives.
+
+    This avoids PyObject attribute access in the Java caller.
+    """
+    return embedding_result_to_java(embedding_model.embed_with_usage(**kwargs))
 
 
 def normalize_tool_call_id(tool_call: Dict[str, Any]) -> Dict[str, Any]:
