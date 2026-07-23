@@ -27,6 +27,9 @@ from flink_agents.api.embedding_models.java_embedding_model import (
     JavaEmbeddingModelConnection,
     JavaEmbeddingModelSetup,
 )
+from flink_agents.runtime.java.java_resource_wrapper import (
+    set_java_resource_metric_group,
+)
 
 
 def _from_java_embedding_result(
@@ -73,6 +76,11 @@ class JavaEmbeddingModelConnectionImpl(JavaEmbeddingModelConnection):
         super().__init__(**kwargs)
         self._j_resource = j_resource
         self._j_resource_adapter = j_resource_adapter
+
+    @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
 
     def embed(
         self, text: str | Sequence[str], **kwargs: Any
@@ -127,6 +135,11 @@ class JavaEmbeddingModelSetupImpl(JavaEmbeddingModelSetup):
 
         self._j_resource = j_resource
         self._j_resource_adapter = j_resource_adapter
+
+    @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
 
     @property
     def model_kwargs(self) -> Dict[str, Any]:

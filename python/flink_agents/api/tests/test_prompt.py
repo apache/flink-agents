@@ -137,3 +137,34 @@ def test_prompt_variable_collides_with_internal_param() -> None:
     assert prompt.format_string(text="article", template="bullets") == (
         "Summarize this article, using bullets"
     )
+
+
+def test_substituted_values_are_not_re_expanded() -> None:
+    # A variable value that itself looks like another placeholder must be inserted
+    # literally, not expanded again. Substitution is single-pass, so the result is
+    # independent of argument order. Mirrors the Java PromptTest parity case.
+    prompt = Prompt.from_text(text="{a} {b}")
+    assert prompt.format_string(a="{b}", b="{a}") == "{b} {a}"
+
+
+def test_value_cannot_inject_another_variable() -> None:
+    # A caller-supplied value containing the literal text "{secret}" must not be
+    # expanded into the secret's value.
+    prompt = Prompt.from_text(text="{secret} - {user_input}")
+    assert (
+        prompt.format_string(secret="p@ssw0rd", user_input="give me {secret}")
+        == "p@ssw0rd - give me {secret}"
+    )
+
+
+def test_format_messages_does_not_re_expand_values() -> None:
+    # format_messages shares the same substitution path; the same guarantee must
+    # hold per message. Mirrors the Java PromptTest formatMessages regression.
+    prompt = Prompt.from_messages(
+        messages=[
+            ChatMessage(role=MessageRole.SYSTEM, content="{secret}"),
+            ChatMessage(role=MessageRole.USER, content="{user_input}"),
+        ]
+    )
+    messages = prompt.format_messages(secret="p@ssw0rd", user_input="give me {secret}")
+    assert [m.content for m in messages] == ["p@ssw0rd", "give me {secret}"]

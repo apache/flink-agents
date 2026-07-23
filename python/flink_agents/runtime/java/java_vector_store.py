@@ -27,6 +27,9 @@ from flink_agents.api.vector_stores.vector_store import (
     Document,
     _maybe_cast_to_list,
 )
+from flink_agents.runtime.java.java_resource_wrapper import (
+    set_java_resource_metric_group,
+)
 from flink_agents.runtime.python_java_utils import from_java_document
 
 
@@ -59,6 +62,11 @@ class JavaVectorStoreImpl(JavaCollectionManageableVectorStore):
 
         self._j_resource = j_resource
         self._j_resource_adapter = j_resource_adapter
+
+    @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
 
     @property
     @override
