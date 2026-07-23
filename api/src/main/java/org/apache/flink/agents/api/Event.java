@@ -20,8 +20,11 @@ package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -37,6 +40,9 @@ public class Event {
     private final UUID id;
     private final String type;
     private final Map<String, Object> attributes;
+
+    @Nullable private UUID upstreamEventId;
+    @Nullable private String upstreamActionName;
 
     /**
      * Runtime-internal timestamp from the source record. Not part of the cross-language event
@@ -81,6 +87,30 @@ public class Event {
         return attributes;
     }
 
+    /** Returns the ID of the Event consumed by the Action that emitted this Event. */
+    @Nullable
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public UUID getUpstreamEventId() {
+        return upstreamEventId;
+    }
+
+    /** Sets the ID of the Event consumed by the Action that emitted this Event. */
+    public void setUpstreamEventId(@Nullable UUID upstreamEventId) {
+        this.upstreamEventId = upstreamEventId;
+    }
+
+    /** Returns the name of the Action that emitted this Event. */
+    @Nullable
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public String getUpstreamActionName() {
+        return upstreamActionName;
+    }
+
+    /** Sets the name of the Action that emitted this Event. */
+    public void setUpstreamActionName(@Nullable String upstreamActionName) {
+        this.upstreamActionName = upstreamActionName;
+    }
+
     public Object getAttr(String name) {
         return attributes.get(name);
     }
@@ -105,16 +135,22 @@ public class Event {
     }
 
     /**
-     * Creates a base Event from another Event, copying id, type, and attributes. Subclasses
-     * override this to reconstruct typed event objects with proper field deserialization.
+     * Creates a base Event from another Event, copying its identity, data, and framework metadata.
+     * Subclasses override this to reconstruct typed event objects with proper field
+     * deserialization.
      */
     public static Event fromEvent(Event event) {
         Event copy =
                 new Event(event.getId(), event.getType(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            copy.setSourceTimestamp(event.getSourceTimestamp());
-        }
+        copy.copyFrameworkMetadataFrom(event);
         return copy;
+    }
+
+    /** Copies framework-managed metadata when reconstructing a typed Event. */
+    protected void copyFrameworkMetadataFrom(Event event) {
+        this.sourceTimestamp = event.sourceTimestamp;
+        this.upstreamEventId = event.upstreamEventId;
+        this.upstreamActionName = event.upstreamActionName;
     }
 
     /**

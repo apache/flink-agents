@@ -62,9 +62,7 @@ public class ContextRetrievalRequestEvent extends Event {
         ContextRetrievalRequestEvent result =
                 new ContextRetrievalRequestEvent(
                         event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
+        result.copyFrameworkMetadataFrom(event);
         return result;
     }
 

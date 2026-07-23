@@ -685,12 +685,8 @@ public class MyEvent extends Event {
     }
 
     public static MyEvent fromEvent(Event event) {
-        // Preserve the base event id (and sourceTimestamp) so event logs, listeners,
-        // correlation, deduplication, and timestamp propagation stay consistent.
         MyEvent result = new MyEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
+        result.copyFrameworkMetadataFrom(event);
         return result;
     }
 
@@ -708,10 +704,11 @@ Typed reconstruction represents the same Event occurrence, so it must preserve t
 identity and framework-managed metadata:
 
 - **Python**: return `with_framework_metadata_from(event)` after constructing the typed object. It
-  returns a new typed object with the Event's UUIDv4 `id`; the returned Event's `id` remains
-  immutable.
-- **Java**: pass `event.getId()` to the typed constructor, then carry over `sourceTimestamp` with
-  `setSourceTimestamp(...)` when `hasSourceTimestamp()` is true.
+  returns a new typed object with the Event's UUIDv4 `id`, `upstream_event_id`, and
+  `upstream_action_name`; the returned Event's `id` remains immutable.
+- **Java**: pass `event.getId()` to the typed constructor, then call
+  `copyFrameworkMetadataFrom(event)`. The helper preserves `sourceTimestamp`,
+  `upstreamEventId`, and `upstreamActionName`.
 {{< /hint >}}
 
 {{< hint info >}}

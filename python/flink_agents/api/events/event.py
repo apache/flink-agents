@@ -24,7 +24,14 @@ except ImportError:
     from typing_extensions import Self, override
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
@@ -70,11 +77,25 @@ class Event(BaseModel, extra="allow"):
         Event type string used for routing. Required for all events.
     attributes : Dict[str, Any]
         Key-value properties for the event data.
+    upstream_event_id : UUID | None
+        ID of the direct Event consumed by the Action that emitted this Event.
+    upstream_action_name : str | None
+        Name of the Action that emitted this Event.
     """
 
     id: UUID = Field(default_factory=uuid4, frozen=True)
     type: str
     attributes: Dict[str, Any] = Field(default_factory=dict)
+    upstream_event_id: UUID | None = Field(
+        default=None,
+        validation_alias=AliasChoices("upstream_event_id", "upstreamEventId"),
+        serialization_alias="upstreamEventId",
+    )
+    upstream_action_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("upstream_action_name", "upstreamActionName"),
+        serialization_alias="upstreamActionName",
+    )
 
     @staticmethod
     def __serialize_unknown(field: Any) -> Dict[str, Any]:
@@ -94,7 +115,23 @@ class Event(BaseModel, extra="allow"):
         # Set fallback if not provided in kwargs
         if "fallback" not in kwargs:
             kwargs["fallback"] = self.__serialize_unknown
+        if "by_alias" not in kwargs:
+            kwargs["by_alias"] = True
         return super().model_dump_json(**kwargs)
+
+    @model_serializer(mode="wrap")
+    def _serialize_event(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> Dict[str, Any]:
+        """Omit empty lineage without changing other null-valued business data."""
+        serialized: Dict[str, Any] = handler(self)
+        if self.upstream_event_id is None:
+            serialized.pop("upstream_event_id", None)
+            serialized.pop("upstreamEventId", None)
+        if self.upstream_action_name is None:
+            serialized.pop("upstream_action_name", None)
+            serialized.pop("upstreamActionName", None)
+        return serialized
 
     @model_validator(mode="after")
     def validate_serializable_fields(self) -> "Event":
@@ -109,7 +146,13 @@ class Event(BaseModel, extra="allow"):
 
     def with_framework_metadata_from(self, source: "Event") -> Self:
         """Return a copy with framework-owned metadata from the source Event."""
-        return self.model_copy(update={"id": source.id})
+        return self.model_copy(
+            update={
+                "id": source.id,
+                "upstream_event_id": source.upstream_event_id,
+                "upstream_action_name": source.upstream_action_name,
+            }
+        )
 
     def get_type(self) -> str:
         """Return the event type string used for routing."""

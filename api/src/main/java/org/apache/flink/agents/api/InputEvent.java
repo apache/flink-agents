@@ -51,9 +51,7 @@ public class InputEvent extends Event {
      */
     public static InputEvent fromEvent(Event event) {
         InputEvent result = new InputEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
+        result.copyFrameworkMetadataFrom(event);
         return result;
     }
 
