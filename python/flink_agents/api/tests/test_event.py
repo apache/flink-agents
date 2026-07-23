@@ -233,6 +233,27 @@ def test_unified_event_from_json_missing_type() -> None:
         Event.from_json(json.dumps({"attributes": {}}))
 
 
+def test_lineage_serialization_respects_field_filters() -> None:
+    """Test lineage aliases do not bypass Pydantic include and exclude filters."""
+    event = Event(
+        type="ChildEvent",
+        upstreamEventId=UUID("00000000-0000-0000-0000-000000000001"),
+        upstreamActionName="child_action",
+    )
+
+    assert event.model_dump(include={"type"}) == {"type": "ChildEvent"}
+    assert json.loads(event.model_dump_json(include={"type"})) == {"type": "ChildEvent"}
+
+    excluded_fields = {"upstream_event_id", "upstream_action_name"}
+    dumped = event.model_dump(exclude=excluded_fields)
+    json_dumped = json.loads(event.model_dump_json(exclude=excluded_fields))
+
+    assert "upstreamEventId" not in dumped
+    assert "upstreamActionName" not in dumped
+    assert "upstreamEventId" not in json_dumped
+    assert "upstreamActionName" not in json_dumped
+
+
 def test_unified_event_serialization_roundtrip() -> None:
     """Test that unified events survive JSON serialization/deserialization."""
     original = Event(type="RoundTrip", attributes={"a": 1, "b": "two"})

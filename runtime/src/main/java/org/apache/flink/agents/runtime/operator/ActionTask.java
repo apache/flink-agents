@@ -91,6 +91,30 @@ public abstract class ActionTask {
     public abstract ActionTaskResult invoke(
             ClassLoader userCodeClassLoader, PythonActionExecutor executor) throws Exception;
 
+    /**
+     * Validates and binds output Events to this task's Action and trigger Event.
+     *
+     * <p>All outputs are validated before mutation to avoid partial updates. Existing lineage is
+     * overwritten, including during replay.
+     */
+    List<Event> finalizeOutputEvents(List<Event> outputEvents) {
+        for (Event outputEvent : outputEvents) {
+            if (Objects.equals(outputEvent.getId(), event.getId())) {
+                throw new IllegalArgumentException(
+                        "Action '"
+                                + action.getName()
+                                + "' cannot emit its triggering Event "
+                                + event.getId()
+                                + "; output Event IDs must differ from the triggering Event ID.");
+            }
+        }
+        for (Event outputEvent : outputEvents) {
+            outputEvent.setUpstreamEventId(event.getId());
+            outputEvent.setUpstreamActionName(action.getName());
+        }
+        return outputEvents;
+    }
+
     public class ActionTaskResult {
         private final boolean finished;
         private final List<Event> outputEvents;
@@ -101,7 +125,7 @@ public abstract class ActionTask {
                 List<Event> outputEvents,
                 @Nullable ActionTask generatedActionTask) {
             this.finished = finished;
-            this.outputEvents = outputEvents;
+            this.outputEvents = finalizeOutputEvents(outputEvents);
             this.generatedActionTaskOpt = Optional.ofNullable(generatedActionTask);
         }
 
