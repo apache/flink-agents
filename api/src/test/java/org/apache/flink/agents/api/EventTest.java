@@ -197,6 +197,7 @@ class EventTest {
         String json = "{\"type\":\"MyCustomEvent\",\"attributes\":{\"msg\":\"hello\"}}";
         Event event = Event.fromJson(json);
 
+        assertNotNull(event.getId());
         assertEquals("MyCustomEvent", event.getType());
         assertEquals("hello", event.getAttr("msg"));
     }

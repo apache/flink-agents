@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
@@ -28,10 +29,12 @@ import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.apache.flink.api.common.state.MapState;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -117,6 +120,10 @@ class ActionTaskContextManagerTest {
             invokeCreateAndSetRunnerContext(mgr, from);
             RunnerContextImpl.MemoryContext fromMemCtx = from.getRunnerContext().getMemoryContext();
             assertThat(fromMemCtx).isNotNull();
+            ReportedExecutionKey reportKey = new ReportedExecutionKey("llm", "model-a", Map.of());
+            ExecutionTraceContext reportTrace =
+                    from.getTraceContext().childExecution("llm", "model-a");
+            from.getActiveReportedExecutions().put(reportKey, reportTrace);
 
             // Step 2: transferContexts populates the map entry for `to` via the private
             // putMemoryContext (ActionTaskContextManager.java:266-286). DEM null is OK because
@@ -145,6 +152,10 @@ class ActionTaskContextManagerTest {
             invokeCreateAndSetRunnerContext(mgr, from);
             RunnerContextImpl.MemoryContext fromMemCtx = from.getRunnerContext().getMemoryContext();
             assertThat(fromMemCtx).isNotNull();
+            ReportedExecutionKey reportKey = new ReportedExecutionKey("llm", "model-a", Map.of());
+            ExecutionTraceContext reportTrace =
+                    from.getTraceContext().childExecution("llm", "model-a");
+            from.getActiveReportedExecutions().put(reportKey, reportTrace);
 
             // transferContexts (ActionTaskContextManager.java:266-286) copies but does NOT
             // remove from source. The from-side continuation map is never populated (the
@@ -167,6 +178,28 @@ class ActionTaskContextManagerTest {
             // — the source carries its continuation on its runner context, not on the
             // manager's map.
             assertThat(mgr.hasContinuationContext(from)).isFalse();
+
+            // (d) Execution report pairing state is part of the action execution scope and follows
+            // the continuation task.
+            assertThat(to.getActiveReportedExecutions()).containsEntry(reportKey, reportTrace);
+        }
+    }
+
+    @Test
+    void transferContextsKeepsReportedExecutionStateForSameContinuationTask() throws Exception {
+        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+            ActionTask task = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction());
+            invokeCreateAndSetRunnerContext(mgr, task);
+
+            ReportedExecutionKey reportKey =
+                    new ReportedExecutionKey("tool", "slow-tool", Map.of());
+            ExecutionTraceContext reportTrace =
+                    task.getTraceContext().childExecution("tool", "slow-tool");
+            task.getActiveReportedExecutions().put(reportKey, reportTrace);
+
+            mgr.transferContexts(task, task, new DurableExecutionManager(null));
+
+            assertThat(task.getActiveReportedExecutions()).containsEntry(reportKey, reportTrace);
         }
     }
 
@@ -246,7 +279,8 @@ class ActionTaskContextManagerTest {
                 sensoryMem,
                 shortTermMem,
                 /* pythonRunnerContext */ null,
-                /* longTermMemory */ null);
+                /* longTermMemory */ null,
+                /* executionEventSink */ null);
     }
 
     private static AgentPlan newEmptyAgentPlan() {

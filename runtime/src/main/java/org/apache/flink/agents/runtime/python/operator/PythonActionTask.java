@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.python.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
@@ -36,6 +37,12 @@ public class PythonActionTask extends ActionTask {
 
     public PythonActionTask(Object key, Event event, Action action) {
         super(key, event, action);
+        checkState(action.getExec() instanceof PythonFunction);
+    }
+
+    public PythonActionTask(
+            Object key, Event event, Action action, ExecutionTraceContext traceContext) {
+        super(key, event, action, traceContext);
         checkState(action.getExec() instanceof PythonFunction);
     }
 
@@ -58,7 +65,8 @@ public class PythonActionTask extends ActionTask {
             // The Python action generates an awaitable. We need to execute it once, which will
             // submit an asynchronous task and return whether the action has been completed.
             ((PythonRunnerContextImpl) runnerContext).setPythonAwaitableRef(pythonAwaitableRef);
-            ActionTask tempGeneratedActionTask = new PythonGeneratorActionTask(key, event, action);
+            ActionTask tempGeneratedActionTask =
+                    new PythonGeneratorActionTask(key, event, action, traceContext);
             tempGeneratedActionTask.setRunnerContext(runnerContext);
             return tempGeneratedActionTask.invoke(userCodeClassLoader, executor);
         }
