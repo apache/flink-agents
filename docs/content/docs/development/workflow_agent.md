@@ -658,11 +658,8 @@ class MyEvent(Event):
     @override
     def from_event(cls, event: Event) -> "MyEvent":
         assert "value" in event.attributes
-        result = MyEvent(value=event.attributes["value"])
-        # Preserve the base event id. Assign it last: the content-based id is
-        # regenerated whenever another field changes.
-        result.id = event.id
-        return result
+        result = cls(value=event.attributes["value"])
+        return result.with_framework_metadata_from(event)
 
     @property
     def value(self) -> str:
@@ -707,16 +704,14 @@ public class MyEvent extends Event {
 {{< /tabs >}}
 
 {{< hint info >}}
-When reconstructing a typed event, preserve the base `Event` metadata so that event logs,
-listeners, correlation, deduplication, and downstream timestamp propagation stay consistent with
-built-in events:
+Typed reconstruction represents the same Event occurrence, so it must preserve the base Event's
+identity and framework-managed metadata:
 
-- **`id`**: copy the source event's `id` onto the reconstructed event, as all built-in events do
-  in both languages. In Python, assign `result.id = event.id` **last**, because the content-based
-  `id` is regenerated whenever any other field changes.
-- **`sourceTimestamp`** (Java only): carry it over with `setSourceTimestamp(...)` when
-  `hasSourceTimestamp()` is true, matching built-in Java events. This field is runtime-internal and
-  used for timestamp propagation; the Python `Event` has no equivalent.
+- **Python**: return `with_framework_metadata_from(event)` after constructing the typed object. It
+  returns a new typed object with the Event's UUIDv4 `id`; the returned Event's `id` remains
+  immutable.
+- **Java**: pass `event.getId()` to the typed constructor, then carry over `sourceTimestamp` with
+  `setSourceTimestamp(...)` when `hasSourceTimestamp()` is true.
 {{< /hint >}}
 
 {{< hint info >}}

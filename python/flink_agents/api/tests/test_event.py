@@ -16,7 +16,8 @@
 # limitations under the License.
 #################################################################################
 import json
-from typing import Any, Type
+from typing import Any, ClassVar, Type
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -24,6 +25,18 @@ from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+
+
+class _CustomEvent(Event):
+    EVENT_TYPE: ClassVar[str] = "custom_event"
+
+    def __init__(self, value: str) -> None:
+        super().__init__(type=self.EVENT_TYPE, attributes={"value": value})
+
+    @classmethod
+    def from_event(cls, event: Event) -> "_CustomEvent":
+        result = cls(value=event.attributes["value"])
+        return result.with_framework_metadata_from(event)
 
 
 def test_event_init_serializable() -> None:
@@ -52,7 +65,11 @@ def test_input_event_ignore_row_unserializable() -> None:
 
 def test_event_row_with_non_serializable_fails() -> None:
     with pytest.raises(ValidationError):
-        Event(type="test", row_field=Row({"a": 1}), non_serializable_field=Type[InputEvent])
+        Event(
+            type="test",
+            row_field=Row({"a": 1}),
+            non_serializable_field=Type[InputEvent],
+        )
 
 
 def test_event_multiple_rows_serializable() -> None:
@@ -62,6 +79,31 @@ def test_event_multiple_rows_serializable() -> None:
 def test_event_setattr_row_serializable() -> None:
     event = Event(type="test", a=1)
     event.row_field = Row({"key": "value"})
+
+
+def test_events_with_same_content_have_distinct_random_ids() -> None:
+    first = OutputEvent(output="same")
+    second = OutputEvent(output="same")
+
+    assert first.id != second.id
+    assert first.id.version == 4
+    assert second.id.version == 4
+
+
+def test_event_id_does_not_change_with_event_content() -> None:
+    event = Event(type="test", a=1)
+    event_id = event.id
+
+    event.a = 2
+
+    assert event.id == event_id
+
+
+def test_event_id_cannot_be_reassigned() -> None:
+    event = Event(type="test")
+
+    with pytest.raises(ValidationError, match="Field is frozen"):
+        event.id = uuid4()
 
 
 def test_event_json_serialization_with_row() -> None:
@@ -201,6 +243,18 @@ def test_unified_event_serialization_roundtrip() -> None:
     restored = Event.model_validate(parsed)
     assert restored.type == "RoundTrip"
     assert restored.attributes == {"a": 1, "b": "two"}
+
+
+def test_custom_typed_from_event_preserves_identity() -> None:
+    """Test custom typed reconstruction preserves framework-managed identity."""
+    event = Event(
+        type=_CustomEvent.EVENT_TYPE,
+        attributes={"value": "result"},
+    )
+
+    reconstructed = _CustomEvent.from_event(event)
+
+    assert reconstructed.id == event.id
 
 
 def test_unified_event_serialization_roundtrip_with_row() -> None:

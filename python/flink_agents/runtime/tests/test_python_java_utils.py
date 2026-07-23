@@ -17,9 +17,15 @@
 #################################################################################
 import json
 
+import cloudpickle
+
 from flink_agents.api.decorators import tool
+from flink_agents.api.events.event import Event
 from flink_agents.api.tools import InjectedArg
-from flink_agents.runtime.python_java_utils import get_python_tool_metadata
+from flink_agents.runtime.python_java_utils import (
+    get_python_tool_metadata,
+    wrap_to_input_event,
+)
 
 
 @tool(injected_args={"tenant_id": InjectedArg.from_config("tenant.id")})
@@ -36,6 +42,15 @@ def test_get_python_tool_metadata_merges_callable_injected_args() -> None:
     schema = json.loads(flat["inputSchema"])
     assert set(schema["properties"]) == {"order_id"}
     injected_args = json.loads(flat["injectedArgs"])
-    assert injected_args == {
-        "tenant_id": {"source": "config", "key": "tenant.id"}
-    }
+    assert injected_args == {"tenant_id": {"source": "config", "key": "tenant.id"}}
+
+
+def test_wrap_to_input_event_assigns_unique_random_id_per_record() -> None:
+    payload = cloudpickle.dumps("same input")
+
+    first = Event.from_json(wrap_to_input_event(payload))
+    second = Event.from_json(wrap_to_input_event(payload))
+
+    assert first.id != second.id
+    assert first.id.version == 4
+    assert second.id.version == 4

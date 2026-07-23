@@ -58,8 +58,7 @@ class ToolRequestEvent(Event):
             model=event.attributes["model"],
             tool_calls=event.attributes["tool_calls"],
         )
-        result.id = event.id
-        return result
+        return result.with_framework_metadata_from(event)
 
     @property
     def model(self) -> str:
@@ -120,13 +119,10 @@ class ToolResponseEvent(Event):
             request_id=event.attributes["request_id"],
             responses=responses,
             external_ids=event.attributes.get("external_ids", {}),
-            success=event.attributes.get(
-                "success", dict.fromkeys(responses, True)
-            ),
+            success=event.attributes.get("success", dict.fromkeys(responses, True)),
             error=event.attributes.get("error", {}),
         )
-        result.id = event.id
-        return result
+        return result.with_framework_metadata_from(event)
 
     @property
     def request_id(self) -> UUID:
