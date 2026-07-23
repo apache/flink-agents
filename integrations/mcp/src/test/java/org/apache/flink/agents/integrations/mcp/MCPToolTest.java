@@ -20,11 +20,15 @@ package org.apache.flink.agents.integrations.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnJre;
 import org.junit.jupiter.api.condition.JRE;
+
+import java.util.Map;
 
 import static com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -61,6 +65,7 @@ class MCPToolTest {
         assertThat(deserialized.getName()).isEqualTo("add");
         assertThat(deserialized.getMetadata()).isEqualTo(metadata);
         assertThat(deserialized.getMcpServer()).isEqualTo(server);
+        assertThat(deserialized.getMcpServerName()).isNull();
     }
 
     @Test
@@ -148,7 +153,7 @@ class MCPToolTest {
         ToolMetadata metadata =
                 new ToolMetadata("multiply", "Multiply two numbers", "{\"type\":\"object\"}");
         MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
-        MCPTool original = new MCPTool(metadata, server);
+        MCPTool original = new MCPTool(metadata, server, "testMcpServer");
 
         ObjectMapper mapper = new ObjectMapper();
         // Configure to ignore unknown properties during deserialization
@@ -161,6 +166,7 @@ class MCPToolTest {
         assertThat(deserialized.getName()).isEqualTo(original.getName());
         assertThat(deserialized.getMetadata()).isEqualTo(original.getMetadata());
         assertThat(deserialized.getMcpServer()).isEqualTo(original.getMcpServer());
+        assertThat(deserialized.getMcpServerName()).isEqualTo("testMcpServer");
     }
 
     @Test
@@ -184,5 +190,18 @@ class MCPToolTest {
         assertThat(tool.getMetadata().getInputSchema()).contains("param2");
         assertThat(tool.getMetadata().getInputSchema()).contains("param3");
         assertThat(tool.getMetadata().getInputSchema()).contains("required");
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("Execution metadata contains MCP server context")
+    void executionMetadataContainsMcpServerContext() {
+        ToolMetadata metadata = new ToolMetadata("add", "Add two numbers", "{\"type\":\"object\"}");
+        MCPServer server = new MCPServer(DEFAULT_ENDPOINT);
+
+        MCPTool tool = new MCPTool(metadata, server, "testMcpServer");
+
+        assertThat(tool.getToolExecutionMetadata(new ToolParameters(Map.of())))
+                .containsEntry(ToolExecutionMetadataKeys.MCP_SERVER, "testMcpServer");
     }
 }

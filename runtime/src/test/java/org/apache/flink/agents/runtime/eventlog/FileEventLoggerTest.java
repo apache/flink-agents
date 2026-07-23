@@ -26,9 +26,11 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.agents.api.logger.LoggerType;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.JobInfo;
 import org.apache.flink.api.common.TaskInfo;
@@ -121,9 +123,9 @@ class FileEventLoggerTest {
     void testAppendWritesJsonEvents() throws Exception {
         logger.open(openParams);
         InputEvent inputEvent = new InputEvent("test input");
-        EventContext context = new EventContext(inputEvent);
+        ExecutionTraceContext context = null;
 
-        logger.append(context, inputEvent);
+        append(logger, inputEvent, context);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -133,10 +135,12 @@ class FileEventLoggerTest {
         EventLogRecord deserializedRecord =
                 objectMapper.readValue(lines.get(0), EventLogRecord.class);
         assertNotNull(deserializedRecord, "Deserialized record should not be null");
-        assertNotNull(deserializedRecord.getContext(), "Deserialized context should not be null");
+        assertNotNull(
+                deserializedRecord.getEventContext().getTimestamp(),
+                "Deserialized timestamp should not be null");
         assertNotNull(deserializedRecord.getEvent(), "Deserialized event should not be null");
 
-        assertEquals(InputEvent.EVENT_TYPE, deserializedRecord.getContext().getEventType());
+        assertEquals(InputEvent.EVENT_TYPE, deserializedRecord.getEvent().getType());
         assertEquals(InputEvent.EVENT_TYPE, deserializedRecord.getEvent().getType());
         InputEvent deserializedInput = InputEvent.fromEvent(deserializedRecord.getEvent());
         assertEquals("test input", deserializedInput.getInput());
@@ -147,11 +151,11 @@ class FileEventLoggerTest {
         logger.open(openParams);
         InputEvent inputEvent = new InputEvent("input data");
         OutputEvent outputEvent = new OutputEvent("output data");
-        EventContext inputContext = new EventContext(inputEvent);
-        EventContext outputContext = new EventContext(outputEvent);
+        ExecutionTraceContext inputContext = null;
+        ExecutionTraceContext outputContext = null;
 
-        logger.append(inputContext, inputEvent);
-        logger.append(outputContext, outputEvent);
+        append(logger, inputEvent, inputContext);
+        append(logger, outputEvent, outputContext);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -174,10 +178,10 @@ class FileEventLoggerTest {
         // Given
         logger.open(openParams);
         TestCustomEvent customEvent = new TestCustomEvent("custom data", 42);
-        EventContext context = new EventContext(customEvent);
+        ExecutionTraceContext context = null;
 
         // When
-        logger.append(context, customEvent);
+        append(logger, customEvent, context);
         logger.flush();
 
         // Then
@@ -187,9 +191,9 @@ class FileEventLoggerTest {
 
         // Verify JSON structure
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
-        assertEquals(TestCustomEvent.EVENT_TYPE, jsonNode.get("event").get("eventType").asText());
+        assertEquals(TestCustomEvent.EVENT_TYPE, jsonNode.get("event_type").asText());
 
-        JsonNode attrsNode = jsonNode.get("event").get("attributes");
+        JsonNode attrsNode = jsonNode.get("event_attributes");
         assertEquals("custom data", attrsNode.get("customData").asText());
         assertEquals(42, attrsNode.get("customNumber").asInt());
 
@@ -210,16 +214,16 @@ class FileEventLoggerTest {
         // Given - first session
         logger.open(openParams);
         InputEvent event1 = new InputEvent("first event");
-        EventContext context1 = new EventContext(event1);
-        logger.append(context1, event1);
+        ExecutionTraceContext context1 = null;
+        append(logger, event1, context1);
         logger.close();
 
         // When - second session (append mode)
         FileEventLogger secondLogger = new FileEventLogger(config);
         secondLogger.open(openParams);
         InputEvent event2 = new InputEvent("second event");
-        EventContext context2 = new EventContext(event2);
-        secondLogger.append(context2, event2);
+        ExecutionTraceContext context2 = null;
+        append(secondLogger, event2, context2);
         secondLogger.flush();
         secondLogger.close();
 
@@ -230,13 +234,10 @@ class FileEventLoggerTest {
 
         // Verify JSON structure
         JsonNode firstEventJson = objectMapper.readTree(lines.get(0));
-        assertEquals(
-                "first event", firstEventJson.get("event").get("attributes").get("input").asText());
+        assertEquals("first event", firstEventJson.get("event_attributes").get("input").asText());
 
         JsonNode secondEventJson = objectMapper.readTree(lines.get(1));
-        assertEquals(
-                "second event",
-                secondEventJson.get("event").get("attributes").get("input").asText());
+        assertEquals("second event", secondEventJson.get("event_attributes").get("input").asText());
 
         // Verify deserialization via fromEvent
         EventLogRecord firstRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
@@ -253,8 +254,8 @@ class FileEventLoggerTest {
         // Given - subtask 0
         logger.open(openParams);
         InputEvent event1 = new InputEvent("subtask 0 event");
-        EventContext context1 = new EventContext(event1);
-        logger.append(context1, event1);
+        ExecutionTraceContext context1 = null;
+        append(logger, event1, context1);
         logger.flush();
 
         // Given - subtask 1
@@ -263,8 +264,8 @@ class FileEventLoggerTest {
         EventLoggerOpenParams openParams2 = new EventLoggerOpenParams(runtimeContext);
         logger2.open(openParams2);
         InputEvent event2 = new InputEvent("subtask 1 event");
-        EventContext context2 = new EventContext(event2);
-        logger2.append(context2, event2);
+        ExecutionTraceContext context2 = null;
+        append(logger2, event2, context2);
         logger2.flush();
         logger2.close();
 
@@ -292,11 +293,9 @@ class FileEventLoggerTest {
         JsonNode subtask1EventJson = objectMapper.readTree(subtask1Lines.get(0));
 
         assertEquals(
-                "subtask 0 event",
-                subtask0EventJson.get("event").get("attributes").get("input").asText());
+                "subtask 0 event", subtask0EventJson.get("event_attributes").get("input").asText());
         assertEquals(
-                "subtask 1 event",
-                subtask1EventJson.get("event").get("attributes").get("input").asText());
+                "subtask 1 event", subtask1EventJson.get("event_attributes").get("input").asText());
 
         // Verify deserialization via fromEvent
         EventLogRecord subtask0Record =
@@ -320,7 +319,7 @@ class FileEventLoggerTest {
 
         logger.open(openParams);
         InputEvent inputEvent = new InputEvent("test input");
-        logger.append(new EventContext(inputEvent), inputEvent);
+        append(logger, inputEvent, null);
         logger.flush();
 
         // Then - output should be valid JSON spanning multiple lines (pretty-printed)
@@ -355,9 +354,9 @@ class FileEventLoggerTest {
         // Use a custom event with a very long string field
         TestCustomEvent event =
                 new TestCustomEvent("this is a very long string that exceeds 10", 1);
-        EventContext context = new EventContext(event);
+        ExecutionTraceContext context = null;
 
-        logger.append(context, event);
+        append(logger, event, context);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -368,7 +367,7 @@ class FileEventLoggerTest {
         assertEquals("STANDARD", jsonNode.get("logLevel").asText());
 
         // The customData field (inside attributes) should be truncated
-        JsonNode attrsNode = jsonNode.get("event").get("attributes");
+        JsonNode attrsNode = jsonNode.get("event_attributes");
         JsonNode customDataNode = attrsNode.get("customData");
         assertTrue(
                 customDataNode.has("truncatedString"),
@@ -389,9 +388,9 @@ class FileEventLoggerTest {
 
         TestCustomEvent event =
                 new TestCustomEvent("this is a very long string that exceeds 10", 1);
-        EventContext context = new EventContext(event);
+        ExecutionTraceContext context = null;
 
-        logger.append(context, event);
+        append(logger, event, context);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -402,7 +401,7 @@ class FileEventLoggerTest {
         assertEquals("VERBOSE", jsonNode.get("logLevel").asText());
 
         // The customData field (inside attributes) should NOT be truncated
-        JsonNode attrsNode = jsonNode.get("event").get("attributes");
+        JsonNode attrsNode = jsonNode.get("event_attributes");
         assertTrue(
                 attrsNode.get("customData").isTextual(),
                 "String should be preserved at VERBOSE level");
@@ -421,9 +420,9 @@ class FileEventLoggerTest {
         logger.open(openParams);
 
         InputEvent event = new InputEvent("should not be logged");
-        EventContext context = new EventContext(event);
+        ExecutionTraceContext context = null;
 
-        logger.append(context, event);
+        append(logger, event, context);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -445,12 +444,12 @@ class FileEventLoggerTest {
 
         // InputEvent should be VERBOSE (no truncation)
         InputEvent inputEvent = new InputEvent("this is a very long string that exceeds 10");
-        logger.append(new EventContext(inputEvent), inputEvent);
+        append(logger, inputEvent, null);
 
         // TestCustomEvent should be STANDARD (truncated)
         TestCustomEvent customEvent =
                 new TestCustomEvent("this is a very long string that exceeds 10", 1);
-        logger.append(new EventContext(customEvent), customEvent);
+        append(logger, customEvent, null);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -460,13 +459,12 @@ class FileEventLoggerTest {
         // InputEvent at VERBOSE - no truncation (data lives in attributes)
         JsonNode inputJson = objectMapper.readTree(lines.get(0));
         assertEquals("VERBOSE", inputJson.get("logLevel").asText());
-        assertTrue(inputJson.get("event").get("attributes").get("input").isTextual());
+        assertTrue(inputJson.get("event_attributes").get("input").isTextual());
 
         // TestCustomEvent at STANDARD - truncated (data lives in attributes)
         JsonNode customJson = objectMapper.readTree(lines.get(1));
         assertEquals("STANDARD", customJson.get("logLevel").asText());
-        assertTrue(
-                customJson.get("event").get("attributes").get("customData").has("truncatedString"));
+        assertTrue(customJson.get("event_attributes").get("customData").has("truncatedString"));
     }
 
     @Test
@@ -474,9 +472,9 @@ class FileEventLoggerTest {
         // Given - default config
         logger.open(openParams);
         InputEvent event = new InputEvent("test");
-        EventContext context = new EventContext(event);
+        ExecutionTraceContext context = null;
 
-        logger.append(context, event);
+        append(logger, event, context);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -485,8 +483,10 @@ class FileEventLoggerTest {
 
         // Verify new top-level fields exist
         assertTrue(jsonNode.has("logLevel"), "JSON should have logLevel field");
-        assertTrue(jsonNode.has("eventType"), "JSON should have eventType field");
-        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("eventType").asText());
+        assertTrue(jsonNode.has("event_id"), "JSON should have event_id field");
+        assertTrue(jsonNode.has("event_type"), "JSON should have event_type field");
+        assertTrue(jsonNode.has("event_attributes"), "JSON should have event_attributes field");
+        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("event_type").asText());
         assertNotNull(jsonNode.get("logLevel").asText());
     }
 
@@ -527,11 +527,11 @@ class FileEventLoggerTest {
 
         // EventA has explicit VERBOSE override — should be logged
         TestNamespacedEventA eventA = new TestNamespacedEventA("should be logged");
-        logger.append(new EventContext(eventA), eventA);
+        append(logger, eventA, null);
 
         // EventB inherits OFF from namespace level — should NOT be logged
         TestNamespacedEventB eventB = new TestNamespacedEventB("should not be logged");
-        logger.append(new EventContext(eventB), eventB);
+        append(logger, eventB, null);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -540,13 +540,19 @@ class FileEventLoggerTest {
 
         JsonNode json = objectMapper.readTree(lines.get(0));
         assertEquals("VERBOSE", json.get("logLevel").asText());
-        assertEquals(TestNamespacedEventA.EVENT_TYPE, json.get("eventType").asText());
+        assertEquals(TestNamespacedEventA.EVENT_TYPE, json.get("event_type").asText());
     }
 
     private Path getExpectedLogFilePath() {
         return tempDir.resolve(
                 String.format(
                         "events-%s-%s-%d.log", testJobId.toString(), testTaskName, testSubTaskId));
+    }
+
+    private static void append(
+            EventLogger logger, Event event, ExecutionTraceContext executionTraceContext)
+            throws Exception {
+        logger.append(new EventContext(event), event, executionTraceContext);
     }
 
     /** Custom test event class using the attributes-based pattern. */

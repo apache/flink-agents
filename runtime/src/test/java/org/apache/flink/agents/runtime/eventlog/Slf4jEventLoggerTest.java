@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.eventlog;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
@@ -27,6 +28,7 @@ import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.agents.api.logger.LoggerType;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.JobInfo;
 import org.apache.flink.api.common.TaskInfo;
@@ -127,9 +129,9 @@ class Slf4jEventLoggerTest {
         logger.open(openParams);
 
         InputEvent inputEvent = new InputEvent("test input");
-        EventContext context = new EventContext(inputEvent);
+        ExecutionTraceContext context = null;
 
-        logger.append(context, inputEvent);
+        append(inputEvent, context);
 
         List<String> messages = testAppender.getMessages();
         assertEquals(1, messages.size(), "Should have logged one message");
@@ -141,8 +143,9 @@ class Slf4jEventLoggerTest {
         assertEquals(testSubTaskId, jsonNode.get("subtaskId").asInt());
         // Verify event content
         assertNotNull(jsonNode.get("timestamp"));
-        assertNotNull(jsonNode.get("event"));
-        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("eventType").asText());
+        assertNotNull(jsonNode.get("event_id"));
+        assertNotNull(jsonNode.get("event_attributes"));
+        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("event_type").asText());
     }
 
     @Test
@@ -154,18 +157,17 @@ class Slf4jEventLoggerTest {
         InputEvent inputEvent = new InputEvent("input data");
         OutputEvent outputEvent = new OutputEvent("output data");
 
-        logger.append(new EventContext(inputEvent), inputEvent);
-        logger.append(new EventContext(outputEvent), outputEvent);
+        append(inputEvent, null);
+        append(outputEvent, null);
 
         List<String> messages = testAppender.getMessages();
         assertEquals(2, messages.size(), "Should have logged two messages");
 
         JsonNode inputJson = objectMapper.readTree(messages.get(0));
-        assertEquals("input data", inputJson.get("event").get("attributes").get("input").asText());
+        assertEquals("input data", inputJson.get("event_attributes").get("input").asText());
 
         JsonNode outputJson = objectMapper.readTree(messages.get(1));
-        assertEquals(
-                "output data", outputJson.get("event").get("attributes").get("output").asText());
+        assertEquals("output data", outputJson.get("event_attributes").get("output").asText());
     }
 
     @Test
@@ -181,7 +183,7 @@ class Slf4jEventLoggerTest {
         logger.open(openParams);
 
         InputEvent inputEvent = new InputEvent("input data");
-        logger.append(new EventContext(inputEvent), inputEvent);
+        append(inputEvent, null);
 
         List<String> messages = testAppender.getMessages();
         assertTrue(messages.isEmpty(), "No events should be logged when root level is OFF");
@@ -202,15 +204,15 @@ class Slf4jEventLoggerTest {
         InputEvent inputEvent = new InputEvent("input data");
         OutputEvent outputEvent = new OutputEvent("output data");
 
-        logger.append(new EventContext(inputEvent), inputEvent);
-        logger.append(new EventContext(outputEvent), outputEvent);
+        append(inputEvent, null);
+        append(outputEvent, null);
 
         List<String> messages = testAppender.getMessages();
         assertEquals(
                 1, messages.size(), "Only OutputEvent should be logged when InputEvent is OFF");
 
         JsonNode jsonNode = objectMapper.readTree(messages.get(0));
-        assertEquals("output data", jsonNode.get("event").get("attributes").get("output").asText());
+        assertEquals("output data", jsonNode.get("event_attributes").get("output").asText());
     }
 
     @Test
@@ -220,7 +222,7 @@ class Slf4jEventLoggerTest {
         logger.open(openParams);
 
         InputEvent inputEvent = new InputEvent("test input");
-        logger.append(new EventContext(inputEvent), inputEvent);
+        append(inputEvent, null);
 
         List<String> messages = testAppender.getMessages();
         assertEquals(1, messages.size());
@@ -237,7 +239,7 @@ class Slf4jEventLoggerTest {
         logger.open(openParams);
 
         InputEvent inputEvent = new InputEvent("test input");
-        logger.append(new EventContext(inputEvent), inputEvent);
+        append(inputEvent, null);
 
         List<String> messages = testAppender.getMessages();
         assertEquals(1, messages.size());
@@ -260,7 +262,7 @@ class Slf4jEventLoggerTest {
         logger.open(openParams);
 
         InputEvent inputEvent = new InputEvent("test input");
-        logger.append(new EventContext(inputEvent), inputEvent);
+        append(inputEvent, null);
 
         List<String> messages = testAppender.getMessages();
         assertEquals(1, messages.size());
@@ -279,6 +281,10 @@ class Slf4jEventLoggerTest {
 
         assertDoesNotThrow(() -> logger.flush(), "flush() should not throw");
         assertDoesNotThrow(() -> logger.close(), "close() should not throw");
+    }
+
+    private void append(Event event, ExecutionTraceContext executionTraceContext) throws Exception {
+        logger.append(new EventContext(event), event, executionTraceContext);
     }
 
     /** A log4j2 appender that captures log messages for testing. */

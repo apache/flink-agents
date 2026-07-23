@@ -40,6 +40,22 @@ def test_event_setattr_serializable() -> None:
     event.c = Event(type="nested")
 
 
+def test_same_content_creates_distinct_event_occurrences() -> None:
+    first = Event(type="test", a=1)
+    second = Event(type="test", a=1)
+
+    assert first.id != second.id
+
+
+def test_mutating_event_payload_preserves_occurrence_id() -> None:
+    event = Event(type="test", a=1)
+    event_id = event.id
+
+    event.a = 2
+
+    assert event.id == event_id
+
+
 def test_event_setattr_non_serializable() -> None:
     event = Event(type="test", a=1)
     with pytest.raises(PydanticSerializationError):

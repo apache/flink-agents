@@ -72,7 +72,7 @@ public class PythonMCPResourceDiscovery {
 
             PythonMCPServer server = (PythonMCPServer) provider.provide(cache.getResourceContext());
 
-            for (PythonMCPTool tool : server.listTools()) {
+            for (PythonMCPTool tool : server.listTools(provider.getName())) {
                 cache.put(tool.getName(), TOOL, tool);
             }
             for (PythonMCPPrompt prompt : server.listPrompts()) {

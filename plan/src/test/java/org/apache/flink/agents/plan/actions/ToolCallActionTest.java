@@ -378,6 +378,22 @@ public class ToolCallActionTest {
         assertThat(response.getError()).containsEntry("call-1", "missing resource");
     }
 
+    @Test
+    void processToolRequestUsesFallbackWhenMissingToolErrorHasNoMessage() {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext() {
+                    @Override
+                    public Resource getResource(String name, ResourceType type) {
+                        throw new RuntimeException();
+                    }
+                };
+
+        ToolCallAction.processToolRequest(toolRequest("queryOrder"), ctx);
+
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getError()).containsEntry("call-1", "Tool does not exist.");
+    }
+
     private static ToolRequestEvent toolRequest(String toolName) {
         return new ToolRequestEvent(
                 "model",

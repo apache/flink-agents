@@ -1,4 +1,5 @@
 {
+  "agent_name": "Agent",
   "actions": {
     "handle": {
       "name": "handle",
