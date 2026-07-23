@@ -50,8 +50,7 @@ def _regenerate_enabled() -> bool:
 
 
 def _force_id(event: Event, fixed_id: UUID) -> Event:
-    object.__setattr__(event, "id", fixed_id)
-    return event
+    return event.model_copy(update={"id": fixed_id})
 
 
 def _write_python_snapshot(name: str, event: Event) -> None:
