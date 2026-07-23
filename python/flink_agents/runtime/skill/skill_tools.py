@@ -23,11 +23,15 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from flink_agents.runtime.skill.skill_manager import SkillManager
 
 from pydantic import BaseModel, Field
 
+from flink_agents.api.tools import ToolExecutionMetadataProvider
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
+from flink_agents.api.trace import ToolExecutionMetadataKeys
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +51,7 @@ class LoadSkillArgs(BaseModel):
     )
 
 
-class LoadSkillTool(Tool):
+class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
     """Tool for loading skill content and resources.
 
     Accesses the SkillManager through the runtime ResourceContext
@@ -72,6 +76,19 @@ class LoadSkillTool(Tool):
     def tool_type(cls) -> ToolType:
         """Return tool type of class."""
         return ToolType.FUNCTION
+
+    def get_tool_execution_metadata(
+        self, parameters: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Describe the requested skill resource for execution tracing."""
+        metadata = {}
+        if "name" in parameters:
+            metadata[ToolExecutionMetadataKeys.SKILL_NAME] = str(parameters["name"])
+        if "path" in parameters:
+            metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] = str(
+                parameters["path"]
+            )
+        return metadata
 
     def call(self, *args: Any, **kwargs: Any) -> str:
         """Call the tool to load a skill."""

@@ -31,6 +31,7 @@ import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.agents.runtime.trace.ExecutionEventSink;
 import org.apache.flink.api.common.state.MapState;
 
 import javax.annotation.Nullable;
@@ -73,7 +74,6 @@ class ActionTaskContextManager implements AutoCloseable {
     private final Map<ActionTask, RunnerContextImpl.MemoryContext> actionTaskMemoryContexts;
     private final Map<ActionTask, ContinuationContext> continuationContexts;
     private final Map<ActionTask, String> pythonAwaitableRefs;
-
     private ContinuationActionExecutor continuationActionExecutor;
 
     ActionTaskContextManager(int numAsyncThreads) {
@@ -148,8 +148,9 @@ class ActionTaskContextManager implements AutoCloseable {
      *   <li>Selects a Java or Python runner context based on the action's {@code Exec} type.
      *   <li>Reuses any existing {@link RunnerContextImpl.MemoryContext} for this task; otherwise
      *       builds a fresh one backed by the supplied sensory/short-term memory states.
+     *   <li>Wires the runtime-level execution event sink onto the runner context.
      *   <li>Calls {@link RunnerContextImpl#switchActionContext} so the shared context now points at
-     *       this action's name, memory, and key namespace.
+     *       this action's name, memory, key namespace, trace context, and reported-execution state.
      *   <li>For Java contexts, attaches a continuation context (re-used if the task is resuming
      *       from an async suspend, fresh otherwise).
      *   <li>For Python contexts, attaches the per-task awaitable reference (or {@code null} if the
@@ -179,7 +180,8 @@ class ActionTaskContextManager implements AutoCloseable {
             MapState<String, MemoryObjectImpl.MemoryItem> sensoryMemState,
             MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState,
             PythonRunnerContextImpl pythonRunnerContext,
-            @Nullable InteranlBaseLongTermMemory longTermMemory) {
+            @Nullable InteranlBaseLongTermMemory longTermMemory,
+            @Nullable ExecutionEventSink executionEventSink) {
         RunnerContextImpl context;
         if (actionTask.action.getExec() instanceof JavaFunction) {
             context =
@@ -207,6 +209,7 @@ class ActionTaskContextManager implements AutoCloseable {
             throw new IllegalStateException(
                     "Unsupported action type: " + actionTask.action.getExec().getClass());
         }
+        context.setExecutionEventSink(executionEventSink);
 
         RunnerContextImpl.MemoryContext memoryContext;
         if (actionTaskMemoryContexts.containsKey(actionTask)) {
@@ -223,7 +226,9 @@ class ActionTaskContextManager implements AutoCloseable {
                 memoryContext,
                 contextKey,
                 actionTask.getObservationId(),
-                MemoryEvent.isMemoryType(actionTask.event.getType()));
+                MemoryEvent.isMemoryType(actionTask.event.getType()),
+                actionTask.getTraceContext(),
+                actionTask.getActiveReportedExecutions());
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;
@@ -271,6 +276,7 @@ class ActionTaskContextManager implements AutoCloseable {
     void transferContexts(
             ActionTask fromTask, ActionTask toTask, DurableExecutionManager durableExecManager) {
         putMemoryContext(toTask, fromTask.getRunnerContext().getMemoryContext());
+        toTask.inheritExecutionState(fromTask);
         RunnerContextImpl.DurableExecutionContext durableContext =
                 fromTask.getRunnerContext().getDurableExecutionContext();
         if (durableContext != null) {

@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Objects;
@@ -103,7 +104,18 @@ public class JavaFunction implements Function {
 
     @Override
     public Object call(Object... args) throws Exception {
-        return getMethod().invoke(null, args);
+        try {
+            return getMethod().invoke(null, args);
+        } catch (InvocationTargetException e) {
+            Throwable target = e.getTargetException();
+            if (target instanceof Exception) {
+                throw (Exception) target;
+            }
+            if (target instanceof Error) {
+                throw (Error) target;
+            }
+            throw new RuntimeException(target);
+        }
     }
 
     @Override

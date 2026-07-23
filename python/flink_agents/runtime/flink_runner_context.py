@@ -15,8 +15,10 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import logging
 import os
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
@@ -38,6 +40,7 @@ from flink_agents.api.runner_context import (
     AsyncExecutionResult,
     RunnerContext,
 )
+from flink_agents.api.trace import ExecutionReporter
 from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
@@ -54,6 +57,24 @@ from flink_agents.runtime.memory.mem0.mem0_long_term_memory import (
 from flink_agents.runtime.resource_cache import ResourceCache
 
 logger = logging.getLogger(__name__)
+
+
+def _error_type(error: BaseException) -> str:
+    return f"{error.__class__.__module__}.{error.__class__.__qualname__}"
+
+
+def _root_cause(error: BaseException) -> BaseException:
+    current = error
+    visited: set[int] = set()
+    while id(current) not in visited:
+        visited.add(id(current))
+        cause = current.__cause__
+        if cause is None and not current.__suppress_context__:
+            cause = current.__context__
+        if cause is None:
+            break
+        current = cause
+    return current
 
 
 @dataclass(frozen=True)
@@ -241,7 +262,7 @@ class _ReconcilerDurableAsyncExecutionResult(AsyncExecutionResult):
         return result
 
 
-class FlinkRunnerContext(RunnerContext):
+class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     """Providing context for agent execution in Flink Environment.
 
     This context allows access to event handling and provides fine-grained
@@ -400,6 +421,56 @@ class FlinkRunnerContext(RunnerContext):
             The individual metric group specific to the current action.
         """
         return FlinkMetricGroup(self._j_runner_context.getActionMetricGroup())
+
+    @override
+    def report_execution_started(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._j_runner_context.reportExecutionStartedJson(
+            entity_type,
+            entity_name,
+            self._entity_metadata_json(entity_metadata),
+        )
+
+    @override
+    def report_execution_succeeded(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._j_runner_context.reportExecutionSucceededJson(
+            entity_type,
+            entity_name,
+            self._entity_metadata_json(entity_metadata),
+        )
+
+    @override
+    def report_execution_failed(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        error: BaseException,
+        problem_category: str | None = None,
+    ) -> None:
+        root_error = _root_cause(error)
+        error_message = str(root_error)
+        self._j_runner_context.reportExecutionFailedJson(
+            entity_type,
+            entity_name,
+            self._entity_metadata_json(entity_metadata),
+            _error_type(root_error),
+            error_message or None,
+            problem_category,
+        )
+
+    @staticmethod
+    def _entity_metadata_json(entity_metadata: Mapping[str, Any] | None) -> str:
+        return json.dumps(dict(entity_metadata or {}))
 
     def _try_get_cached_result(
         self, func: Callable, args: tuple, kwargs: dict

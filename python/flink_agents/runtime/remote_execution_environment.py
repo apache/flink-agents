@@ -96,7 +96,9 @@ class RemoteAgentBuilder(AgentBuilder):
         if self.__agent_plan_json is not None:
             err_msg = "RemoteAgentBuilder doesn't support apply multiple agents yet."
             raise RuntimeError(err_msg)
+        agent_name = None
         if isinstance(agent, str):
+            agent_name = agent
             if agent not in self.__agents:
                 msg = (
                     f"No agent named {agent!r} is registered on this "
@@ -109,7 +111,9 @@ class RemoteAgentBuilder(AgentBuilder):
         for type, name_to_resource in self.__resources.items():
             agent.resources[type] = name_to_resource | agent.resources[type]
 
-        agent_plan_json = AgentPlan.from_agent(agent, self.__config).model_dump_json(
+        agent_plan_json = AgentPlan.from_agent(
+            agent, self.__config, agent_name
+        ).model_dump_json(
             serialize_as_any=True
         )
         self.__validate_agent_plan_json(agent_plan_json)
