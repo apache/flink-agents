@@ -18,15 +18,21 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.io.Serializable;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,17 +47,26 @@ import java.util.UUID;
  * {@code ActionTask} via {@link ActionTaskResult#getGeneratedActionTask()} and continue executing
  * it.
  */
-public abstract class ActionTask {
+public abstract class ActionTask implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     protected static final Logger LOG = LoggerFactory.getLogger(ActionTask.class);
 
     protected final Object key;
     protected final Event event;
     protected final Action action;
-
     /** Stable identifier for observations produced by this logical action execution. */
     protected String observationId;
 
+    protected final ExecutionTraceContext traceContext;
+    /**
+     * Active child executions reported from this action execution. This state follows the
+     * ActionTask, while the shared RunnerContextImpl only points at it during invocation.
+     */
+    private final Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions;
+
+    private boolean executionStartedEventEmitted;
     /**
      * Since RunnerContextImpl contains references to the Operator and state, it should not be
      * serialized and included in the state with ActionTask. Instead, we should check if a valid
@@ -60,14 +75,42 @@ public abstract class ActionTask {
     protected transient RunnerContextImpl runnerContext;
 
     public ActionTask(Object key, Event event, Action action) {
-        this(key, event, action, UUID.randomUUID().toString());
+        this(
+                key,
+                event,
+                action,
+                UUID.randomUUID().toString(),
+                ExecutionTraceContext.forExecution(
+                        null, null, null, ExecutionReporter.EntityTypes.ACTION, action.getName()));
     }
 
     protected ActionTask(Object key, Event event, Action action, String observationId) {
+        this(
+                key,
+                event,
+                action,
+                observationId,
+                ExecutionTraceContext.forExecution(
+                        null, null, null, ExecutionReporter.EntityTypes.ACTION, action.getName()));
+    }
+
+    protected ActionTask(
+            Object key, Event event, Action action, ExecutionTraceContext traceContext) {
+        this(key, event, action, UUID.randomUUID().toString(), traceContext);
+    }
+
+    protected ActionTask(
+            Object key,
+            Event event,
+            Action action,
+            String observationId,
+            ExecutionTraceContext traceContext) {
         this.key = key;
         this.event = event;
         this.action = action;
         this.observationId = Objects.requireNonNull(observationId, "observationId");
+        this.traceContext = Objects.requireNonNull(traceContext, "traceContext must not be null");
+        this.activeReportedExecutions = new HashMap<>();
     }
 
     public RunnerContextImpl getRunnerContext() {
@@ -91,6 +134,38 @@ public abstract class ActionTask {
         return observationId;
     }
 
+    ExecutionTraceContext getTraceContext() {
+        return traceContext;
+    }
+
+    Map<ReportedExecutionKey, ExecutionTraceContext> getActiveReportedExecutions() {
+        return activeReportedExecutions;
+    }
+
+    void inheritExecutionState(ActionTask source) {
+        if (source == this) {
+            return;
+        }
+        this.activeReportedExecutions.clear();
+        this.activeReportedExecutions.putAll(source.activeReportedExecutions);
+        this.executionStartedEventEmitted = source.executionStartedEventEmitted;
+    }
+
+    /**
+     * Returns whether the started lifecycle event has already been emitted for this execution.
+     *
+     * <p>This state is part of the pending continuation task so a resumed continuation does not
+     * emit duplicate started events for the same execution.
+     */
+    boolean hasExecutionStartedEventEmitted() {
+        return executionStartedEventEmitted;
+    }
+
+    /** Marks the started lifecycle event as emitted for this execution. */
+    void markExecutionStartedEventEmitted() {
+        executionStartedEventEmitted = true;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -99,12 +174,13 @@ public abstract class ActionTask {
         return Objects.equals(this.key, other.key)
                 && Objects.equals(this.event, other.event)
                 && Objects.equals(this.action, other.action)
-                && Objects.equals(this.getObservationId(), other.getObservationId());
+                && Objects.equals(this.getObservationId(), other.getObservationId())
+                && Objects.equals(this.traceContext, other.traceContext);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(key, event, action, getObservationId());
+        return Objects.hash(key, event, action, getObservationId(), traceContext);
     }
 
     /** Invokes the action task. */

@@ -38,6 +38,8 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
@@ -368,16 +370,27 @@ public class ChatModelAction {
 
         for (int attempt = 0; attempt < numRetries + 1; attempt++) {
             try {
-                response =
-                        chatAsync
-                                ? ctx.durableExecuteAsync(callable)
-                                : ctx.durableExecute(callable);
-                recordChatTokenMetrics(chatModel, response);
-                // only generate structured output for final response.
-                if (outputSchema != null && response.getToolCalls().isEmpty()) {
-                    response = generateStructuredOutput(response, outputSchema);
+                ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.LLM, model);
+                try {
+                    response =
+                            chatAsync
+                                    ? ctx.durableExecuteAsync(callable)
+                                    : ctx.durableExecute(callable);
+                    Objects.requireNonNull(response, "ChatModel returned a null response.");
+                } catch (Exception modelError) {
+                    ExecutionReporters.failed(
+                            ctx,
+                            ExecutionReporter.EntityTypes.LLM,
+                            model,
+                            modelError,
+                            ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
+                    throw modelError;
                 }
-                break;
+                ExecutionReporters.succeeded(ctx, ExecutionReporter.EntityTypes.LLM, model);
+                recordChatTokenMetrics(chatModel, response);
+                if (outputSchema != null && response.getToolCalls().isEmpty()) {
+                    response = generateStructuredOutputWithReport(ctx, response, outputSchema);
+                }
             } catch (Exception e) {
                 if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
                     LOG.warn(
@@ -400,6 +413,7 @@ public class ChatModelAction {
                         Thread.sleep(currentWaitSec * 1000L);
                         totalWaitTimeSec += currentWaitSec;
                     }
+                    continue;
                 } else {
                     LOG.debug(
                             "Chat request {} failed, the input chat messages are {}.",
@@ -408,6 +422,7 @@ public class ChatModelAction {
                     throw e;
                 }
             }
+            break;
         }
 
         if (actualRetryCount > 0) {
@@ -436,6 +451,25 @@ public class ChatModelAction {
             ctx.sendEvent(
                     new ChatResponseEvent(
                             initialRequestId, response, totalRetryCount, totalRetryWaitSec));
+        }
+    }
+
+    private static ChatMessage generateStructuredOutputWithReport(
+            RunnerContext ctx, ChatMessage response, Object outputSchema) throws Exception {
+        ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
+        try {
+            ChatMessage structuredResponse = generateStructuredOutput(response, outputSchema);
+            ExecutionReporters.succeeded(
+                    ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
+            return structuredResponse;
+        } catch (Exception e) {
+            ExecutionReporters.failed(
+                    ctx,
+                    ExecutionReporter.EntityTypes.PARSER,
+                    STRUCTURED_OUTPUT,
+                    e,
+                    ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR);
+            throw e;
         }
     }
 

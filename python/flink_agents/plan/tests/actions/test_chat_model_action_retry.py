@@ -20,11 +20,14 @@
 import asyncio
 import time
 from typing import Any, Sequence
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel
 
+from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
+from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
@@ -33,6 +36,11 @@ from flink_agents.api.core_options import (
 from flink_agents.api.events.chat_event import ChatResponseEvent
 from flink_agents.api.events.tool_event import ToolResponseEvent
 from flink_agents.api.metric_group import Counter, MetricGroup
+from flink_agents.api.trace import (
+    ExecutionEntityTypes,
+    ExecutionProblemCategories,
+    ExecutionReporter,
+)
 from flink_agents.plan.actions.chat_model_action import (
     chat,
     process_chat_request_or_tool_response,
@@ -100,6 +108,10 @@ class _MockMemoryObject:
         self._store[path] = value
 
 
+class _StructuredResult(BaseModel):
+    result: int
+
+
 def _create_mock_runner_context(
     chat_model: Any,
     max_retries: int = 3,
@@ -126,7 +138,7 @@ def _create_mock_runner_context(
         )
     )
 
-    ctx = MagicMock()
+    ctx = MagicMock(spec=ExecutionReporter)
     ctx.config = config
     ctx.sensory_memory = sensory_memory
     ctx.action_metric_group = metric_group
@@ -176,6 +188,13 @@ class TestChatModelActionRetry:
 
         # No retry metrics should be recorded
         assert len(metric_group._sub_groups) == 0
+        ctx.report_execution_started.assert_called_once_with(
+            ExecutionEntityTypes.LLM, chat_model.connection, {}
+        )
+        ctx.report_execution_succeeded.assert_called_once_with(
+            ExecutionEntityTypes.LLM, chat_model.connection, {}
+        )
+        ctx.report_execution_failed.assert_not_called()
 
     def test_chat_retries_with_exponential_backoff(self) -> None:
         """Fail once then succeed: 1s interval, 1 retry -> wait 1s (1 * 2^0)."""
@@ -222,6 +241,14 @@ class TestChatModelActionRetry:
         model_group = metric_group.get_sub_group("model", chat_model.connection)
         assert model_group.get_counter("retryCount").get_count() == 1
         assert model_group.get_counter("retryWaitSec").get_count() == 1
+        assert ctx.report_execution_started.call_count == 2
+        ctx.report_execution_failed.assert_called_once()
+        failed_args = ctx.report_execution_failed.call_args.args
+        assert failed_args[0] == ExecutionEntityTypes.LLM
+        assert failed_args[-1] == ExecutionProblemCategories.MODEL_CALL_FAILED
+        ctx.report_execution_succeeded.assert_called_once_with(
+            ExecutionEntityTypes.LLM, "test-model", {}
+        )
 
     def test_chat_exhausts_retries_and_raises(self) -> None:
         """All retries exhausted: exception raised, no event sent."""
@@ -246,6 +273,58 @@ class TestChatModelActionRetry:
             )
 
         assert len(sent_events) == 0
+        assert ctx.report_execution_started.call_count == 3
+        assert ctx.report_execution_failed.call_count == 3
+        for failed_call in ctx.report_execution_failed.call_args_list:
+            assert failed_call.args[0] == ExecutionEntityTypes.LLM
+            assert failed_call.args[-1] == ExecutionProblemCategories.MODEL_CALL_FAILED
+        ctx.report_execution_succeeded.assert_not_called()
+
+    def test_structured_output_parse_error_retries_without_failing_llm(
+        self,
+    ) -> None:
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(
+            side_effect=[
+                ChatMessage(role=MessageRole.ASSISTANT, content="not-json"),
+                ChatMessage(role=MessageRole.ASSISTANT, content='{"result": 42}'),
+            ]
+        )
+
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=1, retry_wait_interval_sec=0
+        )
+
+        asyncio.run(
+            chat(
+                uuid4(),
+                "test-model",
+                [ChatMessage(role=MessageRole.USER, content="hi")],
+                {},
+                OutputSchema(output_schema=_StructuredResult),
+                ctx,
+            )
+        )
+
+        assert chat_model.chat.call_count == 2
+        assert len(sent_events) == 1
+        response = sent_events[0].response
+        assert response.extra_args[STRUCTURED_OUTPUT].result == 42
+
+        ctx.report_execution_failed.assert_called_once()
+        failed_args = ctx.report_execution_failed.call_args.args
+        assert failed_args[0] == ExecutionEntityTypes.PARSER
+        assert failed_args[1] == STRUCTURED_OUTPUT
+        assert failed_args[-1] == ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR
+
+        assert ctx.report_execution_started.call_count == 4
+        assert ctx.report_execution_succeeded.call_count == 3
+        assert (
+            ctx.report_execution_succeeded.call_args_list.count(
+                call(ExecutionEntityTypes.LLM, "test-model", {})
+            )
+            == 2
+        )
 
 
 class TestChatResponseEventRetryFields:
@@ -325,9 +404,9 @@ class TestProcessToolResponsePromptArgsForwarding:
             "_TOOL_CALL_CONTEXT",
             {
                 str(initial_request_id): [
-                    ChatMessage(
-                        role=MessageRole.USER, content="hi"
-                    ).model_dump(mode="json")
+                    ChatMessage(role=MessageRole.USER, content="hi").model_dump(
+                        mode="json"
+                    )
                 ]
             },
         )
@@ -377,9 +456,9 @@ class TestProcessToolResponsePromptArgsForwarding:
             "_TOOL_CALL_CONTEXT",
             {
                 str(initial_request_id): [
-                    ChatMessage(
-                        role=MessageRole.USER, content="hi"
-                    ).model_dump(mode="json")
+                    ChatMessage(role=MessageRole.USER, content="hi").model_dump(
+                        mode="json"
+                    )
                 ]
             },
         )
@@ -389,7 +468,9 @@ class TestProcessToolResponsePromptArgsForwarding:
             responses={tool_call_id: "Tool `query_order` execute failed."},
             external_ids={},
             success={tool_call_id: False},
-            error={tool_call_id: "Missing config for injected tool parameter: tenant_id"},
+            error={
+                tool_call_id: "Missing config for injected tool parameter: tenant_id"
+            },
         )
 
         asyncio.run(process_chat_request_or_tool_response(tool_response_event, ctx))

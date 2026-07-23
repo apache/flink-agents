@@ -29,9 +29,15 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.listener.EventListener;
+import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
+import org.apache.flink.agents.api.logger.EventLoggerFactory;
+import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.api.memory.MemorySet;
+import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -42,6 +48,7 @@ import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
+import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
@@ -52,6 +59,7 @@ import org.apache.flink.streaming.runtime.tasks.mailbox.TaskMailbox;
 import org.apache.flink.streaming.util.AbstractStreamOperatorTestHarness;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.apache.flink.util.ExceptionUtils;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -85,6 +93,13 @@ public class ActionExecutionOperatorTest {
         TestAgent.resetReconcilableRecoveryFixture();
         TestAgent.resetMixedRecoveryFixture();
         TestAgent.FOLLOWING_ACTION_EXECUTED.set(false);
+        RecordingEventLogger.reset();
+        EventLoggerFactory.registerFactory(LoggerType.SLF4J, config -> new RecordingEventLogger());
+    }
+
+    @AfterEach
+    void restoreEventLoggerFactory() {
+        EventLoggerFactory.registerFactory(LoggerType.SLF4J, Slf4jEventLogger::new);
     }
 
     @Test
@@ -678,10 +693,12 @@ public class ActionExecutionOperatorTest {
     /** A EventListener for unit test */
     public static class TestEventListener implements EventListener {
         public boolean called = false;
+        public final List<String> eventTypes = new ArrayList<>();
 
         @Override
         public void onEventProcessed(EventContext context, Event event) {
             this.called = true;
+            this.eventTypes.add(event.getType());
         }
     }
 
@@ -707,9 +724,134 @@ public class ActionExecutionOperatorTest {
         return snapshotsByType;
     }
 
+    /** Records events appended to Event Log for assertions. */
+    public static class RecordingEventLogger implements EventLogger {
+        private static final List<RecordedEvent> EVENTS = new ArrayList<>();
+        private static int createdCount;
+        private static int openCount;
+        private static int flushCount;
+        private static int closeCount;
+
+        public RecordingEventLogger() {
+            createdCount++;
+        }
+
+        static void reset() {
+            EVENTS.clear();
+            createdCount = 0;
+            openCount = 0;
+            flushCount = 0;
+            closeCount = 0;
+        }
+
+        static List<RecordedEvent> events() {
+            return List.copyOf(EVENTS);
+        }
+
+        static int createdCount() {
+            return createdCount;
+        }
+
+        static int openCount() {
+            return openCount;
+        }
+
+        static int flushCount() {
+            return flushCount;
+        }
+
+        static int closeCount() {
+            return closeCount;
+        }
+
+        @Override
+        public void open(EventLoggerOpenParams params) {
+            openCount++;
+        }
+
+        @Override
+        public void append(EventContext eventContext, Event event) {
+            append(eventContext, event, null);
+        }
+
+        @Override
+        public void append(
+                EventContext eventContext, Event event, ExecutionTraceContext traceContext) {
+            EVENTS.add(new RecordedEvent(event, traceContext));
+        }
+
+        @Override
+        public void flush() {
+            flushCount++;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+        }
+    }
+
+    private static class RecordedEvent {
+        private final Event event;
+        private final ExecutionTraceContext traceContext;
+
+        private RecordedEvent(Event event, ExecutionTraceContext traceContext) {
+            this.event = event;
+            this.traceContext = traceContext;
+        }
+
+        private ExecutionTraceContext traceContext() {
+            if (traceContext == null) {
+                throw new AssertionError("Missing ExecutionTraceContext");
+            }
+            return traceContext;
+        }
+
+        private String status() {
+            return (String) event.getAttr(ExecutionLifecycleEvents.STATUS_ATTRIBUTE);
+        }
+
+        private String problemCategory() {
+            return (String) event.getAttr(ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE);
+        }
+    }
+
+    private static RecordedEvent findRecordedLifecycleEvent(
+            String eventType, String entityName, String status) {
+        return RecordingEventLogger.events().stream()
+                .filter(record -> eventType.equals(record.event.getType()))
+                .filter(record -> entityName.equals(record.traceContext().getEntityName()))
+                .filter(record -> status.equals(record.status()))
+                .findFirst()
+                .orElseThrow(
+                        () ->
+                                new AssertionError(
+                                        String.format(
+                                                "Missing lifecycle event type=%s entity=%s status=%s in %s",
+                                                eventType,
+                                                entityName,
+                                                status,
+                                                RecordingEventLogger.events().stream()
+                                                        .map(
+                                                                record ->
+                                                                        record.event.getType()
+                                                                                + "/"
+                                                                                + record.traceContext()
+                                                                                        .getEntityName()
+                                                                                + "/"
+                                                                                + record.status())
+                                                        .collect(Collectors.toList()))));
+    }
+
+    private static AgentConfiguration traceEnabledConfig() {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.EVENT_LOG_TRACE_ENABLED, true);
+        return config;
+    }
+
     @Test
     void testEventListenersFromAgentConfig() throws Exception {
-        final AgentConfiguration config = new AgentConfiguration();
+        final AgentConfiguration config = traceEnabledConfig();
         config.set(AgentConfigOptions.EVENT_LISTENERS, List.of(TestEventListener.class.getName()));
         final AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
 
@@ -739,11 +881,167 @@ public class ActionExecutionOperatorTest {
 
             // process a some element to trigger the operator logic
             testHarness.processElement(new StreamRecord<>(1L));
+            operator.waitInFlightEventsFinished();
 
             // listener should have been invoked after element processing
-            called = ((TestEventListener) listener).called;
+            TestEventListener testEventListener = (TestEventListener) listener;
+            called = testEventListener.called;
             assertThat(called).isTrue();
+            assertThat(testEventListener.eventTypes)
+                    .noneMatch(ExecutionLifecycleEvents::isExecutionLifecycleEvent);
+            assertThat(RecordingEventLogger.events())
+                    .anyMatch(
+                            record ->
+                                    ExecutionLifecycleEvents.isExecutionLifecycleEvent(
+                                            record.event.getType()));
         }
+    }
+
+    @Test
+    void testActionLifecycleEventsCarryExecutionContext() throws Exception {
+        final AgentConfiguration config = traceEnabledConfig();
+        final AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(1L));
+            operator.waitInFlightEventsFinished();
+        }
+
+        RecordedEvent action1Started =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
+                        "action1",
+                        ExecutionLifecycleEvents.STATUS_STARTED);
+        RecordedEvent action1Finished =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE,
+                        "action1",
+                        ExecutionLifecycleEvents.STATUS_SUCCESS);
+        RecordedEvent action2Started =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
+                        "action2",
+                        ExecutionLifecycleEvents.STATUS_STARTED);
+        RecordedEvent action2Finished =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE,
+                        "action2",
+                        ExecutionLifecycleEvents.STATUS_SUCCESS);
+
+        assertThat(action1Started.traceContext().getInputRunId()).isNotBlank();
+        assertThat(action1Started.traceContext().getBusinessKey()).isEqualTo("1");
+        assertThat(action1Started.traceContext().getEntityType()).isEqualTo("action");
+        assertThat(action1Started.status()).isEqualTo(ExecutionLifecycleEvents.STATUS_STARTED);
+        assertThat(action1Finished.traceContext().getExecutionId())
+                .isEqualTo(action1Started.traceContext().getExecutionId());
+        assertThat(action1Finished.status()).isEqualTo(ExecutionLifecycleEvents.STATUS_SUCCESS);
+
+        assertThat(action2Started.traceContext().getInputRunId())
+                .isEqualTo(action1Started.traceContext().getInputRunId());
+        assertThat(action2Started.traceContext().getParentExecutionId()).isNull();
+        assertThat(action2Finished.traceContext().getExecutionId())
+                .isEqualTo(action2Started.traceContext().getExecutionId());
+
+        RecordedEvent middleEvent =
+                RecordingEventLogger.events().stream()
+                        .filter(
+                                record ->
+                                        TestAgent.MiddleEvent.EVENT_TYPE.equals(
+                                                record.event.getType()))
+                        .findFirst()
+                        .orElseThrow();
+        assertThat(middleEvent.traceContext().getExecutionId())
+                .isEqualTo(action1Started.traceContext().getExecutionId());
+        assertThat(middleEvent.traceContext().getEntityName()).isEqualTo("action1");
+
+        RecordedEvent outputEvent =
+                RecordingEventLogger.events().stream()
+                        .filter(record -> OutputEvent.EVENT_TYPE.equals(record.event.getType()))
+                        .findFirst()
+                        .orElseThrow();
+        assertThat(outputEvent.traceContext().getExecutionId())
+                .isEqualTo(action2Started.traceContext().getExecutionId());
+        assertThat(outputEvent.traceContext().getEntityName()).isEqualTo("action2");
+    }
+
+    @Test
+    void testActionFailureLifecycleEventCarriesProblemCategory() throws Exception {
+        final AgentConfiguration config = traceEnabledConfig();
+        AgentPlan basePlan = TestAgent.getDurableExceptionUncaughtAgentPlan();
+        AgentPlan agentPlan =
+                new AgentPlan(
+                        basePlan.getActions(),
+                        basePlan.getActionsByEvent(),
+                        basePlan.getResourceProviders(),
+                        config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(1L));
+            assertThatThrownBy(operator::waitInFlightEventsFinished)
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class);
+        }
+
+        RecordedEvent failed =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
+                        "durableExceptionUncaughtAction",
+                        ExecutionLifecycleEvents.STATUS_FAILED);
+        assertThat(failed.problemCategory())
+                .isEqualTo(ExecutionReporter.ProblemCategories.ACTION_EXECUTION_FAILED);
+        assertThat(failed.event.getAttr("error_type"))
+                .isEqualTo(IllegalStateException.class.getName());
+        assertThat(String.valueOf(failed.event.getAttr("error_message")))
+                .contains("Simulated LLM failure");
+    }
+
+    @Test
+    void testActionContinuationEmitsStartedLifecycleEventOnce() throws Exception {
+        final AgentConfiguration config = traceEnabledConfig();
+        AgentPlan basePlan = TestAgent.getAsyncAgentPlan(false);
+        AgentPlan agentPlan =
+                new AgentPlan(
+                        basePlan.getActions(),
+                        basePlan.getActionsByEvent(),
+                        basePlan.getResourceProviders(),
+                        config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(5L));
+            operator.waitInFlightEventsFinished();
+        }
+
+        assertThat(RecordingEventLogger.events())
+                .filteredOn(
+                        record ->
+                                ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(
+                                                record.event.getType())
+                                        && "asyncAction1"
+                                                .equals(record.traceContext().getEntityName()))
+                .hasSize(1);
     }
 
     @Test
@@ -799,6 +1097,69 @@ public class ActionExecutionOperatorTest {
             testHarness.notifyOfCompletedCheckpoint(1L);
 
             assertThat(actionStateStore.getPrunedSeqNums()).containsExactly(0L);
+        }
+    }
+
+    @Test
+    void testBusinessAndExecutionEventsShareSingleEventLogger() throws Exception {
+        AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(traceEnabledConfig());
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(1L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(RecordingEventLogger.createdCount()).isEqualTo(1);
+            assertThat(RecordingEventLogger.openCount()).isEqualTo(1);
+            assertThat(RecordingEventLogger.flushCount())
+                    .isEqualTo(RecordingEventLogger.events().size());
+            assertThat(RecordingEventLogger.events())
+                    .anySatisfy(
+                            record ->
+                                    assertThat(record.event.getType())
+                                            .isEqualTo(InputEvent.EVENT_TYPE));
+            assertThat(RecordingEventLogger.events())
+                    .anySatisfy(
+                            record ->
+                                    assertThat(record.event.getType())
+                                            .isEqualTo(
+                                                    ExecutionLifecycleEvents
+                                                            .EXECUTION_STARTED_EVENT_TYPE));
+        }
+
+        assertThat(RecordingEventLogger.closeCount()).isEqualTo(1);
+    }
+
+    @Test
+    void testTraceRecordingIsDisabledByDefault() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(1L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(RecordingEventLogger.events()).isNotEmpty();
+            assertThat(RecordingEventLogger.events())
+                    .allSatisfy(
+                            record -> {
+                                assertThat(record.traceContext).isNull();
+                                assertThat(
+                                                ExecutionLifecycleEvents.isExecutionLifecycleEvent(
+                                                        record.event.getType()))
+                                        .isFalse();
+                            });
         }
     }
 
@@ -1131,6 +1492,144 @@ public class ActionExecutionOperatorTest {
             assertThat(TestAgent.ACTION2_CALL_COUNTER.get())
                     .as("Completed action2 must not be re-executed during replay")
                     .isEqualTo(1);
+        }
+    }
+
+    @Test
+    void testActionStateStoreReplayRecordsReusedExecutions() throws Exception {
+        AgentConfiguration config = traceEnabledConfig();
+        AgentPlan basePlan = TestAgent.getAgentPlan(false);
+        AgentPlan agentPlanWithStateStore =
+                new AgentPlan(
+                        basePlan.getActions(),
+                        basePlan.getResourceProviders(),
+                        config,
+                        basePlan.getAgentName());
+        InMemoryActionStateStore actionStateStore;
+        String originalInputRunId;
+        UUID originalMiddleEventId;
+        UUID originalOutputEventId;
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(
+                                agentPlanWithStateStore,
+                                true,
+                                new InMemoryActionStateStore(false)),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            actionStateStore =
+                    (InMemoryActionStateStore)
+                            operator.getDurableExecutionManager().getActionStateStore();
+
+            long inputValue = 7L;
+            testHarness.processElement(new StreamRecord<>(inputValue));
+            operator.waitInFlightEventsFinished();
+
+            RecordedEvent action1Started =
+                    findRecordedLifecycleEvent(
+                            ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
+                            "action1",
+                            ExecutionLifecycleEvents.STATUS_STARTED);
+            originalInputRunId = action1Started.traceContext().getInputRunId();
+            originalMiddleEventId =
+                    RecordingEventLogger.events().stream()
+                            .filter(
+                                    record ->
+                                            TestAgent.MiddleEvent.EVENT_TYPE.equals(
+                                                    record.event.getType()))
+                            .findFirst()
+                            .orElseThrow()
+                            .event
+                            .getId();
+            originalOutputEventId =
+                    RecordingEventLogger.events().stream()
+                            .filter(record -> OutputEvent.EVENT_TYPE.equals(record.event.getType()))
+                            .findFirst()
+                            .orElseThrow()
+                            .event
+                            .getId();
+        }
+
+        RecordingEventLogger.reset();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(
+                                agentPlanWithStateStore, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            long inputValue = 7L;
+            testHarness.processElement(new StreamRecord<>(inputValue));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> outputRecords =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(outputRecords).hasSize(1);
+            assertThat(outputRecords.get(0).getValue()).isEqualTo((inputValue + 1) * 2);
+            assertThat(actionStateStore.getKeyedActionStates().get(String.valueOf(inputValue)))
+                    .hasSize(2);
+
+            List<RecordedEvent> replayEvents = RecordingEventLogger.events();
+            assertThat(replayEvents)
+                    .filteredOn(
+                            record ->
+                                    ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE.equals(
+                                            record.event.getType()))
+                    .extracting(record -> record.traceContext().getEntityName())
+                    .containsExactlyInAnyOrder("action1", "action2");
+            assertThat(replayEvents)
+                    .noneMatch(
+                            record ->
+                                    ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE.equals(
+                                                    record.event.getType())
+                                            && ExecutionLifecycleEvents.STATUS_SUCCESS.equals(
+                                                    record.status())
+                                            && List.of("action1", "action2")
+                                                    .contains(
+                                                            record.traceContext().getEntityName()));
+
+            RecordedEvent action1Reused =
+                    findRecordedLifecycleEvent(
+                            ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE,
+                            "action1",
+                            ExecutionLifecycleEvents.STATUS_REUSED);
+            RecordedEvent action2Reused =
+                    findRecordedLifecycleEvent(
+                            ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE,
+                            "action2",
+                            ExecutionLifecycleEvents.STATUS_REUSED);
+            RecordedEvent replayedMiddleEvent =
+                    replayEvents.stream()
+                            .filter(
+                                    record ->
+                                            TestAgent.MiddleEvent.EVENT_TYPE.equals(
+                                                    record.event.getType()))
+                            .findFirst()
+                            .orElseThrow();
+            RecordedEvent replayedOutputEvent =
+                    replayEvents.stream()
+                            .filter(record -> OutputEvent.EVENT_TYPE.equals(record.event.getType()))
+                            .findFirst()
+                            .orElseThrow();
+
+            assertThat(action1Reused.traceContext().getInputRunId())
+                    .isNotEqualTo(originalInputRunId);
+            assertThat(action2Reused.traceContext().getInputRunId())
+                    .isEqualTo(action1Reused.traceContext().getInputRunId());
+            assertThat(replayedMiddleEvent.event.getId()).isEqualTo(originalMiddleEventId);
+            assertThat(replayedMiddleEvent.traceContext().getExecutionId())
+                    .isEqualTo(action1Reused.traceContext().getExecutionId());
+            assertThat(replayedOutputEvent.event.getId()).isEqualTo(originalOutputEventId);
+            assertThat(replayedOutputEvent.traceContext().getExecutionId())
+                    .isEqualTo(action2Reused.traceContext().getExecutionId());
         }
     }
 

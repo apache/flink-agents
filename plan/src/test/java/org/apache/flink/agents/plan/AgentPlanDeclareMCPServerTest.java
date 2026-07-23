@@ -259,6 +259,7 @@ class AgentPlanDeclareMCPServerTest {
 
         MCPTool mcpTool = (MCPTool) tool;
         assertEquals("add", mcpTool.getName());
+        assertEquals("testMcpServer", mcpTool.getMcpServerName());
         // Verify description starts with expected text
         assertTrue(
                 mcpTool.getMetadata()

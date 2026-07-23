@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.python.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
@@ -28,6 +29,20 @@ public class PythonGeneratorActionTask extends PythonActionTask {
 
     public PythonGeneratorActionTask(Object key, Event event, Action action, String observationId) {
         super(key, event, action, observationId);
+    }
+
+    public PythonGeneratorActionTask(
+            Object key, Event event, Action action, ExecutionTraceContext traceContext) {
+        super(key, event, action, traceContext);
+    }
+
+    public PythonGeneratorActionTask(
+            Object key,
+            Event event,
+            Action action,
+            String observationId,
+            ExecutionTraceContext traceContext) {
+        super(key, event, action, observationId, traceContext);
     }
 
     @Override
@@ -48,7 +63,7 @@ public class PythonGeneratorActionTask extends PythonActionTask {
                             + "re-executing from beginning.",
                     action.getName());
             PythonActionTask freshTask =
-                    new PythonActionTask(key, event, action, getObservationId());
+                    new PythonActionTask(key, event, action, getObservationId(), traceContext);
             freshTask.setRunnerContext(runnerContext);
             return freshTask.invoke(userCodeClassLoader, executor);
         }
