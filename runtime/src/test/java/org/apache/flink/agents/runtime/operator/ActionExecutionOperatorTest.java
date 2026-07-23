@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
@@ -34,6 +35,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
@@ -50,6 +52,7 @@ import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.HashMap;
@@ -582,6 +585,36 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
+    void testCompletedActionStatePersistsOutputEventLineage() throws Exception {
+        AgentPlan agentPlan = TestAgent.getAgentPlan(false);
+        SerializingActionStateStore actionStateStore = new SerializingActionStateStore();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(3L));
+            operator.waitInFlightEventsFinished();
+        }
+
+        assertThat(actionStateStore.getCompletedStateBytes()).hasSize(2);
+        for (Map.Entry<String, byte[]> entry :
+                actionStateStore.getCompletedStateBytes().entrySet()) {
+            JsonNode state = OBJECT_MAPPER.readTree(entry.getValue());
+            JsonNode outputEvent = state.path("outputEvents").get(0);
+
+            assertThat(outputEvent.path("upstreamEventId").asText())
+                    .isEqualTo(state.path("taskEvent").path("id").asText());
+            assertThat(outputEvent.path("upstreamActionName").asText()).isEqualTo(entry.getKey());
+        }
+    }
+
+    @Test
     void testActionStateStoreStateManagement() throws Exception {
         AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
 
@@ -748,6 +781,16 @@ public class ActionExecutionOperatorTest {
             testHarness.processElement(new StreamRecord<>(inputValue));
             operator.waitInFlightEventsFinished();
         }
+
+        for (Map<String, ActionState> states : actionStateStore.getKeyedActionStates().values()) {
+            for (ActionState state : states.values()) {
+                for (Event outputEvent : state.getOutputEvents()) {
+                    outputEvent.setUpstreamEventId(null);
+                    outputEvent.setUpstreamActionName(null);
+                }
+            }
+        }
+
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
                         new ActionExecutionOperatorFactory<>(
@@ -772,6 +815,18 @@ public class ActionExecutionOperatorTest {
             // The action state store should only have one entry
             assertThat(actionStateStore.getKeyedActionStates().get(String.valueOf(inputValue)))
                     .hasSize(2);
+
+            for (ActionState state :
+                    actionStateStore
+                            .getKeyedActionStates()
+                            .get(String.valueOf(inputValue))
+                            .values()) {
+                Event outputEvent = state.getOutputEvents().get(0);
+                String expectedActionName =
+                        state.getTaskEvent() instanceof InputEvent ? "action1" : "action2";
+                assertThat(outputEvent.getUpstreamEventId()).isNotNull();
+                assertThat(outputEvent.getUpstreamActionName()).isEqualTo(expectedActionName);
+            }
         }
     }
 
@@ -2151,6 +2206,27 @@ public class ActionExecutionOperatorTest {
 
         private List<Long> getPrunedSeqNums() {
             return prunedSeqNums;
+        }
+    }
+
+    private static class SerializingActionStateStore extends InMemoryActionStateStore {
+        private final Map<String, byte[]> completedStateBytes = new HashMap<>();
+
+        private SerializingActionStateStore() {
+            super(false);
+        }
+
+        @Override
+        public void put(Object key, long seqNum, Action action, Event event, ActionState state)
+                throws IOException {
+            if (state.isCompleted()) {
+                completedStateBytes.put(action.getName(), ActionStateSerde.serialize(state));
+            }
+            super.put(key, seqNum, action, event, state);
+        }
+
+        private Map<String, byte[]> getCompletedStateBytes() {
+            return completedStateBytes;
         }
     }
 

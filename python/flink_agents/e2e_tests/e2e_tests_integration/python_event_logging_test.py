@@ -18,6 +18,8 @@
 import json
 import os
 import shutil
+import subprocess
+import sys
 import sysconfig
 import tempfile
 from pathlib import Path
@@ -41,6 +43,9 @@ from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_TRACE_TREE_READER = _REPO_ROOT / "tools" / "reconstruct_trace_tree.py"
 
 
 class InputKeySelector(KeySelector):
@@ -204,6 +209,81 @@ def _read_log_records(event_log_dir: Path) -> list[dict]:
         with log_file.open(encoding="utf-8") as handle:
             records.extend(json.loads(line) for line in handle if line.strip())
     return records
+
+
+def _run_trace_tree_reader(
+    event_log_dir: Path, output_format: str
+) -> subprocess.CompletedProcess[str]:
+    """Run the public Trace Tree reader CLI against Runtime Event Logs."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_TRACE_TREE_READER),
+            str(event_log_dir),
+            "--format",
+            output_format,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return result
+
+
+def test_event_lineage_reconstructs_trace_trees_from_runtime_logs(
+    tmp_path: Path,
+) -> None:
+    """Test a real PyFlink job produces logs consumable by the Trace Tree reader."""
+    event_log_dir = _run_event_logging_pipeline(tmp_path)
+    records = _read_log_records(event_log_dir)
+    input_event_ids = {
+        record["event"]["id"]
+        for record in records
+        if record["eventType"] == InputEvent.EVENT_TYPE
+    }
+    output_event_ids = {
+        record["event"]["id"]
+        for record in records
+        if record["eventType"] == OutputEvent.EVENT_TYPE
+    }
+
+    json_result = _run_trace_tree_reader(event_log_dir, "json")
+    trace_forest = json.loads(json_result.stdout)
+    text_result = _run_trace_tree_reader(event_log_dir, "text")
+
+    assert input_event_ids
+    assert len(output_event_ids) == len(input_event_ids)
+    assert set(trace_forest["roots"]) == input_event_ids
+    assert set(trace_forest["nodes"]) == input_event_ids | output_event_ids
+    assert trace_forest["warnings"] == []
+    assert json_result.stderr == ""
+
+    for root_id in trace_forest["roots"]:
+        root = trace_forest["nodes"][root_id]
+        assert root["eventType"] == InputEvent.EVENT_TYPE
+        assert root["upstreamEventId"] is None
+        assert root["upstreamActionName"] is None
+        assert len(root["actions"]) == 1
+
+        action_node = root["actions"][0]
+        assert action_node["name"] == "process_input"
+        assert len(action_node["children"]) == 1
+
+        child_id = action_node["children"][0]
+        child = trace_forest["nodes"][child_id]
+        assert child_id in output_event_ids
+        assert child["eventType"] == OutputEvent.EVENT_TYPE
+        assert child["upstreamEventId"] == root_id
+        assert child["upstreamActionName"] == "process_input"
+        assert child["actions"] == []
+
+    assert text_result.stdout.count("Trace Tree ") == len(input_event_ids)
+    assert text_result.stdout.count("[Action: process_input]") == len(input_event_ids)
+    for event_id in input_event_ids | output_event_ids:
+        assert f"({event_id})" in text_result.stdout
+    assert text_result.stderr == ""
 
 
 def test_event_log_verbose_level(tmp_path: Path) -> None:

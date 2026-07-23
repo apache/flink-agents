@@ -143,6 +143,31 @@ class EventTest {
         assertEquals(InputEvent.EVENT_TYPE, deserialized.getType());
     }
 
+    @Test
+    void testLineageJsonRoundTrip() throws Exception {
+        UUID upstreamEventId = UUID.randomUUID();
+        Event original = new Event("ChildEvent");
+        original.setUpstreamEventId(upstreamEventId);
+        original.setUpstreamActionName("child_action");
+
+        String json = objectMapper.writeValueAsString(original);
+        JsonNode node = objectMapper.readTree(json);
+        Event deserialized = objectMapper.readValue(json, Event.class);
+
+        assertEquals(upstreamEventId.toString(), node.get("upstreamEventId").asText());
+        assertEquals("child_action", node.get("upstreamActionName").asText());
+        assertEquals(upstreamEventId, deserialized.getUpstreamEventId());
+        assertEquals("child_action", deserialized.getUpstreamActionName());
+    }
+
+    @Test
+    void testRootEventOmitsLineageFieldsFromJson() throws Exception {
+        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(new InputEvent(1L)));
+
+        assertFalse(node.has("upstreamEventId"));
+        assertFalse(node.has("upstreamActionName"));
+    }
+
     // ── fromJson ───────────────────────────────────────────────────────────
 
     @Test
@@ -217,5 +242,37 @@ class EventTest {
         event.setSourceTimestamp(123456789L);
         assertTrue(event.hasSourceTimestamp());
         assertEquals(123456789L, event.getSourceTimestamp());
+    }
+
+    @Test
+    void testFromEventCopiesFrameworkMetadata() {
+        UUID upstreamEventId = UUID.randomUUID();
+        Event original = new Event("Test");
+        original.setSourceTimestamp(123456789L);
+        original.setUpstreamEventId(upstreamEventId);
+        original.setUpstreamActionName("test_action");
+
+        Event copy = Event.fromEvent(original);
+
+        assertEquals(123456789L, copy.getSourceTimestamp());
+        assertEquals(upstreamEventId, copy.getUpstreamEventId());
+        assertEquals("test_action", copy.getUpstreamActionName());
+    }
+
+    @Test
+    void testTypedFromEventCopiesLineage() {
+        UUID upstreamEventId = UUID.randomUUID();
+        Event original =
+                new Event(
+                        UUID.randomUUID(),
+                        OutputEvent.EVENT_TYPE,
+                        new HashMap<>(Map.of("output", "result")));
+        original.setUpstreamEventId(upstreamEventId);
+        original.setUpstreamActionName("output_action");
+
+        OutputEvent copy = OutputEvent.fromEvent(original);
+
+        assertEquals(upstreamEventId, copy.getUpstreamEventId());
+        assertEquals("output_action", copy.getUpstreamActionName());
     }
 }
