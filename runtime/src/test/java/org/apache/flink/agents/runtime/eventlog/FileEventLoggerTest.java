@@ -174,6 +174,9 @@ class FileEventLoggerTest {
         // Given
         logger.open(openParams);
         TestCustomEvent customEvent = new TestCustomEvent("custom data", 42);
+        UUID upstreamEventId = UUID.randomUUID();
+        customEvent.setUpstreamEventId(upstreamEventId);
+        customEvent.setUpstreamActionName("custom_action");
         EventContext context = new EventContext(customEvent);
 
         // When
@@ -203,6 +206,9 @@ class FileEventLoggerTest {
                 TestCustomEvent.fromEvent(deserializedRecord.getEvent());
         assertEquals("custom data", deserializedEvent.getCustomData());
         assertEquals(42, deserializedEvent.getCustomNumber());
+        assertEquals(customEvent.getId(), deserializedEvent.getId());
+        assertEquals(upstreamEventId, deserializedEvent.getUpstreamEventId());
+        assertEquals("custom_action", deserializedEvent.getUpstreamActionName());
     }
 
     @Test
@@ -566,9 +572,7 @@ class FileEventLoggerTest {
         public static TestCustomEvent fromEvent(Event event) {
             TestCustomEvent result =
                     new TestCustomEvent(event.getId(), new HashMap<>(event.getAttributes()));
-            if (event.hasSourceTimestamp()) {
-                result.setSourceTimestamp(event.getSourceTimestamp());
-            }
+            result.copyFrameworkMetadataFrom(event);
             return result;
         }
 

@@ -77,9 +77,7 @@ public class ChatResponseEvent extends Event {
     public static ChatResponseEvent fromEvent(Event event) {
         ChatResponseEvent result =
                 new ChatResponseEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
+        result.copyFrameworkMetadataFrom(event);
         return result;
     }
 

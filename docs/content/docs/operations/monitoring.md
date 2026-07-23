@@ -184,13 +184,43 @@ Each record contains a top-level `timestamp`, the resolved `logLevel`, and a top
 {
   "timestamp": "2024-01-15T10:30:00Z",
   "logLevel": "STANDARD",
-  "eventType": "_input_event",
+  "eventType": "MiddleEvent",
   "event": {
-    "eventType": "_input_event",
-    "...": "..."
+    "eventType": "MiddleEvent",
+    "id": "39361629-4f1d-4b62-b734-a48b181cb6e0",
+    "attributes": {},
+    "type": "MiddleEvent",
+    "upstreamEventId": "dad5ed00-80e2-4746-8bdb-f126bad504b5",
+    "upstreamActionName": "action1"
   }
 }
 ```
+
+`upstreamEventId` identifies the Event consumed by the Action that emitted the current Event, and `upstreamActionName` identifies that Action. The framework maintains both fields directly on the `event` object, outside business `attributes`. A root `InputEvent` omits both fields.
+
+### Trace Tree Reconstruction
+
+The local reader rebuilds InputEvent-rooted Trace Trees from a saved File Event Log. From the repository root, pass either one log file for text output or a log directory for Trace Tree JSON:
+
+```bash
+python tools/reconstruct_trace_tree.py /path/to/events-job-task-0.log
+python tools/reconstruct_trace_tree.py /path/to/event-log-directory --format json
+```
+
+For example, the text output for an `InputEvent -> MiddleEvent -> OutputEvent` lineage is:
+
+```text
+Trace Tree 1
+  _input_event (dad5ed00-80e2-4746-8bdb-f126bad504b5)
+    [Action: action1]
+      MiddleEvent (39361629-4f1d-4b62-b734-a48b181cb6e0)
+        [Action: action2]
+          _output_event (f452ce08-c672-4c9c-841f-d81d15a900c5)
+```
+
+In JSON output, `roots` lists root Event IDs and `nodes` maps each Event ID to its Event node. The reader derives virtual Action nodes from `upstreamActionName`; they are not separate Event Log records. Log order controls display order only and does not add execution-order semantics.
+
+Reconstruction warnings are written to standard error and included in JSON output while valid InputEvent-rooted trees are retained. Warnings cover duplicate Event IDs, missing parent Events, missing Action names, non-InputEvents without parents, and InputEvents with invalid upstream lineage.
 
 ### Event Log Levels
 
@@ -204,7 +234,7 @@ Each event type is logged at a configurable verbosity. Three levels are supporte
 
 The global default is set by [`event-log.level`]({{< ref "docs/operations/configuration#core-options" >}}). At `STANDARD` level, the payload is shrunk along three independent axes — long strings, large arrays, and deep nesting — controlled by `event-log.standard.max-string-length`, `event-log.standard.max-array-elements`, and `event-log.standard.max-depth` respectively. Setting any threshold to `0` disables that specific truncation; setting all three to `0` makes `STANDARD` behave identically to `VERBOSE` (apart from the `logLevel` label). The exact truncation strategy may evolve over time; the contract is only that `STANDARD` keeps logs concise while `VERBOSE` preserves the full payload.
 
-**Fields that are never truncated.** Structural and identifying fields are always preserved in full so log consumers can still group, route, and correlate records: `timestamp`, `logLevel`, top-level `eventType`, and the event's own `id`, `type`, and short scalar fields. Truncation only applies to large nested content (long strings, big arrays, deeply nested objects).
+**Fields that are never truncated.** Structural and identifying fields are always preserved in full so log consumers can still group, route, and correlate records: `timestamp`, `logLevel`, top-level `eventType`, and the event's own `eventType`, `type`, `id`, `upstreamEventId`, and `upstreamActionName`. The `attributes` envelope is also preserved, while large nested content inside it can still be truncated.
 
 **Truncation wrapper format.** When a field is truncated at `STANDARD` level it is replaced by a JSON object that records what was retained and what was dropped. This keeps the record valid JSON and lets downstream tooling detect truncation programmatically:
 

@@ -120,7 +120,8 @@ class MyEvent(Event):
     def from_event(cls, event: Event) -> "MyEvent":
         """Reconstruct a MyEvent from a generic Event."""
         assert "value" in event.attributes
-        return MyEvent(value=Record.model_validate(event.attributes["value"]))
+        result = cls(value=Record.model_validate(event.attributes["value"]))
+        return result.with_framework_metadata_from(event)
 
     @property
     def value(self) -> Any:

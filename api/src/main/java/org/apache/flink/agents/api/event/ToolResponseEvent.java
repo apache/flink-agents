@@ -100,9 +100,7 @@ public class ToolResponseEvent extends Event {
     public static ToolResponseEvent fromEvent(Event event) {
         ToolResponseEvent result =
                 new ToolResponseEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
+        result.copyFrameworkMetadataFrom(event);
         return result;
     }
 

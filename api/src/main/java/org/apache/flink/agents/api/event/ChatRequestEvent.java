@@ -98,9 +98,7 @@ public class ChatRequestEvent extends Event {
     public static ChatRequestEvent fromEvent(Event event) {
         ChatRequestEvent result =
                 new ChatRequestEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
+        result.copyFrameworkMetadataFrom(event);
         return result;
     }
 

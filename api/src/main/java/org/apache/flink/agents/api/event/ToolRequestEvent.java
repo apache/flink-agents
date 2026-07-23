@@ -56,9 +56,7 @@ public class ToolRequestEvent extends Event {
     public static ToolRequestEvent fromEvent(Event event) {
         ToolRequestEvent result =
                 new ToolRequestEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
+        result.copyFrameworkMetadataFrom(event);
         return result;
     }
 

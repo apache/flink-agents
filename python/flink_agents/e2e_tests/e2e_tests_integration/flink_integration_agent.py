@@ -65,7 +65,8 @@ class MyEvent(Event):
     def from_event(cls, event: "Event") -> "MyEvent":
         """Reconstruct a MyEvent from a generic Event."""
         assert "value" in event.attributes, "Missing 'value' in event attributes"
-        return cls(value=event.attributes["value"])
+        result = cls(value=event.attributes["value"])
+        return result.with_framework_metadata_from(event)
 
     @property
     def value(self) -> Any:

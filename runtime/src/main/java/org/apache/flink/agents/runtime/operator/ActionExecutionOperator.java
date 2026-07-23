@@ -346,6 +346,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     key);
             isFinished = true;
             outputEvents = actionState.getOutputEvents();
+            setOutputEventLineage(actionTask, outputEvents);
             for (MemoryUpdate memoryUpdate : actionState.getShortTermMemoryUpdates()) {
                 actionTask
                         .getRunnerContext()
@@ -385,6 +386,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             durableExecManager.removeDurableContext(actionTask);
             contextManager.removeContinuationContext(actionTask);
             contextManager.removePythonAwaitableRef(actionTask);
+            outputEvents = actionTaskResult.getOutputEvents();
+            setOutputEventLineage(actionTask, outputEvents);
             durableExecManager.maybePersistTaskResult(
                     key,
                     sequenceNumber,
@@ -393,7 +396,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     actionTask.getRunnerContext(),
                     actionTaskResult);
             isFinished = actionTaskResult.isFinished();
-            outputEvents = actionTaskResult.getOutputEvents();
             generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
         }
 
@@ -451,6 +453,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // If the current key has additional action tasks remaining, we should submit a new mail
             // to continue processing them.
             mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
+        }
+    }
+
+    private static void setOutputEventLineage(ActionTask actionTask, List<Event> outputEvents) {
+        for (Event outputEvent : outputEvents) {
+            outputEvent.setUpstreamEventId(actionTask.event.getId());
+            outputEvent.setUpstreamActionName(actionTask.action.getName());
         }
     }
 
