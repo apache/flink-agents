@@ -181,10 +181,14 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
         @Override
         public AgentBuilder apply(Agent agent) {
+            return apply(agent, null);
+        }
+
+        private AgentBuilder apply(Agent agent, @Nullable String agentName) {
             try {
                 // Inspect resources registered in environment to agent.
                 agent.addResourcesIfAbsent(resources);
-                this.agentPlan = new AgentPlan(agent, config);
+                this.agentPlan = new AgentPlan(agent, config, agentName);
                 return this;
             } catch (Exception e) {
                 throw new RuntimeException("Failed to create agent plan from agent", e);
@@ -201,7 +205,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                                 + "'; no agent with that name is registered on the environment. "
                                 + "Did you forget to call env.loadYaml(...) or env.getAgents().put(...) first?");
             }
-            return apply(agent);
+            return apply(agent, agentName);
         }
 
         @Override

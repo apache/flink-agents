@@ -41,6 +41,8 @@ public class AgentPlanJsonSerializer extends StdSerializer<AgentPlan> {
             throws IOException {
         jsonGenerator.writeStartObject();
 
+        jsonGenerator.writeStringField("agent_name", agentPlan.getAgentName());
+
         // Serialize actions
         jsonGenerator.writeFieldName("actions");
         jsonGenerator.writeStartObject();

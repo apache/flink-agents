@@ -21,14 +21,18 @@ package org.apache.flink.agents.runtime.skill;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolExecutionMetadataProvider;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Built-in tool that returns the body of a SKILL.md (default) or a specific bundled resource.
@@ -36,7 +40,7 @@ import java.util.List;
  * <p>Mirrors the Python {@code flink_agents.runtime.skill.skill_tools.LoadSkillTool}. Auto-loaded
  * by {@code AgentPlan.addSkills} when an agent declares any {@code @Skills} method.
  */
-public class LoadSkillTool extends Tool {
+public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider {
 
     private static final String DESCRIPTION =
             "Load a skill's content or a specific resource. Use this to access skill instructions and resources.";
@@ -59,6 +63,22 @@ public class LoadSkillTool extends Tool {
     @Override
     public ToolType getToolType() {
         return ToolType.FUNCTION;
+    }
+
+    @Override
+    public Map<String, Object> getToolExecutionMetadata(ToolParameters parameters) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (parameters.hasParameter("name")) {
+            metadata.put(
+                    ToolExecutionMetadataKeys.SKILL_NAME,
+                    String.valueOf(parameters.getParameter("name")));
+        }
+        if (parameters.hasParameter("path")) {
+            metadata.put(
+                    ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH,
+                    String.valueOf(parameters.getParameter("path")));
+        }
+        return metadata;
     }
 
     @Override

@@ -75,6 +75,7 @@ class AgentPlan(BaseModel):
     actions: Dict[str, Action]
     actions_by_event: Dict[str, List[str]]
     resource_providers: Dict[ResourceType, Dict[str, ResourceProvider]] | None = None
+    agent_name: str | None = None
     config: AgentConfiguration | None = None
 
     @field_serializer("resource_providers")
@@ -138,7 +139,9 @@ class AgentPlan(BaseModel):
         return self
 
     @staticmethod
-    def from_agent(agent: Agent, config: AgentConfiguration) -> "AgentPlan":
+    def from_agent(
+        agent: Agent, config: AgentConfiguration, agent_name: str | None = None
+    ) -> "AgentPlan":
         """Build a AgentPlan from user defined agent."""
         actions = {}
         actions_by_event = {}
@@ -164,6 +167,7 @@ class AgentPlan(BaseModel):
             actions=actions,
             actions_by_event=actions_by_event,
             resource_providers=resource_providers,
+            agent_name=agent_name or agent.__class__.__name__,
             config=config,
         )
 
@@ -299,10 +303,7 @@ def _get_actions(agent: Agent) -> List[Action]:
             Action(
                 name=name,
                 exec=_to_plan_function(action_tuple[1]),
-                trigger_conditions=[
-                    _resolve_event_type(et)
-                    for et in action_tuple[0]
-                ],
+                trigger_conditions=[_resolve_event_type(et) for et in action_tuple[0]],
                 config=action_tuple[2],
             )
         )
@@ -480,14 +481,13 @@ def _add_mcp_server(
         ]
     )
 
-    resource_providers.extend(
-        [
+    for tool in mcp_server.list_tools():
+        tool.mcp_server_name = name
+        resource_providers.append(
             PythonSerializableResourceProvider.from_resource(
                 name=tool.name, resource=tool
             )
-            for tool in mcp_server.list_tools()
-        ]
-    )
+        )
 
     mcp_server.close()
 

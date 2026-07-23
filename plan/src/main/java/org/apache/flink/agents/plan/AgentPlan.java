@@ -97,6 +97,9 @@ public class AgentPlan implements Serializable {
     /** Two-level mapping of resource type to resource name to resource provider. */
     private Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
 
+    /** User-visible agent identity used for observability. */
+    private String agentName;
+
     private AgentConfiguration config;
 
     public AgentPlan(Map<String, Action> actions, Map<String, List<Action>> actionsByEvent) {
@@ -121,10 +124,20 @@ public class AgentPlan implements Serializable {
             Map<String, List<Action>> actionsByEvent,
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
             AgentConfiguration config) {
+        this(actions, actionsByEvent, resourceProviders, config, null);
+    }
+
+    public AgentPlan(
+            Map<String, Action> actions,
+            Map<String, List<Action>> actionsByEvent,
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            AgentConfiguration config,
+            String agentName) {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = resourceProviders;
         this.config = config;
+        this.agentName = agentName;
     }
 
     /**
@@ -139,10 +152,15 @@ public class AgentPlan implements Serializable {
     }
 
     public AgentPlan(Agent agent, AgentConfiguration config) throws Exception {
+        this(agent, config, defaultAgentName(agent));
+    }
+
+    public AgentPlan(Agent agent, AgentConfiguration config, String agentName) throws Exception {
         this(new HashMap<>(), new HashMap<>());
         extractActionsFromAgent(agent);
         extractResourceProvidersFromAgent(agent);
         this.config = config;
+        this.agentName = agentName != null ? agentName : defaultAgentName(agent);
     }
 
     public Map<String, Action> getActions() {
@@ -163,6 +181,10 @@ public class AgentPlan implements Serializable {
 
     public Map<ResourceType, Map<String, ResourceProvider>> getResourceProviders() {
         return resourceProviders;
+    }
+
+    public String getAgentName() {
+        return agentName;
     }
 
     public List<Action> getActionsTriggeredBy(String eventType) {
@@ -188,7 +210,13 @@ public class AgentPlan implements Serializable {
         this.actions = agentPlan.getActions();
         this.actionsByEvent = agentPlan.getActionsByEvent();
         this.resourceProviders = agentPlan.getResourceProviders();
+        this.agentName = agentPlan.getAgentName();
         this.config = agentPlan.getConfig();
+    }
+
+    private static String defaultAgentName(Agent agent) {
+        String simpleName = agent.getClass().getSimpleName();
+        return simpleName == null || simpleName.isEmpty() ? agent.getClass().getName() : simpleName;
     }
 
     private void extractActions(
@@ -391,6 +419,7 @@ public class AgentPlan implements Serializable {
                 (Iterable<? extends SerializableResource>) listToolsMethod.invoke(mcpServer);
 
         for (SerializableResource tool : tools) {
+            tool = attachMcpServerNameIfSupported(tool, name);
             Method getNameMethod = tool.getClass().getMethod("getName");
             String toolName = (String) getNameMethod.invoke(tool);
             addResourceProvider(
@@ -414,6 +443,20 @@ public class AgentPlan implements Serializable {
         // Call close() via reflection
         Method closeMethod = mcpServer.getClass().getMethod("close");
         closeMethod.invoke(mcpServer);
+    }
+
+    private static SerializableResource attachMcpServerNameIfSupported(
+            SerializableResource tool, String mcpServerName) throws Exception {
+        try {
+            Method method = tool.getClass().getMethod("withMcpServerName", String.class);
+            Object result = method.invoke(tool, mcpServerName);
+            if (result instanceof SerializableResource) {
+                return (SerializableResource) result;
+            }
+            return tool;
+        } catch (NoSuchMethodException e) {
+            return tool;
+        }
     }
 
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {

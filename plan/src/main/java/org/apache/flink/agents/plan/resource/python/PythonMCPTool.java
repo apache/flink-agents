@@ -21,20 +21,27 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolExecutionMetadataProvider;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import pemja.core.object.PyObject;
 
+import javax.annotation.Nullable;
+
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
-public class PythonMCPTool extends Tool implements PythonResourceWrapper {
+public class PythonMCPTool extends Tool
+        implements PythonResourceWrapper, ToolExecutionMetadataProvider {
     private static final String GET_JAVA_TOOL_META =
             "python_java_utils.get_java_tool_metadata_from_tool";
     private final PyObject tool;
     private final PythonResourceAdapter adapter;
+    @Nullable private final String mcpServerName;
 
     /**
      * Creates a new PythonMCPServer.
@@ -44,9 +51,22 @@ public class PythonMCPTool extends Tool implements PythonResourceWrapper {
      * @param tool The Python MCP tool object
      */
     public PythonMCPTool(PythonResourceAdapter adapter, PyObject tool) {
+        this(adapter, tool, null);
+    }
+
+    /**
+     * Creates a new Python MCP tool associated with a server resource name.
+     *
+     * @param adapter The Python resource adapter
+     * @param tool The Python MCP tool object
+     * @param mcpServerName The AgentPlan resource name of the MCP server that exposed this tool
+     */
+    public PythonMCPTool(
+            PythonResourceAdapter adapter, PyObject tool, @Nullable String mcpServerName) {
         super(getToolMetadata(adapter, tool));
         this.tool = tool;
         this.adapter = adapter;
+        this.mcpServerName = mcpServerName;
     }
 
     @SuppressWarnings("unchecked")
@@ -90,5 +110,14 @@ public class PythonMCPTool extends Tool implements PythonResourceWrapper {
     @Override
     public ToolType getToolType() {
         return ToolType.MCP;
+    }
+
+    @Override
+    public Map<String, Object> getToolExecutionMetadata(ToolParameters parameters) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (mcpServerName != null) {
+            metadata.put(ToolExecutionMetadataKeys.MCP_SERVER, mcpServerName);
+        }
+        return metadata;
     }
 }

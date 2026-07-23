@@ -62,7 +62,7 @@ public class Event {
         if (type == null || type.isEmpty()) {
             throw new IllegalArgumentException("Event 'type' must not be null or empty.");
         }
-        this.id = id;
+        this.id = id != null ? id : UUID.randomUUID();
         this.type = type;
         this.attributes = attributes != null ? attributes : new HashMap<>();
     }

@@ -24,6 +24,7 @@ import pytest
 
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.api.skills import Skills
+from flink_agents.api.trace import ToolExecutionMetadataKeys
 from flink_agents.runtime.skill.skill_manager import SkillManager
 from flink_agents.runtime.skill.skill_tools import LoadSkillTool
 
@@ -85,6 +86,16 @@ class TestLoadSkillTool:
         result = tool.call(name="nano-banana-pro", path="nonexistent.txt")
         assert "not found" in result.lower()
         assert "scripts/generate_image.py" in result
+
+    def test_execution_metadata_describes_requested_resource(
+        self, tool: LoadSkillTool
+    ) -> None:
+        """Execution metadata identifies the explicitly requested skill resource."""
+        metadata = tool.get_tool_execution_metadata(
+            {"name": "github", "path": "README.md"}
+        )
+        assert metadata[ToolExecutionMetadataKeys.SKILL_NAME] == "github"
+        assert metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] == "README.md"
 
     # -- skill not found -----------------------------------------------------
 

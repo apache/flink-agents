@@ -31,12 +31,9 @@ def _tool_request_record(tool_calls: list) -> dict:
     return {
         "timestamp": "2026-05-31T00:00:00Z",
         "logLevel": "STANDARD",
-        "eventType": "_tool_request_event",
-        "event": {
-            "eventType": "_tool_request_event",
-            "id": "00000000-0000-0000-0000-000000000001",
-            "attributes": {"model": "qwen3:1.7b", "tool_calls": tool_calls},
-        },
+        "event_id": "00000000-0000-0000-0000-000000000001",
+        "event_type": "_tool_request_event",
+        "event_attributes": {"model": "qwen3:1.7b", "tool_calls": tool_calls},
     }
 
 
@@ -64,8 +61,9 @@ def test_collect_tool_invocations(tmp_path: Path) -> None:
     other_event = {
         "timestamp": "2026-05-31T00:00:00Z",
         "logLevel": "STANDARD",
-        "eventType": "_input_event",
-        "event": {"eventType": "_input_event", "id": "x", "attributes": {}},
+        "event_id": "00000000-0000-0000-0000-000000000002",
+        "event_type": "_input_event",
+        "event_attributes": {},
     }
     _write_log(
         log_dir,
@@ -89,17 +87,41 @@ def test_collect_tool_invocations_no_tool(tmp_path: Path) -> None:
             {
                 "timestamp": "2026-05-31T00:00:00Z",
                 "logLevel": "STANDARD",
-                "eventType": "_output_event",
-                "event": {
-                    "eventType": "_output_event",
-                    "id": "y",
-                    "attributes": {},
-                },
+                "event_id": "00000000-0000-0000-0000-000000000003",
+                "event_type": "_output_event",
+                "event_attributes": {},
             }
         ],
     )
 
     assert collect_tool_invocations(log_dir) == []
+
+
+def test_collect_tool_invocations_legacy_format(tmp_path: Path) -> None:
+    """Parser remains compatible with the old nested event log format."""
+    log_dir = tmp_path / "event_logs"
+    _write_log(
+        log_dir,
+        [
+            {
+                "timestamp": "2026-05-31T00:00:00Z",
+                "logLevel": "STANDARD",
+                "eventType": "_tool_request_event",
+                "event": {
+                    "eventType": "_tool_request_event",
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "attributes": {
+                        "model": "qwen3:1.7b",
+                        "tool_calls": [_function_tool_call("add", {"a": 1, "b": 2})],
+                    },
+                },
+            }
+        ],
+    )
+
+    assert collect_tool_invocations(log_dir) == [
+        {"name": "add", "arguments": {"a": 1, "b": 2}}
+    ]
 
 
 def test_assert_tool_invoked_dict_args() -> None:
