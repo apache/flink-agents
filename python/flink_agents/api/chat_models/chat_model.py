@@ -146,6 +146,35 @@ class BaseChatModelConnection(Resource, ABC):
         """
         return False
 
+    def _reject_unsupported_output_schema(
+        self, output_schema: OutputSchema | None
+    ) -> None:
+        """Refuse an output schema this connection cannot translate natively.
+
+        ``chat`` is abstract here, so there is no inherited body that could absorb a
+        schema loudly. A connection without a native structured-output translation
+        calls this as the first statement of its ``chat`` instead, which turns a
+        schema it could only drop into an error rather than an unconstrained response
+        that the caller would mistake for a schema-conforming one.
+
+        Args:
+            output_schema: The schema the response should conform to. ``None`` returns
+                without effect.
+
+        Raises:
+            NotImplementedError: If ``output_schema`` is not ``None``.
+        """
+        if output_schema is None:
+            return
+        cls = type(self)
+        msg = (
+            f"{cls.__module__}.{cls.__qualname__} has no native structured-output"
+            " translation, so it cannot honor the given output schema. Override chat()"
+            " to translate the schema natively, or pass no schema so the caller applies"
+            " the prompt-engineering fallback."
+        )
+        raise NotImplementedError(msg)
+
     DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str], ...]] = (
         re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE),
         re.compile(r"<analysis>(.*?)</analysis>", re.DOTALL | re.IGNORECASE),
@@ -215,8 +244,9 @@ class BaseChatModelConnection(Resource, ABC):
             every implementation must declare it as a named parameter rather than let
             it fall into ``**kwargs``: ``**kwargs`` is forwarded to the provider SDK,
             so a schema landing there would reach the request body. Implementations
-            without a native structured-output translation accept and ignore it,
-            leaving the caller on the prompt-engineering fallback.
+            without a native structured-output translation reject a non-``None`` value
+            via ``_reject_unsupported_output_schema``, so a caller that wants the
+            prompt-engineering fallback must pass ``None``.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)

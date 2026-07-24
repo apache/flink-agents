@@ -86,11 +86,12 @@ public abstract class BaseChatModelConnection extends Resource {
      * POJO {@link Class} or an {@link org.apache.flink.agents.api.agents.OutputSchema} (a {@code
      * RowTypeInfo} wrapper); the two cases are distinguished by the connection that consumes it.
      *
-     * <p>This default implementation <b>ignores</b> {@code outputSchema} and delegates to {@link
-     * #chat(List, List, Map)}. Connections without a native structured-output translation inherit
-     * it unchanged and need no edits. A connection that does translate a schema into a native
-     * provider parameter overrides this overload, and reports its capability via {@link
-     * #supportsNativeStructuredOutput(String)}.
+     * <p>A schema must not be handed to a connection that has no native translation for it: this
+     * default implementation rejects a non-null {@code outputSchema} rather than dropping it, so an
+     * unconstrained response can never be mistaken for a schema-conforming one. A null {@code
+     * outputSchema} delegates to {@link #chat(List, List, Map)}. A connection that does translate a
+     * schema into a native provider parameter overrides this overload, and reports its capability
+     * via {@link #supportsNativeStructuredOutput(String)}.
      *
      * @param messages the input chat messages
      * @param tools the tools can be called by the model
@@ -98,12 +99,22 @@ public abstract class BaseChatModelConnection extends Resource {
      * @param outputSchema the schema the response should conform to, or null for an unconstrained
      *     response
      * @return the chat response containing model outputs
+     * @throws UnsupportedOperationException if {@code outputSchema} is non-null and this connection
+     *     has no native structured-output translation
      */
     public ChatMessage chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
             @Nullable Object outputSchema) {
+        if (outputSchema != null) {
+            throw new UnsupportedOperationException(
+                    getClass().getName()
+                            + " has no native structured-output translation, so it cannot honor"
+                            + " the given output schema. Override chat(List, List, Map, Object) to"
+                            + " translate the schema natively, or pass no schema so the caller"
+                            + " applies the prompt-engineering fallback.");
+        }
         return chat(messages, tools, modelParams);
     }
 }

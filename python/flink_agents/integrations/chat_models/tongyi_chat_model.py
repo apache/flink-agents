@@ -107,11 +107,12 @@ class TongyiChatModelConnection(BaseChatModelConnection):
     ) -> ChatMessage:
         """Process a sequence of messages, and return a response.
 
-        ``output_schema`` is accepted and ignored: this connection has no native
+        A non-``None`` ``output_schema`` is rejected: this connection has no native
         structured-output translation, so callers stay on the prompt-engineering
         fallback. Declaring the parameter keeps a caller-supplied schema out of
         ``**kwargs``, which is forwarded to the provider SDK.
         """
+        self._reject_unsupported_output_schema(output_schema)
         tongyi_messages = self.__convert_to_tongyi_messages(messages)
 
         tongyi_tools: List[Dict[str, Any]] | None = (

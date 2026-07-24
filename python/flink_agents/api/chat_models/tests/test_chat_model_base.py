@@ -149,6 +149,26 @@ def test_default_capability_predicate_is_false() -> None:
     assert connection.supports_native_structured_output(None) is False
 
 
+def test_output_schema_guard_rejects_a_schema() -> None:
+    """The guard refuses a schema a connection cannot translate natively.
+
+    Dropping it instead would return an unconstrained response that the caller has no
+    way to tell apart from a schema-conforming one.
+    """
+    connection = _RecordingConnection()
+    schema = OutputSchema(output_schema=_Answer)
+
+    with pytest.raises(NotImplementedError, match="_RecordingConnection"):
+        connection._reject_unsupported_output_schema(schema)
+
+
+def test_output_schema_guard_passes_through_none() -> None:
+    """A caller on the prompt-engineering fallback passes None and is let through."""
+    connection = _RecordingConnection()
+
+    assert connection._reject_unsupported_output_schema(None) is None
+
+
 def test_setup_routes_output_schema_through_to_connection() -> None:
     """chat() forwards a caller's ``output_schema`` on to the connection intact.
 

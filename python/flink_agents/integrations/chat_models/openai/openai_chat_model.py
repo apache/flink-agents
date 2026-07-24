@@ -151,7 +151,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         tools : Optional[List]
             List of tools that can be called by the model
         output_schema : OutputSchema | None
-            Accepted and ignored: this connection has no native structured-output
+            Rejected when non-``None``: this connection has no native structured-output
             translation, so callers stay on the prompt-engineering fallback. Declaring
             the parameter keeps a caller-supplied schema out of ``**kwargs``, which is
             forwarded to the provider SDK.
@@ -164,6 +164,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message
         """
+        self._reject_unsupported_output_schema(output_schema)
         tool_specs = None
         if tools is not None:
             tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]

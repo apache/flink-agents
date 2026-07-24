@@ -323,8 +323,29 @@ class BaseChatModelTest {
     }
 
     @Test
-    @DisplayName("Default chat() overload ignores outputSchema and delegates to the 3-arg chat()")
-    void testDefaultChatOverloadIgnoresOutputSchema() {
+    @DisplayName("Default chat() overload rejects an outputSchema it cannot translate")
+    void testDefaultChatOverloadRejectsOutputSchema() {
+        RecordingConnection connection = new RecordingConnection();
+
+        // Dropping the schema instead would return an unconstrained response that the
+        // caller has no way to tell apart from a schema-conforming one.
+        assertThrows(
+                UnsupportedOperationException.class,
+                () ->
+                        connection.chat(
+                                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                                List.of(),
+                                new HashMap<>(),
+                                new Object()));
+
+        // The rejection has to precede the delegation: a delegate-then-throw ordering
+        // would still issue a real provider request before failing.
+        assertNull(connection.capturedMessages);
+    }
+
+    @Test
+    @DisplayName("Default chat() overload delegates to the 3-arg chat() for a null outputSchema")
+    void testDefaultChatOverloadDelegatesForNullOutputSchema() {
         RecordingConnection connection = new RecordingConnection();
         Map<String, Object> modelParams = new HashMap<>();
         modelParams.put("temperature", 0.5);
@@ -334,10 +355,10 @@ class BaseChatModelTest {
                         List.of(new ChatMessage(MessageRole.USER, "hi")),
                         List.of(),
                         modelParams,
-                        new Object());
+                        null);
 
-        // The 3-arg chat() ran (it is what produces "ok") and the schema never reached
-        // modelParams, so it cannot travel on to a provider SDK request.
+        // The 3-arg chat() ran (it is what produces "ok") and the overload added nothing
+        // to modelParams that could travel on to a provider SDK request.
         assertEquals("ok", response.getContent());
         assertEquals(Map.of("temperature", 0.5), connection.capturedModelParams);
     }
