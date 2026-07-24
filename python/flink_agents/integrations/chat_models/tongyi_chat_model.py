@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Sequence, cast
 from dashscope import Generation
 from pydantic import Field
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -101,9 +102,17 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
-        """Process a sequence of messages, and return a response."""
+        """Process a sequence of messages, and return a response.
+
+        A non-``None`` ``output_schema`` is rejected: this connection has no native
+        structured-output translation, so callers stay on the prompt-engineering
+        fallback. Declaring the parameter keeps a caller-supplied schema out of
+        ``**kwargs``, which is forwarded to the provider SDK.
+        """
+        self._reject_unsupported_output_schema(output_schema)
         tongyi_messages = self.__convert_to_tongyi_messages(messages)
 
         tongyi_tools: List[Dict[str, Any]] | None = (

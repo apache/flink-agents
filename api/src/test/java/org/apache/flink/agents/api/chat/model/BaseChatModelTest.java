@@ -237,6 +237,7 @@ class BaseChatModelTest {
     /** Connection that captures the messages passed to it for assertions. */
     private static class RecordingConnection extends BaseChatModelConnection {
         List<ChatMessage> capturedMessages;
+        Map<String, Object> capturedModelParams;
 
         RecordingConnection() {
             super(
@@ -249,6 +250,7 @@ class BaseChatModelTest {
         public ChatMessage chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             this.capturedMessages = new ArrayList<>(messages);
+            this.capturedModelParams = new HashMap<>(modelParams);
             return new ChatMessage(MessageRole.ASSISTANT, "ok");
         }
     }
@@ -318,6 +320,124 @@ class BaseChatModelTest {
         assertEquals(2, connection.capturedMessages.size());
         assertEquals("Task: v1", connection.capturedMessages.get(0).getContent());
         assertEquals("tool result", connection.capturedMessages.get(1).getContent());
+    }
+
+    @Test
+    @DisplayName("Default chat() overload rejects an outputSchema it cannot translate")
+    void testDefaultChatOverloadRejectsOutputSchema() {
+        RecordingConnection connection = new RecordingConnection();
+
+        // Dropping the schema instead would return an unconstrained response that the
+        // caller has no way to tell apart from a schema-conforming one.
+        assertThrows(
+                UnsupportedOperationException.class,
+                () ->
+                        connection.chat(
+                                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                                List.of(),
+                                new HashMap<>(),
+                                new Object()));
+
+        // The rejection has to precede the delegation: a delegate-then-throw ordering
+        // would still issue a real provider request before failing.
+        assertNull(connection.capturedMessages);
+    }
+
+    @Test
+    @DisplayName("Default chat() overload delegates to the 3-arg chat() for a null outputSchema")
+    void testDefaultChatOverloadDelegatesForNullOutputSchema() {
+        RecordingConnection connection = new RecordingConnection();
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("temperature", 0.5);
+
+        ChatMessage response =
+                connection.chat(
+                        List.of(new ChatMessage(MessageRole.USER, "hi")),
+                        List.of(),
+                        modelParams,
+                        null);
+
+        // The 3-arg chat() ran (it is what produces "ok") and the overload added nothing
+        // to modelParams that could travel on to a provider SDK request.
+        assertEquals("ok", response.getContent());
+        assertEquals(Map.of("temperature", 0.5), connection.capturedModelParams);
+    }
+
+    @Test
+    @DisplayName("Default capability predicate reports no native structured output for any model")
+    void testDefaultCapabilityPredicateIsFalse() {
+        RecordingConnection connection = new RecordingConnection();
+
+        assertFalse(connection.supportsNativeStructuredOutput("gpt-4o"));
+        assertFalse(connection.supportsNativeStructuredOutput("gpt-3.5-turbo"));
+        assertFalse(connection.supportsNativeStructuredOutput(null));
+    }
+
+    @Test
+    @DisplayName("Structured-output strategy defaults to AUTO when the descriptor omits it")
+    void testStructuredOutputStrategyDefaultsToAuto() {
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(new RecordingConnection(), null);
+
+        assertEquals(StructuredOutputStrategy.AUTO, setup.getStructuredOutputStrategy());
+    }
+
+    @Test
+    @DisplayName("Structured-output strategy defaults to AUTO when the descriptor argument is null")
+    void testStructuredOutputStrategyDefaultsToAutoForNullArgument() {
+        // A descriptor argument present with a null value is indistinguishable from an
+        // absent one here, so it resolves to the same default rather than failing.
+        TestChatModel model =
+                new TestChatModel(
+                        new ResourceDescriptor(
+                                TestChatModel.class.getName(),
+                                Collections.singletonMap("structured_output_strategy", null)),
+                        null);
+
+        assertEquals(StructuredOutputStrategy.AUTO, model.getStructuredOutputStrategy());
+    }
+
+    @Test
+    @DisplayName("Structured-output strategy is read from the descriptor argument")
+    void testStructuredOutputStrategyReadFromDescriptor() {
+        TestChatModel model =
+                new TestChatModel(
+                        new ResourceDescriptor(
+                                TestChatModel.class.getName(),
+                                Map.of("structured_output_strategy", "native")),
+                        null);
+
+        assertEquals(StructuredOutputStrategy.NATIVE, model.getStructuredOutputStrategy());
+    }
+
+    @Test
+    @DisplayName("An unrecognized structured-output strategy is rejected instead of defaulting")
+    void testUnknownStructuredOutputStrategyRejected() {
+        ResourceDescriptor descriptor =
+                new ResourceDescriptor(
+                        TestChatModel.class.getName(),
+                        Map.of("structured_output_strategy", "bogus"));
+
+        assertThrows(IllegalArgumentException.class, () -> new TestChatModel(descriptor, null));
+    }
+
+    @Test
+    @DisplayName("AUTO resolves to native only when the effective model is capable")
+    void testAutoStrategyResolvesToNativeOnlyWhenCapable() {
+        assertTrue(StructuredOutputStrategy.AUTO.resolvesToNative(true));
+        assertFalse(StructuredOutputStrategy.AUTO.resolvesToNative(false));
+    }
+
+    @Test
+    @DisplayName("NATIVE forces native even when the model is not capable")
+    void testNativeStrategyForcesNativeRegardlessOfCapability() {
+        assertTrue(StructuredOutputStrategy.NATIVE.resolvesToNative(false));
+    }
+
+    @Test
+    @DisplayName("PROMPT never resolves to native even when the model is capable")
+    void testPromptStrategyNeverResolvesToNative() {
+        assertFalse(StructuredOutputStrategy.PROMPT.resolvesToNative(true));
     }
 
     @Test

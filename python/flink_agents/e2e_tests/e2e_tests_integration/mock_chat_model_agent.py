@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from pyflink.datastream import KeySelector
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -95,9 +96,16 @@ class MockChatModelConnection(BaseChatModelConnection):
         self,
         messages: Sequence[ChatMessage],
         tools: List | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
-        """Generate a tool call or a response according to input."""
+        """Generate a tool call or a response according to input.
+
+        A non-``None`` ``output_schema`` is rejected: this connection has no native
+        structured-output translation. Declaring the parameter keeps a caller-supplied
+        schema out of ``**kwargs``.
+        """
+        self._reject_unsupported_output_schema(output_schema)
         if "sum" in messages[-1].content:
             input = messages[-1].content
             # Validate the tool was bound before the model was invoked.

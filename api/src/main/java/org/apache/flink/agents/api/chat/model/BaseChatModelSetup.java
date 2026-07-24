@@ -48,6 +48,7 @@ public abstract class BaseChatModelSetup extends Resource {
     @Nullable protected String skillDiscoveryPrompt;
     protected List<String> allowedCommands;
     protected List<String> allowedScriptDirs;
+    protected StructuredOutputStrategy structuredOutputStrategy;
 
     @Nullable protected BaseChatModelConnection connection;
     protected final List<Tool> tools = new ArrayList<>();
@@ -67,6 +68,10 @@ public abstract class BaseChatModelSetup extends Resource {
                 declaredScriptDirs == null
                         ? new ArrayList<>()
                         : new ArrayList<>(declaredScriptDirs);
+        this.structuredOutputStrategy =
+                StructuredOutputStrategy.fromArgument(
+                        descriptor.getArgument("structured_output_strategy"),
+                        StructuredOutputStrategy.AUTO);
     }
 
     /**
@@ -218,5 +223,16 @@ public abstract class BaseChatModelSetup extends Resource {
 
     public List<String> getAllowedScriptDirs() {
         return allowedScriptDirs;
+    }
+
+    /**
+     * The configured intent about how an output schema should be applied, defaulting to {@link
+     * StructuredOutputStrategy#AUTO}. Whether native structured output is actually applied combines
+     * this policy with the connection's model-dependent capability.
+     *
+     * @return the structured output strategy
+     */
+    public StructuredOutputStrategy getStructuredOutputStrategy() {
+        return structuredOutputStrategy;
     }
 }
