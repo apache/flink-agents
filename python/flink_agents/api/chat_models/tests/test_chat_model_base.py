@@ -211,6 +211,36 @@ def test_structured_output_strategy_coerces_name_and_value_case_insensitively(
     assert setup.structured_output_strategy is StructuredOutputStrategy.NATIVE
 
 
+def test_structured_output_strategy_normalizes_explicit_none_to_auto() -> None:
+    """An explicitly null policy resolves to AUTO instead of being rejected.
+
+    Java cannot distinguish a configuration that carries the key as null from one
+    that omits it, and resolves both to AUTO, so a null arriving on Python must not
+    fail validation or leave the attribute None.
+    """
+    setup = _RecordingChatModelSetup(
+        connection="c", model="m", structured_output_strategy=None
+    )
+
+    assert setup.structured_output_strategy is StructuredOutputStrategy.AUTO
+
+
+@pytest.mark.parametrize("raw", ["bogus", ""])
+def test_structured_output_strategy_rejects_unrecognized_value(raw: str) -> None:
+    """Only null normalizes to AUTO; every other unrecognized value still raises.
+
+    An empty string reaches this field in practice from an empty YAML scalar or an
+    unset environment substitution, and it must not be mistaken for an omitted value:
+    normalizing on falsiness rather than on null would accept it as AUTO. A non-empty
+    unrecognized name survives that same falsiness check, so it takes `"bogus"` to
+    catch a resolver that coerces any unknown string to AUTO.
+    """
+    with pytest.raises(ValidationError):
+        _RecordingChatModelSetup(
+            connection="c", model="m", structured_output_strategy=raw
+        )
+
+
 def test_auto_strategy_resolves_to_native_only_when_capable() -> None:
     """AUTO defers to the model's capability."""
     assert StructuredOutputStrategy.AUTO.resolves_to_native(True) is True

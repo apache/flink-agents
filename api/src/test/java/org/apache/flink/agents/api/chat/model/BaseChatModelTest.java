@@ -383,6 +383,21 @@ class BaseChatModelTest {
     }
 
     @Test
+    @DisplayName("Structured-output strategy defaults to AUTO when the descriptor argument is null")
+    void testStructuredOutputStrategyDefaultsToAutoForNullArgument() {
+        // A descriptor argument present with a null value is indistinguishable from an
+        // absent one here, so it resolves to the same default rather than failing.
+        TestChatModel model =
+                new TestChatModel(
+                        new ResourceDescriptor(
+                                TestChatModel.class.getName(),
+                                Collections.singletonMap("structured_output_strategy", null)),
+                        null);
+
+        assertEquals(StructuredOutputStrategy.AUTO, model.getStructuredOutputStrategy());
+    }
+
+    @Test
     @DisplayName("Structured-output strategy is read from the descriptor argument")
     void testStructuredOutputStrategyReadFromDescriptor() {
         TestChatModel model =

@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, ClassVar, Dict, List, Mapping, Sequence, Tuple, cast
 
-from pydantic import Field, PrivateAttr
+from pydantic import Field, PrivateAttr, field_validator
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
@@ -289,9 +289,25 @@ class BaseChatModelSetup(Resource):
         description=(
             "Intent about how an output schema should be applied. Whether native "
             "structured output is actually used combines this policy with the "
-            "connection's model-dependent capability."
+            "connection's model-dependent capability. An explicitly null value is "
+            "normalized to AUTO, so a validated setup always carries a real strategy."
         ),
     )
+
+    @field_validator("structured_output_strategy", mode="before")
+    @classmethod
+    def _normalize_null_strategy(cls, value: Any) -> Any:
+        """Normalize an explicitly null strategy to the ``AUTO`` default.
+
+        A configuration source can carry the key with a null value instead of
+        omitting it. Java cannot tell those two apart — its descriptor argument
+        lookup returns null in both cases and resolves them to ``AUTO`` — so an
+        explicit null resolves to ``AUTO`` here too rather than being rejected.
+        Unknown non-null values still fail validation.
+        """
+        if value is None:
+            return StructuredOutputStrategy.AUTO
+        return value
 
     @property
     @abstractmethod
