@@ -23,16 +23,13 @@ import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
-import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
 import java.io.Serializable;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -56,11 +53,6 @@ public abstract class ActionTask implements Serializable {
     protected final Event event;
     protected final Action action;
     protected final ExecutionTraceContext traceContext;
-    /**
-     * Active child executions reported from this action execution. This state follows the
-     * ActionTask, while the shared RunnerContextImpl only points at it during invocation.
-     */
-    private final Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions;
 
     private boolean executionStartedEventEmitted;
     /**
@@ -85,7 +77,6 @@ public abstract class ActionTask implements Serializable {
         this.event = event;
         this.action = action;
         this.traceContext = Objects.requireNonNull(traceContext, "traceContext must not be null");
-        this.activeReportedExecutions = new HashMap<>();
     }
 
     public RunnerContextImpl getRunnerContext() {
@@ -104,16 +95,10 @@ public abstract class ActionTask implements Serializable {
         return traceContext;
     }
 
-    Map<ReportedExecutionKey, ExecutionTraceContext> getActiveReportedExecutions() {
-        return activeReportedExecutions;
-    }
-
-    void inheritExecutionState(ActionTask source) {
+    void inheritLifecycleState(ActionTask source) {
         if (source == this) {
             return;
         }
-        this.activeReportedExecutions.clear();
-        this.activeReportedExecutions.putAll(source.activeReportedExecutions);
         this.executionStartedEventEmitted = source.executionStartedEventEmitted;
     }
 

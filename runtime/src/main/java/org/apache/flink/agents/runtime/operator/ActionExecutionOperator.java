@@ -420,16 +420,26 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
                 notifyFinished = isFinished;
             } catch (Exception e) {
-                notifyActionFailed(actionTask, e);
+                try {
+                    notifyActionFailed(actionTask, e);
+                } finally {
+                    contextManager.completeActionExecution(actionTask);
+                }
                 throw e;
             }
         }
 
-        for (Event actionOutputEvent : outputEvents) {
-            processEvent(key, actionOutputEvent, actionTask.getTraceContext());
-        }
-        if (notifyFinished) {
-            notifyActionFinished(actionTask);
+        try {
+            for (Event actionOutputEvent : outputEvents) {
+                processEvent(key, actionOutputEvent, actionTask.getTraceContext());
+            }
+            if (notifyFinished) {
+                notifyActionFinished(actionTask);
+            }
+        } finally {
+            if (isFinished) {
+                contextManager.completeActionExecution(actionTask);
+            }
         }
 
         boolean currentInputEventFinished = false;
