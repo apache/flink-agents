@@ -121,7 +121,7 @@ public final class ExecutionTraceContext implements Serializable {
                 entityMetadata);
     }
 
-    /** Creates a child execution linked to this execution through {@code parent_execution_id}. */
+    /** Creates a child execution linked to this execution through {@code parentExecutionId}. */
     public ExecutionTraceContext childExecution(String entityType, String entityName) {
         return childExecution(entityType, entityName, null);
     }
