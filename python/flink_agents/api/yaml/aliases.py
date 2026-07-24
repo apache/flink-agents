@@ -66,6 +66,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "anthropic": ResourceName.ChatModel.ANTHROPIC_CONNECTION,
             "tongyi": ResourceName.ChatModel.TONGYI_CONNECTION,
             "azure_openai": ResourceName.ChatModel.AZURE_OPENAI_CONNECTION,
+            "watsonx": ResourceName.ChatModel.WATSONX_CONNECTION,
         },
         "java": {
             "ollama": ResourceName.ChatModel.Java.OLLAMA_CONNECTION,
@@ -74,6 +75,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "anthropic": ResourceName.ChatModel.Java.ANTHROPIC_CONNECTION,
             "azure": ResourceName.ChatModel.Java.AZURE_CONNECTION,
             "bedrock": ResourceName.ChatModel.Java.BEDROCK_CONNECTION,
+            "watsonx": ResourceName.ChatModel.Java.WATSONX_CONNECTION,
         },
     },
     ResourceType.CHAT_MODEL: {
@@ -83,6 +85,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "anthropic": ResourceName.ChatModel.ANTHROPIC_SETUP,
             "tongyi": ResourceName.ChatModel.TONGYI_SETUP,
             "azure_openai": ResourceName.ChatModel.AZURE_OPENAI_SETUP,
+            "watsonx": ResourceName.ChatModel.WATSONX_SETUP,
         },
         "java": {
             "ollama": ResourceName.ChatModel.Java.OLLAMA_SETUP,
@@ -91,6 +94,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "anthropic": ResourceName.ChatModel.Java.ANTHROPIC_SETUP,
             "azure": ResourceName.ChatModel.Java.AZURE_SETUP,
             "bedrock": ResourceName.ChatModel.Java.BEDROCK_SETUP,
+            "watsonx": ResourceName.ChatModel.Java.WATSONX_SETUP,
         },
     },
     ResourceType.EMBEDDING_MODEL_CONNECTION: {

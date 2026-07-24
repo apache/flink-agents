@@ -1111,6 +1111,163 @@ Some popular options include:
 Model availability and specifications may change. Always check the official DashScope documentation for the latest information before implementing in production.
 {{< /hint >}}
 
+### Watsonx (IBM watsonx.ai)
+
+IBM watsonx.ai provides cloud-based chat models, including the IBM Granite series, with enterprise-grade governance and deployment options on IBM Cloud.
+
+#### Prerequisites
+
+1. Create an account on [IBM Cloud](https://cloud.ibm.com/) and provision a [watsonx.ai](https://www.ibm.com/products/watsonx-ai) instance
+2. Create a watsonx.ai project or deployment space
+2. On Developer access, select your Project ID and create API Key
+4. Note the generated API Key, Project ID and watsonx.ai URL for configuring your connection
+
+#### WatsonxChatModelConnection Parameters
+
+{{< tabs "WatsonxChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `url` | str | `$WATSONX_URL` | watsonx.ai service endpoint of your region |
+| `api_key` | str | `$WATSONX_API_KEY` | IBM Cloud API key; configure exactly one of `api_key` and `token` |
+| `token` | str | `$WATSONX_TOKEN` | Bearer token; configure exactly one of `api_key` and `token` |
+| `project_id` | str | `$WATSONX_PROJECT_ID` | watsonx.ai project id (or use `space_id`) |
+| `space_id` | str | `$WATSONX_SPACE_ID` | Deployment space id, as an alternative to `project_id` |
+| `request_timeout` | float | `120.0` | HTTP request timeout in seconds |
+| `max_retries` | int | `3` | Maximum retries for transport failures and HTTP 408, 429, 500, 502, 503, and 504 responses |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `url` | String | `$WATSONX_URL` | watsonx.ai service endpoint of your region |
+| `api_key` | String | `$WATSONX_API_KEY` | IBM Cloud API key; configure exactly one of `api_key` and `token` |
+| `token` | String | `$WATSONX_TOKEN` | Bearer token; configure exactly one of `api_key` and `token` |
+| `project_id` | String | `$WATSONX_PROJECT_ID` | watsonx.ai project id (or use `space_id`) |
+| `space_id` | String | `$WATSONX_SPACE_ID` | Deployment space id, as an alternative to `project_id` |
+| `api_version` | String | `"2025-04-23"` | watsonx.ai REST API version date |
+| `iam_url` | String | `"https://iam.cloud.ibm.com"` | IAM endpoint used to exchange the API key for a token |
+| `request_timeout` | double | `120.0` | HTTP request timeout in seconds |
+| `max_retries` | int | `3` | Maximum retries for transport failures and HTTP 408, 429, 500, 502, 503, and 504 responses |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### WatsonxChatModelSetup Parameters
+
+{{< tabs "WatsonxChatModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | str | Required | Reference to connection method name |
+| `model` | str | `"ibm/granite-4-h-small"` | watsonx.ai model id to use |
+| `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
+| `tools` | List[str] | None | List of tool names available to the model |
+| `temperature` | float | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `extract_reasoning` | bool | `False` | Extract reasoning content (e.g. `<think>` blocks) from response |
+| `additional_kwargs` | dict | `{}` | Additional watsonx.ai chat parameters (e.g. `top_p`, `time_limit`, `seed`) |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"ibm/granite-4-h-small"` | watsonx.ai model id to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List[String] | None | List of tool names available to the model |
+| `temperature` | Double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_tokens` | Integer | None | Maximum number of tokens to generate |
+| `extract_reasoning` | Boolean | `false` | Extract reasoning content (e.g. `<think>` blocks) from response |
+| `additional_kwargs` | Map | `{}` | Additional watsonx.ai chat parameters (e.g. `top_p`, `time_limit`, `seed`) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Watsonx Usage Example" >}}
+
+{{< tab "Python" >}}
+```python
+class MyAgent(Agent):
+
+    @chat_model_connection
+    @staticmethod
+    def watsonx_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.WATSONX_CONNECTION,
+            url="https://us-south.ml.cloud.ibm.com",  # set WATSONX_URL env var
+            api_key="your-api-key-here",  # set WATSONX_API_KEY env var
+            project_id="your-project-id",  # set WATSONX_PROJECT_ID env var
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def watsonx_chat_model() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.WATSONX_SETUP,
+            connection="watsonx_connection",
+            model="ibm/granite-4-h-small",
+            temperature=0.1,
+            max_tokens=1024
+        )
+
+    ...
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor watsonxConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.WATSONX_CONNECTION)
+                .addInitialArgument("url", "https://us-south.ml.cloud.ibm.com")
+                .addInitialArgument("api_key", "your-api-key-here")
+                .addInitialArgument("project_id", "your-project-id")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor watsonxChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.WATSONX_SETUP)
+                .addInitialArgument("connection", "watsonxConnection")
+                .addInitialArgument("model", "ibm/granite-4-h-small")
+                .addInitialArgument("temperature", 0.1)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Visit the [watsonx.ai foundation models documentation](https://www.ibm.com/products/watsonx-ai/foundation-models) for the complete and up-to-date list of available chat models.
+
+Some popular options include:
+- **ibm/granite** series (ibm/granite-4-h-small, ibm/granite-3-3-8b-instruct)
+- **meta-llama** series (meta-llama/llama-3-3-70b-instruct)
+- **mistralai** series (mistralai/mistral-large)
+
+{{< hint warning >}}
+Model availability and specifications may change. Always check the official IBM watsonx.ai documentation for the latest information before implementing in production.
+{{< /hint >}}
+
 ## Using Cross-Language Providers
 
 Flink Agents supports cross-language chat model integration, allowing you to use chat models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a chat model provider is only available in one language (e.g., Tongyi is currently Python-only).
