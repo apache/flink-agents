@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -31,6 +32,7 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.trace.ExecutionEventSink;
+import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.apache.flink.api.common.state.MapState;
 
 import javax.annotation.Nullable;
@@ -46,9 +48,11 @@ import java.util.Map;
  * <ul>
  *   <li>The shared (Java) {@link RunnerContextImpl} that is reused across action tasks via {@link
  *       RunnerContextImpl#switchActionContext}.
- *   <li>Three per-{@link ActionTask} maps that survive across the boundary between a finishing
- *       action and the action it generates: memory contexts, continuation contexts (for async Java
+ *   <li>Three per-{@link ActionTask} maps that survive across the boundary between one task and its
+ *       generated continuation task: memory contexts, continuation contexts (for async Java
  *       actions), and Python awaitable references.
+ *   <li>Active child-execution reports, keyed by Action execution id, that pair start and terminal
+ *       reports across continuation tasks without entering Flink state.
  *   <li>The {@link ContinuationActionExecutor} thread pool used to run async Java continuations.
  * </ul>
  *
@@ -73,12 +77,15 @@ class ActionTaskContextManager implements AutoCloseable {
     private final Map<ActionTask, RunnerContextImpl.MemoryContext> actionTaskMemoryContexts;
     private final Map<ActionTask, ContinuationContext> continuationContexts;
     private final Map<ActionTask, String> pythonAwaitableRefs;
+    private final Map<String, Map<ReportedExecutionKey, ExecutionTraceContext>>
+            activeReportedExecutionsByActionExecutionId;
     private ContinuationActionExecutor continuationActionExecutor;
 
     ActionTaskContextManager(int numAsyncThreads) {
         this.actionTaskMemoryContexts = new HashMap<>();
         this.continuationContexts = new HashMap<>();
         this.pythonAwaitableRefs = new HashMap<>();
+        this.activeReportedExecutionsByActionExecutionId = new HashMap<>();
         this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
     }
 
@@ -225,7 +232,7 @@ class ActionTaskContextManager implements AutoCloseable {
                 memoryContext,
                 String.valueOf(key.hashCode()),
                 actionTask.getTraceContext(),
-                actionTask.getActiveReportedExecutions());
+                getOrCreateActiveReportedExecutions(actionTask));
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;
@@ -273,7 +280,7 @@ class ActionTaskContextManager implements AutoCloseable {
     void transferContexts(
             ActionTask fromTask, ActionTask toTask, DurableExecutionManager durableExecManager) {
         putMemoryContext(toTask, fromTask.getRunnerContext().getMemoryContext());
-        toTask.inheritExecutionState(fromTask);
+        toTask.inheritLifecycleState(fromTask);
         RunnerContextImpl.DurableExecutionContext durableContext =
                 fromTask.getRunnerContext().getDurableExecutionContext();
         if (durableContext != null) {
@@ -291,6 +298,21 @@ class ActionTaskContextManager implements AutoCloseable {
                 this.putPythonAwaitableRef(toTask, awaitableRef);
             }
         }
+    }
+
+    void completeActionExecution(ActionTask actionTask) {
+        activeReportedExecutionsByActionExecutionId.remove(
+                actionTask.getTraceContext().getExecutionId());
+    }
+
+    private Map<ReportedExecutionKey, ExecutionTraceContext> getOrCreateActiveReportedExecutions(
+            ActionTask actionTask) {
+        String executionId = actionTask.getTraceContext().getExecutionId();
+        if (executionId == null) {
+            throw new IllegalStateException("Action execution id must not be null.");
+        }
+        return activeReportedExecutionsByActionExecutionId.computeIfAbsent(
+                executionId, ignored -> new HashMap<>());
     }
 
     @Nullable
