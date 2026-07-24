@@ -17,12 +17,20 @@
  */
 package org.apache.flink.agents.runtime.async;
 
+import org.apache.flink.agents.api.context.Outcome;
+
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
 
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,16 +66,21 @@ public class ContinuationActionExecutor {
      * @return true if the action completed, false if waiting for async execution
      */
     public boolean executeAction(ContinuationContext context, Runnable action) {
-        // Check if we have a pending async Future from previous yield
+        // Wait while async work is still pending, unless the batch deadline elapsed — then resume
+        // so executeAllAsync can finalize timed-out slots.
+        if (context.hasPendingAsync() && !context.isBatchDeadlineElapsed()) {
+            return false;
+        }
+
         Future<?> pending = context.getPendingFuture();
         if (pending != null) {
-            if (!pending.isDone()) {
-                // Async task not done yet, return false to wait
-                return false;
-            }
-            // Async task done, clear the pending future and resume
             LOG.debug("Async task done...");
             context.setPendingFuture(null);
+        }
+        Future<?> pendingBatch = context.getPendingBatchFuture();
+        if (pendingBatch != null) {
+            LOG.debug("Async batch done...");
+            context.setPendingBatchFuture(null);
         }
 
         Continuation currentContinuation = context.getCurrentContinuation();
@@ -146,6 +159,102 @@ public class ContinuationActionExecutor {
         }
 
         return (T) context.getAsyncResultRef().get();
+    }
+
+    /**
+     * Executes all suppliers as one async batch and returns one {@link Outcome} per supplier.
+     * Supplier failures are captured in their own outcome so one failed supplier does not abort the
+     * whole batch.
+     *
+     * @param context the continuation context for this action
+     * @param suppliers the suppliers to execute
+     * @param timeout the timeout for the whole batch; null or non-positive means no timeout
+     * @param <T> the result type
+     * @return outcomes in supplier order
+     */
+    public <T> List<Outcome<T>> executeAllAsync(
+            ContinuationContext context, List<Callable<T>> suppliers, Duration timeout)
+            throws Exception {
+        context.clearAsyncState();
+
+        List<CompletableFuture<Outcome<T>>> futures = new ArrayList<>(suppliers.size());
+        for (Callable<T> supplier : suppliers) {
+            futures.add(
+                    CompletableFuture.supplyAsync(
+                            () -> {
+                                try {
+                                    return Outcome.success(supplier.call());
+                                } catch (Exception e) {
+                                    return Outcome.<T>failure(e);
+                                }
+                            },
+                            asyncExecutor));
+        }
+
+        CompletableFuture<Void> barrier =
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+        long deadlineNanos = getDeadlineNanos(timeout);
+        context.setPendingBatchFuture(barrier, deadlineNanos);
+
+        while (!barrier.isDone()) {
+            if (System.nanoTime() >= deadlineNanos) {
+                TimeoutException exception =
+                        new TimeoutException(
+                                "Async durable batch execution timed out after " + timeout);
+                barrier.cancel(true);
+                context.setPendingBatchFuture(null);
+                return collectBatchOutcomesOnTimeout(futures, exception);
+            }
+            Continuation.yield(SCOPE);
+        }
+
+        context.setPendingBatchFuture(null);
+        return collectBatchOutcomes(futures);
+    }
+
+    /**
+     * Collects per-slot outcomes after the batch barrier completes normally.
+     *
+     * <p>Each supplier already wraps success and failure into an {@link Outcome}, so {@code join()}
+     * returns that outcome rather than throwing for ordinary tool exceptions.
+     */
+    private static <T> List<Outcome<T>> collectBatchOutcomes(
+            List<CompletableFuture<Outcome<T>>> futures) {
+        List<Outcome<T>> results = new ArrayList<>(futures.size());
+        for (CompletableFuture<Outcome<T>> future : futures) {
+            results.add(future.join());
+        }
+        return results;
+    }
+
+    /**
+     * Collects per-slot outcomes when the batch deadline elapses.
+     *
+     * <p>Completed slots keep their success or failure outcome. Only slots that are still running
+     * (or become cancelled) are finalized as timeout failures. {@code cancel(true)} is attempted
+     * only for unfinished futures; a future that completes between the check and cancel stays
+     * non-cancelled and is collected as a normal outcome.
+     */
+    private static <T> List<Outcome<T>> collectBatchOutcomesOnTimeout(
+            List<CompletableFuture<Outcome<T>>> futures, TimeoutException timeoutException) {
+        List<Outcome<T>> results = new ArrayList<>(futures.size());
+        for (CompletableFuture<Outcome<T>> future : futures) {
+            if (!future.isDone()) {
+                future.cancel(true);
+            }
+            if (future.isDone() && !future.isCancelled()) {
+                results.add(future.join());
+            } else {
+                results.add(Outcome.failure(timeoutException));
+            }
+        }
+        return results;
+    }
+
+    private long getDeadlineNanos(Duration timeout) {
+        return timeout == null || timeout.isZero() || timeout.isNegative()
+                ? Long.MAX_VALUE
+                : System.nanoTime() + timeout.toNanos();
     }
 
     public void close() {
