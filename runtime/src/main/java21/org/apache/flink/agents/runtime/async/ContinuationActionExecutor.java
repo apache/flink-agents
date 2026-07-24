@@ -66,8 +66,9 @@ public class ContinuationActionExecutor {
      * @return true if the action completed, false if waiting for async execution
      */
     public boolean executeAction(ContinuationContext context, Runnable action) {
-        // Check if we have a pending async Future from previous yield
-        if (context.hasPendingAsync()) {
+        // Wait while async work is still pending, unless the batch deadline elapsed — then resume
+        // so executeAllAsync can finalize timed-out slots.
+        if (context.hasPendingAsync() && !context.isBatchDeadlineElapsed()) {
             return false;
         }
 
@@ -192,9 +193,9 @@ public class ContinuationActionExecutor {
 
         CompletableFuture<Void> barrier =
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
-        context.setPendingBatchFuture(barrier);
-
         long deadlineNanos = getDeadlineNanos(timeout);
+        context.setPendingBatchFuture(barrier, deadlineNanos);
+
         while (!barrier.isDone()) {
             if (System.nanoTime() >= deadlineNanos) {
                 TimeoutException exception =
