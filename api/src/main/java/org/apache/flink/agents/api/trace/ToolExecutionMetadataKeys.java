@@ -20,13 +20,13 @@ package org.apache.flink.agents.api.trace;
 /** Shared field names for Tool execution entity metadata. */
 public final class ToolExecutionMetadataKeys {
 
-    public static final String TOOL_REQUEST_EVENT_ID = "tool_request_event_id";
-    public static final String TOOL_CALL_ID = "tool_call_id";
-    public static final String EXTERNAL_ID = "external_id";
-    public static final String TOOL_TYPE = "tool_type";
-    public static final String MCP_SERVER = "mcp_server";
-    public static final String SKILL_NAME = "skill_name";
-    public static final String SKILL_RESOURCE_PATH = "skill_resource_path";
+    public static final String TOOL_REQUEST_EVENT_ID = "toolRequestEventId";
+    public static final String TOOL_CALL_ID = "toolCallId";
+    public static final String EXTERNAL_ID = "externalId";
+    public static final String TOOL_TYPE = "toolType";
+    public static final String MCP_SERVER = "mcpServer";
+    public static final String SKILL_NAME = "skillName";
+    public static final String SKILL_RESOURCE_PATH = "skillResourcePath";
 
     private ToolExecutionMetadataKeys() {}
 }

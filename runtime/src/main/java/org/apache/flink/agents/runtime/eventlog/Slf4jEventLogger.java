@@ -176,7 +176,7 @@ public class Slf4jEventLogger implements EventLogger {
 
         // Truncate event attributes at STANDARD level.
         if (level == EventLogLevel.STANDARD && truncator != null) {
-            JsonNode attributesNode = rootNode.get("event_attributes");
+            JsonNode attributesNode = rootNode.get("eventAttributes");
             if (attributesNode instanceof ObjectNode) {
                 boolean truncated = truncator.truncate((ObjectNode) attributesNode);
                 if (truncated && truncatedEventsCounter != null) {

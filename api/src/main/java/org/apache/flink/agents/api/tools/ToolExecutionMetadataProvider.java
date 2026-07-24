@@ -32,7 +32,7 @@ public interface ToolExecutionMetadataProvider {
      * Returns additional metadata for the current tool call.
      *
      * @param parameters tool call parameters associated with the execution
-     * @return small structured metadata to merge into execution {@code entity_metadata}
+     * @return small structured metadata to merge into execution {@code entityMetadata}
      */
     Map<String, Object> getToolExecutionMetadata(ToolParameters parameters);
 }

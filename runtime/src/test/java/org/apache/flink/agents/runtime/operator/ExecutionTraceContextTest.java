@@ -96,7 +96,7 @@ class ExecutionTraceContextTest {
                         "parent",
                         ExecutionReporter.EntityTypes.TOOL,
                         "search",
-                        Map.of("tool_call_id", "call-1"));
+                        Map.of("toolCallId", "call-1"));
         TypeSerializer<ExecutionTraceContext> serializer =
                 TypeInformation.of(ExecutionTraceContext.class)
                         .createSerializer(new SerializerConfigImpl());
@@ -107,7 +107,7 @@ class ExecutionTraceContextTest {
                 serializer.deserialize(new DataInputDeserializer(output.getCopyOfBuffer()));
 
         assertThat(restored).isEqualTo(traceContext);
-        assertThat(restored.getEntityMetadata()).containsEntry("tool_call_id", "call-1");
+        assertThat(restored.getEntityMetadata()).containsEntry("toolCallId", "call-1");
         assertThatThrownBy(() -> restored.getEntityMetadata().put("new-key", "new-value"))
                 .isInstanceOf(UnsupportedOperationException.class);
     }

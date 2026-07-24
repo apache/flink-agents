@@ -31,9 +31,9 @@ def _tool_request_record(tool_calls: list) -> dict:
     return {
         "timestamp": "2026-05-31T00:00:00Z",
         "logLevel": "STANDARD",
-        "event_id": "00000000-0000-0000-0000-000000000001",
-        "event_type": "_tool_request_event",
-        "event_attributes": {"model": "qwen3:1.7b", "tool_calls": tool_calls},
+        "eventId": "00000000-0000-0000-0000-000000000001",
+        "eventType": "_tool_request_event",
+        "eventAttributes": {"model": "qwen3:1.7b", "tool_calls": tool_calls},
     }
 
 
@@ -61,9 +61,9 @@ def test_collect_tool_invocations(tmp_path: Path) -> None:
     other_event = {
         "timestamp": "2026-05-31T00:00:00Z",
         "logLevel": "STANDARD",
-        "event_id": "00000000-0000-0000-0000-000000000002",
-        "event_type": "_input_event",
-        "event_attributes": {},
+        "eventId": "00000000-0000-0000-0000-000000000002",
+        "eventType": "_input_event",
+        "eventAttributes": {},
     }
     _write_log(
         log_dir,
@@ -87,9 +87,9 @@ def test_collect_tool_invocations_no_tool(tmp_path: Path) -> None:
             {
                 "timestamp": "2026-05-31T00:00:00Z",
                 "logLevel": "STANDARD",
-                "event_id": "00000000-0000-0000-0000-000000000003",
-                "event_type": "_output_event",
-                "event_attributes": {},
+                "eventId": "00000000-0000-0000-0000-000000000003",
+                "eventType": "_output_event",
+                "eventAttributes": {},
             }
         ],
     )
