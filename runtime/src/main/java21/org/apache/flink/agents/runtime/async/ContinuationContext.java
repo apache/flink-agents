@@ -28,6 +28,9 @@ public class ContinuationContext {
     private Continuation currentContinuation;
     private volatile Future<?> pendingFuture;
     private volatile Future<?> pendingBatchFuture;
+    /** {@link Long#MAX_VALUE} means the pending batch has no deadline. */
+    private volatile long pendingBatchDeadlineNanos = Long.MAX_VALUE;
+
     private final AtomicReference<Object> asyncResult = new AtomicReference<>();
     private final AtomicReference<Throwable> asyncException = new AtomicReference<>();
 
@@ -52,11 +55,29 @@ public class ContinuationContext {
     }
 
     public void setPendingBatchFuture(Future<?> pendingBatchFuture) {
+        setPendingBatchFuture(pendingBatchFuture, Long.MAX_VALUE);
+    }
+
+    /**
+     * Records a pending batch barrier and its absolute nanoTime deadline.
+     *
+     * <p>{@link #hasPendingAsync()} only reflects whether the barrier future is still running.
+     * {@link ContinuationActionExecutor#executeAction} consults {@link #isBatchDeadlineElapsed()}
+     * separately so a timed-out batch can still resume and finalize unfinished slots.
+     */
+    public void setPendingBatchFuture(Future<?> pendingBatchFuture, long deadlineNanos) {
         this.pendingBatchFuture = pendingBatchFuture;
+        this.pendingBatchDeadlineNanos =
+                pendingBatchFuture == null ? Long.MAX_VALUE : deadlineNanos;
     }
 
     public boolean hasPendingAsync() {
         return isPending(pendingFuture) || isPending(pendingBatchFuture);
+    }
+
+    /** Whether the pending batch deadline has elapsed. No deadline means {@link Long#MAX_VALUE}. */
+    public boolean isBatchDeadlineElapsed() {
+        return System.nanoTime() >= pendingBatchDeadlineNanos;
     }
 
     private static boolean isPending(Future<?> future) {
@@ -74,6 +95,7 @@ public class ContinuationContext {
     public void clearAsyncState() {
         pendingFuture = null;
         pendingBatchFuture = null;
+        pendingBatchDeadlineNanos = Long.MAX_VALUE;
         asyncResult.set(null);
         asyncException.set(null);
     }
