@@ -52,7 +52,6 @@ public class ToolCallAction {
                 List.of(ToolRequestEvent.EVENT_TYPE));
     }
 
-    @SuppressWarnings("unchecked")
     public static void processToolRequest(Event event, RunnerContext ctx) {
         ToolRequestEvent toolRequest = ToolRequestEvent.fromEvent(event);
         boolean toolCallAsync = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_ASYNC);
@@ -62,23 +61,14 @@ public class ToolCallAction {
         Map<String, String> error = new HashMap<>();
         Map<String, ToolResponse> responses = new HashMap<>();
         Map<String, String> externalIds = new HashMap<>();
-        List<ToolCallExecution> executions = buildToolCallExecutions(toolRequest, ctx, externalIds);
-        List<ToolCallExecution> callableExecutions = new ArrayList<>();
-        List<DurableCallable<ToolResponse>> callables = new ArrayList<>();
+        List<ToolCallExecution> executions =
+                buildToolCallExecutions(
+                        toolRequest, ctx, externalIds, success, error, responses);
 
-        for (ToolCallExecution execution : executions) {
-            if (execution.response != null) {
-                applyInlineResponse(execution, success, error, responses);
-            } else {
-                callableExecutions.add(execution);
-                callables.add(execution.callable);
-            }
-        }
-
-        if (toolCallAsync && toolCallParallel && callables.size() > 1) {
-            executeParallel(callableExecutions, callables, ctx, success, error, responses);
+        if (toolCallAsync && toolCallParallel && executions.size() > 1) {
+            executeParallel(executions, ctx, success, error, responses);
         } else {
-            executeSequentially(callableExecutions, toolCallAsync, ctx, success, error, responses);
+            executeSequentially(executions, toolCallAsync, ctx, success, error, responses);
         }
 
         ctx.sendEvent(
@@ -87,7 +77,12 @@ public class ToolCallAction {
 
     @SuppressWarnings("unchecked")
     private static List<ToolCallExecution> buildToolCallExecutions(
-            ToolRequestEvent toolRequest, RunnerContext ctx, Map<String, String> externalIds) {
+            ToolRequestEvent toolRequest,
+            RunnerContext ctx,
+            Map<String, String> externalIds,
+            Map<String, Boolean> success,
+            Map<String, String> error,
+            Map<String, ToolResponse> responses) {
         List<ToolCallExecution> executions = new ArrayList<>();
         for (Map<String, Object> toolCall : toolRequest.getToolCalls()) {
             String id = String.valueOf(toolCall.get("id"));
@@ -110,14 +105,13 @@ public class ToolCallAction {
             }
 
             if (tool == null) {
-                executions.add(
-                        ToolCallExecution.withResponse(
-                                id,
-                                name,
-                                ToolResponse.error(String.format("Tool %s does not exist.", name)),
-                                diagnosticError != null
-                                        ? diagnosticError
-                                        : "Tool does not exist."));
+                recordInlineResponse(
+                        id,
+                        ToolResponse.error(String.format("Tool %s does not exist.", name)),
+                        diagnosticError != null ? diagnosticError : "Tool does not exist.",
+                        success,
+                        error,
+                        responses);
                 continue;
             }
 
@@ -126,12 +120,13 @@ public class ToolCallAction {
                 // context such as tenant ids cannot be spoofed by a tool call payload.
                 mergedArguments.putAll(resolveInjectedArguments(tool, ctx));
             } catch (Exception e) {
-                executions.add(
-                        ToolCallExecution.withResponse(
-                                id,
-                                name,
-                                ToolResponse.error(String.format("Tool %s execute failed.", name)),
-                                e.getMessage()));
+                recordInlineResponse(
+                        id,
+                        ToolResponse.error(String.format("Tool %s execute failed.", name)),
+                        e.getMessage(),
+                        success,
+                        error,
+                        responses);
                 continue;
             }
 
@@ -154,26 +149,29 @@ public class ToolCallAction {
                             return toolRef.call(new ToolParameters(callArguments));
                         }
                     };
-            executions.add(ToolCallExecution.withCallable(id, name, callable));
+            executions.add(new ToolCallExecution(id, name, callable));
         }
         return executions;
     }
 
     private static void executeParallel(
             List<ToolCallExecution> executions,
-            List<DurableCallable<ToolResponse>> callables,
             RunnerContext ctx,
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses) {
+        List<DurableCallable<ToolResponse>> callables = new ArrayList<>(executions.size());
+        for (ToolCallExecution execution : executions) {
+            callables.add(execution.callable);
+        }
         try {
             List<Outcome<ToolResponse>> outcomes = ctx.durableExecuteAllAsync(callables);
             for (int i = 0; i < outcomes.size(); i++) {
-                applyOutcome(executions.get(i), outcomes.get(i), success, error, responses);
+                recordOutcome(executions.get(i), outcomes.get(i), success, error, responses);
             }
         } catch (Exception e) {
             for (ToolCallExecution execution : executions) {
-                applyExecutionException(execution, e, success, error, responses);
+                recordExecutionException(execution, e, success, error, responses);
             }
         }
     }
@@ -191,38 +189,40 @@ public class ToolCallAction {
                         toolCallAsync
                                 ? ctx.durableExecuteAsync(execution.callable)
                                 : ctx.durableExecute(execution.callable);
-                applyToolResponse(execution.id, response, success, error, responses);
+                recordToolResponse(execution.id, response, success, error, responses);
             } catch (Exception e) {
-                applyExecutionException(execution, e, success, error, responses);
+                recordExecutionException(execution, e, success, error, responses);
             }
         }
     }
 
-    private static void applyOutcome(
+    private static void recordOutcome(
             ToolCallExecution execution,
             Outcome<ToolResponse> outcome,
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses) {
         if (outcome.isFailure()) {
-            applyExecutionException(execution, outcome.getError(), success, error, responses);
+            recordExecutionException(execution, outcome.getError(), success, error, responses);
         } else {
-            applyToolResponse(execution.id, outcome.getValue(), success, error, responses);
+            recordToolResponse(execution.id, outcome.getValue(), success, error, responses);
         }
     }
 
-    private static void applyInlineResponse(
-            ToolCallExecution execution,
+    private static void recordInlineResponse(
+            String id,
+            ToolResponse response,
+            String diagnosticError,
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses) {
-        applyToolResponse(execution.id, execution.response, success, error, responses);
-        if (execution.diagnosticError != null) {
-            error.put(execution.id, execution.diagnosticError);
+        recordToolResponse(id, response, success, error, responses);
+        if (diagnosticError != null) {
+            error.put(id, diagnosticError);
         }
     }
 
-    private static void applyExecutionException(
+    private static void recordExecutionException(
             ToolCallExecution execution,
             Exception exception,
             Map<String, Boolean> success,
@@ -235,7 +235,7 @@ public class ToolCallAction {
         error.put(execution.id, exception.getMessage());
     }
 
-    private static void applyToolResponse(
+    private static void recordToolResponse(
             String id,
             ToolResponse response,
             Map<String, Boolean> success,
@@ -248,36 +248,17 @@ public class ToolCallAction {
         }
     }
 
-    private static class ToolCallExecution {
+    private static final class ToolCallExecution {
         private final String id;
         private final String name;
         private final DurableCallable<ToolResponse> callable;
-        private final ToolResponse response;
 
         private ToolCallExecution(
-                String id,
-                String name,
-                DurableCallable<ToolResponse> callable,
-                ToolResponse response) {
+                String id, String name, DurableCallable<ToolResponse> callable) {
             this.id = id;
             this.name = name;
             this.callable = callable;
-            this.response = response;
         }
-
-        private static ToolCallExecution withCallable(
-                String id, String name, DurableCallable<ToolResponse> callable) {
-            return new ToolCallExecution(id, name, callable, null);
-        }
-
-        private static ToolCallExecution withResponse(
-                String id, String name, ToolResponse response, String diagnosticError) {
-            ToolCallExecution execution = new ToolCallExecution(id, name, null, response);
-            execution.diagnosticError = diagnosticError;
-            return execution;
-        }
-
-        private String diagnosticError;
     }
 
     private static Map<String, Object> resolveInjectedArguments(Tool tool, RunnerContext ctx)
