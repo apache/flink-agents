@@ -31,8 +31,6 @@ import java.util.UUID;
 public final class ExecutionTraceContext implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    private static final Map<String, Object> EMPTY_METADATA = Collections.emptyMap();
-
     private final String inputRunId;
     private final String businessKey;
     private final String agentName;
@@ -58,7 +56,7 @@ public final class ExecutionTraceContext implements Serializable {
         this.parentExecutionId = parentExecutionId;
         this.entityType = entityType;
         this.entityName = entityName;
-        this.entityMetadata = normalizeMetadata(entityMetadata);
+        this.entityMetadata = copyMetadata(entityMetadata);
     }
 
     public static ExecutionTraceContext forInputRun(String businessKey) {
@@ -171,14 +169,14 @@ public final class ExecutionTraceContext implements Serializable {
     }
 
     public Map<String, Object> getEntityMetadata() {
-        return entityMetadata;
+        return Collections.unmodifiableMap(entityMetadata);
     }
 
-    private static Map<String, Object> normalizeMetadata(Map<String, Object> entityMetadata) {
-        if (entityMetadata == null || entityMetadata.isEmpty()) {
-            return EMPTY_METADATA;
+    private static Map<String, Object> copyMetadata(Map<String, Object> entityMetadata) {
+        if (entityMetadata == null) {
+            return new LinkedHashMap<>();
         }
-        return Collections.unmodifiableMap(new LinkedHashMap<>(entityMetadata));
+        return new LinkedHashMap<>(entityMetadata);
     }
 
     @Override

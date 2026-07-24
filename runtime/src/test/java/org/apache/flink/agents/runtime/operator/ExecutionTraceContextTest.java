@@ -22,9 +22,17 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.core.memory.DataInputDeserializer;
+import org.apache.flink.core.memory.DataOutputSerializer;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Unit tests for {@link ExecutionTraceContext}. */
 class ExecutionTraceContextTest {
@@ -75,5 +83,32 @@ class ExecutionTraceContextTest {
                 .isEqualTo(ExecutionLifecycleEvents.STATUS_FAILED);
         assertThat(event.getAttr(ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE))
                 .isEqualTo(ExecutionReporter.ProblemCategories.ACTION_EXECUTION_FAILED);
+    }
+
+    @Test
+    void entityMetadataSurvivesFlinkStateSerialization() throws Exception {
+        ExecutionTraceContext traceContext =
+                ExecutionTraceContext.fromExistingIds(
+                        "run",
+                        "business-key",
+                        "agent",
+                        "execution",
+                        "parent",
+                        ExecutionReporter.EntityTypes.TOOL,
+                        "search",
+                        Map.of("tool_call_id", "call-1"));
+        TypeSerializer<ExecutionTraceContext> serializer =
+                TypeInformation.of(ExecutionTraceContext.class)
+                        .createSerializer(new SerializerConfigImpl());
+        DataOutputSerializer output = new DataOutputSerializer(256);
+
+        serializer.serialize(traceContext, output);
+        ExecutionTraceContext restored =
+                serializer.deserialize(new DataInputDeserializer(output.getCopyOfBuffer()));
+
+        assertThat(restored).isEqualTo(traceContext);
+        assertThat(restored.getEntityMetadata()).containsEntry("tool_call_id", "call-1");
+        assertThatThrownBy(() -> restored.getEntityMetadata().put("new-key", "new-value"))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 }
