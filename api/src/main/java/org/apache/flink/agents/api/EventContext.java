@@ -23,12 +23,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.Instant;
 
-/** Contextual information about an event, such as its type and timestamp. */
+/** Runtime context for one observed event occurrence. */
 public class EventContext {
-    /** The routing key for the event, matching the {@code EVENT_TYPE} constant or type string. */
+    /** The event type observed by the runtime, matching {@link Event#getType()}. */
     private final String eventType;
 
-    // Timestamp of when the event occurred
+    /** Timestamp of when the event occurrence was observed by the runtime. */
     private final String timestamp;
 
     public EventContext(Event event) {

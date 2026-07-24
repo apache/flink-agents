@@ -149,6 +149,7 @@
             }
         }
     },
+    "agent_name": "MyAgent",
     "config": {
         "conf_data": {
             "mock.key": "mock.value"

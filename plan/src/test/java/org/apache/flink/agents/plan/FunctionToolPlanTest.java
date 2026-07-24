@@ -152,6 +152,23 @@ class FunctionToolPlanTest {
     }
 
     @Test
+    @DisplayName("FunctionTool reports user exception message from Java function")
+    void javaFunctionToolReportsUserExceptionMessage() throws Exception {
+        Method m =
+                FunctionToolPlanTest.class.getMethod(
+                        "calc", double.class, double.class, String.class);
+        FunctionTool tool = FunctionTool.fromStaticMethod("desc", m);
+
+        ToolResponse error =
+                tool.call(
+                        new ToolParameters(
+                                new HashMap<>(Map.of("a", 10, "b", 0, "operation", "div"))));
+
+        assertFalse(error.isSuccess());
+        assertEquals("Division by zero", error.getError());
+    }
+
+    @Test
     @DisplayName("Injected @ToolParam is hidden from metadata schema")
     void injectedToolParamHiddenFromMetadata() throws Exception {
         Method m = FunctionToolPlanTest.class.getMethod("queryOrder", String.class, String.class);

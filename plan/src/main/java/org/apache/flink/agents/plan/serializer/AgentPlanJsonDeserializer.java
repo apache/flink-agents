@@ -51,6 +51,9 @@ public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
             throws IOException, JacksonException {
         ObjectCodec codec = parser.getCodec();
         JsonNode node = codec.readTree(parser);
+        JsonNode agentNameNode = node.get("agent_name");
+        String agentName =
+                agentNameNode != null && !agentNameNode.isNull() ? agentNameNode.asText() : null;
         JsonNode actionsNode = node.get("actions");
 
         // Deserialize actions
@@ -133,6 +136,6 @@ public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
         }
         AgentConfiguration config = new AgentConfiguration(configData);
 
-        return new AgentPlan(actions, actionsByEvent, resourceProviders, config);
+        return new AgentPlan(actions, actionsByEvent, resourceProviders, config, agentName);
     }
 }

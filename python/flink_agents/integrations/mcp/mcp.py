@@ -20,7 +20,7 @@ import base64
 from abc import ABC
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Mapping
 from urllib.parse import urlparse
 
 import cloudpickle
@@ -39,17 +39,22 @@ from typing_extensions import override
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.tools import ToolExecutionMetadataProvider
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
+from flink_agents.api.trace import (
+    ToolExecutionMetadataKeys,
+)
 from flink_agents.integrations.mcp.utils import extract_mcp_content_item
 
 
-class MCPTool(Tool):
+class MCPTool(Tool, ToolExecutionMetadataProvider):
     """MCP tool definition that can be called directly.
 
     This represents a single tool from an MCP server.
     """
 
     mcp_server: "MCPServer" = Field(default=None)
+    mcp_server_name: str | None = None
 
     @classmethod
     @override
@@ -66,6 +71,14 @@ class MCPTool(Tool):
         return asyncio.run(
             self.mcp_server.call_tool_async(self.metadata.name, *args, **kwargs)
         )
+
+    @override
+    def get_tool_execution_metadata(
+        self, parameters: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        if self.mcp_server_name is None:
+            return {}
+        return {ToolExecutionMetadataKeys.MCP_SERVER: self.mcp_server_name}
 
     @override
     def close(self) -> None:

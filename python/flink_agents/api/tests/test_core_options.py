@@ -101,10 +101,11 @@ def test_agent_config_options_are_explicitly_declared() -> None:
     from flink_agents.api.core_options import AgentConfigOptions, EventLogLevel
 
     options = _collect_config_options(AgentConfigOptions)
-    assert len(options) == 23
+    assert len(options) == 24
     assert options["BASE_LOG_DIR"].get_key() == "baseLogDir"
     assert options["KAFKA_BOOTSTRAP_SERVERS"].get_default_value() == "localhost:9092"
     assert options["EVENT_LOG_LEVEL"].get_default_value() is EventLogLevel.STANDARD
+    assert options["EVENT_LOG_TRACE_ENABLED"].get_default_value() is False
 
 
 def test_unknown_agent_config_option_raises_attribute_error() -> None:

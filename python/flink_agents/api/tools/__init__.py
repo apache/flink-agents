@@ -15,9 +15,16 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from flink_agents.api.tools.tool_execution_metadata_provider import (
+    ToolExecutionMetadataProvider,
+)
 from flink_agents.api.tools.tool_parameter_injection import (
     InjectedArg,
     ToolParameterSource,
 )
 
-__all__ = ["InjectedArg", "ToolParameterSource"]
+__all__ = [
+    "InjectedArg",
+    "ToolExecutionMetadataProvider",
+    "ToolParameterSource",
+]

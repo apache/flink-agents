@@ -21,6 +21,9 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -28,10 +31,12 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
+import org.apache.flink.agents.runtime.trace.ExecutionEventLogger;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
@@ -107,6 +112,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private final transient EventRouter<IN, OUT> eventRouter;
 
+    private final transient ExecutionEventLogger executionEventLogger;
+
+    private final transient EventLogWriter eventLogWriter;
+
     private final transient DurableExecutionManager durableExecManager;
 
     private transient OperatorStateManager stateManager;
@@ -127,7 +136,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.agentPlan = agentPlan;
         this.processingTimeService = processingTimeService;
         this.mailboxExecutor = mailboxExecutor;
-        this.eventRouter = new EventRouter<>(agentPlan, inputIsJava);
+        this.eventLogWriter = EventLogWriter.create(agentPlan);
+        this.eventRouter = new EventRouter<>(agentPlan, inputIsJava, eventLogWriter);
+        this.executionEventLogger = ExecutionEventLogger.forEventLogWriter(eventLogWriter);
         this.durableExecManager = new DurableExecutionManager(actionStateStore);
         OperatorUtils.setChainStrategy(this, ChainingStrategy.ALWAYS);
     }
@@ -192,8 +203,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         mailboxProcessor = getMailboxProcessor();
 
-        // Initialize the event logger if it is set.
-        eventRouter.initEventLogger(getRuntimeContext());
+        eventLogWriter.open(getRuntimeContext(), builtInMetrics);
 
         // Initialize user event listeners from configuration
         eventRouter.initEventListeners(getRuntimeContext());
@@ -241,7 +251,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
      * `tryProcessActionTaskForKey` to continue processing.
      */
     private void processEvent(Object key, Event event) throws Exception {
-        eventRouter.notifyEventProcessed(event);
+        processEvent(
+                key,
+                event,
+                ExecutionTraceContext.forInputRun(
+                        businessKeyFromKey(key), agentPlan.getAgentName()));
+    }
+
+    private void processEvent(Object key, Event event, ExecutionTraceContext traceContext)
+            throws Exception {
+        eventRouter.notifyEventProcessed(event, traceContext);
 
         boolean isInputEvent = EventUtil.isInputEvent(event);
         if (EventUtil.isOutputEvent(event)) {
@@ -269,7 +288,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             List<Action> triggerActions = eventRouter.getActionsTriggeredBy(event, agentPlan);
             if (triggerActions != null && !triggerActions.isEmpty()) {
                 for (Action triggerAction : triggerActions) {
-                    stateManager.addActionTask(createActionTask(key, triggerAction, event));
+                    stateManager.addActionTask(
+                            createActionTask(key, triggerAction, event, traceContext));
                 }
             }
         }
@@ -327,10 +347,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 stateManager.getSensoryMemState(),
                 stateManager.getShortTermMemState(),
                 pythonBridge.getPythonRunnerContext(),
-                ltm);
+                ltm,
+                executionEventLogger);
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
+        boolean notifyFinished = false;
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt = Optional.empty();
         ActionState actionState =
@@ -359,6 +381,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .getSensoryMemory()
                         .set(memoryUpdate.getPath(), memoryUpdate.getValue());
             }
+            notifyActionReused(actionTask);
         } else {
             // Initialize ActionState if not exists, or use existing one for recovery
             if (actionState == null) {
@@ -369,36 +392,54 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 key, sequenceNumber, actionTask.action, actionTask.event);
             }
 
-            // Set up durable execution context for fine-grained recovery
-            durableExecManager.setupDurableExecutionContext(
-                    actionTask, actionState, sequenceNumber);
+            notifyActionStarted(actionTask);
+            try {
+                // Set up durable execution context for fine-grained recovery
+                durableExecManager.setupDurableExecutionContext(
+                        actionTask, actionState, sequenceNumber);
 
-            ActionTask.ActionTaskResult actionTaskResult =
-                    actionTask.invoke(
-                            getRuntimeContext().getUserCodeClassLoader(),
-                            this.pythonBridge.getPythonActionExecutor());
+                ActionTask.ActionTaskResult actionTaskResult =
+                        actionTask.invoke(
+                                getRuntimeContext().getUserCodeClassLoader(),
+                                this.pythonBridge.getPythonActionExecutor());
 
-            // We remove the contexts from the map after the task is processed. They will be added
-            // back later if the action task has a generated action task, meaning it is not
-            // finished.
-            contextManager.removeMemoryContext(actionTask);
-            durableExecManager.removeDurableContext(actionTask);
-            contextManager.removeContinuationContext(actionTask);
-            contextManager.removePythonAwaitableRef(actionTask);
-            durableExecManager.maybePersistTaskResult(
-                    key,
-                    sequenceNumber,
-                    actionTask.action,
-                    actionTask.event,
-                    actionTask.getRunnerContext(),
-                    actionTaskResult);
-            isFinished = actionTaskResult.isFinished();
-            outputEvents = actionTaskResult.getOutputEvents();
-            generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
+                // Drop task-local contexts after each step; continuations transfer them back.
+                contextManager.removeMemoryContext(actionTask);
+                durableExecManager.removeDurableContext(actionTask);
+                contextManager.removeContinuationContext(actionTask);
+                contextManager.removePythonAwaitableRef(actionTask);
+                durableExecManager.maybePersistTaskResult(
+                        key,
+                        sequenceNumber,
+                        actionTask.action,
+                        actionTask.event,
+                        actionTask.getRunnerContext(),
+                        actionTaskResult);
+                isFinished = actionTaskResult.isFinished();
+                outputEvents = actionTaskResult.getOutputEvents();
+                generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
+                notifyFinished = isFinished;
+            } catch (Exception e) {
+                try {
+                    notifyActionFailed(actionTask, e);
+                } finally {
+                    contextManager.completeActionExecution(actionTask);
+                }
+                throw e;
+            }
         }
 
-        for (Event actionOutputEvent : outputEvents) {
-            processEvent(key, actionOutputEvent);
+        try {
+            for (Event actionOutputEvent : outputEvents) {
+                processEvent(key, actionOutputEvent, actionTask.getTraceContext());
+            }
+            if (notifyFinished) {
+                notifyActionFinished(actionTask);
+            }
+        } finally {
+            if (isFinished) {
+                contextManager.completeActionExecution(actionTask);
+            }
         }
 
         boolean currentInputEventFinished = false;
@@ -478,8 +519,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (pythonBridge != null) {
             pythonBridge.close();
         }
-        if (eventRouter != null) {
-            eventRouter.close();
+        if (eventLogWriter != null) {
+            eventLogWriter.close();
         }
         if (durableExecManager != null) {
             durableExecManager.close();
@@ -544,15 +585,52 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 "Expected to be running on the task mailbox thread, but was not.");
     }
 
-    private ActionTask createActionTask(Object key, Action action, Event event) {
+    private void notifyActionStarted(ActionTask actionTask) {
+        if (actionTask.hasExecutionStartedEventEmitted()) {
+            return;
+        }
+        notifyExecutionLifecycleEvent(
+                actionTask.getTraceContext(), ExecutionLifecycleEvents.executionStarted());
+        actionTask.markExecutionStartedEventEmitted();
+    }
+
+    private void notifyActionFinished(ActionTask actionTask) {
+        notifyExecutionLifecycleEvent(
+                actionTask.getTraceContext(), ExecutionLifecycleEvents.executionFinished());
+    }
+
+    private void notifyActionReused(ActionTask actionTask) {
+        notifyExecutionLifecycleEvent(
+                actionTask.getTraceContext(), ExecutionLifecycleEvents.executionReused());
+    }
+
+    private void notifyActionFailed(ActionTask actionTask, Exception error) {
+        notifyExecutionLifecycleEvent(
+                actionTask.getTraceContext(),
+                ExecutionLifecycleEvents.executionFailed(
+                        error, ExecutionReporter.ProblemCategories.ACTION_EXECUTION_FAILED));
+    }
+
+    private void notifyExecutionLifecycleEvent(ExecutionTraceContext traceContext, Event event) {
+        executionEventLogger.emit(event, traceContext);
+    }
+
+    private ActionTask createActionTask(
+            Object key, Action action, Event event, ExecutionTraceContext sourceTraceContext) {
+        ExecutionTraceContext actionTraceContext =
+                ExecutionTraceContext.forAction(sourceTraceContext, action.getName());
         if (action.getExec() instanceof JavaFunction) {
-            return new JavaActionTask(key, event, action);
+            return new JavaActionTask(key, event, action, actionTraceContext);
         } else if (action.getExec() instanceof PythonFunction) {
-            return new PythonActionTask(key, event, action);
+            return new PythonActionTask(key, event, action, actionTraceContext);
         } else {
             throw new IllegalStateException(
                     "Unsupported action type: " + action.getExec().getClass());
         }
+    }
+
+    private static String businessKeyFromKey(Object key) {
+        return key == null ? null : String.valueOf(key);
     }
 
     private void tryResumeProcessActionTasks() throws Exception {

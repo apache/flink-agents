@@ -659,8 +659,8 @@ class MyEvent(Event):
     def from_event(cls, event: Event) -> "MyEvent":
         assert "value" in event.attributes
         result = MyEvent(value=event.attributes["value"])
-        # Preserve the base event id. Assign it last: the content-based id is
-        # regenerated whenever another field changes.
+        # Preserve the base event id so event logs, listeners, correlation,
+        # and deduplication stay consistent.
         result.id = event.id
         return result
 
@@ -712,8 +712,7 @@ listeners, correlation, deduplication, and downstream timestamp propagation stay
 built-in events:
 
 - **`id`**: copy the source event's `id` onto the reconstructed event, as all built-in events do
-  in both languages. In Python, assign `result.id = event.id` **last**, because the content-based
-  `id` is regenerated whenever any other field changes.
+  in both languages.
 - **`sourceTimestamp`** (Java only): carry it over with `setSourceTimestamp(...)` when
   `hasSourceTimestamp()` is true, matching built-in Java events. This field is runtime-internal and
   used for timestamp propagation; the Python `Event` has no equivalent.

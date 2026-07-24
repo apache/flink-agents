@@ -30,6 +30,9 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.utils.JsonUtils;
@@ -40,6 +43,8 @@ import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.trace.ExecutionEventSink;
+import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,7 +62,7 @@ import java.util.concurrent.Callable;
  * The implementation class of {@link RunnerContext}, which serves as the execution context for
  * actions.
  */
-public class RunnerContextImpl implements RunnerContext {
+public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().registerModule(new JavaTimeModule());
@@ -105,6 +110,10 @@ public class RunnerContextImpl implements RunnerContext {
     protected String actionName;
     protected InteranlBaseLongTermMemory ltm;
 
+    @Nullable protected ExecutionTraceContext actionTraceContext;
+    @Nullable protected ExecutionEventSink executionEventSink;
+    @Nullable private Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions;
+
     /** Context for fine-grained durable execution, may be null if not enabled. */
     @Nullable protected DurableExecutionContext durableExecutionContext;
 
@@ -125,11 +134,26 @@ public class RunnerContextImpl implements RunnerContext {
     }
 
     public void switchActionContext(String actionName, MemoryContext memoryContext, String key) {
+        switchActionContext(actionName, memoryContext, key, null, null);
+    }
+
+    public void switchActionContext(
+            String actionName,
+            MemoryContext memoryContext,
+            String key,
+            @Nullable ExecutionTraceContext actionTraceContext,
+            @Nullable Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions) {
         this.actionName = actionName;
         this.memoryContext = memoryContext;
+        this.actionTraceContext = actionTraceContext;
+        this.activeReportedExecutions = activeReportedExecutions;
         if (ltm != null) {
             ltm.switchContext(key);
         }
+    }
+
+    public void setExecutionEventSink(@Nullable ExecutionEventSink executionEventSink) {
+        this.executionEventSink = executionEventSink;
     }
 
     public MemoryContext getMemoryContext() {
@@ -189,6 +213,81 @@ public class RunnerContextImpl implements RunnerContext {
     public List<MemoryUpdate> getShortTermMemoryUpdates() {
         mailboxThreadChecker.run();
         return List.copyOf(memoryContext.getShortTermMemoryUpdates());
+    }
+
+    @Override
+    public void reportExecutionStarted(
+            String entityType, String entityName, Map<String, Object> entityMetadata)
+            throws Exception {
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                ExecutionLifecycleEvents.executionStarted());
+    }
+
+    @Override
+    public void reportExecutionSucceeded(
+            String entityType, String entityName, Map<String, Object> entityMetadata)
+            throws Exception {
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                ExecutionLifecycleEvents.executionFinished());
+    }
+
+    @Override
+    public void reportExecutionFailed(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            Throwable error,
+            @Nullable String problemCategory)
+            throws Exception {
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                ExecutionLifecycleEvents.executionFailed(error, problemCategory));
+    }
+
+    protected void reportChildExecution(
+            String entityType, String entityName, Map<String, Object> entityMetadata, Event event) {
+        mailboxThreadChecker.run();
+        if (actionTraceContext == null
+                || executionEventSink == null
+                || activeReportedExecutions == null) {
+            return;
+        }
+
+        ReportedExecutionKey key = new ReportedExecutionKey(entityType, entityName, entityMetadata);
+        ExecutionTraceContext reportTraceContext;
+        if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
+            reportTraceContext =
+                    actionTraceContext.childExecution(
+                            entityType, entityName, key.getEntityMetadata());
+            ExecutionTraceContext previous = activeReportedExecutions.put(key, reportTraceContext);
+            if (previous != null) {
+                LOG.debug(
+                        "Execution start report for {}:{} replaced an active report with the same metadata.",
+                        entityType,
+                        entityName);
+            }
+        } else {
+            reportTraceContext = activeReportedExecutions.remove(key);
+            if (reportTraceContext == null) {
+                LOG.debug(
+                        "Execution terminal report for {}:{} has no matching start report; emitting it with a new execution id.",
+                        entityType,
+                        entityName);
+                reportTraceContext =
+                        actionTraceContext.childExecution(
+                                entityType, entityName, key.getEntityMetadata());
+            }
+        }
+
+        executionEventSink.emit(event, reportTraceContext);
     }
 
     @Override

@@ -31,6 +31,7 @@ import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
 import java.util.ArrayList;
@@ -39,9 +40,12 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -98,8 +102,15 @@ class EventRouterTest {
         InputEvent inputEvent = new InputEvent(7L);
         router.notifyEventProcessed(inputEvent);
 
-        verify(listener1).onEventProcessed(any(EventContext.class), eq(inputEvent));
-        verify(listener2).onEventProcessed(any(EventContext.class), eq(inputEvent));
+        ArgumentCaptor<EventContext> logContext = ArgumentCaptor.forClass(EventContext.class);
+        ArgumentCaptor<EventContext> listener1Context = ArgumentCaptor.forClass(EventContext.class);
+        ArgumentCaptor<EventContext> listener2Context = ArgumentCaptor.forClass(EventContext.class);
+        verify(mockLogger).append(logContext.capture(), eq(inputEvent), isNull());
+        verify(listener1).onEventProcessed(listener1Context.capture(), eq(inputEvent));
+        verify(listener2).onEventProcessed(listener2Context.capture(), eq(inputEvent));
+        assertThat(logContext.getValue().getEventType()).isEqualTo(InputEvent.EVENT_TYPE);
+        assertThat(listener1Context.getValue()).isSameAs(logContext.getValue());
+        assertThat(listener2Context.getValue()).isSameAs(logContext.getValue());
     }
 
     /**
@@ -138,8 +149,29 @@ class EventRouterTest {
         router.notifyEventProcessed(inputEvent);
 
         InOrder ordered = inOrder(mockLogger);
-        ordered.verify(mockLogger).append(any(EventContext.class), eq(inputEvent));
+        ordered.verify(mockLogger).append(any(EventContext.class), eq(inputEvent), isNull());
         ordered.verify(mockLogger).flush();
+    }
+
+    @Test
+    void notifyEventProcessedIgnoresEventLogWriteFailure() throws Exception {
+        AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
+        EventLogger mockLogger = mock(EventLogger.class);
+        EventRouter<Long, Object> router =
+                new EventRouter<>(plan, /* inputIsJava */ true, mockLogger);
+        EventListener listener = mock(EventListener.class);
+        router.addEventListener(listener);
+        BuiltInMetrics spyMetrics = spy(makeMetrics());
+        router.open(spyMetrics);
+
+        InputEvent inputEvent = new InputEvent(3L);
+        doThrow(new RuntimeException("log failed"))
+                .when(mockLogger)
+                .append(any(EventContext.class), eq(inputEvent), isNull());
+
+        assertThatCode(() -> router.notifyEventProcessed(inputEvent)).doesNotThrowAnyException();
+        verify(listener).onEventProcessed(any(EventContext.class), eq(inputEvent));
+        verify(spyMetrics).markEventProcessed();
     }
 
     /**

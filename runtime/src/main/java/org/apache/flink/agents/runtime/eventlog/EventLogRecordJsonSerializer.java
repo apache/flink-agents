@@ -19,39 +19,35 @@
 package org.apache.flink.agents.runtime.eventlog;
 
 import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.JsonSerializer;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 
 import java.io.IOException;
-import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * Custom JSON serializer for {@link EventLogRecord}.
  *
- * <p>This serializer handles the serialization of EventLogRecord instances to JSON format suitable
- * for structured logging. The serialization includes:
- *
- * <ul>
- *   <li>Top-level timestamp
- *   <li>Top-level eventType (routing key, mirrors {@code event.eventType})
- *   <li>Event data serialized as a standard JSON object
- * </ul>
- *
- * <p>The resulting JSON structure is:
+ * <p>This serializer emits the normalized Event Log record shape used by downstream trace and
+ * aggregation consumers. Event identity, event type, attributes, input-run context, and execution
+ * hierarchy context are flattened at the top level.
  *
  * <pre>{@code
  * {
  *   "timestamp": "2024-01-15T10:30:00Z",
- *   "eventType": "_input_event",
- *   "event": {
- *     "eventType": "_input_event",
- *     // Event fields serialized normally
- *   }
+ *   "inputRunId": "...",
+ *   "businessKey": "...",
+ *   "executionId": "...",
+ *   "entityType": "action",
+ *   "entityName": "process",
+ *   "eventId": "...",
+ *   "eventType": "_execution_started_event",
+ *   "status": "started",
+ *   "eventAttributes": {}
  * }
  * }</pre>
  */
@@ -61,73 +57,64 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
     public void serialize(EventLogRecord record, JsonGenerator gen, SerializerProvider serializers)
             throws IOException {
 
-        ObjectMapper mapper = (ObjectMapper) gen.getCodec();
-        if (mapper == null) {
-            mapper = new ObjectMapper();
-        }
-
+        Event event = record.getEvent();
+        ExecutionTraceContext traceContext = record.getExecutionTraceContext();
         gen.writeStartObject();
-        gen.writeStringField("timestamp", record.getContext().getTimestamp());
-        gen.writeStringField("eventType", record.getEvent().getType());
-
-        gen.writeFieldName("event");
-        JsonNode eventNode = buildEventNode(record.getEvent(), mapper);
-        if (!eventNode.isObject()) {
-            throw new IllegalStateException(
-                    "Event log payload must be a JSON object, but was: " + eventNode.getNodeType());
+        gen.writeStringField("timestamp", record.getEventContext().getTimestamp());
+        if (traceContext != null) {
+            writeStringFieldIfPresent(gen, "inputRunId", traceContext.getInputRunId());
+            writeStringFieldIfPresent(gen, "businessKey", traceContext.getBusinessKey());
+            writeStringFieldIfPresent(gen, "agentName", traceContext.getAgentName());
+            writeStringFieldIfPresent(gen, "executionId", traceContext.getExecutionId());
+            writeStringFieldIfPresent(
+                    gen, "parentExecutionId", traceContext.getParentExecutionId());
+            writeStringFieldIfPresent(gen, "entityType", traceContext.getEntityType());
+            writeStringFieldIfPresent(gen, "entityName", traceContext.getEntityName());
+            writeMapFieldIfPresent(gen, "entityMetadata", traceContext.getEntityMetadata());
         }
-        eventNode = reorderEventFields((ObjectNode) eventNode, record.getEvent(), mapper);
-        gen.writeTree(eventNode);
+        gen.writeStringField("eventId", event.getId().toString());
+        gen.writeStringField("eventType", event.getType());
+        writeStringFieldIfPresent(
+                gen,
+                "status",
+                executionLifecycleAttribute(event, ExecutionLifecycleEvents.STATUS_ATTRIBUTE));
+        writeStringFieldIfPresent(
+                gen,
+                "problemCategory",
+                executionLifecycleAttribute(
+                        event, ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE));
+        gen.writeObjectField("eventAttributes", eventAttributes(event));
         gen.writeEndObject();
     }
 
-    private JsonNode buildEventNode(Event event, ObjectMapper mapper) {
-        JsonNode eventNode = mapper.valueToTree(event);
-        if (eventNode.isObject()) {
-            ObjectNode objectNode = (ObjectNode) eventNode;
-            objectNode.put("eventType", event.getType());
-            objectNode.remove("sourceTimestamp");
+    private static Map<String, Object> eventAttributes(Event event) {
+        Map<String, Object> attributes = new LinkedHashMap<>(event.getAttributes());
+        if (ExecutionLifecycleEvents.isExecutionLifecycleEvent(event.getType())) {
+            attributes.remove(ExecutionLifecycleEvents.STATUS_ATTRIBUTE);
+            attributes.remove(ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE);
         }
-        return eventNode;
+        return attributes;
     }
 
-    private ObjectNode reorderEventFields(ObjectNode original, Event event, ObjectMapper mapper) {
-        ObjectNode ordered = mapper.createObjectNode();
-
-        // eventType — routing key (user-defined string)
-        JsonNode eventTypeNode = original.get("eventType");
-        if (eventTypeNode != null) {
-            ordered.set("eventType", eventTypeNode);
-        } else {
-            ordered.put("eventType", event.getType());
+    private static String executionLifecycleAttribute(Event event, String name) {
+        if (!ExecutionLifecycleEvents.isExecutionLifecycleEvent(event.getType())) {
+            return null;
         }
+        Object value = event.getAttr(name);
+        return value == null ? null : String.valueOf(value);
+    }
 
-        JsonNode idNode = original.get("id");
-        if (idNode != null) {
-            ordered.set("id", idNode);
-        } else if (event.getId() != null) {
-            ordered.put("id", event.getId().toString());
+    private static void writeStringFieldIfPresent(JsonGenerator gen, String field, String value)
+            throws IOException {
+        if (value != null) {
+            gen.writeStringField(field, value);
         }
+    }
 
-        JsonNode attributesNode = original.get("attributes");
-        if (attributesNode != null) {
-            ordered.set("attributes", attributesNode);
-        } else {
-            ordered.putObject("attributes");
+    private static void writeMapFieldIfPresent(
+            JsonGenerator gen, String field, Map<String, Object> value) throws IOException {
+        if (value != null && !value.isEmpty()) {
+            gen.writeObjectField(field, value);
         }
-
-        Iterator<Map.Entry<String, JsonNode>> fields = original.fields();
-        while (fields.hasNext()) {
-            Map.Entry<String, JsonNode> entry = fields.next();
-            String fieldName = entry.getKey();
-            if ("sourceTimestamp".equals(fieldName)) {
-                continue;
-            }
-            if (!ordered.has(fieldName)) {
-                ordered.set(fieldName, entry.getValue());
-            }
-        }
-
-        return ordered;
     }
 }

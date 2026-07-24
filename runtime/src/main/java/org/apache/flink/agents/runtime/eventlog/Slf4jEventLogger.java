@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.metrics.Counter;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -40,6 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.Map;
 
 /**
@@ -147,7 +149,13 @@ public class Slf4jEventLogger implements EventLogger {
     }
 
     @Override
-    public void append(EventContext context, Event event) throws Exception {
+    public void append(EventContext eventContext, Event event) throws Exception {
+        append(eventContext, event, null);
+    }
+
+    @Override
+    public void append(EventContext eventContext, Event event, ExecutionTraceContext traceContext)
+            throws Exception {
         // Resolve log level and skip OFF events.
         EventLogLevel level =
                 levelResolver != null
@@ -157,7 +165,7 @@ public class Slf4jEventLogger implements EventLogger {
             return;
         }
 
-        EventLogRecord record = new EventLogRecord(context, event);
+        EventLogRecord record = new EventLogRecord(eventContext, traceContext, event);
         JsonNode tree = MAPPER.valueToTree(record);
         if (!(tree instanceof ObjectNode)) {
             throw new IllegalStateException(
@@ -166,33 +174,41 @@ public class Slf4jEventLogger implements EventLogger {
         }
         ObjectNode rootNode = (ObjectNode) tree;
 
-        // Truncate the event subtree at STANDARD level.
+        // Truncate event attributes at STANDARD level.
         if (level == EventLogLevel.STANDARD && truncator != null) {
-            JsonNode eventNode = rootNode.get("event");
-            if (eventNode instanceof ObjectNode) {
-                boolean truncated = truncator.truncate((ObjectNode) eventNode);
+            JsonNode attributesNode = rootNode.get("eventAttributes");
+            if (attributesNode instanceof ObjectNode) {
+                boolean truncated = truncator.truncate((ObjectNode) attributesNode);
                 if (truncated && truncatedEventsCounter != null) {
                     truncatedEventsCounter.inc();
                 }
             }
         }
 
-        // Rebuild the top-level object so logLevel/subtask context sit alongside the documented
-        // JSON layout: timestamp, logLevel, eventType, subtask context, event.
-        ObjectNode ordered = MAPPER.createObjectNode();
-        ordered.set("timestamp", rootNode.get("timestamp"));
-        ordered.put("logLevel", level.name());
-        ordered.set("eventType", rootNode.get("eventType"));
-        ordered.put("jobId", jobId);
-        ordered.put("taskName", taskName);
-        ordered.put("subtaskId", subtaskId);
-        ordered.set("event", rootNode.get("event"));
+        ObjectNode ordered = withLogLevelAndSubtaskContext(rootNode, level);
 
         String json =
                 prettyPrint
                         ? MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(ordered)
                         : MAPPER.writeValueAsString(ordered);
         EVENT_LOG.info(json);
+    }
+
+    private ObjectNode withLogLevelAndSubtaskContext(ObjectNode rootNode, EventLogLevel level) {
+        ObjectNode ordered = MAPPER.createObjectNode();
+        ordered.set("timestamp", rootNode.get("timestamp"));
+        ordered.put("logLevel", level.name());
+        ordered.put("jobId", jobId);
+        ordered.put("taskName", taskName);
+        ordered.put("subtaskId", subtaskId);
+        Iterator<Map.Entry<String, JsonNode>> fields = rootNode.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            if (!"timestamp".equals(field.getKey())) {
+                ordered.set(field.getKey(), field.getValue());
+            }
+        }
+        return ordered;
     }
 
     @Override

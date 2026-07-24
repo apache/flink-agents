@@ -118,6 +118,14 @@ public class AgentConfigOptions {
             new ConfigOption<>("event-log.level", EventLogLevel.class, EventLogLevel.STANDARD);
 
     /**
+     * Whether to persist Agent Trace context and execution lifecycle Events in the Event Log.
+     * Business Events continue to be logged without trace context when this option is disabled.
+     * In-process execution reporting, including built-in metrics, is unaffected.
+     */
+    public static final ConfigOption<Boolean> EVENT_LOG_TRACE_ENABLED =
+            new ConfigOption<>("event-log.trace.enabled", Boolean.class, false);
+
+    /**
      * The maximum string length for event payloads when logging at STANDARD level. Strings
      * exceeding this length will be truncated. Defaults to 2000.
      */

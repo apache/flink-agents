@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.junit.jupiter.api.Test;
 
@@ -94,6 +95,15 @@ class LoadSkillToolTest {
         // The script file should be returned verbatim (not wrapped in <skill_content>).
         assertTrue(!out.startsWith("<skill_content"));
         assertTrue(out.length() > 0);
+    }
+
+    @Test
+    void executionMetadataDescribesRequestedSkillResource() {
+        Map<String, Object> metadata =
+                tool(contextWithSkills()).getToolExecutionMetadata(args("github", "README.md"));
+
+        assertEquals("github", metadata.get(ToolExecutionMetadataKeys.SKILL_NAME));
+        assertEquals("README.md", metadata.get(ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH));
     }
 
     @Test

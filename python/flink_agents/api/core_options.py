@@ -190,6 +190,12 @@ class AgentConfigOptions:
         default=EventLogLevel.STANDARD,
     )
 
+    EVENT_LOG_TRACE_ENABLED = ConfigOption(
+        key="event-log.trace.enabled",
+        config_type=bool,
+        default=False,
+    )
+
     EVENT_LOG_MAX_STRING_LENGTH = ConfigOption(
         key="event-log.standard.max-string-length",
         config_type=int,
