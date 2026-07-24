@@ -64,10 +64,10 @@ def collect_tool_invocations(log_dir: str | Path) -> list[dict]:
                 if not line.strip():
                     continue
                 record = json.loads(line)
-                event_type = record.get("event_type", record.get("eventType"))
+                event_type = record.get("eventType")
                 if event_type != "_tool_request_event":
                     continue
-                attributes = record.get("event_attributes")
+                attributes = record.get("eventAttributes")
                 if attributes is None:
                     attributes = record["event"].get("attributes", {})
                 tool_calls = attributes.get("tool_calls", [])

@@ -191,9 +191,9 @@ class FileEventLoggerTest {
 
         // Verify JSON structure
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
-        assertEquals(TestCustomEvent.EVENT_TYPE, jsonNode.get("event_type").asText());
+        assertEquals(TestCustomEvent.EVENT_TYPE, jsonNode.get("eventType").asText());
 
-        JsonNode attrsNode = jsonNode.get("event_attributes");
+        JsonNode attrsNode = jsonNode.get("eventAttributes");
         assertEquals("custom data", attrsNode.get("customData").asText());
         assertEquals(42, attrsNode.get("customNumber").asInt());
 
@@ -234,10 +234,10 @@ class FileEventLoggerTest {
 
         // Verify JSON structure
         JsonNode firstEventJson = objectMapper.readTree(lines.get(0));
-        assertEquals("first event", firstEventJson.get("event_attributes").get("input").asText());
+        assertEquals("first event", firstEventJson.get("eventAttributes").get("input").asText());
 
         JsonNode secondEventJson = objectMapper.readTree(lines.get(1));
-        assertEquals("second event", secondEventJson.get("event_attributes").get("input").asText());
+        assertEquals("second event", secondEventJson.get("eventAttributes").get("input").asText());
 
         // Verify deserialization via fromEvent
         EventLogRecord firstRecord = objectMapper.readValue(lines.get(0), EventLogRecord.class);
@@ -293,9 +293,9 @@ class FileEventLoggerTest {
         JsonNode subtask1EventJson = objectMapper.readTree(subtask1Lines.get(0));
 
         assertEquals(
-                "subtask 0 event", subtask0EventJson.get("event_attributes").get("input").asText());
+                "subtask 0 event", subtask0EventJson.get("eventAttributes").get("input").asText());
         assertEquals(
-                "subtask 1 event", subtask1EventJson.get("event_attributes").get("input").asText());
+                "subtask 1 event", subtask1EventJson.get("eventAttributes").get("input").asText());
 
         // Verify deserialization via fromEvent
         EventLogRecord subtask0Record =
@@ -367,7 +367,7 @@ class FileEventLoggerTest {
         assertEquals("STANDARD", jsonNode.get("logLevel").asText());
 
         // The customData field (inside attributes) should be truncated
-        JsonNode attrsNode = jsonNode.get("event_attributes");
+        JsonNode attrsNode = jsonNode.get("eventAttributes");
         JsonNode customDataNode = attrsNode.get("customData");
         assertTrue(
                 customDataNode.has("truncatedString"),
@@ -401,7 +401,7 @@ class FileEventLoggerTest {
         assertEquals("VERBOSE", jsonNode.get("logLevel").asText());
 
         // The customData field (inside attributes) should NOT be truncated
-        JsonNode attrsNode = jsonNode.get("event_attributes");
+        JsonNode attrsNode = jsonNode.get("eventAttributes");
         assertTrue(
                 attrsNode.get("customData").isTextual(),
                 "String should be preserved at VERBOSE level");
@@ -459,12 +459,12 @@ class FileEventLoggerTest {
         // InputEvent at VERBOSE - no truncation (data lives in attributes)
         JsonNode inputJson = objectMapper.readTree(lines.get(0));
         assertEquals("VERBOSE", inputJson.get("logLevel").asText());
-        assertTrue(inputJson.get("event_attributes").get("input").isTextual());
+        assertTrue(inputJson.get("eventAttributes").get("input").isTextual());
 
         // TestCustomEvent at STANDARD - truncated (data lives in attributes)
         JsonNode customJson = objectMapper.readTree(lines.get(1));
         assertEquals("STANDARD", customJson.get("logLevel").asText());
-        assertTrue(customJson.get("event_attributes").get("customData").has("truncatedString"));
+        assertTrue(customJson.get("eventAttributes").get("customData").has("truncatedString"));
     }
 
     @Test
@@ -483,10 +483,10 @@ class FileEventLoggerTest {
 
         // Verify new top-level fields exist
         assertTrue(jsonNode.has("logLevel"), "JSON should have logLevel field");
-        assertTrue(jsonNode.has("event_id"), "JSON should have event_id field");
-        assertTrue(jsonNode.has("event_type"), "JSON should have event_type field");
-        assertTrue(jsonNode.has("event_attributes"), "JSON should have event_attributes field");
-        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("event_type").asText());
+        assertTrue(jsonNode.has("eventId"), "JSON should have eventId field");
+        assertTrue(jsonNode.has("eventType"), "JSON should have eventType field");
+        assertTrue(jsonNode.has("eventAttributes"), "JSON should have eventAttributes field");
+        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("eventType").asText());
         assertNotNull(jsonNode.get("logLevel").asText());
     }
 
@@ -540,7 +540,7 @@ class FileEventLoggerTest {
 
         JsonNode json = objectMapper.readTree(lines.get(0));
         assertEquals("VERBOSE", json.get("logLevel").asText());
-        assertEquals(TestNamespacedEventA.EVENT_TYPE, json.get("event_type").asText());
+        assertEquals(TestNamespacedEventA.EVENT_TYPE, json.get("eventType").asText());
     }
 
     private Path getExpectedLogFilePath() {

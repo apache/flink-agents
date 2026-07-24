@@ -178,7 +178,7 @@ By default, all File-based Event Logs are stored in the `flink-agents` subdirect
 
 The JSON record format described here applies to both the SLF4J and File event loggers. The SLF4J logger adds `jobId`, `taskName`, and `subtaskId` fields on top (see [SLF4J Event Log](#slf4j-event-log-default)); the File logger encodes those values in the file path instead.
 
-Each record is a flat JSON object. It contains the event occurrence time, the resolved `logLevel`, optional execution trace fields, the event identity, and the event payload in `event_attributes`. The flat `event_type` field makes it easy for downstream tools (e.g. `grep`, `jq`, log shippers) to filter by event type without parsing nested JSON.
+Each record is a flat JSON object. Framework-owned field names use camelCase, consistent with the existing Event Log format. A record contains the event occurrence time, the resolved `logLevel`, optional execution trace fields, the event identity, and the event payload in `eventAttributes`. The flat `eventType` field makes it easy for downstream tools (e.g. `grep`, `jq`, log shippers) to filter by event type without parsing nested JSON.
 
 Agent Trace persistence is disabled by default. Set `event-log.trace.enabled: true` to add trace context to business Event records and persist Action, LLM, Parser, and Tool lifecycle Events. When Trace persistence is disabled, business Events continue to be logged without the trace fields shown below.
 
@@ -188,17 +188,17 @@ Example Trace record:
 {
   "timestamp": "2024-01-15T10:30:00Z",
   "logLevel": "STANDARD",
-  "input_run_id": "7f1b5d20-86c6-4a5d-b65a-9c41757f2e11",
-  "business_key": "order-1001",
-  "agent_name": "ReActAgent",
-  "execution_id": "9cb3c3df-1d3b-4c45-ae7d-1b28a1b86522",
-  "parent_execution_id": "55cc59a8-f4e8-4f15-badf-4833f8a8a97a",
-  "entity_type": "llm",
-  "entity_name": "qwen-max",
-  "event_id": "80f30736-2759-41d8-aa59-9c8ad481ab42",
-  "event_type": "_execution_finished_event",
+  "inputRunId": "7f1b5d20-86c6-4a5d-b65a-9c41757f2e11",
+  "businessKey": "order-1001",
+  "agentName": "ReActAgent",
+  "executionId": "9cb3c3df-1d3b-4c45-ae7d-1b28a1b86522",
+  "parentExecutionId": "55cc59a8-f4e8-4f15-badf-4833f8a8a97a",
+  "entityType": "llm",
+  "entityName": "qwen-max",
+  "eventId": "80f30736-2759-41d8-aa59-9c8ad481ab42",
+  "eventType": "_execution_finished_event",
   "status": "success",
-  "event_attributes": {}
+  "eventAttributes": {}
 }
 ```
 
@@ -214,7 +214,7 @@ Each event type is logged at a configurable verbosity. Three levels are supporte
 
 The global default is set by [`event-log.level`]({{< ref "docs/operations/configuration#core-options" >}}). At `STANDARD` level, the payload is shrunk along three independent axes — long strings, large arrays, and deep nesting — controlled by `event-log.standard.max-string-length`, `event-log.standard.max-array-elements`, and `event-log.standard.max-depth` respectively. Setting any threshold to `0` disables that specific truncation; setting all three to `0` makes `STANDARD` behave identically to `VERBOSE` (apart from the `logLevel` label). The exact truncation strategy may evolve over time; the contract is only that `STANDARD` keeps logs concise while `VERBOSE` preserves the full payload.
 
-**Fields that are never truncated.** Structural and identifying fields are always preserved in full so log consumers can still group, route, and correlate records: `timestamp`, `logLevel`, trace fields such as `input_run_id` and `execution_id`, `event_id`, `event_type`, and lifecycle fields such as `status` and `problem_category`. Truncation only applies to large nested content under `event_attributes` (long strings, big arrays, deeply nested objects).
+**Fields that are never truncated.** Structural and identifying fields are always preserved in full so log consumers can still group, route, and correlate records: `timestamp`, `logLevel`, trace fields such as `inputRunId` and `executionId`, `eventId`, `eventType`, and lifecycle fields such as `status` and `problemCategory`. Truncation only applies to large nested content under `eventAttributes` (long strings, big arrays, deeply nested objects).
 
 **Truncation wrapper format.** When a field is truncated at `STANDARD` level it is replaced by a JSON object that records what was retained and what was dropped. This keeps the record valid JSON and lets downstream tooling detect truncation programmatically:
 
@@ -232,9 +232,9 @@ Example record at `STANDARD` with a long string and a large array truncated:
 {
   "timestamp": "2024-01-15T10:30:00Z",
   "logLevel": "STANDARD",
-  "event_id": "...",
-  "event_type": "_chat_request_event",
-  "event_attributes": {
+  "eventId": "...",
+  "eventType": "_chat_request_event",
+  "eventAttributes": {
     "model": "gpt-4",
     "messages": {
       "truncatedList": [
@@ -249,7 +249,7 @@ Example record at `STANDARD` with a long string and a large array truncated:
 
 ### Per-event-type log levels
 
-You can override the level for individual event types using the `event-log.type.<EVENT_TYPE>.level` config key, where `<EVENT_TYPE>` is the event's routing type string (the same string that appears as `event_type` in the JSON log). Built-in events use short snake-cased names such as:
+You can override the level for individual event types using the `event-log.type.<EVENT_TYPE>.level` config key, where `<EVENT_TYPE>` is the event's routing type string (the same string that appears as `eventType` in the JSON log). Although the field name uses camelCase, built-in Event type values remain snake-cased:
 
 | Event class              | `<EVENT_TYPE>` value             |
 |--------------------------|----------------------------------|
@@ -301,5 +301,5 @@ Other per-type levels from `config.yaml` are preserved — the `-D` flag only ov
 
 - **Default behavior changed.** Before this feature, every event was logged in full. The new default is `STANDARD`, which truncates large payloads. To restore the previous behavior either globally or per type, set the level to `VERBOSE`.
 - **Old log records still parse.** Records written in the previous nested format (`eventType` plus `event`) continue to deserialize. They do not contain run or execution context and therefore cannot reconstruct a complete Agent Trace.
-- **External consumers must migrate to the flat field names.** New records expose fields such as `event_type` and `event_attributes` at the top level. Compatibility in the framework deserializer does not automatically update existing `jq` expressions, log-shipper mappings, or downstream queries that read the previous nested JSON shape directly.
+- **External consumers must migrate to the flat field names.** New records expose fields such as `eventType` and `eventAttributes` at the top level. Compatibility in the framework deserializer does not automatically update existing `jq` expressions, log-shipper mappings, or downstream queries that read the previous nested JSON shape directly.
 - **Existing pending ActionTask state is not compatible with the new schema.** Agent Trace adds execution identity and Action lifecycle state to pending `ActionTask` state. Restoring savepoints containing that state from before this change would require a versioned `ActionTask` state serializer, which is not included in this feature.

@@ -39,15 +39,15 @@ import java.util.Map;
  * <pre>{@code
  * {
  *   "timestamp": "2024-01-15T10:30:00Z",
- *   "input_run_id": "...",
- *   "business_key": "...",
- *   "execution_id": "...",
- *   "entity_type": "action",
- *   "entity_name": "process",
- *   "event_id": "...",
- *   "event_type": "_execution_started_event",
+ *   "inputRunId": "...",
+ *   "businessKey": "...",
+ *   "executionId": "...",
+ *   "entityType": "action",
+ *   "entityName": "process",
+ *   "eventId": "...",
+ *   "eventType": "_execution_started_event",
  *   "status": "started",
- *   "event_attributes": {}
+ *   "eventAttributes": {}
  * }
  * }</pre>
  */
@@ -62,28 +62,28 @@ public class EventLogRecordJsonSerializer extends JsonSerializer<EventLogRecord>
         gen.writeStartObject();
         gen.writeStringField("timestamp", record.getEventContext().getTimestamp());
         if (traceContext != null) {
-            writeStringFieldIfPresent(gen, "input_run_id", traceContext.getInputRunId());
-            writeStringFieldIfPresent(gen, "business_key", traceContext.getBusinessKey());
-            writeStringFieldIfPresent(gen, "agent_name", traceContext.getAgentName());
-            writeStringFieldIfPresent(gen, "execution_id", traceContext.getExecutionId());
+            writeStringFieldIfPresent(gen, "inputRunId", traceContext.getInputRunId());
+            writeStringFieldIfPresent(gen, "businessKey", traceContext.getBusinessKey());
+            writeStringFieldIfPresent(gen, "agentName", traceContext.getAgentName());
+            writeStringFieldIfPresent(gen, "executionId", traceContext.getExecutionId());
             writeStringFieldIfPresent(
-                    gen, "parent_execution_id", traceContext.getParentExecutionId());
-            writeStringFieldIfPresent(gen, "entity_type", traceContext.getEntityType());
-            writeStringFieldIfPresent(gen, "entity_name", traceContext.getEntityName());
-            writeMapFieldIfPresent(gen, "entity_metadata", traceContext.getEntityMetadata());
+                    gen, "parentExecutionId", traceContext.getParentExecutionId());
+            writeStringFieldIfPresent(gen, "entityType", traceContext.getEntityType());
+            writeStringFieldIfPresent(gen, "entityName", traceContext.getEntityName());
+            writeMapFieldIfPresent(gen, "entityMetadata", traceContext.getEntityMetadata());
         }
-        gen.writeStringField("event_id", event.getId().toString());
-        gen.writeStringField("event_type", event.getType());
+        gen.writeStringField("eventId", event.getId().toString());
+        gen.writeStringField("eventType", event.getType());
         writeStringFieldIfPresent(
                 gen,
                 "status",
                 executionLifecycleAttribute(event, ExecutionLifecycleEvents.STATUS_ATTRIBUTE));
         writeStringFieldIfPresent(
                 gen,
-                "problem_category",
+                "problemCategory",
                 executionLifecycleAttribute(
                         event, ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE));
-        gen.writeObjectField("event_attributes", eventAttributes(event));
+        gen.writeObjectField("eventAttributes", eventAttributes(event));
         gen.writeEndObject();
     }
 

@@ -90,7 +90,7 @@ class ExecutionReportersTest {
                                         ctx,
                                         ExecutionReporter.EntityTypes.TOOL,
                                         "search",
-                                        Map.of("tool_call_id", "call-1"),
+                                        Map.of("toolCallId", "call-1"),
                                         businessError,
                                         ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED))
                 .doesNotThrowAnyException();

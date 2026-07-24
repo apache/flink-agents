@@ -97,7 +97,7 @@ class RunnerContextImplExecutionReporterTest {
         runnerContext.switchActionContext(
                 "tool_call_action", null, "business-key", actionB, activeReportsB);
         runnerContext.reportExecutionStarted(
-                ExecutionReporter.EntityTypes.TOOL, "search", Map.of("tool_call_id", "call-1"));
+                ExecutionReporter.EntityTypes.TOOL, "search", Map.of("toolCallId", "call-1"));
 
         runnerContext.switchActionContext(
                 "chat_model_action", null, "business-key", actionA, activeReportsA);
@@ -130,7 +130,7 @@ class RunnerContextImplExecutionReporterTest {
         runnerContext.switchActionContext(
                 "tool_call_action", null, "business-key", actionTraceContext, new HashMap<>());
 
-        String metadata = "{\"tool_call_id\":\"call-1\",\"tool_type\":\"function\"}";
+        String metadata = "{\"toolCallId\":\"call-1\",\"toolType\":\"function\"}";
         runnerContext.reportExecutionStartedJson(
                 ExecutionReporter.EntityTypes.TOOL, "search", metadata);
         runnerContext.reportExecutionFailedJson(
@@ -148,12 +148,12 @@ class RunnerContextImplExecutionReporterTest {
         assertThat(failed.traceContext().getExecutionId())
                 .isEqualTo(started.traceContext().getExecutionId());
         assertThat(failed.traceContext().getEntityMetadata())
-                .containsEntry("tool_call_id", "call-1")
-                .containsEntry("tool_type", "function");
+                .containsEntry("toolCallId", "call-1")
+                .containsEntry("toolType", "function");
         assertThat(failed.event.getType())
                 .isEqualTo(ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE);
-        assertThat(failed.event.getAttr("error_type")).isEqualTo("builtins.ValueError");
-        assertThat(failed.event.getAttr("error_message")).isEqualTo("bad response");
+        assertThat(failed.event.getAttr("errorType")).isEqualTo("builtins.ValueError");
+        assertThat(failed.event.getAttr("errorMessage")).isEqualTo("bad response");
         assertThat(failed.event.getAttr(ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE))
                 .isEqualTo(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
     }

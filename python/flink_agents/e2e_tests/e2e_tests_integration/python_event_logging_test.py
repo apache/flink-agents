@@ -117,7 +117,7 @@ def test_python_event_logging(tmp_path: Path) -> None:
                 if line.strip():
                     record = json.loads(line)
                     record_line = line
-                    event_payload = record.get("event_attributes")
+                    event_payload = record.get("eventAttributes")
                     if event_payload is None:
                         event_payload = record.get("event", {}).get("attributes", {})
                     if "processed_review" in json.dumps(event_payload):
@@ -130,14 +130,14 @@ def test_python_event_logging(tmp_path: Path) -> None:
     assert record_line is not None, "Event log file is empty."
     assert "timestamp" in record
     assert "logLevel" in record
-    assert "event_id" in record
-    assert "event_type" in record
-    assert "event_attributes" in record
+    assert "eventId" in record
+    assert "eventType" in record
+    assert "eventAttributes" in record
     assert has_processed_review, "Log should contain processed review content"
 
-    event_id_idx = record_line.find('"event_id"')
-    event_type_idx = record_line.find('"event_type"')
-    attributes_idx = record_line.find('"event_attributes"')
+    event_id_idx = record_line.find('"eventId"')
+    event_type_idx = record_line.find('"eventType"')
+    attributes_idx = record_line.find('"eventAttributes"')
     assert event_id_idx != -1
     assert event_type_idx != -1
     assert attributes_idx != -1

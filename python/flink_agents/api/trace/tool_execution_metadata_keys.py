@@ -21,10 +21,10 @@
 class ToolExecutionMetadataKeys:
     """Shared field names for Tool execution entity metadata."""
 
-    TOOL_REQUEST_EVENT_ID = "tool_request_event_id"
-    TOOL_CALL_ID = "tool_call_id"
-    EXTERNAL_ID = "external_id"
-    TOOL_TYPE = "tool_type"
-    MCP_SERVER = "mcp_server"
-    SKILL_NAME = "skill_name"
-    SKILL_RESOURCE_PATH = "skill_resource_path"
+    TOOL_REQUEST_EVENT_ID = "toolRequestEventId"
+    TOOL_CALL_ID = "toolCallId"
+    EXTERNAL_ID = "externalId"
+    TOOL_TYPE = "toolType"
+    MCP_SERVER = "mcpServer"
+    SKILL_NAME = "skillName"
+    SKILL_RESOURCE_PATH = "skillResourcePath"
