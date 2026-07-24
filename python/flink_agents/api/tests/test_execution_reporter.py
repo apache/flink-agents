@@ -27,7 +27,7 @@ from flink_agents.api.trace import (
 
 def test_failed_reporter_uses_metadata_before_error() -> None:
     ctx = MagicMock(spec=ExecutionReporter)
-    metadata = {"tool_call_id": "call-1"}
+    metadata = {"toolCallId": "call-1"}
     error = RuntimeError("boom")
 
     ExecutionReporters.failed(

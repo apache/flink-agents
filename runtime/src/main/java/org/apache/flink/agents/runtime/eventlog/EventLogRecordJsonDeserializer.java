@@ -63,7 +63,7 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
             throw new IOException("Missing 'timestamp' field in EventLogRecord JSON");
         }
 
-        if (rootNode.has("event_attributes")) {
+        if (rootNode.has("eventAttributes")) {
             return deserializeNormalizedRecord(mapper, rootNode, timestampNode.asText());
         }
 
@@ -72,12 +72,12 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
 
     private static EventLogRecord deserializeNormalizedRecord(
             ObjectMapper mapper, JsonNode rootNode, String timestamp) throws IOException {
-        String eventType = getText(rootNode, "event_type", true);
-        UUID eventId = parseUuid(getText(rootNode, "event_id", true));
-        JsonNode attributesNode = rootNode.get("event_attributes");
+        String eventType = getText(rootNode, "eventType", true);
+        UUID eventId = parseUuid(getText(rootNode, "eventId", true));
+        JsonNode attributesNode = rootNode.get("eventAttributes");
         if (attributesNode == null || !attributesNode.isObject()) {
             throw new IOException(
-                    "Field 'event_attributes' must be an object in EventLogRecord JSON");
+                    "Field 'eventAttributes' must be an object in EventLogRecord JSON");
         }
         Map<String, Object> attributes =
                 mapper.convertValue(attributesNode, new TypeReference<Map<String, Object>>() {});
@@ -85,7 +85,7 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
                 ExecutionLifecycleEvents.isExecutionLifecycleEvent(eventType);
         String status = executionLifecycleEvent ? getText(rootNode, "status", false) : null;
         String problemCategory =
-                executionLifecycleEvent ? getText(rootNode, "problem_category", false) : null;
+                executionLifecycleEvent ? getText(rootNode, "problemCategory", false) : null;
         if (executionLifecycleEvent) {
             if (status != null) {
                 attributes.putIfAbsent(ExecutionLifecycleEvents.STATUS_ATTRIBUTE, status);
@@ -115,14 +115,14 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
 
     private static ExecutionTraceContext traceContext(ObjectMapper mapper, JsonNode rootNode)
             throws IOException {
-        String inputRunId = getText(rootNode, "input_run_id", false);
-        String businessKey = getText(rootNode, "business_key", false);
-        String agentName = getText(rootNode, "agent_name", false);
-        String executionId = getText(rootNode, "execution_id", false);
-        String parentExecutionId = getText(rootNode, "parent_execution_id", false);
-        String entityType = getText(rootNode, "entity_type", false);
-        String entityName = getText(rootNode, "entity_name", false);
-        Map<String, Object> entityMetadata = getObjectMap(mapper, rootNode.get("entity_metadata"));
+        String inputRunId = getText(rootNode, "inputRunId", false);
+        String businessKey = getText(rootNode, "businessKey", false);
+        String agentName = getText(rootNode, "agentName", false);
+        String executionId = getText(rootNode, "executionId", false);
+        String parentExecutionId = getText(rootNode, "parentExecutionId", false);
+        String entityType = getText(rootNode, "entityType", false);
+        String entityName = getText(rootNode, "entityName", false);
+        Map<String, Object> entityMetadata = getObjectMap(mapper, rootNode.get("entityMetadata"));
         if (inputRunId == null
                 && businessKey == null
                 && agentName == null
@@ -181,7 +181,7 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
         try {
             return UUID.fromString(value);
         } catch (IllegalArgumentException e) {
-            throw new IOException("Invalid 'event_id' field in EventLogRecord JSON", e);
+            throw new IOException("Invalid 'eventId' field in EventLogRecord JSON", e);
         }
     }
 
@@ -192,7 +192,7 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
         }
         if (!node.isObject()) {
             throw new IOException(
-                    "Field 'entity_metadata' must be an object in EventLogRecord JSON");
+                    "Field 'entityMetadata' must be an object in EventLogRecord JSON");
         }
         Map<String, Object> result =
                 mapper.convertValue(node, new TypeReference<Map<String, Object>>() {});

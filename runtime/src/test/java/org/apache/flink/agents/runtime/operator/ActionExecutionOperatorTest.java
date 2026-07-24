@@ -675,9 +675,9 @@ public class ActionExecutionOperatorTest {
                         ExecutionLifecycleEvents.STATUS_FAILED);
         assertThat(failed.problemCategory())
                 .isEqualTo(ExecutionReporter.ProblemCategories.ACTION_EXECUTION_FAILED);
-        assertThat(failed.event.getAttr("error_type"))
+        assertThat(failed.event.getAttr("errorType"))
                 .isEqualTo(IllegalStateException.class.getName());
-        assertThat(String.valueOf(failed.event.getAttr("error_message")))
+        assertThat(String.valueOf(failed.event.getAttr("errorMessage")))
                 .contains("Simulated LLM failure");
     }
 

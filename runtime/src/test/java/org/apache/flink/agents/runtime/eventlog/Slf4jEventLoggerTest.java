@@ -143,9 +143,9 @@ class Slf4jEventLoggerTest {
         assertEquals(testSubTaskId, jsonNode.get("subtaskId").asInt());
         // Verify event content
         assertNotNull(jsonNode.get("timestamp"));
-        assertNotNull(jsonNode.get("event_id"));
-        assertNotNull(jsonNode.get("event_attributes"));
-        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("event_type").asText());
+        assertNotNull(jsonNode.get("eventId"));
+        assertNotNull(jsonNode.get("eventAttributes"));
+        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("eventType").asText());
     }
 
     @Test
@@ -164,10 +164,10 @@ class Slf4jEventLoggerTest {
         assertEquals(2, messages.size(), "Should have logged two messages");
 
         JsonNode inputJson = objectMapper.readTree(messages.get(0));
-        assertEquals("input data", inputJson.get("event_attributes").get("input").asText());
+        assertEquals("input data", inputJson.get("eventAttributes").get("input").asText());
 
         JsonNode outputJson = objectMapper.readTree(messages.get(1));
-        assertEquals("output data", outputJson.get("event_attributes").get("output").asText());
+        assertEquals("output data", outputJson.get("eventAttributes").get("output").asText());
     }
 
     @Test
@@ -212,7 +212,7 @@ class Slf4jEventLoggerTest {
                 1, messages.size(), "Only OutputEvent should be logged when InputEvent is OFF");
 
         JsonNode jsonNode = objectMapper.readTree(messages.get(0));
-        assertEquals("output data", jsonNode.get("event_attributes").get("output").asText());
+        assertEquals("output data", jsonNode.get("eventAttributes").get("output").asText());
     }
 
     @Test

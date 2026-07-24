@@ -63,12 +63,12 @@ class EventLogRecordJsonSerdeTest {
         JsonNode jsonNode = objectMapper.readTree(json);
 
         assertTrue(jsonNode.has("timestamp"));
-        assertTrue(jsonNode.has("event_id"));
-        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("event_type").asText());
-        assertEquals("test input data", jsonNode.get("event_attributes").get("input").asText());
+        assertTrue(jsonNode.has("eventId"));
+        assertEquals(InputEvent.EVENT_TYPE, jsonNode.get("eventType").asText());
+        assertEquals("test input data", jsonNode.get("eventAttributes").get("input").asText());
         assertFalse(jsonNode.has("event"));
-        assertFalse(jsonNode.has("input_run_id"));
-        assertFalse(jsonNode.has("execution_id"));
+        assertFalse(jsonNode.has("inputRunId"));
+        assertFalse(jsonNode.has("executionId"));
     }
 
     @Test
@@ -101,8 +101,8 @@ class EventLogRecordJsonSerdeTest {
         String json = objectMapper.writeValueAsString(record);
         JsonNode jsonNode = objectMapper.readTree(json);
 
-        assertEquals(OutputEvent.EVENT_TYPE, jsonNode.get("event_type").asText());
-        assertEquals("test output data", jsonNode.get("event_attributes").get("output").asText());
+        assertEquals(OutputEvent.EVENT_TYPE, jsonNode.get("eventType").asText());
+        assertEquals("test output data", jsonNode.get("eventAttributes").get("output").asText());
     }
 
     @Test
@@ -113,8 +113,8 @@ class EventLogRecordJsonSerdeTest {
         String json = objectMapper.writeValueAsString(record);
         JsonNode jsonNode = objectMapper.readTree(json);
 
-        assertEquals(CustomTestEvent.EVENT_TYPE, jsonNode.get("event_type").asText());
-        JsonNode attrsNode = jsonNode.get("event_attributes");
+        assertEquals(CustomTestEvent.EVENT_TYPE, jsonNode.get("eventType").asText());
+        JsonNode attrsNode = jsonNode.get("eventAttributes");
         assertEquals("custom data", attrsNode.get("customData").asText());
         assertEquals(42, attrsNode.get("customNumber").asInt());
         assertTrue(attrsNode.get("customFlag").asBoolean());
@@ -142,15 +142,15 @@ class EventLogRecordJsonSerdeTest {
         JsonNode jsonNode = objectMapper.readTree(json);
 
         assertFalse(jsonNode.has("status"));
-        assertFalse(jsonNode.has("problem_category"));
+        assertFalse(jsonNode.has("problemCategory"));
         assertEquals(
                 "business-status",
-                jsonNode.get("event_attributes")
+                jsonNode.get("eventAttributes")
                         .get(ExecutionLifecycleEvents.STATUS_ATTRIBUTE)
                         .asText());
         assertEquals(
                 "business-category",
-                jsonNode.get("event_attributes")
+                jsonNode.get("eventAttributes")
                         .get(ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE)
                         .asText());
 
@@ -168,7 +168,7 @@ class EventLogRecordJsonSerdeTest {
     @Test
     void testSerializeAndDeserializeExecutionLifecycleFields() throws Exception {
         Map<String, Object> entityMetadata = new LinkedHashMap<>();
-        entityMetadata.put("mcp_server", "demo-server");
+        entityMetadata.put("mcpServer", "demo-server");
 
         Event lifecycleEvent =
                 ExecutionLifecycleEvents.executionFailed(
@@ -190,27 +190,26 @@ class EventLogRecordJsonSerdeTest {
         String json = objectMapper.writeValueAsString(record);
         JsonNode jsonNode = objectMapper.readTree(json);
 
-        assertEquals("input-run-1", jsonNode.get("input_run_id").asText());
-        assertEquals("business-key-1", jsonNode.get("business_key").asText());
-        assertEquals("agent-a", jsonNode.get("agent_name").asText());
-        assertEquals("execution-1", jsonNode.get("execution_id").asText());
-        assertEquals("parent-execution-1", jsonNode.get("parent_execution_id").asText());
-        assertEquals("action", jsonNode.get("entity_type").asText());
-        assertEquals("process", jsonNode.get("entity_name").asText());
-        assertEquals("demo-server", jsonNode.get("entity_metadata").get("mcp_server").asText());
+        assertEquals("input-run-1", jsonNode.get("inputRunId").asText());
+        assertEquals("business-key-1", jsonNode.get("businessKey").asText());
+        assertEquals("agent-a", jsonNode.get("agentName").asText());
+        assertEquals("execution-1", jsonNode.get("executionId").asText());
+        assertEquals("parent-execution-1", jsonNode.get("parentExecutionId").asText());
+        assertEquals("action", jsonNode.get("entityType").asText());
+        assertEquals("process", jsonNode.get("entityName").asText());
+        assertEquals("demo-server", jsonNode.get("entityMetadata").get("mcpServer").asText());
         assertEquals(
                 ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
-                jsonNode.get("event_type").asText());
+                jsonNode.get("eventType").asText());
         assertEquals("failed", jsonNode.get("status").asText());
-        assertEquals("model_output_parse_error", jsonNode.get("problem_category").asText());
+        assertEquals("model_output_parse_error", jsonNode.get("problemCategory").asText());
+        assertFalse(jsonNode.get("eventAttributes").has(ExecutionLifecycleEvents.STATUS_ATTRIBUTE));
         assertFalse(
-                jsonNode.get("event_attributes").has(ExecutionLifecycleEvents.STATUS_ATTRIBUTE));
-        assertFalse(
-                jsonNode.get("event_attributes")
+                jsonNode.get("eventAttributes")
                         .has(ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE));
         assertEquals(
                 IllegalStateException.class.getName(),
-                jsonNode.get("event_attributes").get("error_type").asText());
+                jsonNode.get("eventAttributes").get("errorType").asText());
 
         EventLogRecord deserializedRecord = objectMapper.readValue(json, EventLogRecord.class);
         ExecutionTraceContext deserializedTraceContext =
@@ -224,7 +223,7 @@ class EventLogRecordJsonSerdeTest {
         assertEquals("parent-execution-1", deserializedTraceContext.getParentExecutionId());
         assertEquals("action", deserializedTraceContext.getEntityType());
         assertEquals("process", deserializedTraceContext.getEntityName());
-        assertEquals("demo-server", deserializedTraceContext.getEntityMetadata().get("mcp_server"));
+        assertEquals("demo-server", deserializedTraceContext.getEntityMetadata().get("mcpServer"));
         assertEquals(
                 "failed",
                 deserializedRecord.getEvent().getAttr(ExecutionLifecycleEvents.STATUS_ATTRIBUTE));

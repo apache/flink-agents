@@ -35,8 +35,8 @@ class ExecutionLifecycleEventsTest {
 
         Event event = ExecutionLifecycleEvents.executionFailed(error);
 
-        assertThat(event.getAttr("error_type")).isEqualTo(root.getClass().getName());
-        assertThat(event.getAttr("error_message")).isEqualTo("root");
+        assertThat(event.getAttr("errorType")).isEqualTo(root.getClass().getName());
+        assertThat(event.getAttr("errorMessage")).isEqualTo("root");
     }
 
     @Test
@@ -50,7 +50,7 @@ class ExecutionLifecycleEventsTest {
                         Duration.ofSeconds(1),
                         () -> ExecutionLifecycleEvents.executionFailed(first));
 
-        assertThat(event.getAttr("error_type")).isEqualTo(first.getClass().getName());
-        assertThat(event.getAttr("error_message")).isEqualTo("first");
+        assertThat(event.getAttr("errorType")).isEqualTo(first.getClass().getName());
+        assertThat(event.getAttr("errorMessage")).isEqualTo("first");
     }
 }

@@ -41,7 +41,7 @@ public final class ExecutionLifecycleEvents {
     public static final String STATUS_FAILED = "failed";
     public static final String STATUS_REUSED = "reused";
     public static final String STATUS_ATTRIBUTE = "status";
-    public static final String PROBLEM_CATEGORY_ATTRIBUTE = "problem_category";
+    public static final String PROBLEM_CATEGORY_ATTRIBUTE = "problemCategory";
 
     private ExecutionLifecycleEvents() {}
 
@@ -83,10 +83,10 @@ public final class ExecutionLifecycleEvents {
             attributes.put(PROBLEM_CATEGORY_ATTRIBUTE, problemCategory);
         }
         if (errorType != null && !errorType.isEmpty()) {
-            attributes.put("error_type", errorType);
+            attributes.put("errorType", errorType);
         }
         if (errorMessage != null && !errorMessage.isEmpty()) {
-            attributes.put("error_message", errorMessage);
+            attributes.put("errorMessage", errorMessage);
         }
         return new Event(EXECUTION_FAILED_EVENT_TYPE, attributes);
     }
