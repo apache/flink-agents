@@ -123,9 +123,7 @@ class WatsonxChatModelConnectionTest {
                         .addInitialArgument("space_id", "test-space")
                         .build();
 
-        assertThatThrownBy(
-                        () ->
-                                new WatsonxChatModelConnection(descriptor, NOOP, NO_ENVIRONMENT))
+        assertThatThrownBy(() -> new WatsonxChatModelConnection(descriptor, NOOP, NO_ENVIRONMENT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("cannot both be provided")
                 .hasMessageContaining("exactly one");
@@ -137,9 +135,7 @@ class WatsonxChatModelConnectionTest {
                         .addInitialArgument("token", " test-token ")
                         .addInitialArgument("project_id", " test-project ")
                         .build();
-        assertThatThrownBy(
-                        () ->
-                                new WatsonxChatModelConnection(credentials, NOOP, NO_ENVIRONMENT))
+        assertThatThrownBy(() -> new WatsonxChatModelConnection(credentials, NOOP, NO_ENVIRONMENT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("api_key and token")
                 .hasMessageContaining("exactly one");
@@ -167,8 +163,7 @@ class WatsonxChatModelConnectionTest {
                             .addInitialArgument("project_id", "test-project")
                             .addInitialArgument("request_timeout", invalidTimeout)
                             .build();
-            assertThatThrownBy(
-                            () -> new WatsonxChatModelConnection(invalid, NOOP, NO_ENVIRONMENT))
+            assertThatThrownBy(() -> new WatsonxChatModelConnection(invalid, NOOP, NO_ENVIRONMENT))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("request_timeout");
         }
@@ -187,9 +182,7 @@ class WatsonxChatModelConnectionTest {
                             .addInitialArgument("project_id", "test-project")
                             .addInitialArgument("max_retries", invalidMaxRetries)
                             .build();
-            assertThatThrownBy(
-                            () ->
-                                    new WatsonxChatModelConnection(invalid, NOOP, NO_ENVIRONMENT))
+            assertThatThrownBy(() -> new WatsonxChatModelConnection(invalid, NOOP, NO_ENVIRONMENT))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("max_retries");
         }

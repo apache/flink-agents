@@ -37,16 +37,14 @@ class WatsonxChatModelSetupTest {
     void testDefaultModel() {
         WatsonxChatModelSetup setup =
                 new WatsonxChatModelSetup(
-                        ResourceDescriptor.Builder.newBuilder(
-                                        WatsonxChatModelSetup.class.getName())
+                        ResourceDescriptor.Builder.newBuilder(WatsonxChatModelSetup.class.getName())
                                 .addInitialArgument("connection", "watsonx")
                                 .build(),
                         NOOP);
 
         Map<String, Object> params = setup.getParameters();
         assertThat(params.get("model")).isEqualTo(WatsonxChatModelSetup.DEFAULT_MODEL);
-        assertThat(params.get("temperature"))
-                .isEqualTo(WatsonxChatModelSetup.DEFAULT_TEMPERATURE);
+        assertThat(params.get("temperature")).isEqualTo(WatsonxChatModelSetup.DEFAULT_TEMPERATURE);
         assertThat(params).doesNotContainKey("max_tokens");
     }
 
@@ -55,8 +53,7 @@ class WatsonxChatModelSetupTest {
     void testConfiguredParameters() {
         WatsonxChatModelSetup setup =
                 new WatsonxChatModelSetup(
-                        ResourceDescriptor.Builder.newBuilder(
-                                        WatsonxChatModelSetup.class.getName())
+                        ResourceDescriptor.Builder.newBuilder(WatsonxChatModelSetup.class.getName())
                                 .addInitialArgument("connection", "watsonx")
                                 .addInitialArgument("model", "ibm/granite-3-3-8b-instruct")
                                 .addInitialArgument("temperature", 0.2)
@@ -72,8 +69,7 @@ class WatsonxChatModelSetupTest {
         assertThat(params.get("temperature")).isEqualTo(0.2);
         assertThat(params.get("max_tokens")).isEqualTo(512);
         assertThat(params.get("extract_reasoning")).isEqualTo(true);
-        assertThat(params.get("additional_kwargs"))
-                .isEqualTo(Map.of("top_p", 0.9, "seed", 7));
+        assertThat(params.get("additional_kwargs")).isEqualTo(Map.of("top_p", 0.9, "seed", 7));
     }
 
     @Test
@@ -85,7 +81,7 @@ class WatsonxChatModelSetupTest {
                             () ->
                                     new WatsonxChatModelSetup(
                                             ResourceDescriptor.Builder.newBuilder(
-                                                                    WatsonxChatModelSetup.class.getName())
+                                                            WatsonxChatModelSetup.class.getName())
                                                     .addInitialArgument("connection", "watsonx")
                                                     .addInitialArgument(
                                                             "temperature", invalidTemperature)
@@ -105,7 +101,7 @@ class WatsonxChatModelSetupTest {
                             () ->
                                     new WatsonxChatModelSetup(
                                             ResourceDescriptor.Builder.newBuilder(
-                                                                    WatsonxChatModelSetup.class.getName())
+                                                            WatsonxChatModelSetup.class.getName())
                                                     .addInitialArgument("connection", "watsonx")
                                                     .addInitialArgument(
                                                             "max_tokens", invalidMaxTokens)
@@ -115,5 +111,4 @@ class WatsonxChatModelSetupTest {
                     .hasMessageContaining("max_tokens");
         }
     }
-
 }
