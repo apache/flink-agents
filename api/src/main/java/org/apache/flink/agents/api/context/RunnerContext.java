@@ -173,18 +173,8 @@ public interface RunnerContext {
      *
      * <p>Access to memory and sendEvent are prohibited within the callables.
      */
-    default <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
-            throws Exception {
-        java.util.ArrayList<Outcome<T>> outcomes = new java.util.ArrayList<>(callables.size());
-        for (DurableCallable<T> callable : callables) {
-            try {
-                outcomes.add(Outcome.success(durableExecute(callable)));
-            } catch (Exception e) {
-                outcomes.add(Outcome.failure(e));
-            }
-        }
-        return outcomes;
-    }
+    <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+            throws Exception;
 
     /** Clean up the resource. */
     void close() throws Exception;
