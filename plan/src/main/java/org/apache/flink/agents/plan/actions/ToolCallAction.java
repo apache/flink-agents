@@ -62,8 +62,7 @@ public class ToolCallAction {
         Map<String, ToolResponse> responses = new HashMap<>();
         Map<String, String> externalIds = new HashMap<>();
         List<ToolCallExecution> executions =
-                buildToolCallExecutions(
-                        toolRequest, ctx, externalIds, success, error, responses);
+                buildToolCallExecutions(toolRequest, ctx, externalIds, success, error, responses);
 
         if (toolCallAsync && toolCallParallel && executions.size() > 1) {
             executeParallel(executions, ctx, success, error, responses);
@@ -253,8 +252,7 @@ public class ToolCallAction {
         private final String name;
         private final DurableCallable<ToolResponse> callable;
 
-        private ToolCallExecution(
-                String id, String name, DurableCallable<ToolResponse> callable) {
+        private ToolCallExecution(String id, String name, DurableCallable<ToolResponse> callable) {
             this.id = id;
             this.name = name;
             this.callable = callable;

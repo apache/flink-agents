@@ -226,8 +226,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         }
     }
 
-    private <T> List<Outcome<T>> executeAllWithoutDurableState(List<DurableCallable<T>> callables)
-            throws Exception {
+    private <T> List<Outcome<T>> executeAllWithoutDurableState(List<DurableCallable<T>> callables) {
         List<Callable<T>> suppliers = new ArrayList<>();
         for (DurableCallable<T> callable : callables) {
             suppliers.add(callable::call);
@@ -235,8 +234,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         return executeOutcomeSuppliers(suppliers);
     }
 
-    private <T> List<Outcome<T>> executeOutcomeSuppliers(List<Callable<T>> suppliers)
-            throws Exception {
+    private <T> List<Outcome<T>> executeOutcomeSuppliers(List<Callable<T>> suppliers) {
         if (suppliers.isEmpty()) {
             return List.of();
         }
