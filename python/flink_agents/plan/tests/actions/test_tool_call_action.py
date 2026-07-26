@@ -17,20 +17,13 @@
 #################################################################################
 import asyncio
 from typing import Any
-from unittest.mock import MagicMock
 
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
-from flink_agents.api.tools import InjectedArg, ToolExecutionMetadataProvider
-from flink_agents.api.tools.tool import ToolType
-from flink_agents.api.trace import (
-    ExecutionEntityTypes,
-    ExecutionProblemCategories,
-    ExecutionReporter,
-    ToolExecutionMetadataKeys,
-)
+from flink_agents.api.runner_context import Outcome
+from flink_agents.api.tools import InjectedArg
 from flink_agents.plan.actions.tool_call_action import process_tool_request
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
@@ -49,29 +42,48 @@ class _Context:
         sensory_memory: Any | None = None,
         short_term_memory: Any | None = None,
     ) -> None:
-        self.config = config or AgentConfiguration({"tenant_id": "tenant-1"})
-        if isinstance(self.config, AgentConfiguration):
+        if config is None:
+            self.config = AgentConfiguration({"tenant_id": "tenant-1"})
             self.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, False)
+        else:
+            self.config = config
         self.injected_args = injected_args or {
             "tenant_id": InjectedArg.from_config("tenant_id")
         }
         self.sensory_memory = sensory_memory
         self.short_term_memory = short_term_memory
         self.sent_events = []
+        self.durable_execute_calls = []
+        self.durable_execute_async_calls = []
+        self.durable_execute_all_async_calls = []
+        self.durable_execute_all_async_outcomes = None
 
     def get_resource(self, name: str, type: ResourceType) -> FunctionTool:
-        assert name == "query_order"
         assert type == ResourceType.TOOL
+        if name != "query_order":
+            msg = f"Tool `{name}` does not exist."
+            raise ValueError(msg)
         return FunctionTool(
             func=PythonFunction.from_callable(query_order),
             injected_args=self.injected_args,
         )
 
-    def durable_execute(self, func: Any, **kwargs: Any) -> Any:
-        return func(**kwargs)
+    def durable_execute(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        self.durable_execute_calls.append((func, args, kwargs))
+        return func(*args, **kwargs)
 
-    async def durable_execute_async(self, func: Any, **kwargs: Any) -> Any:
-        return func(**kwargs)
+    async def durable_execute_async(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        self.durable_execute_async_calls.append((func, args, kwargs))
+        return func(*args, **kwargs)
+
+    async def durable_execute_all_async(self, callables: list[Any]) -> list[Outcome]:
+        self.durable_execute_all_async_calls.append(callables)
+        if self.durable_execute_all_async_outcomes is not None:
+            return self.durable_execute_all_async_outcomes
+        return [
+            Outcome.success(call.func(*call.args, **(call.kwargs or {})))
+            for call in callables
+        ]
 
     def send_event(self, event: Any) -> None:
         self.sent_events.append(event)
@@ -95,9 +107,7 @@ class _NestedMemoryObject(MemoryObject):
     def set(self, path: str, value: Any) -> Any:
         raise NotImplementedError
 
-    def new_object(
-        self, path: str, *, overwrite: bool = False
-    ) -> "_NestedMemoryObject":
+    def new_object(self, path: str, *, overwrite: bool = False) -> "_NestedMemoryObject":
         raise NotImplementedError
 
     def is_exist(self, path: str) -> bool:
@@ -112,7 +122,10 @@ class _NestedMemoryObject(MemoryObject):
 
 class _WrongConfig:
     def get(self, option: Any) -> bool:
-        assert option == AgentExecutionOptions.TOOL_CALL_ASYNC
+        assert option in (
+            AgentExecutionOptions.TOOL_CALL_ASYNC,
+            AgentExecutionOptions.TOOL_CALL_PARALLEL,
+        )
         return False
 
 
@@ -198,10 +211,7 @@ def test_tool_call_action_reports_missing_config_injected_arg() -> None:
             {
                 "id": "call-1",
                 "type": "function",
-                "function": {
-                    "name": "query_order",
-                    "arguments": {"order_id": "order-1"},
-                },
+                "function": {"name": "query_order", "arguments": {"order_id": "order-1"}},
             }
         ],
     )
@@ -281,9 +291,7 @@ def test_tool_call_action_exposes_wrong_config_type() -> None:
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.responses["call-1"] == "Tool `query_order` execute failed."
     assert response.success["call-1"] is False
-    assert (
-        response.error["call-1"] == "'_WrongConfig' object has no attribute 'conf_data'"
-    )
+    assert response.error["call-1"] == "'_WrongConfig' object has no attribute 'conf_data'"
 
 
 def test_tool_call_action_uses_sync_execution_in_test_context() -> None:
@@ -292,136 +300,105 @@ def test_tool_call_action_uses_sync_execution_in_test_context() -> None:
     assert ctx.config.get(AgentExecutionOptions.TOOL_CALL_ASYNC) is False
 
 
-def test_tool_call_reports_started_and_succeeded() -> None:
-    tool = MagicMock()
-    tool.tool_type.return_value = ToolType.FUNCTION
-    tool.call = MagicMock(return_value="result")
-    ctx, sent_events = trace_context(tool)
-    request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
+def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, True)
+    ctx = _Context(config=config)
 
-    asyncio.run(process_tool_request(request, ctx))
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
 
-    assert len(sent_events) == 1
-    metadata = {
-        ToolExecutionMetadataKeys.TOOL_REQUEST_EVENT_ID: str(request.id),
-        ToolExecutionMetadataKeys.TOOL_CALL_ID: "call-1",
-        ToolExecutionMetadataKeys.EXTERNAL_ID: "external-call-1",
-        ToolExecutionMetadataKeys.TOOL_TYPE: "function",
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.responses == {
+        "call-1": "tenant-1:order-call-1",
+        "call-2": "tenant-1:order-call-2",
     }
-    ctx.report_execution_started.assert_called_once_with(
-        ExecutionEntityTypes.TOOL, "search", metadata
-    )
-    ctx.report_execution_succeeded.assert_called_once_with(
-        ExecutionEntityTypes.TOOL, "search", metadata
-    )
-    ctx.report_execution_failed.assert_not_called()
+    assert response.success == {"call-1": True, "call-2": True}
+    assert len(ctx.durable_execute_all_async_calls) == 1
+    assert [call.id for call in ctx.durable_execute_all_async_calls[0]] == [
+        "tool-call:call-1",
+        "tool-call:call-2",
+    ]
+    assert ctx.durable_execute_async_calls == []
 
 
-def test_tool_call_reports_failed() -> None:
-    tool = MagicMock()
-    tool.tool_type.return_value = ToolType.FUNCTION
-    tool.call = MagicMock(side_effect=RuntimeError("boom"))
-    ctx, _ = trace_context(tool)
-    request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
+def test_tool_call_action_uses_serial_async_when_parallel_disabled() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, False)
+    ctx = _Context(config=config)
 
-    asyncio.run(process_tool_request(request, ctx))
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
 
-    ctx.report_execution_failed.assert_called_once()
-    args = ctx.report_execution_failed.call_args.args
-    assert args[0] == ExecutionEntityTypes.TOOL
-    assert args[1] == "search"
-    assert args[2][ToolExecutionMetadataKeys.TOOL_CALL_ID] == "call-1"
-    assert isinstance(args[3], RuntimeError)
-    assert args[4] == ExecutionProblemCategories.TOOL_CALL_FAILED
+    assert ctx.durable_execute_all_async_calls == []
+    assert len(ctx.durable_execute_async_calls) == 2
 
 
-def test_tool_call_includes_provider_metadata() -> None:
-    class MetadataTool(ToolExecutionMetadataProvider):
-        @staticmethod
-        def tool_type() -> ToolType:
-            return ToolType.MCP
+def test_tool_call_action_does_not_batch_single_tool() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, True)
+    ctx = _Context(config=config)
 
-        @staticmethod
-        def call(**kwargs: object) -> str:
-            return "result"
+    asyncio.run(process_tool_request(tool_request("call-1"), ctx))
 
-        def get_tool_execution_metadata(
-            self, parameters: dict[str, object]
-        ) -> dict[str, object]:
-            return {ToolExecutionMetadataKeys.MCP_SERVER: "search_server"}
-
-    ctx, _ = trace_context(MetadataTool())
-    request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
-
-    asyncio.run(process_tool_request(request, ctx))
-
-    metadata = ctx.report_execution_started.call_args.args[2]
-    assert metadata[ToolExecutionMetadataKeys.MCP_SERVER] == "search_server"
+    assert ctx.durable_execute_all_async_calls == []
+    assert len(ctx.durable_execute_async_calls) == 1
 
 
-def test_tool_execution_metadata_cannot_mutate_call_arguments() -> None:
-    class MutatingMetadataTool(ToolExecutionMetadataProvider):
-        @staticmethod
-        def tool_type() -> ToolType:
-            return ToolType.FUNCTION
+def test_tool_call_action_excludes_missing_tool_from_parallel_batch() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, True)
+    ctx = _Context(config=config)
 
-        @staticmethod
-        def call(**kwargs: object) -> object:
-            return kwargs["query"]
+    asyncio.run(process_tool_request(tool_request("call-1", "missing"), ctx))
 
-        def get_tool_execution_metadata(
-            self, parameters: dict[str, object]
-        ) -> dict[str, object]:
-            parameters["query"] = "mutated"
-            return {}
-
-    ctx, sent_events = trace_context(MutatingMetadataTool())
-
-    asyncio.run(
-        process_tool_request(
-            ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()]), ctx
-        )
-    )
-
-    response = ToolResponseEvent.from_event(sent_events[0])
-    assert response.responses["call-1"] == "flink"
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.success["call-1"] is True
+    assert response.success["missing"] is False
+    assert len(ctx.durable_execute_async_calls) == 1
+    assert ctx.durable_execute_all_async_calls == []
 
 
-def trace_context(tool: object) -> tuple[MagicMock, list[ToolResponseEvent]]:
-    sent_events = []
-    config = MagicMock()
-    config.get = MagicMock(
-        side_effect=lambda option: False
-        if option is AgentExecutionOptions.TOOL_CALL_ASYNC
-        else option.get_default_value()
-    )
-    ctx = MagicMock(spec=ExecutionReporter)
-    ctx.config = config
-    ctx.get_resource = MagicMock(return_value=tool)
-    ctx.durable_execute = MagicMock(side_effect=lambda fn, **kwargs: fn(**kwargs))
-    ctx.send_event = MagicMock(side_effect=lambda event: sent_events.append(event))
-    return ctx, sent_events
+def test_tool_call_action_records_parallel_outcome_failure() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, True)
+    ctx = _Context(config=config)
+    ctx.durable_execute_all_async_outcomes = [
+        Outcome.success("ok"),
+        Outcome.failure(ValueError("boom")),
+    ]
+
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
+
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.responses["call-1"] == "ok"
+    assert response.success["call-1"] is True
+    assert response.responses["call-2"] == "Tool `query_order` execute failed."
+    assert response.success["call-2"] is False
+    assert response.error["call-2"] == "boom"
 
 
-def trace_tool_call() -> dict:
-    return {
-        "id": "call-1",
-        "original_id": "external-call-1",
-        "function": {"name": "search", "arguments": {"query": "flink"}},
-    }
-
-
-def tool_request() -> ToolRequestEvent:
+def tool_request(*call_ids: str) -> ToolRequestEvent:
+    if not call_ids:
+        call_ids = ("call-1",)
     return ToolRequestEvent(
         model="model",
         tool_calls=[
             {
-                "id": "call-1",
+                "id": call_id,
                 "type": "function",
                 "function": {
-                    "name": "query_order",
-                    "arguments": {"order_id": "order-1"},
+                    "name": "missing_tool" if call_id == "missing" else "query_order",
+                    "arguments": {
+                        "order_id": "order-1"
+                        if len(call_ids) == 1
+                        else f"order-{call_id}"
+                    },
                 },
             }
+            for call_id in call_ids
         ],
     )

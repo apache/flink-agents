@@ -313,6 +313,18 @@ class AgentExecutionOptions:
         default=True,
     )
 
+    TOOL_CALL_PARALLEL = ConfigOption(
+        key="tool-call.parallel",
+        config_type=bool,
+        default=True,
+    )
+
+    TOOL_CALL_BATCH_TIMEOUT = ConfigOption(
+        key="tool-call.batch.timeout",
+        config_type=int,
+        default=-1,
+    )
+
     RAG_ASYNC = ConfigOption(
         key="rag.async",
         config_type=bool,
