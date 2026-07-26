@@ -486,12 +486,16 @@ public class RunnerContextImpl implements RunnerContext {
         }
     }
 
-    /**
-     * Returns the current durable call result as an array of fields for bridge consumers, or null
-     * if no persisted slot exists at the current call index.
-     */
-    public Object[] getCurrentCallResultFields() {
-        CallResult current = getCurrentCallResult();
+    public int getCurrentCallIndex() {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext == null) {
+            return 0;
+        }
+        return durableExecutionContext.getCurrentCallIndex();
+    }
+
+    public Object[] getCallResultFieldsAt(int index) {
+        CallResult current = getCallResultAt(index);
         if (current == null) {
             return null;
         }
@@ -502,6 +506,17 @@ public class RunnerContextImpl implements RunnerContext {
             current.getResultPayload(),
             current.getExceptionPayload()
         };
+    }
+
+    /**
+     * Returns the current durable call result as an array of fields for bridge consumers, or null
+     * if no persisted slot exists at the current call index.
+     */
+    public Object[] getCurrentCallResultFields() {
+        if (durableExecutionContext == null) {
+            return null;
+        }
+        return getCallResultFieldsAt(durableExecutionContext.getCurrentCallIndex());
     }
 
     protected <T> Outcome<T> readTerminalOutcomeAt(
