@@ -42,6 +42,7 @@ _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
     "java.lang.Float": float,
     "java.lang.Double": float,
     "java.util.List": list,
+    "java.time.Duration": int,
 }
 
 
@@ -84,10 +85,19 @@ def _java_type_matches_python(java_type_name: str, python_config_type: type) -> 
     return python_config_type.__name__ == java_simple_name
 
 
-def normalize_java_default(java_default: Any, python_config_type: type) -> Any:
+def _java_duration_to_millis(java_duration: Any) -> int:
+    return int(java_duration.toMillis())
+
+
+def normalize_java_default(
+    java_default: Any, java_type_name: str, python_config_type: type
+) -> Any:
     """Convert a Java default value into a Python-comparable form."""
     if java_default is None:
         return None
+
+    if java_type_name == "java.time.Duration":
+        return _java_duration_to_millis(java_default)
 
     if hasattr(java_default, "name") and callable(java_default.name):
         enum_name = java_default.name()
@@ -122,6 +132,7 @@ def assert_python_option_matches_java(
     python_default = python_option.get_default_value()
     java_default = normalize_java_default(
         java_option.getDefaultValue(),
+        java_type_name,
         python_config_type,
     )
     assert python_default == java_default, (
