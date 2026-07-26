@@ -319,6 +319,12 @@ class AgentExecutionOptions:
         default=True,
     )
 
+    TOOL_CALL_NUM_ASYNC_THREADS = ConfigOption(
+        key="tool-call.num-async-threads",
+        config_type=int,
+        default=os.cpu_count() * 2,
+    )
+
     TOOL_CALL_BATCH_TIMEOUT = ConfigOption(
         key="tool-call.batch.timeout",
         config_type=int,

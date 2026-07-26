@@ -261,7 +261,7 @@ class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
     def __await__(self) -> Any:
         plan = self._ctx._prepare_batch_execution(self._calls)
         futures = [
-            self._ctx.executor.submit(supplier) for _, supplier in plan.suppliers
+            self._ctx.tool_call_executor.submit(supplier) for _, supplier in plan.suppliers
         ]
         timeout_ms = self._ctx.config.get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT)
         deadline = time.monotonic() + timeout_ms / 1000 if timeout_ms >= 0 else None
@@ -270,9 +270,7 @@ class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
                 exception = TimeoutError(
                     f"Async durable batch execution timed out after {timeout_ms} ms"
                 )
-                for future in futures:
-                    future.cancel()
-                executed = [Outcome.failure(exception) for _ in futures]
+                executed = _collect_outcomes_on_timeout(futures, exception)
                 return self._ctx._finalize_batch_execution(self._calls, plan, executed)
             yield
 
@@ -287,6 +285,23 @@ def _collect_outcomes(futures: list[Any]) -> list[Outcome]:
             outcomes.append(Outcome.success(future.result()))
         except Exception as e:  # noqa: PERF203
             outcomes.append(Outcome.failure(e))
+    return outcomes
+
+
+def _collect_outcomes_on_timeout(
+    futures: list[Any], timeout_exception: TimeoutError
+) -> list[Outcome]:
+    outcomes = []
+    for future in futures:
+        if not future.done():
+            future.cancel()
+        if future.done() and not future.cancelled():
+            try:
+                outcomes.append(Outcome.success(future.result()))
+            except Exception as e:
+                outcomes.append(Outcome.failure(e))
+        else:
+            outcomes.append(Outcome.failure(timeout_exception))
     return outcomes
 
 
@@ -305,6 +320,7 @@ class FlinkRunnerContext(RunnerContext):
         j_runner_context: Any,
         agent_plan_json: str,
         executor: ThreadPoolExecutor,
+        tool_call_executor: ThreadPoolExecutor,
         j_resource_adapter: Any,
     ) -> None:
         """Initialize a flink runner context with the given java runner context.
@@ -324,6 +340,7 @@ class FlinkRunnerContext(RunnerContext):
         self.__resource_cache.set_java_resource_adapter(j_resource_adapter)
         self.__config = self.__agent_plan.config
         self.executor = executor
+        self.tool_call_executor = tool_call_executor
 
     def set_long_term_memory(self, ltm: InternalBaseLongTermMemory) -> None:
         """Set long term memory instance to this context.
@@ -940,12 +957,13 @@ def create_flink_runner_context(
     j_runner_context: Any,
     agent_plan_json: str,
     executor: ThreadPoolExecutor,
+    tool_call_executor: ThreadPoolExecutor,
     j_resource_adapter: Any,
     job_identifier: str,
 ) -> FlinkRunnerContext:
     """Used to create a FlinkRunnerContext Python object in Pemja environment."""
     ctx = FlinkRunnerContext(
-        j_runner_context, agent_plan_json, executor, j_resource_adapter
+        j_runner_context, agent_plan_json, executor, tool_call_executor, j_resource_adapter
     )
     ltm = _init_long_term_memory(ctx, job_identifier)
     if ltm is not None:

@@ -316,8 +316,8 @@ def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
     assert response.success == {"call-1": True, "call-2": True}
     assert len(ctx.durable_execute_all_async_calls) == 1
     assert [call.id for call in ctx.durable_execute_all_async_calls[0]] == [
-        "tool-call:call-1",
-        "tool-call:call-2",
+        "tool-call-call-1",
+        "tool-call-call-2",
     ]
     assert ctx.durable_execute_async_calls == []
 

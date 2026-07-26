@@ -17,6 +17,7 @@
 #################################################################################
 import ast
 import importlib
+import os
 import sys
 import types
 from pathlib import Path
@@ -129,6 +130,8 @@ def test_agent_execution_options_include_parallel_tool_call_options() -> None:
     assert options["TOOL_CALL_ASYNC"].get_default_value() is True
     assert options["TOOL_CALL_PARALLEL"].get_key() == "tool-call.parallel"
     assert options["TOOL_CALL_PARALLEL"].get_default_value() is True
+    assert options["TOOL_CALL_NUM_ASYNC_THREADS"].get_key() == "tool-call.num-async-threads"
+    assert options["TOOL_CALL_NUM_ASYNC_THREADS"].get_default_value() == os.cpu_count() * 2
     assert options["TOOL_CALL_BATCH_TIMEOUT"].get_key() == "tool-call.batch.timeout"
     assert options["TOOL_CALL_BATCH_TIMEOUT"].get_default_value() == -1
 

@@ -194,6 +194,7 @@ def _create_runner_context(
     ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
     ctx._j_runner_context = j_runner_context
     ctx.executor = ThreadPoolExecutor(max_workers=2)
+    ctx.tool_call_executor = ThreadPoolExecutor(max_workers=2)
     ctx._FlinkRunnerContext__agent_plan = None
     ctx._FlinkRunnerContext__ltm = None
     ctx._FlinkRunnerContext__config = config or AgentConfiguration({})
@@ -202,6 +203,7 @@ def _create_runner_context(
 
 def _close_runner_context(ctx: FlinkRunnerContext) -> None:
     ctx.executor.shutdown(wait=True)
+    ctx.tool_call_executor.shutdown(wait=True)
 
 
 def _run_async(result: Any) -> object:
@@ -489,8 +491,8 @@ def test_flink_runner_context_durable_execute_all_async_initial_batch() -> None:
         outcomes = _run_async(
             ctx.durable_execute_all_async(
                 [
-                    DurableCall("tool-call:1", _call_value, args=("one",)),
-                    DurableCall("tool-call:2", _call_value, args=("two",)),
+                    DurableCall("tool-call-1", _call_value, args=("one",)),
+                    DurableCall("tool-call-2", _call_value, args=("two",)),
                 ]
             )
         )
@@ -513,13 +515,13 @@ def test_flink_runner_context_durable_execute_all_async_recovers_partial_batch()
     j_runner_context.call_results.extend(
         [
             _StoredCallResult(
-                function_id="tool-call:1",
+                function_id="tool-call-1",
                 args_digest="",
                 status="SUCCEEDED",
                 result_payload=cloudpickle.dumps("cached-one"),
             ),
             _StoredCallResult(
-                function_id="tool-call:2",
+                function_id="tool-call-2",
                 args_digest="",
                 status="PENDING",
             ),
@@ -537,8 +539,8 @@ def test_flink_runner_context_durable_execute_all_async_recovers_partial_batch()
         outcomes = _run_async(
             ctx.durable_execute_all_async(
                 [
-                    DurableCall("tool-call:1", tracked_call, args=("one",)),
-                    DurableCall("tool-call:2", tracked_call, args=("two",)),
+                    DurableCall("tool-call-1", tracked_call, args=("one",)),
+                    DurableCall("tool-call-2", tracked_call, args=("two",)),
                 ]
             )
         )
@@ -555,7 +557,7 @@ def test_flink_runner_context_durable_execute_all_async_returns_cached_failure()
     j_runner_context = _FakeJavaRunnerContext()
     j_runner_context.call_results.append(
         _StoredCallResult(
-            function_id="tool-call:1",
+            function_id="tool-call-1",
             args_digest="",
             status="FAILED",
             exception_payload=cloudpickle.dumps(ValueError("cached failure")),
@@ -566,7 +568,7 @@ def test_flink_runner_context_durable_execute_all_async_returns_cached_failure()
     try:
         outcomes = _run_async(
             ctx.durable_execute_all_async(
-                [DurableCall("tool-call:1", _call_value, args=("one",))]
+                [DurableCall("tool-call-1", _call_value, args=("one",))]
             )
         )
     finally:
@@ -590,8 +592,8 @@ def test_flink_runner_context_durable_execute_all_async_collects_failures() -> N
         outcomes = _run_async(
             ctx.durable_execute_all_async(
                 [
-                    DurableCall("tool-call:1", _call_value, args=("one",)),
-                    DurableCall("tool-call:2", fail_call),
+                    DurableCall("tool-call-1", _call_value, args=("one",)),
+                    DurableCall("tool-call-2", fail_call),
                 ]
             )
         )
@@ -608,9 +610,9 @@ def test_flink_runner_context_durable_execute_all_async_collects_failures() -> N
     assert j_runner_context.current_call_index == 2
 
 
-def test_flink_runner_context_durable_execute_all_async_timeout_returns_failures() -> None:
+def test_flink_runner_context_durable_execute_all_async_timeout_keeps_completed_results() -> None:
     j_runner_context = _FakeJavaRunnerContext()
-    config = AgentConfiguration({"tool-call.batch.timeout": 1})
+    config = AgentConfiguration({"tool-call.batch.timeout": 10})
     ctx = _create_runner_context(j_runner_context, config=config)
 
     def slow_call() -> str:
@@ -621,18 +623,19 @@ def test_flink_runner_context_durable_execute_all_async_timeout_returns_failures
         outcomes = _run_async(
             ctx.durable_execute_all_async(
                 [
-                    DurableCall("tool-call:1", slow_call),
-                    DurableCall("tool-call:2", slow_call),
+                    DurableCall("tool-call-1", lambda: "fast"),
+                    DurableCall("tool-call-2", slow_call),
                 ]
             )
         )
     finally:
         _close_runner_context(ctx)
 
-    assert all(outcome.is_failure() for outcome in outcomes)
-    assert all(isinstance(outcome.error, TimeoutError) for outcome in outcomes)
+    assert outcomes[0].value == "fast"
+    assert outcomes[1].is_failure()
+    assert isinstance(outcomes[1].error, TimeoutError)
     assert [result.status for result in j_runner_context.call_results] == [
-        "FAILED",
+        "SUCCEEDED",
         "FAILED",
     ]
     assert j_runner_context.current_call_index == 2

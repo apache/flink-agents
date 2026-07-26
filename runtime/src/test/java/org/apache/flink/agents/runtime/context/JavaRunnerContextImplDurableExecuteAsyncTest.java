@@ -20,6 +20,8 @@ package org.apache.flink.agents.runtime.context;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.configuration.Configuration;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
@@ -35,6 +37,7 @@ import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
@@ -313,6 +316,39 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
     }
 
+    @Test
+    void testDurableExecuteAllAsyncTimeoutKeepsCompletedOutcomes() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        executor.setUseTimeoutCollection(true);
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        ((Configuration) context.getConfig())
+                .set(
+                        AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT,
+                        java.time.Duration.ofMillis(10));
+        TestDurableCallable<String> first =
+                new TestDurableCallable<>("batch-1", String.class, () -> "fast");
+        TestDurableCallable<String> second =
+                new TestDurableCallable<>(
+                        "batch-2",
+                        String.class,
+                        () -> {
+                            Thread.sleep(100);
+                            return "slow";
+                        });
+
+        List<Outcome<String>> outcomes = context.durableExecuteAllAsync(List.of(first, second));
+
+        assertEquals("fast", outcomes.get(0).getValue());
+        assertTrue(outcomes.get(1).isFailure());
+        assertInstanceOf(TimeoutException.class, outcomes.get(1).getError());
+        List<CallResult> persisted =
+                context.getDurableExecutionContext().getActionState().getCallResults();
+        assertTrue(persisted.get(0).isSuccess());
+        assertTrue(persisted.get(1).isFailure());
+        assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
+        executor.close();
+    }
+
     private JavaRunnerContextImpl createContext(
             ActionState actionState, ContinuationActionExecutor executor) {
         JavaRunnerContextImpl context =
@@ -343,6 +379,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     private static final class InspectingContinuationActionExecutor
             extends ContinuationActionExecutor {
         private Runnable beforeExecute;
+        private boolean useTimeoutCollection;
         private int executeAsyncCallCount;
         private int executeAllAsyncCallCount;
         private final List<Integer> executeAllAsyncBatchSizes = new java.util.ArrayList<>();
@@ -367,6 +404,9 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                 java.time.Duration timeout) {
             executeAllAsyncCallCount++;
             executeAllAsyncBatchSizes.add(suppliers.size());
+            if (useTimeoutCollection) {
+                return collectTimedOutOutcomes(suppliers);
+            }
             List<Outcome<T>> outcomes = new java.util.ArrayList<>(suppliers.size());
             for (Callable<T> supplier : suppliers) {
                 try {
@@ -378,8 +418,28 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
             return outcomes;
         }
 
+        private <T> List<Outcome<T>> collectTimedOutOutcomes(List<Callable<T>> suppliers) {
+            List<Outcome<T>> outcomes = new java.util.ArrayList<>(suppliers.size());
+            for (int i = 0; i < suppliers.size(); i++) {
+                if (i == 0) {
+                    try {
+                        outcomes.add(Outcome.success(suppliers.get(i).call()));
+                    } catch (Exception e) {
+                        outcomes.add(Outcome.failure(e));
+                    }
+                } else {
+                    outcomes.add(Outcome.failure(new TimeoutException("batch timeout")));
+                }
+            }
+            return outcomes;
+        }
+
         private void setBeforeExecute(Runnable beforeExecute) {
             this.beforeExecute = beforeExecute;
+        }
+
+        private void setUseTimeoutCollection(boolean useTimeoutCollection) {
+            this.useTimeoutCollection = useTimeoutCollection;
         }
 
         private int getExecuteAsyncCallCount() {

@@ -131,7 +131,7 @@ def _build_tool_call_executions(
                 id=call_id,
                 name=name,
                 durable_call=DurableCall(
-                    id=f"tool-call:{call_id}",
+                    id=f"tool-call-{call_id}",
                     func=tool.call,
                     kwargs=call_kwargs,
                 ),
