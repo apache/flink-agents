@@ -50,6 +50,12 @@ import java.util.stream.Collectors;
  */
 final class OpenAIChatCompletionsUtils {
 
+    /** Default timeout in seconds for OpenAI API requests (aligned with Python SDK). */
+    static final int DEFAULT_TIMEOUT_SECONDS = 60;
+
+    /** Default max retries for OpenAI API requests (aligned with Python SDK). */
+    static final int DEFAULT_MAX_RETRIES = 3;
+
     private OpenAIChatCompletionsUtils() {}
 
     private static final ObjectMapper mapper = new ObjectMapper();

@@ -121,3 +121,12 @@ def test_default_model_when_omitted() -> None:
     """Verify per-integration default applies when `model` is omitted from __init__."""
     setup = OpenAIChatModelSetup(connection="conn")
     assert setup.model == DEFAULT_OPENAI_MODEL
+
+
+def test_connection_default_timeout_and_max_retries() -> None:
+    """Pin canonical connection defaults to prevent silent drift."""
+    conn = OpenAIChatModelConnection(
+        name="test", api_key="fake", api_base_url="http://localhost"
+    )
+    assert conn.timeout == 60.0
+    assert conn.max_retries == 3
