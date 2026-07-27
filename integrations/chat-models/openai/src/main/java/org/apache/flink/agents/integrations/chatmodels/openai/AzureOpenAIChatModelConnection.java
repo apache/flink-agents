@@ -25,10 +25,12 @@ import com.openai.azure.AzureUrlPathMode;
 import com.openai.azure.credential.AzureApiKeyCredential;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.core.JsonSchemaLocalValidation;
 import com.openai.core.JsonValue;
 import com.openai.models.ChatModel;
 import com.openai.models.FunctionDefinition;
 import com.openai.models.FunctionParameters;
+import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionFunctionTool;
@@ -98,7 +100,47 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
     private static final Set<String> RESERVED_KWARG_KEYS =
             Set.of("model", "model_of_azure_deployment", "temperature", "max_tokens", "logprobs");
 
+    // Models with documented json_schema strict Structured Outputs support. Source of truth:
+    // https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/structured-outputs
+    //
+    // Matching is exact, never by prefix: Azure exposes a deployment's model name and model version
+    // as separate properties, so a name carries no version to discriminate on. The documented list
+    // includes gpt-4o only at versions 2024-08-06 and 2024-11-20 while version 2024-05-13 is
+    // unsupported, so a bare "gpt-4o" is ambiguous and is deliberately absent from the set below.
+    // An unrecognized name reports not-capable and degrades to the prompt fallback rather than
+    // failing at the provider.
+    //
+    // The source list prints "gpt-5.1-codex mini" with a space; it is transcribed hyphenated here
+    // because Azure model identifiers do not contain spaces.
+    private static final Set<String> NATIVE_STRUCTURED_OUTPUT_MODELS =
+            Set.of(
+                    "gpt-5.1-codex",
+                    "gpt-5.1-codex-mini",
+                    "gpt-5.1",
+                    "gpt-5.1-chat",
+                    "gpt-5-pro",
+                    "gpt-5-codex",
+                    "gpt-5",
+                    "gpt-5-mini",
+                    "gpt-5-nano",
+                    "codex-mini",
+                    "o3-pro",
+                    "o3-mini",
+                    "o1",
+                    "gpt-4o-mini",
+                    "gpt-4.1",
+                    "gpt-4.1-nano",
+                    "gpt-4.1-mini",
+                    "o4-mini",
+                    "o3");
+
+    // Date prefix of 2024-08-01-preview, the earliest api-version Azure documents as supporting
+    // structured outputs.
+    private static final String MIN_STRUCTURED_OUTPUT_API_VERSION = "2024-08-01";
+
     private final OpenAIClient client;
+
+    private final String apiVersion;
 
     public AzureOpenAIChatModelConnection(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
@@ -113,6 +155,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         if (apiVersion == null || apiVersion.isBlank()) {
             throw new IllegalArgumentException("api_version should not be null or empty.");
         }
+        this.apiVersion = apiVersion;
 
         String azureEndpoint = descriptor.getArgument("azure_endpoint");
         if (azureEndpoint == null || azureEndpoint.isBlank()) {
@@ -151,84 +194,226 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         this.client = clientBuilder.build();
     }
 
+    /**
+     * Whether Azure documents json_schema strict support for {@code effectiveModel}.
+     *
+     * <p>{@code effectiveModel} is the model backing an Azure deployment, not the deployment name.
+     * See the allowlist above for the source of truth and for why the match is exact. An
+     * unrecognized model reports {@code false} so it degrades to the prompt-engineering fallback
+     * rather than failing at the provider.
+     *
+     * <p>Reads no instance state, so capability stays answerable independently of how the
+     * connection was configured.
+     */
+    @Override
+    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+        if (effectiveModel == null || effectiveModel.isEmpty()) {
+            return false;
+        }
+        return NATIVE_STRUCTURED_OUTPUT_MODELS.contains(effectiveModel);
+    }
+
+    /**
+     * Whether the configured api-version reaches the structured-output floor.
+     *
+     * <p>Azure documents {@code 2024-08-01-preview} as the first api-version supporting structured
+     * outputs, and whether an older version rejects {@code response_format} or silently ignores it
+     * is not documented. The request therefore never carries {@code response_format} below the
+     * floor, which is safe under either behavior.
+     *
+     * <p>The comparison assumes the documented api-version form, a zero-padded {@code YYYY-MM-DD}
+     * date optionally suffixed {@code -preview}; over that form comparing the leading date
+     * lexicographically is exact. The GA {@code v1} literal sorts above the floor, which matches
+     * Azure documenting {@code v1} as supporting structured outputs. This is not a validator: a
+     * value of any other shape is not classified reliably, and the service rejects an api-version
+     * it does not recognize. The constructor rejects a null or blank api-version, so no value of
+     * that shape reaches here.
+     */
+    private boolean apiVersionSupportsStructuredOutput() {
+        String datePrefix =
+                apiVersion.length() > MIN_STRUCTURED_OUTPUT_API_VERSION.length()
+                        ? apiVersion.substring(0, MIN_STRUCTURED_OUTPUT_API_VERSION.length())
+                        : apiVersion;
+        return datePrefix.compareTo(MIN_STRUCTURED_OUTPUT_API_VERSION) >= 0;
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        return doChat(messages, tools, modelParams, null);
+    }
+
+    /**
+     * Translates {@code outputSchema} into Azure's native strict {@code response_format}
+     * json_schema when it is a POJO {@link Class}, the model backing the deployment is one Azure
+     * documents json_schema strict support for, and the configured api-version reaches {@code
+     * 2024-08-01-preview}. Any other combination leaves the request unconstrained so that the
+     * prompt-engineering fallback still governs the response, rather than failing at the provider.
+     *
+     * <p>Capability is keyed on the {@code model_of_azure_deployment} model parameter rather than
+     * on the deployment the request targets, because a deployment name is chosen by the user and
+     * carries no model information. Leaving that parameter unset therefore keeps even a capable
+     * deployment on the fallback.
+     *
+     * @throws IllegalArgumentException if the schema is applied natively while {@code
+     *     additional_kwargs} also carries a {@code response_format}, since the two would otherwise
+     *     compete on the same request
+     */
+    @Override
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
+        return doChat(messages, tools, modelParams, outputSchema);
+    }
+
+    private ChatMessage doChat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
         try {
-            Map<String, Object> mutableArgs =
-                    modelParams != null ? new HashMap<>(modelParams) : new HashMap<>();
-
-            String azureDeployment = (String) mutableArgs.remove("model");
-            if (azureDeployment == null || azureDeployment.isBlank()) {
-                throw new IllegalArgumentException("model is required for Azure OpenAI API calls");
-            }
-            String modelOfAzureDeployment =
-                    (String) mutableArgs.remove("model_of_azure_deployment");
-
-            ChatCompletionCreateParams.Builder builder =
-                    ChatCompletionCreateParams.builder()
-                            .model(ChatModel.of(azureDeployment))
-                            .messages(OpenAIChatCompletionsUtils.convertToOpenAIMessages(messages));
-
-            if (tools != null && !tools.isEmpty()) {
-                builder.tools(convertTools(tools));
-            }
-
-            Object temperature = mutableArgs.remove("temperature");
-            if (temperature instanceof Number) {
-                builder.temperature(((Number) temperature).doubleValue());
-            }
-
-            Object maxTokens = mutableArgs.remove("max_tokens");
-            if (maxTokens instanceof Number) {
-                builder.maxCompletionTokens(((Number) maxTokens).longValue());
-            }
-
-            Object logprobs = mutableArgs.remove("logprobs");
-            if (Boolean.TRUE.equals(logprobs)) {
-                builder.logprobs(true);
-            }
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> additionalKwargs =
-                    (Map<String, Object>) mutableArgs.remove("additional_kwargs");
-            if (additionalKwargs != null) {
-                Set<String> collisions = new HashSet<>(additionalKwargs.keySet());
-                collisions.retainAll(RESERVED_KWARG_KEYS);
-                if (!collisions.isEmpty()) {
-                    throw new IllegalArgumentException(
-                            "additional_kwargs must not contain reserved typed fields: "
-                                    + collisions
-                                    + ". Set these via the corresponding Setup field instead.");
-                }
-                for (Map.Entry<String, Object> entry : additionalKwargs.entrySet()) {
-                    builder.putAdditionalBodyProperty(
-                            entry.getKey(), toJsonValue(entry.getValue()));
-                }
-            }
-
-            ChatCompletion completion = client.chat().completions().create(builder.build());
-
-            ChatMessage response =
-                    OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
-                            completion.choices().get(0).message());
-
-            if (modelOfAzureDeployment != null
-                    && !modelOfAzureDeployment.isBlank()
-                    && completion.usage().isPresent()) {
-                response.getExtraArgs().put("model_name", modelOfAzureDeployment);
-                response.getExtraArgs()
-                        .put("promptTokens", completion.usage().get().promptTokens());
-                response.getExtraArgs()
-                        .put("completionTokens", completion.usage().get().completionTokens());
-            }
-
-            return response;
+            ChatCompletionCreateParams params =
+                    buildRequest(messages, tools, modelParams, outputSchema);
+            return toResponse(client.chat().completions().create(params), modelParams);
         } catch (IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
             throw new RuntimeException("Failed to call Azure OpenAI chat completions API.", e);
         }
+    }
+
+    // Package-private so response handling can be asserted against a constructed completion without
+    // issuing a live API call through the final OpenAI client.
+    ChatMessage toResponse(ChatCompletion completion, Map<String, Object> modelParams) {
+        // Read from the caller's map rather than the copy buildRequest consumed, and read without
+        // consuming: a caller may reuse the same map across calls. The map is assembled fresh for
+        // each call and no one retains it, so reading it once the response has arrived yields the
+        // same value as reading it before the request was issued. Token metrics report the model
+        // backing the deployment, which buildRequest only uses to decide capability.
+        String modelOfAzureDeployment =
+                modelParams != null ? (String) modelParams.get("model_of_azure_deployment") : null;
+
+        ChatMessage response =
+                OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
+                        completion.choices().get(0).message());
+
+        if (modelOfAzureDeployment != null
+                && !modelOfAzureDeployment.isBlank()
+                && completion.usage().isPresent()) {
+            response.getExtraArgs().put("model_name", modelOfAzureDeployment);
+            response.getExtraArgs().put("promptTokens", completion.usage().get().promptTokens());
+            response.getExtraArgs()
+                    .put("completionTokens", completion.usage().get().completionTokens());
+        }
+
+        return response;
+    }
+
+    // Package-private so the request body (including the native response_format) can be asserted
+    // without issuing a live API call through the final OpenAI client.
+    ChatCompletionCreateParams buildRequest(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> rawModelParams,
+            Object outputSchema) {
+        Map<String, Object> mutableArgs =
+                rawModelParams != null ? new HashMap<>(rawModelParams) : new HashMap<>();
+
+        String azureDeployment = (String) mutableArgs.remove("model");
+        if (azureDeployment == null || azureDeployment.isBlank()) {
+            throw new IllegalArgumentException("model is required for Azure OpenAI API calls");
+        }
+        String modelOfAzureDeployment = (String) mutableArgs.remove("model_of_azure_deployment");
+
+        ChatCompletionCreateParams.Builder builder =
+                ChatCompletionCreateParams.builder()
+                        .model(ChatModel.of(azureDeployment))
+                        .messages(OpenAIChatCompletionsUtils.convertToOpenAIMessages(messages));
+
+        if (tools != null && !tools.isEmpty()) {
+            builder.tools(convertTools(tools));
+        }
+
+        // Capability belongs to the model backing the deployment, so it is the input to the check;
+        // the deployment name is chosen by the user and carries none. Native structured output
+        // applies only for a POJO Class schema — a RowTypeInfo (wrapped in OutputSchema) keeps the
+        // prompt-engineering fallback, as do an incapable model and an api-version below the floor.
+        String nativeSchemaName = null;
+        if (outputSchema instanceof Class
+                && supportsNativeStructuredOutput(modelOfAzureDeployment)
+                && apiVersionSupportsStructuredOutput()) {
+            Class<?> schemaClass = (Class<?>) outputSchema;
+            builder.responseFormat(toNativeResponseFormat(schemaClass));
+            nativeSchemaName = schemaClass.getSimpleName();
+        }
+
+        Object temperature = mutableArgs.remove("temperature");
+        if (temperature instanceof Number) {
+            builder.temperature(((Number) temperature).doubleValue());
+        }
+
+        Object maxTokens = mutableArgs.remove("max_tokens");
+        if (maxTokens instanceof Number) {
+            builder.maxCompletionTokens(((Number) maxTokens).longValue());
+        }
+
+        Object logprobs = mutableArgs.remove("logprobs");
+        if (Boolean.TRUE.equals(logprobs)) {
+            builder.logprobs(true);
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> additionalKwargs =
+                (Map<String, Object>) mutableArgs.remove("additional_kwargs");
+        if (additionalKwargs != null) {
+            Set<String> collisions = new HashSet<>(additionalKwargs.keySet());
+            collisions.retainAll(RESERVED_KWARG_KEYS);
+            if (!collisions.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "additional_kwargs must not contain reserved typed fields: "
+                                + collisions
+                                + ". Set these via the corresponding Setup field instead.");
+            }
+            // Only the branch that actually sent a schema may reject the caller's own
+            // response_format; every path that skipped it leaves the value untouched.
+            if (nativeSchemaName != null && additionalKwargs.containsKey("response_format")) {
+                throw new IllegalArgumentException(
+                        "The "
+                                + nativeSchemaName
+                                + " output schema is sent as response_format on deployment '"
+                                + azureDeployment
+                                + "', so response_format must not also be set in additional_kwargs."
+                                + " Remove that value, or omit the output schema to set"
+                                + " response_format directly.");
+            }
+            for (Map.Entry<String, Object> entry : additionalKwargs.entrySet()) {
+                builder.putAdditionalBodyProperty(entry.getKey(), toJsonValue(entry.getValue()));
+            }
+        }
+
+        return builder.build();
+    }
+
+    // Derives the strict json_schema response format from a POJO class via the SDK's typed
+    // structured-output builder. The Kotlin-facade StructuredOutputsKt.responseFormatFromClass is
+    // not callable from Java, so the response format is extracted through the typed builder, which
+    // generates the same strict draft-2020-12 schema, and then reattached to the standard builder.
+    private static <T> ResponseFormatJsonSchema toNativeResponseFormat(Class<T> schemaClass) {
+        return ChatCompletionCreateParams.builder()
+                .model(ChatModel.of(""))
+                .addUserMessage("")
+                .responseFormat(schemaClass, JsonSchemaLocalValidation.NO)
+                .build()
+                .rawParams()
+                .responseFormat()
+                .orElseThrow(
+                        () ->
+                                new IllegalStateException(
+                                        "OpenAI SDK did not produce a response_format for schema "
+                                                + schemaClass.getName()))
+                .asJsonSchema();
     }
 
     @Override
