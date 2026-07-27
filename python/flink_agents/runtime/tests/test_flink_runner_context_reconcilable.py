@@ -190,11 +190,12 @@ class _FakeJavaRunnerContext:
 def _create_runner_context(
     j_runner_context: _FakeJavaRunnerContext,
     config: AgentConfiguration | None = None,
+    tool_call_workers: int = 2,
 ) -> FlinkRunnerContext:
     ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
     ctx._j_runner_context = j_runner_context
     ctx.executor = ThreadPoolExecutor(max_workers=2)
-    ctx.tool_call_executor = ThreadPoolExecutor(max_workers=2)
+    ctx.tool_call_executor = ThreadPoolExecutor(max_workers=tool_call_workers)
     ctx._FlinkRunnerContext__agent_plan = None
     ctx._FlinkRunnerContext__ltm = None
     ctx._FlinkRunnerContext__config = config or AgentConfiguration({})
@@ -481,6 +482,41 @@ def test_flink_runner_context_reconciler_kwarg_is_not_forwarded() -> None:
         _close_runner_context(ctx)
 
     assert result == {}
+
+
+def test_flink_runner_context_durable_execute_all_async_runs_calls_in_parallel() -> None:
+    j_runner_context = _FakeJavaRunnerContext()
+    config = AgentConfiguration({"tool-call.batch.timeout": -1})
+    ctx = _create_runner_context(j_runner_context, config=config, tool_call_workers=3)
+    sleep_seconds = 0.2
+
+    def slow_call(value: str) -> str:
+        time.sleep(sleep_seconds)
+        return value
+
+    try:
+        start = time.perf_counter()
+        outcomes = _run_async(
+            ctx.durable_execute_all_async(
+                [
+                    DurableCall("tool-call-1", slow_call, args=("one",)),
+                    DurableCall("tool-call-2", slow_call, args=("two",)),
+                    DurableCall("tool-call-3", slow_call, args=("three",)),
+                ]
+            )
+        )
+        elapsed = time.perf_counter() - start
+    finally:
+        _close_runner_context(ctx)
+
+    assert [outcome.value for outcome in outcomes] == ["one", "two", "three"]
+    assert elapsed < sleep_seconds * 2
+    assert [result.status for result in j_runner_context.call_results] == [
+        "SUCCEEDED",
+        "SUCCEEDED",
+        "SUCCEEDED",
+    ]
+    assert j_runner_context.current_call_index == 3
 
 
 def test_flink_runner_context_durable_execute_all_async_initial_batch() -> None:

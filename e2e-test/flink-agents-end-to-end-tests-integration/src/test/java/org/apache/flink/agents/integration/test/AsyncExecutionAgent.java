@@ -23,12 +23,32 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
+import org.apache.flink.agents.api.annotation.ChatModelConnection;
+import org.apache.flink.agents.api.annotation.ChatModelSetup;
+import org.apache.flink.agents.api.annotation.ToolParam;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
+import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Agent definition for testing async execution functionality.
@@ -68,6 +88,141 @@ public class AsyncExecutionAgent {
         @Override
         public Integer getKey(AsyncRequest request) {
             return request.id;
+        }
+    }
+
+    /** Chat connection that emits one tool request containing multiple slow tool calls. */
+    public static class ToolBatchChatConnection extends BaseChatModelConnection {
+        public ToolBatchChatConnection(
+                ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        @Override
+        public ChatMessage chat(
+                List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+            ChatMessage lastMessage = messages.get(messages.size() - 1);
+            if (lastMessage.getRole() == MessageRole.TOOL) {
+                return new ChatMessage(MessageRole.ASSISTANT, lastMessage.getContent());
+            }
+
+            String requestId = lastMessage.getContent();
+            return new ChatMessage(
+                    MessageRole.ASSISTANT,
+                    "",
+                    List.of(
+                            toolCall("call-1", requestId, 1),
+                            toolCall("call-2", requestId, 2),
+                            toolCall("call-3", requestId, 3)));
+        }
+    }
+
+    /** Chat model setup bound to the timed tool. */
+    public static class ToolBatchChatModel extends BaseChatModelSetup {
+        public ToolBatchChatModel(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return new HashMap<>();
+        }
+    }
+
+    private static Map<String, Object> toolCall(String id, String requestId, int index) {
+        return Map.of(
+                "id",
+                id,
+                "type",
+                "function",
+                "function",
+                Map.of(
+                        "name",
+                        "timed_tool",
+                        "arguments",
+                        Map.of("request_id", requestId, "call_index", index)));
+    }
+
+    /** Agent that requests one chat turn that produces multiple slow tool calls. */
+    public static class ToolBatchAgent extends Agent {
+        public ToolBatchAgent(int sleepTimeMs) {}
+
+        @ChatModelConnection
+        public static ResourceDescriptor toolBatchChatConnection() {
+            return ResourceDescriptor.Builder.newBuilder(ToolBatchChatConnection.class.getName())
+                    .build();
+        }
+
+        @ChatModelSetup
+        public static ResourceDescriptor toolBatchChatModel() {
+            return ResourceDescriptor.Builder.newBuilder(ToolBatchChatModel.class.getName())
+                    .addInitialArgument("connection", "toolBatchChatConnection")
+                    .addInitialArgument("model", "test-model")
+                    .addInitialArgument("tools", List.of("timed_tool"))
+                    .build();
+        }
+
+        @org.apache.flink.agents.api.annotation.Tool(
+                description = "Records timing for a slow tool call.")
+        public static String timed_tool(
+                @ToolParam(name = "request_id") String requestId,
+                @ToolParam(name = "call_index") String callIndex) {
+            long start = System.currentTimeMillis();
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            long end = System.currentTimeMillis();
+            return String.format(
+                    "request=%s,call=%s,start=%d,end=%d", requestId, callIndex, start, end);
+        }
+
+        @Action(EventType.InputEvent)
+        public static void requestTools(Event event, RunnerContext ctx) {
+            InputEvent inputEvent = InputEvent.fromEvent(event);
+            AsyncRequest request = (AsyncRequest) inputEvent.getInput();
+            ctx.sendEvent(
+                    new ChatRequestEvent(
+                            "toolBatchChatModel",
+                            List.of(
+                                    new ChatMessage(
+                                            MessageRole.USER, String.valueOf(request.id)))));
+        }
+
+        @Action(EventType.ChatResponseEvent)
+        public static void emitToolTimings(Event event, RunnerContext ctx) {
+            ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(event);
+            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getContent()));
+        }
+    }
+
+    /** Tool that records its execution time range in the response result. */
+    public static class TimedTool extends Tool {
+        private final int sleepTimeMs;
+
+        public TimedTool(int sleepTimeMs) {
+            super(new ToolMetadata("timed_tool", "Records timing for a slow tool call.", "{}"));
+            this.sleepTimeMs = sleepTimeMs;
+        }
+
+        @Override
+        public ToolType getToolType() {
+            return ToolType.FUNCTION;
+        }
+
+        @Override
+        public ToolResponse call(ToolParameters parameters) {
+            int callIndex = parameters.getParameter("call_index", Integer.class);
+            long start = System.currentTimeMillis();
+            try {
+                Thread.sleep(sleepTimeMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            long end = System.currentTimeMillis();
+            return ToolResponse.success(
+                    String.format("call=%d,start=%d,end=%d", callIndex, start, end));
         }
     }
 

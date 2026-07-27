@@ -18,6 +18,7 @@
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -27,6 +28,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * End-to-end tests for Java async execution functionality.
@@ -333,6 +336,61 @@ public class AsyncExecutionTest {
         System.out.println("=== Test Passed ===");
     }
 
+    @Test
+    public void testToolCallBatchExecutionIsActuallyParallel() throws Exception {
+        boolean continuationSupported = ContinuationActionExecutor.isContinuationSupported();
+        int javaVersion = Runtime.version().feature();
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        int sleepTimeMs = 500;
+        DataStream<AsyncExecutionAgent.AsyncRequest> inputStream =
+                env.fromElements(
+                        new AsyncExecutionAgent.AsyncRequest(1, "tool-batch", sleepTimeMs));
+
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLEL, true);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_NUM_ASYNC_THREADS, 3);
+
+        DataStream<Object> outputStream =
+                agentsEnv
+                        .fromDataStream(
+                                inputStream, new AsyncExecutionAgent.AsyncRequestKeySelector())
+                        .apply(new AsyncExecutionAgent.ToolBatchAgent(sleepTimeMs))
+                        .toDataStream();
+
+        CloseableIterator<Object> results = outputStream.collectAsync();
+        agentsEnv.execute();
+
+        List<long[]> executionRanges = new ArrayList<>();
+        while (results.hasNext()) {
+            String output = results.next().toString();
+            Matcher matcher = Pattern.compile("start=(\\d+),end=(\\d+)").matcher(output);
+            while (matcher.find()) {
+                long start = Long.parseLong(matcher.group(1));
+                long end = Long.parseLong(matcher.group(2));
+                executionRanges.add(new long[] {start, end});
+            }
+        }
+        results.close();
+
+        Assertions.assertEquals(3, executionRanges.size());
+        int overlapCount = countOverlaps(executionRanges);
+        if (continuationSupported && javaVersion >= 21) {
+            Assertions.assertTrue(
+                    overlapCount >= 2,
+                    "On JDK 21+, tool calls in one ToolRequestEvent should run in parallel.");
+        } else {
+            Assertions.assertEquals(
+                    0,
+                    overlapCount,
+                    "On JDK < 21, tool-call batch execution should use the sequential fallback.");
+        }
+    }
+
     /**
      * Tests that durableExecute (sync) works correctly.
      *
@@ -386,5 +444,19 @@ public class AsyncExecutionTest {
                     output.contains("SyncProcessed:"),
                     "Output should contain processed data: " + output);
         }
+    }
+
+    private static int countOverlaps(List<long[]> executionRanges) {
+        int overlapCount = 0;
+        for (int i = 0; i < executionRanges.size(); i++) {
+            for (int j = i + 1; j < executionRanges.size(); j++) {
+                long[] range1 = executionRanges.get(i);
+                long[] range2 = executionRanges.get(j);
+                if (range1[0] < range2[1] && range2[0] < range1[1]) {
+                    overlapCount++;
+                }
+            }
+        }
+        return overlapCount;
     }
 }
