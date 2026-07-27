@@ -19,7 +19,14 @@ import logging
 from typing import Any, Dict, List, Sequence
 
 from openai import NOT_GIVEN, AzureOpenAI
-from pydantic import Field, PrivateAttr
+
+# Private SDK module (leading underscore): the openai client itself uses this helper to
+# build the strict json_schema for response_format, and there is no public re-export. It
+# has existed at this path since the structured-output support in openai 1.66.3 (the
+# pinned minimum). A future openai bump that moves it will fail loudly on import here.
+from openai.lib._pydantic import to_strict_json_schema
+from pydantic import BaseModel, Field, PrivateAttr
+from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
@@ -39,6 +46,70 @@ logger = logging.getLogger(__name__)
 _RESERVED_KWARG_KEYS = frozenset(
     {"model", "model_of_azure_deployment", "temperature", "max_tokens", "logprobs"}
 )
+
+# Models with documented json_schema strict Structured Outputs support. Source of truth:
+# https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/structured-outputs
+#
+# Matching is exact, never by prefix: Azure exposes a deployment's model name and model
+# version as separate properties, so a name carries no version to discriminate on. The
+# documented list includes gpt-4o only at versions 2024-08-06 and 2024-11-20 while
+# version 2024-05-13 is unsupported, so a bare "gpt-4o" is ambiguous and is deliberately
+# absent from the set below. An unrecognized name reports not-capable and degrades to
+# the prompt fallback rather than failing at the provider.
+#
+# The source list prints "gpt-5.1-codex mini" with a space; it is transcribed hyphenated
+# here because Azure model identifiers do not contain spaces.
+_NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
+    {
+        "gpt-5.1-codex",
+        "gpt-5.1-codex-mini",
+        "gpt-5.1",
+        "gpt-5.1-chat",
+        "gpt-5-pro",
+        "gpt-5-codex",
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano",
+        "codex-mini",
+        "o3-pro",
+        "o3-mini",
+        "o1",
+        "gpt-4o-mini",
+        "gpt-4.1",
+        "gpt-4.1-nano",
+        "gpt-4.1-mini",
+        "o4-mini",
+        "o3",
+    }
+)
+
+# Date prefix of 2024-08-01-preview, the earliest api-version Azure documents as
+# supporting structured outputs.
+_MIN_STRUCTURED_OUTPUT_API_VERSION = "2024-08-01"
+
+
+def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
+    """Build the ``response_format`` for a native structured-output request.
+
+    Returns ``None`` (leaving behavior unchanged) unless the schema is a ``BaseModel``
+    subclass. A ``RowTypeInfo`` schema is skipped so it keeps the prompt-engineering
+    fallback.
+    """
+    if output_schema is None:
+        return None
+    model = (
+        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    )
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": model.__name__,
+            "schema": to_strict_json_schema(model),
+            "strict": True,
+        },
+    }
 
 
 class AzureOpenAIChatModelConnection(BaseChatModelConnection):
@@ -114,6 +185,41 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             )
         return self._client
 
+    @override
+    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+        """Whether Azure documents json_schema strict support for ``effective_model``.
+
+        ``effective_model`` is the model backing an Azure deployment, not the deployment
+        name. See the module-level allowlist for the source of truth and for why the
+        match is exact. An unrecognized model reports ``False`` so it degrades to the
+        prompt-engineering fallback rather than failing at the provider.
+
+        Reads no instance state, so it stays answerable on an instance that was never
+        initialized, where any field access would raise.
+        """
+        if not effective_model:
+            return False
+        return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
+
+    def _api_version_supports_structured_output(self) -> bool:
+        """Whether the configured api-version reaches the structured-output floor.
+
+        Azure documents ``2024-08-01-preview`` as the first api-version supporting
+        structured outputs, and whether an older version rejects ``response_format`` or
+        silently ignores it is not documented. The request therefore never carries
+        ``response_format`` below the floor, which is safe under either behavior.
+
+        The comparison assumes the documented api-version form, a zero-padded
+        ``YYYY-MM-DD`` date optionally suffixed ``-preview``; over that form comparing
+        the leading date lexicographically is exact. The GA ``v1`` literal sorts above
+        the floor, which matches Azure documenting ``v1`` as supporting structured
+        outputs. This is not a validator: a value of any other shape is not classified
+        reliably, and the service rejects an api-version it does not recognize.
+        """
+        if not self.api_version:
+            return False
+        return self.api_version[:10] >= _MIN_STRUCTURED_OUTPUT_API_VERSION
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -130,10 +236,13 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         tools : Optional[List]
             List of tools that can be called by the model
         output_schema : OutputSchema | None
-            Rejected when non-``None``: this connection has no native structured-output
-            translation, so callers stay on the prompt-engineering fallback.
-            Declaring the parameter keeps a caller-supplied schema out of
-            ``**kwargs``, which is forwarded to the provider SDK.
+            The schema the response should conform to, or ``None`` for an unconstrained
+            response. Native structured output is applied only for a ``BaseModel``
+            schema, on a deployment whose backing model the provider documents as
+            capable, and with an api-version that supports it; a ``RowTypeInfo`` schema,
+            an incapable model, or an older api-version keeps the prompt-engineering
+            fallback. Where native output applies, a caller-supplied
+            ``response_format`` conflicts with it and raises ``ValueError``.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
@@ -143,7 +252,6 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message
         """
-        self._reject_unsupported_output_schema(output_schema)
         tool_specs = None
         if tools is not None:
             tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]
@@ -164,6 +272,31 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
                 f"Setup field instead."
             )
             raise ValueError(msg)
+
+        # Capability belongs to the model backing the deployment, so it is the input to
+        # the check. The deployment name is chosen by the user and carries none.
+        if (
+            output_schema is not None
+            and self.supports_native_structured_output(model_of_azure_deployment)
+            and self._api_version_supports_structured_output()
+        ):
+            response_format = _native_response_format(output_schema)
+            if response_format is not None:
+                caller_response_format = (
+                    "response_format" in kwargs
+                    or "response_format" in additional_kwargs
+                )
+                if caller_response_format:
+                    msg = (
+                        f"The {response_format['json_schema']['name']} output schema "
+                        f"is sent as response_format on deployment "
+                        f"'{azure_deployment}', so response_format must not also be "
+                        f"passed as a kwarg or in additional_kwargs. Remove that "
+                        f"value, or omit output_schema to set response_format "
+                        f"directly."
+                    )
+                    raise ValueError(msg)
+                kwargs["response_format"] = response_format
 
         response = self.client.chat.completions.create(
             # Azure OpenAI APIs use Azure deployment name as the model parameter
