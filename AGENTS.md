@@ -25,7 +25,7 @@ Java tests use JUnit 5 with AssertJ and Mockito. Python tests use pytest; integr
 
 ## Commit & Pull Request Guidelines
 
-Use concise subjects with bracketed components, matching existing history, such as `[python] Admit bytes in memory values` or `[api][java] Add event constants`. For nontrivial behavior changes, open or link a GitHub issue before the PR. PR titles should include relevant components like `[api]`, `[runtime]`, `[java]`, `[python]`, or `[hotfix]`; describe the change, test evidence, and any compatibility impact.
+Use concise subjects with bracketed components, matching existing history, such as `[python] Admit bytes in memory values` or `[api][java] Add event constants`. For nontrivial behavior changes, open or link a GitHub issue before the PR. PR titles should include relevant components like `[api]`, `[runtime]`, `[java]`, `[python]`, or `[hotfix]`; describe the change, test evidence, and any compatibility impact. Answer the PR template's generative-AI question, and when such tooling was used, include a `Generated-by: <tool name and version>` line in the PR description, per the [ASF generative tooling guidance](https://www.apache.org/legal/generative-tooling.html).
 
 ## Code Review
 
