@@ -63,6 +63,15 @@ public final class ActionSpec {
             throw new IllegalArgumentException(
                     "'trigger_conditions' is required and must contain at least one entry");
         }
+        for (int index = 0; index < triggerConditions.size(); index++) {
+            String triggerCondition = triggerConditions.get(index);
+            if (triggerCondition == null || triggerCondition.isBlank()) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "'trigger_conditions' entry #%d for action '%s' must be a non-blank string",
+                                index + 1, name));
+            }
+        }
         this.name = name;
         this.function = function;
         this.triggerConditions = triggerConditions;

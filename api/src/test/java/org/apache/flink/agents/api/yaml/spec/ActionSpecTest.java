@@ -23,6 +23,8 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.apache.flink.agents.api.yaml.Language;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -64,13 +66,33 @@ class ActionSpecTest {
     }
 
     @Test
-    void preservesInvalidEntriesForPlan() throws Exception {
-        ActionSpec invalidEntries =
-                M.readValue(
-                        "name: a\nfunction: x:y\ntrigger_conditions: ['  ', null]\n",
-                        ActionSpec.class);
-
-        assertThat(invalidEntries.getTriggerConditions()).containsExactly("  ", null);
+    void rejectsNullOrBlankEntries() {
+        assertThatThrownBy(
+                        () ->
+                                M.readValue(
+                                        "name: a\nfunction: x:y\ntrigger_conditions: ['  ']\n",
+                                        ActionSpec.class))
+                .rootCause()
+                .hasMessageContaining("entry #1")
+                .hasMessageContaining("non-blank string");
+        assertThatThrownBy(
+                        () ->
+                                M.readValue(
+                                        "name: a\nfunction: x:y\ntrigger_conditions: [input, null]\n",
+                                        ActionSpec.class))
+                .rootCause()
+                .hasMessageContaining("entry #2")
+                .hasMessageContaining("non-blank string");
+        assertThatThrownBy(
+                        () ->
+                                new ActionSpec(
+                                        "a",
+                                        "x:y",
+                                        Arrays.asList("input", null),
+                                        null,
+                                        Language.JAVA))
+                .hasMessageContaining("entry #2")
+                .hasMessageContaining("non-blank string");
     }
 
     @Test

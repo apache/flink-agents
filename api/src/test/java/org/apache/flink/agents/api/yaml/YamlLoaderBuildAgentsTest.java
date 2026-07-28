@@ -233,8 +233,8 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
-    void defersEntryValidationToPlan(@TempDir Path tmp) throws Exception {
-        Path file = tmp.resolve("deferred_trigger_validation.yaml");
+    void rejectsNullOrBlankConditionEntry(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("invalid_trigger_condition.yaml");
         Files.writeString(
                 file,
                 "agents:\n"
@@ -244,8 +244,11 @@ class YamlLoaderBuildAgentsTest {
                         + "        function: pkg.mod:fn\n"
                         + "        trigger_conditions: ['  ', null]\n");
 
-        Agent agent = YamlLoader.buildAgents(file).getAgents().get("a");
-        assertThat(agent.getActions().get("invalid_entries").f0).containsExactly("  ", null);
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .rootCause()
+                .hasMessageContaining("trigger_conditions")
+                .hasMessageContaining("entry #1")
+                .hasMessageContaining("non-blank string");
     }
 
     @Test
