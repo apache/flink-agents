@@ -159,6 +159,31 @@ def test_build_agents_from_single_agent_yaml() -> None:
     assert shared_actions == {}
 
 
+def test_loader_resolves_exact_event_aliases(tmp_path: Path) -> None:
+    yaml_text = (
+        "agents:\n"
+        "  - name: a\n"
+        "    actions:\n"
+        "      - name: mixed\n"
+        f"        function: {_TARGETS_MODULE}:increment\n"
+        "        trigger_conditions:\n"
+        "          - input\n"
+        "          - \"attributes.kind == 'input'\"\n"
+        "          - \"'input'\"\n"
+    )
+    path = tmp_path / "mixed_selectors.yaml"
+    path.write_text(yaml_text)
+
+    agents, _, _ = build_agents(path)
+
+    trigger_conditions, _, _ = agents["a"].actions["mixed"]
+    assert trigger_conditions == [
+        InputEvent.EVENT_TYPE,
+        "attributes.kind == 'input'",
+        "'input'",
+    ]
+
+
 def test_build_agents_resolves_event_alias_and_clazz_alias() -> None:
     agents, _, _ = build_agents(_FIXTURES / "with_descriptors.yaml")
     agent = agents["chat_agent"]

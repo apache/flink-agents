@@ -71,6 +71,27 @@
             <artifactId>flink-python</artifactId>
             <version>${flink.version}</version>
         </dependency>
+
+        <!-- Runtime logging implementations are provided by deployment environments,
+             so the in-process E2E test harness supplies them explicitly. -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>${log4j2.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>${log4j2.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j-impl</artifactId>
+            <version>${log4j2.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

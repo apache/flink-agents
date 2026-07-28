@@ -40,7 +40,7 @@
         "module" : "flink_agents.plan.tests.test_agent_plan_cross_language",
         "qualname" : "_dummy_action"
       },
-      "trigger_conditions" : [ "_input_event" ],
+      "trigger_conditions" : [ "_input_event", "attributes.ready == true" ],
       "config" : null
     }
   },

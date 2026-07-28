@@ -80,9 +80,9 @@ class ConditionExpressionCompilerTest {
 
     @Test
     void supportsDynamicAttributeTypes() throws CelEvaluationException {
-        CelRuntime.Program program = compileValidated("id > 0").program();
+        CelRuntime.Program program = compileValidated("score > 0").program();
 
-        assertThat(program.eval(Map.of("id", 42L))).isEqualTo(true);
+        assertThat(program.eval(Map.of("score", 42L))).isEqualTo(true);
     }
 
     @Test

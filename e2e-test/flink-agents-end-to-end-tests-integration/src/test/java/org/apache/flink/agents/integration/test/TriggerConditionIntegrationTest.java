@@ -31,6 +31,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Test;
 
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -149,11 +150,11 @@ public class TriggerConditionIntegrationTest {
         assertThat(outputs).containsExactly("yaml-hyphen:ok");
     }
 
-    private static Path yamlFixture(String name) {
+    private static Path yamlFixture(String name) throws URISyntaxException {
         URL resource =
                 TriggerConditionIntegrationTest.class.getClassLoader().getResource("yaml/" + name);
         Objects.requireNonNull(resource, "fixture not found on classpath: yaml/" + name);
-        return Paths.get(resource.getPath());
+        return Paths.get(resource.toURI());
     }
 
     private static List<String> runPayloads(List<Object> inputs, Agent agent) throws Exception {

@@ -17,7 +17,6 @@
  */
 package org.apache.flink.agents.resource.test;
 
-import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -31,7 +30,10 @@ public class JavaAgentWithPythonActionAgent extends Agent {
     public JavaAgentWithPythonActionAgent() {
         addAction(
                 "multiply_by_two",
-                new String[] {InputEvent.EVENT_TYPE},
+                new String[] {
+                    "type == EventType.InputEvent && input > 1 && input < 7",
+                    "type == EventType.InputEvent && input > 3 && input < 9"
+                },
                 new PythonFunction(PYTHON_MODULE, PYTHON_QUALNAME),
                 null);
     }
