@@ -122,8 +122,8 @@ final class ConditionEvaluator {
     }
 
     /**
-     * Normalizes Java values for CEL, converting nulls, numbers, collections, and
-     * Jackson-serializable objects while preserving CEL-native values.
+     * Normalizes Java values for condition evaluation, converting nulls, numbers, collections, and
+     * Jackson-serializable objects while preserving evaluator-native values.
      */
     @SuppressWarnings("unchecked")
     private static Object normalizeValue(Object value) {
