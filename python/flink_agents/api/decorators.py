@@ -29,7 +29,9 @@ def _validate_target(target: Function, owner: str) -> None:
     """Reject targets with empty required identifiers, attributed to ``owner``."""
     if isinstance(target, PythonFunction):
         if not target.module or not target.qualname:
-            msg = f"PythonFunction target on '{owner}' must set both module and qualname"
+            msg = (
+                f"PythonFunction target on '{owner}' must set both module and qualname"
+            )
             raise ValueError(msg)
     elif isinstance(target, JavaFunction):
         if not target.qualname or not target.method_name:
@@ -43,14 +45,16 @@ def action(
 ) -> Callable:
     """Decorator for marking a function as an agent action.
 
-    Each argument is an event-type name string that this action responds to.
-    Multiple entries combine with OR semantics — the action triggers if any
-    one matches.
+    Each trigger condition is an event-type name or Boolean condition
+    expression. Multiple conditions combine with OR semantics. To combine an
+    event type and an attribute predicate with AND, place both in one
+    expression, such as ``type == EventType.InputEvent && score > 5``.
+    Expression validation occurs when the plan is applied.
 
     Parameters
     ----------
     trigger_conditions : str
-        Event-type name strings that this action responds to.
+        Raw event-type names or Boolean condition expressions.
     target : Function, optional
         Cross-language function descriptor dispatched instead of the
         decorated body. The body becomes a stub — raise
@@ -63,22 +67,14 @@ def action(
 
     Raises:
     ------
-    AssertionError
-        If no conditions are given or any entry is not a non-empty string.
     TypeError
-        If ``target`` is provided but is not a :class:`Function` descriptor.
+        If an entry is not a string, or ``target`` is not a
+        :class:`Function` descriptor.
     """
-    assert len(trigger_conditions) > 0, (
-        "action must have at least one trigger condition (event-type name)"
-    )
-
     for entry in trigger_conditions:
-        assert isinstance(entry, str), (
-            f"action trigger condition must be a string, got {entry!r}"
-        )
-        assert entry != "", (
-            f"action trigger condition must be non-empty, got {entry!r}"
-        )
+        if not isinstance(entry, str):
+            msg = f"action trigger condition must be a string, got {entry!r}"
+            raise TypeError(msg)
 
     if target is not None and not isinstance(target, Function):
         msg = (
