@@ -20,6 +20,7 @@ import logging
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
 from flink_agents.api.agents.react_agent import OutputSchema
@@ -124,7 +125,7 @@ def test_action_deserialize(action: Action) -> None:
         expected_json = f.read()
     action = Action.model_validate_json(expected_json)
     assert action.name == "legal"
-    assert action.trigger_conditions== ["_input_event"]
+    assert action.trigger_conditions == ["_input_event"]
     func = action.exec
     assert func.module == "flink_agents.plan.tests.test_action"
     assert func.qualname == "legal_signature"
@@ -207,3 +208,32 @@ def test_action_deserialize_python_config_preserves_plain_list() -> None:
     )
     action = Action.model_validate_json(json_str)
     assert action.config == {"hosts": ["host-a", "host-b", "host-c"]}
+
+
+@pytest.mark.parametrize(
+    ("trigger_conditions", "message"),
+    [
+        ([], "must have at least one trigger condition"),
+        (["  "], "Invalid trigger condition #1"),
+    ],
+)
+def test_action_rejects_empty_or_blank_trigger_conditions(
+    trigger_conditions: list[str], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        Action(
+            name="invalid",
+            exec=PythonFunction.from_callable(legal_signature),
+            trigger_conditions=trigger_conditions,
+        )
+
+
+def test_action_rejects_non_string_trigger_condition() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        Action(
+            name="invalid",
+            exec=PythonFunction.from_callable(legal_signature),
+            trigger_conditions=[42],  # type: ignore[list-item]
+        )
+
+    assert exc_info.value.errors()[0]["loc"] == ("trigger_conditions", 0)

@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -23,8 +24,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+from flink_agents.api.agents.agent import Agent
+from flink_agents.api.events.event import Event
+from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.remote_execution_environment import (
+    RemoteAgentBuilder,
     RemoteExecutionEnvironment,
 )
 
@@ -38,6 +43,30 @@ test_data = {
         "debug": True,
     }
 }
+
+
+def _action(event: Event, ctx: RunnerContext) -> None:
+    pass
+
+
+def _agent_with_conditions(trigger_conditions: list[str]) -> Agent:
+    agent = Agent()
+    agent.add_action(
+        name="handle",
+        trigger_conditions=trigger_conditions,
+        func=_action,
+    )
+    return agent
+
+
+def _remote_builder() -> RemoteAgentBuilder:
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+    ):
+        remote_env = RemoteExecutionEnvironment(env=MagicMock())
+    return remote_env.from_datastream(
+        input=MagicMock(), key_selector=lambda record: record["key"]
+    )
 
 
 def test_remote_execution_environment_load_config_file() -> None:
@@ -220,6 +249,83 @@ def test_apply_by_unknown_name_errors() -> None:
         builder.apply("ghost")
 
 
+def test_apply_sends_plan_to_java_validator() -> None:
+    builder = _remote_builder()
+    agent = _agent_with_conditions(["type == EventType.InputEvent && input > 2"])
+
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.invoke_method",
+        return_value=None,
+    ) as invoke:
+        returned = builder.apply(agent)
+
+    assert returned is builder
+    invoke.assert_called_once()
+    _, class_name, method_name, args, parameter_types = invoke.call_args.args
+    assert class_name == "org.apache.flink.agents.plan.AgentPlanJsonValidator"
+    assert method_name == "validateAgentPlan"
+    assert parameter_types == ["java.lang.String"]
+    payload = json.loads(args[0])
+    assert payload["actions"]["handle"]["trigger_conditions"] == [
+        "type == EventType.InputEvent && input > 2"
+    ]
+
+
+def test_apply_surfaces_java_error_and_allows_retry() -> None:
+    builder = _remote_builder()
+    agent = _agent_with_conditions(["type =="])
+    error_message = (
+        "Invalid trigger condition #1 for action 'handle' from source "
+        '"type ==": syntax error'
+    )
+
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.invoke_method",
+        side_effect=[error_message, None],
+    ) as invoke:
+        with pytest.raises(ValueError) as error:
+            builder.apply(agent)
+        returned = builder.apply(agent)
+
+    assert str(error.value) == error_message
+    assert returned is builder
+    assert invoke.call_count == 2
+
+
+def test_apply_wraps_java_validation_failure() -> None:
+    builder = _remote_builder()
+    agent = _agent_with_conditions(["_input_event"])
+    bridge_error = RuntimeError("gateway failed")
+
+    with (
+        patch(
+            "flink_agents.runtime.remote_execution_environment.invoke_method",
+            side_effect=bridge_error,
+        ),
+        pytest.raises(
+            RuntimeError, match="Java AgentPlan JSON validation failed"
+        ) as error,
+    ):
+        builder.apply(agent)
+
+    assert error.value.__cause__ is bridge_error
+
+
+def test_apply_rejects_structure_before_java_validation() -> None:
+    builder = _remote_builder()
+    agent = _agent_with_conditions(["   "])
+
+    with (
+        patch(
+            "flink_agents.runtime.remote_execution_environment.invoke_method"
+        ) as invoke,
+        pytest.raises(ValueError, match="Invalid trigger condition #1"),
+    ):
+        builder.apply(agent)
+
+    invoke.assert_not_called()
+
+
 def _verify_config(config: AgentConfiguration) -> None:
     assert config.get_str("database.host") == "localhost"
     assert config.get_int("database.port") == 5432
@@ -228,7 +334,7 @@ def _verify_config(config: AgentConfiguration) -> None:
     assert config.get_bool("debug") is True
 
 
-def test_to_datastream_submits_preflight_validated_plan_json() -> None:
+def test_to_datastream_submits_java_validated_plan_json() -> None:
     config = AgentConfiguration({"plan.version": "validated"})
     builder = RemoteAgentBuilder(
         input=MagicMock(), config=config, resources={}, agents={}

@@ -103,9 +103,7 @@ final class ConditionEvaluator {
         Map<String, Object> conditionVariables = new HashMap<>();
         conditionVariables.put("type", event.getType());
         conditionVariables.put("EventType", EventType.allConstants());
-        if (event.getId() != null) {
-            conditionVariables.put("id", event.getId().toString());
-        }
+        conditionVariables.put("id", event.getId().toString());
 
         Map<String, Object> attrs = event.getAttributes();
         Map<String, Object> normalizedAttributes = new HashMap<>();

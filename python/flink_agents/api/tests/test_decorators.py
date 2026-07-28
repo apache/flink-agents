@@ -32,34 +32,58 @@ def test_action_decorator() -> None:
         ctx.send_event(OutputEvent(output=input))
 
     assert hasattr(forward_action, "_trigger_conditions")
-    listen_events = forward_action._trigger_conditions
-    assert listen_events == (InputEvent.EVENT_TYPE,)
+    trigger_conditions = forward_action._trigger_conditions
+    assert trigger_conditions == (InputEvent.EVENT_TYPE,)
 
 
-def test_action_decorator_listen_multi_events() -> None:
-    @action(EventType.InputEvent, EventType.OutputEvent)
+def test_action_decorator_preserves_mixed_conditions() -> None:
+    @action(
+        EventType.InputEvent,
+        EventType.OutputEvent,
+        "attributes.ready == true",
+    )
     def forward_action(event: Event, ctx: RunnerContext) -> None:
         input = InputEvent.from_event(event).input
         ctx.send_event(OutputEvent(output=input))
 
     assert hasattr(forward_action, "_trigger_conditions")
-    listen_events = forward_action._trigger_conditions
-    assert listen_events == (InputEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE)
+    trigger_conditions = forward_action._trigger_conditions
+    assert trigger_conditions == (
+        InputEvent.EVENT_TYPE,
+        OutputEvent.EVENT_TYPE,
+        "attributes.ready == true",
+    )
 
 
-def test_action_decorator_listen_no_event() -> None:
-    with pytest.raises(AssertionError):
+@pytest.mark.parametrize(
+    "conditions",
+    [
+        pytest.param((), id="empty"),
+        pytest.param((" ",), id="blank"),
+    ],
+)
+def test_action_decorator_defers_structural_validation(
+    conditions: tuple[str, ...],
+) -> None:
+    @action(*conditions)
+    def forward_action(event: Event, ctx: RunnerContext) -> None:
+        input = InputEvent.from_event(event).input
+        ctx.send_event(OutputEvent(output=input))
 
-        @action()
-        def forward_action(event: Event, ctx: RunnerContext) -> None:
-            input = InputEvent.from_event(event).input
-            ctx.send_event(OutputEvent(output=input))
+    assert forward_action._trigger_conditions == conditions
 
 
-def test_action_decorator_listen_non_string_type() -> None:
-    with pytest.raises(AssertionError):
+@pytest.mark.parametrize(
+    "condition",
+    [
+        pytest.param(InputEvent, id="event-class"),
+        pytest.param(42, id="integer"),
+    ],
+)
+def test_action_decorator_rejects_non_string_conditions(condition: object) -> None:
+    with pytest.raises(TypeError, match="must be a string"):
 
-        @action(InputEvent)  # type: ignore[arg-type]
+        @action(condition)  # type: ignore[arg-type]
         def forward_action(event: Event, ctx: RunnerContext) -> None:
             input = InputEvent.from_event(event).input
             ctx.send_event(OutputEvent(output=input))
@@ -74,25 +98,6 @@ def test_action_decorator_with_string_identifier() -> None:
 
     assert hasattr(my_handler, "_trigger_conditions")
     assert my_handler._trigger_conditions == ("MyCustomEvent",)
-
-
-def test_action_decorator_multiple_strings() -> None:
-    """Test that @action accepts multiple string identifiers."""
-
-    @action("_input_event", "AnotherEvent")
-    def mixed_handler(event: Event, ctx: RunnerContext) -> None:
-        pass
-
-    assert mixed_handler._trigger_conditions == ("_input_event", "AnotherEvent")
-
-
-def test_action_decorator_rejects_invalid_types() -> None:
-    """Test that @action rejects non-string arguments."""
-    with pytest.raises(AssertionError):
-
-        @action(42)  # type: ignore[arg-type]
-        def bad_handler(event: Event, ctx: RunnerContext) -> None:
-            pass
 
 
 def _java_target() -> JavaFunction:

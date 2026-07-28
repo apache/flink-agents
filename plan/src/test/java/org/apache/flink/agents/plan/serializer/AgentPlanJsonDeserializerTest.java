@@ -18,7 +18,10 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -86,6 +89,25 @@ public class AgentPlanJsonDeserializerTest {
         assertEquals(1.5, configData.get("key2"));
         assertEquals(true, configData.get("key3"));
         assertEquals("v1", configData.get("key4"));
+    }
+
+    @Test
+    public void testInvalidConditionIsJsonMappingError() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode plan = mapper.readTree(Utils.readJsonFromResource("agent_plans/agent_plan.json"));
+        ((ArrayNode) plan.get("actions").get("first_action").get("trigger_conditions"))
+                .removeAll()
+                .add("type ==");
+
+        JsonMappingException error =
+                assertThrows(
+                        JsonMappingException.class,
+                        () -> mapper.readValue(mapper.writeValueAsString(plan), AgentPlan.class));
+
+        assertInstanceOf(IllegalArgumentException.class, error.getCause());
+        assertTrue(error.getOriginalMessage().contains("trigger condition #1"));
+        assertTrue(error.getOriginalMessage().contains("action 'first_action'"));
+        assertTrue(error.getOriginalMessage().contains("\"type ==\""));
     }
 
     @Test

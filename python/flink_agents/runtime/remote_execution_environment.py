@@ -45,8 +45,8 @@ from flink_agents.plan.configuration import AgentConfiguration
 
 _CONFIG_FILE_NAME = "config.yaml"
 _LEGACY_CONFIG_FILE_NAME = "flink-conf.yaml"
-_AGENT_PLAN_PREFLIGHT_CLASS = "org.apache.flink.agents.plan.AgentPlanPreflight"
-_AGENT_PLAN_PREFLIGHT_METHOD = "findValidationError"
+_AGENT_PLAN_JSON_VALIDATOR_CLASS = "org.apache.flink.agents.plan.AgentPlanJsonValidator"
+_AGENT_PLAN_JSON_VALIDATOR_METHOD = "validateAgentPlan"
 
 
 class RemoteAgentBuilder(AgentBuilder):
@@ -112,23 +112,23 @@ class RemoteAgentBuilder(AgentBuilder):
         agent_plan_json = AgentPlan.from_agent(agent, self.__config).model_dump_json(
             serialize_as_any=True
         )
-        self.__preflight(agent_plan_json)
+        self.__validate_agent_plan_json(agent_plan_json)
         self.__agent_plan_json = agent_plan_json
 
         return self
 
     @staticmethod
-    def __preflight(agent_plan_json: str) -> None:
+    def __validate_agent_plan_json(agent_plan_json: str) -> None:
         try:
             error_message = invoke_method(
                 None,
-                _AGENT_PLAN_PREFLIGHT_CLASS,
-                _AGENT_PLAN_PREFLIGHT_METHOD,
+                _AGENT_PLAN_JSON_VALIDATOR_CLASS,
+                _AGENT_PLAN_JSON_VALIDATOR_METHOD,
                 [agent_plan_json],
                 ["java.lang.String"],
             )
         except Exception as error:
-            message = "Java AgentPlan preflight failed."
+            message = "Java AgentPlan JSON validation failed."
             raise RuntimeError(message) from error
 
         if error_message is not None:

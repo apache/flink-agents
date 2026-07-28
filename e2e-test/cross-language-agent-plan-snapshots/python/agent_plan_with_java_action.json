@@ -57,6 +57,8 @@
   },
   "resource_providers": {},
   "config": {
-    "conf_data": {}
+    "conf_data": {
+      "action.trigger-condition.evaluate-failure-strategy": "FAIL"
+    }
   }
 }

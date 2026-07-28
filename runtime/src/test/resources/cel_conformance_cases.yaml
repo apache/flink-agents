@@ -256,9 +256,8 @@
 
 # ----- Nested has() short-circuit (has(a.b.c) desugaring) -----
 # has(a.b.c) desugars to has(a) && has(a.b) && has(a.b.c): a missing intermediate (or a
-# wholly-absent root) short-circuits to false in BOTH engines, never throwing "no such key".
-# Without this, cel-java threw on the intermediate select and WARN_AND_SKIP turned it into a
-# silent missed trigger, while cel-python returned false — a cross-language divergence.
+# wholly-absent root) must short-circuit to false rather than throwing "no such key".
+# Otherwise WARN_AND_SKIP would turn the evaluation error into a silent missed trigger.
 
 - name: has_nested_intermediate_missing_returns_false
   condition: 'has(attributes.meta.source)'

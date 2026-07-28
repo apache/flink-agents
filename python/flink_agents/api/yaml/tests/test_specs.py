@@ -212,6 +212,22 @@ def test_action_spec_rejects_empty_trigger_conditions() -> None:
         ActionSpec.model_validate({"name": "a1", "trigger_conditions": []})
 
 
+def test_action_spec_rejects_blank_trigger_conditions() -> None:
+    with pytest.raises(ValidationError):
+        ActionSpec.model_validate({"name": "a1", "trigger_conditions": [" "]})
+
+
+def test_action_spec_defers_cel_validation() -> None:
+    raw_entries = ["input", " attributes.ready == true ", "type =="]
+    spec = ActionSpec.model_validate({"name": "a1", "trigger_conditions": raw_entries})
+    assert spec.trigger_conditions == raw_entries
+
+
+def test_action_spec_rejects_non_string_trigger_condition() -> None:
+    with pytest.raises(ValidationError):
+        ActionSpec.model_validate({"name": "a1", "trigger_conditions": ["input", 42]})
+
+
 def test_action_spec_defaults() -> None:
     spec = ActionSpec.model_validate(
         {"name": "a1", "trigger_conditions": ["input"]}

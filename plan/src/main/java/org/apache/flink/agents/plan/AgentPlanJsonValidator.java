@@ -32,7 +32,7 @@ import javax.annotation.Nullable;
  * to propagate to the caller.
  */
 @Internal
-public final class AgentPlanPreflight {
+public final class AgentPlanJsonValidator {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -42,7 +42,7 @@ public final class AgentPlanPreflight {
      * @return {@code null} when valid, otherwise a display-ready user-error message
      */
     @Nullable
-    public static String findValidationError(String agentPlanJson) {
+    public static String validateAgentPlan(String agentPlanJson) {
         try {
             MAPPER.readValue(agentPlanJson, AgentPlan.class);
             return null;
@@ -54,5 +54,5 @@ public final class AgentPlanPreflight {
         }
     }
 
-    private AgentPlanPreflight() {}
+    private AgentPlanJsonValidator() {}
 }

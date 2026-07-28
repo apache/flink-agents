@@ -195,20 +195,6 @@ class ConditionEvaluatorTest {
     }
 
     @Test
-    void missingEventIdDoesNotAbortVariableBuilding() throws Exception {
-        String source = "score > 80";
-        Event event = Event.fromJson("{\"type\":\"test\",\"attributes\":{\"score\":90}}");
-        EvaluatorHarness testEvaluator =
-                new EvaluatorHarness(List.of(source), ConditionEvaluationFailureStrategy.FAIL);
-
-        Map<String, Object> conditionVariables =
-                testEvaluator.buildConditionVariables(event, source);
-
-        assertThat(conditionVariables).isNotNull().doesNotContainKey("id");
-        assertThat(testEvaluator.evaluate(source, event)).isTrue();
-    }
-
-    @Test
     void eventIdWinsWhileAttributeIdRemainsExplicitlyAccessible() {
         UUID eventId = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
         List<String> sources =

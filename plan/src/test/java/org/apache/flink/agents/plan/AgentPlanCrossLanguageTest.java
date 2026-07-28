@@ -23,8 +23,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -98,7 +101,10 @@ class AgentPlanCrossLanguageTest {
     private static AgentPlan compileWithPythonAction() throws Exception {
         Agent agent = new Agent();
         agent.addAction(
-                "handle", new String[] {InputEvent.EVENT_TYPE}, pythonFunctionDescriptor(), null);
+                "handle",
+                new String[] {InputEvent.EVENT_TYPE, "attributes.ready == true"},
+                pythonFunctionDescriptor(),
+                null);
         return new AgentPlan(agent);
     }
 
@@ -137,6 +143,8 @@ class AgentPlanCrossLanguageTest {
         assertThat(planFn.getModule())
                 .isEqualTo("flink_agents.plan.tests.test_agent_plan_cross_language");
         assertThat(planFn.getQualName()).isEqualTo("_dummy_action");
+        assertThat(action.getTriggerConditions())
+                .containsExactly(InputEvent.EVENT_TYPE, "attributes.ready == true");
     }
 
     @Test
@@ -217,6 +225,10 @@ class AgentPlanCrossLanguageTest {
         assertThat(pf.getModule())
                 .isEqualTo("flink_agents.plan.tests.test_agent_plan_cross_language");
         assertThat(pf.getQualName()).isEqualTo("_dummy_action");
+        assertThat(action.getTriggerConditions())
+                .containsExactly(InputEvent.EVENT_TYPE, "attributes.ready == true");
+        assertThat(action.getClassifiedTriggerConditions().get(1))
+                .isInstanceOf(ExpressionCondition.class);
     }
 
     // ── Cross-language snapshot (Java writes / Python reads) ───────────────
@@ -265,5 +277,13 @@ class AgentPlanCrossLanguageTest {
         JavaFunction jf = (JavaFunction) handle.getExec();
         assertThat(jf.getQualName()).isEqualTo("com.example.Handlers");
         assertThat(jf.getMethodName()).isEqualTo("handle");
+        assertThat(handle.getTriggerConditions())
+                .containsExactly(InputEvent.EVENT_TYPE, "attributes.ready == true");
+        assertThat(handle.getClassifiedTriggerConditions().get(1))
+                .isInstanceOf(ExpressionCondition.class);
+        assertThat(
+                        restored.getConfig()
+                                .get(AgentConfigOptions.CONDITION_EVALUATION_FAILURE_STRATEGY))
+                .isEqualTo(ConditionEvaluationFailureStrategy.FAIL);
     }
 }

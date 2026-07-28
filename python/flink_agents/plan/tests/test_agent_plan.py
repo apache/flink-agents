@@ -49,6 +49,7 @@ from flink_agents.api.vector_stores.vector_store import (
     BaseVectorStore,
     Document,
 )
+from flink_agents.plan.actions.action import Action
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
@@ -69,15 +70,30 @@ class AgentForTest(Agent):
 def test_from_agent():
     agent = AgentForTest()
     agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())
-    actions = agent_plan.get_actions(InputEvent.EVENT_TYPE)
-    assert len(actions) == 1
-    action = actions[0]
+    action = agent_plan.actions["increment"]
     assert action.name == "increment"
     func = action.exec
     assert isinstance(func, PythonFunction)
     assert func.module == "flink_agents.plan.tests.test_agent_plan"
     assert func.qualname == "AgentForTest.increment"
     assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
+
+
+class RawConditionAgent(Agent):
+    @action(EventType.InputEvent, " attributes.ready == true ", "type ==")
+    @staticmethod
+    def handle(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+
+def test_from_agent_preserves_raw_conditions() -> None:
+    plan = AgentPlan.from_agent(RawConditionAgent(), AgentConfiguration())
+
+    assert plan.actions["handle"].trigger_conditions == [
+        InputEvent.EVENT_TYPE,
+        " attributes.ready == true ",
+        "type ==",
+    ]
 
 
 class InvalidAgent(Agent):
@@ -119,13 +135,12 @@ def test_conventional_staticmethod_outer_decorator_order_is_registered() -> None
     plan = AgentPlan.from_agent(
         AgentWithConventionalDecoratorOrder(), AgentConfiguration()
     )
-    actions = plan.get_actions(InputEvent.EVENT_TYPE)
-    assert len(actions) == 1, (
+    assert "handle" in plan.actions, (
         "Action defined with `@staticmethod` outer / `@action` inner was silently "
         "dropped — `_get_actions` should unwrap the staticmethod before checking "
         "for `_trigger_conditions`."
     )
-    assert actions[0].name == "handle"
+    assert plan.actions["handle"].trigger_conditions == [InputEvent.EVENT_TYPE]
 
 
 class _BaseAgentWithInheritedAction(Agent):
@@ -355,6 +370,26 @@ def test_agent_plan_serialize(agent_plan: AgentPlan) -> None:
     actual = json.loads(json_value)
     expected = json.loads(expected_json)
     assert actual == expected
+
+
+def test_plan_serializes_actions_without_legacy_index() -> None:
+    action = Action(
+        name="a",
+        exec=PythonFunction.from_callable(MyAgent.first_action),
+        trigger_conditions=[InputEvent.EVENT_TYPE, "attributes.ready == true"],
+    )
+    plan = AgentPlan(
+        actions={"a": action},
+        resource_providers={},
+        config=AgentConfiguration(),
+    )
+    payload = json.loads(plan.model_dump_json(serialize_as_any=True))
+
+    assert payload["actions"]["a"]["trigger_conditions"] == [
+        InputEvent.EVENT_TYPE,
+        "attributes.ready == true",
+    ]
+    assert "actions_by_event" not in payload
 
 
 def test_agent_plan_deserialize(agent_plan: AgentPlan) -> None:
@@ -589,32 +624,3 @@ def test_warns_for_returning_action_added_via_add_action(
         and "ignored" in record.getMessage().lower()
         for record in caplog.records
     )
-
-
-# ── String identifier tests ──────────────────────────────────────────────
-
-
-class StringIdAgent(Agent):
-    """Agent with actions listening to string identifiers."""
-
-    @action("CustomEvent")
-    @staticmethod
-    def handle_custom(event: Event, ctx: RunnerContext) -> None:
-        ctx.send_event(OutputEvent(output=event.get_attr("msg")))
-
-
-def test_from_agent_with_string_identifier() -> None:
-    """Test that AgentPlan correctly handles string identifiers."""
-    agent = StringIdAgent()
-    agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())
-
-    # The string identifier should be preserved as-is
-    actions = agent_plan.get_actions("CustomEvent")
-    assert len(actions) == 1
-    assert actions[0].name == "handle_custom"
-    assert "CustomEvent" in actions[0].trigger_conditions
-
-    # Verify serialization roundtrip preserves the string identifier
-    json_str = agent_plan.model_dump_json(serialize_as_any=True)
-    restored = AgentPlan.model_validate_json(json_str)
-    assert restored.get_actions("CustomEvent")[0].name == "handle_custom"
