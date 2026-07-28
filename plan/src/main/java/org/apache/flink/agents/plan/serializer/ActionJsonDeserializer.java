@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.serializer;
 
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
@@ -103,6 +104,8 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
 
         try {
             return new Action(name, func, triggerConditions, config);
+        } catch (IllegalArgumentException e) {
+            throw JsonMappingException.from(jsonParser, e.getMessage(), e);
         } catch (Exception e) {
             throw new IOException("Failed to create Action '" + name + "': " + e.getMessage(), e);
         }

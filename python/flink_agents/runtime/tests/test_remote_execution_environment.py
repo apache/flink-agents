@@ -226,3 +226,29 @@ def _verify_config(config: AgentConfiguration) -> None:
     assert config.get_str("api.endpoint") == "/api/v1"
     assert config.get_float("api.timeout") == 30.0
     assert config.get_bool("debug") is True
+
+
+def test_to_datastream_submits_preflight_validated_plan_json() -> None:
+    config = AgentConfiguration({"plan.version": "validated"})
+    builder = RemoteAgentBuilder(
+        input=MagicMock(), config=config, resources={}, agents={}
+    )
+    agent = _agent_with_conditions(["_input_event"])
+
+    with (
+        patch(
+            "flink_agents.runtime.remote_execution_environment.invoke_method",
+            side_effect=[None, MagicMock()],
+        ) as invoke,
+        patch("flink_agents.runtime.remote_execution_environment.DataStream"),
+    ):
+        builder.apply(agent)
+        validated_plan_json = invoke.call_args_list[0].args[3][0]
+        config.set_str("plan.version", "mutated")
+        builder.to_datastream()
+
+    submitted_plan_json = invoke.call_args_list[1].args[3][1]
+    assert submitted_plan_json == validated_plan_json
+    assert json.loads(submitted_plan_json)["config"]["conf_data"]["plan.version"] == (
+        "validated"
+    )
