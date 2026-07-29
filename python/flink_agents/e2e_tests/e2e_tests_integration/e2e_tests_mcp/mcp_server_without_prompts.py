@@ -23,7 +23,8 @@ from mcp.server.fastmcp import FastMCP
 dotenv.load_dotenv()
 
 # Create MCP server
-mcp = FastMCP("MathServer", port = 8001)
+mcp = FastMCP("MathServer", port=8001)
+
 
 @mcp.tool()
 async def add(a: int, b: int) -> int:

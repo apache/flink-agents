@@ -52,6 +52,44 @@ public class FlinkAgentsMetricGroupImplTest {
     }
 
     @Test
+    void testGetSubGroupWithKeyValue() {
+        String key = "model";
+        String value = "gpt-4";
+        FlinkAgentsMetricGroupImpl result = metricGroup.getSubGroup(key, value);
+
+        assertNotNull(result);
+        assertEquals(result, metricGroup.getSubGroup(key, value));
+    }
+
+    @Test
+    void testKeyValueSubGroupIsolatedFromNamedSubGroup() {
+        FlinkAgentsMetricGroupImpl named = metricGroup.getSubGroup("model");
+        FlinkAgentsMetricGroupImpl kv = metricGroup.getSubGroup("model", "gpt-4");
+
+        assertNotSame(named, kv);
+
+        named.getCounter("c").inc(10);
+        kv.getCounter("c").inc(99);
+
+        assertEquals(10, named.getCounter("c").getCount());
+        assertEquals(99, kv.getCounter("c").getCount());
+    }
+
+    @Test
+    void testDifferentValuesCreateDistinctSubGroups() {
+        FlinkAgentsMetricGroupImpl gpt4 = metricGroup.getSubGroup("model", "gpt-4");
+        FlinkAgentsMetricGroupImpl gpt35 = metricGroup.getSubGroup("model", "gpt-3.5");
+
+        assertNotSame(gpt4, gpt35);
+
+        gpt4.getCounter("promptTokens").inc(100);
+        gpt35.getCounter("promptTokens").inc(200);
+
+        assertEquals(100, gpt4.getCounter("promptTokens").getCount());
+        assertEquals(200, gpt35.getCounter("promptTokens").getCount());
+    }
+
+    @Test
     void testGetGauge() {
         String name = "testGauge";
         UpdatableGaugeImpl result = metricGroup.getGauge(name);

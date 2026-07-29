@@ -18,13 +18,22 @@
 import typing
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Type
+from typing import TYPE_CHECKING, Any, Type
 
-from pydantic import BaseModel, Field, field_serializer, model_validator
+from pydantic import BaseModel, field_serializer, model_validator
 from typing_extensions import override
 
 from flink_agents.api.resource import ResourceType, SerializableResource
+from flink_agents.api.tools.tool_parameter_injection import (
+    InjectedArg,
+    merge_injected_args,
+    normalize_injected_args,
+    validate_injected_arg_names,
+)
 from flink_agents.api.tools.utils import create_model_from_schema
+
+if TYPE_CHECKING:
+    from flink_agents.api.tools.function_tool import FunctionTool
 
 
 class ToolType(Enum):
@@ -77,9 +86,7 @@ class ToolMetadata(BaseModel):
         args_schema = self["args_schema"]
         if isinstance(args_schema, dict):
             title = args_schema.get("title", "default")
-            self["args_schema"] = create_model_from_schema(
-                title, args_schema
-            )
+            self["args_schema"] = create_model_from_schema(title, args_schema)
         return self
 
     def __eq__(self, other: "ToolMetadata") -> bool:
@@ -101,34 +108,31 @@ class ToolMetadata(BaseModel):
         return parameters
 
 
-class FunctionTool(SerializableResource):
-    """Tool container keeps a callable, mainly used to represent
-    a function which will be converted to BaseTool after compile.
-    """
-
-    func: typing.Callable = Field(exclude=True)
-
-    @classmethod
-    def resource_type(cls) -> ResourceType:
-        """Get the resource type."""
-        return ResourceType.TOOL
-
-
 class Tool(SerializableResource, ABC):
-    """Base abstract class of all kinds of tools.
+    """Base abstract class of all kinds of tools."""
 
-    Attributes:
-    ----------
-    metadata : ToolMetadata
-        The metadata of the tools, includes name, description and arguments schema.
-    """
-
-    metadata: ToolMetadata
+    metadata: ToolMetadata | None = None
 
     @staticmethod
-    def from_callable(func: typing.Callable) -> FunctionTool:
-        """Create a function tool from a callable."""
-        return FunctionTool(func=func)
+    def from_callable(
+        func: typing.Callable,
+        *,
+        injected_args: dict[str, InjectedArg | dict] | None = None,
+    ) -> "FunctionTool":
+        """Wrap a Python callable as a declarative ``FunctionTool``."""
+        from flink_agents.api.function import PythonFunction
+        from flink_agents.api.tools.function_tool import FunctionTool
+
+        declared = normalize_injected_args(injected_args)
+        annotated = getattr(func, "_injected_args", None)
+        normalized = merge_injected_args(
+            annotated, declared, tool_name=getattr(func, "__qualname__", str(func))
+        )
+        validate_injected_arg_names(func, normalized)
+        return FunctionTool(
+            func=PythonFunction.from_callable(func),
+            injected_args=normalized,
+        )
 
     @property
     def name(self) -> str:

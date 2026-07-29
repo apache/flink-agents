@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api;
 
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.configuration.Configuration;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -27,6 +28,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.util.Preconditions;
 
 import javax.annotation.Nullable;
 
@@ -42,6 +44,7 @@ import java.util.Map;
  */
 public abstract class AgentsExecutionEnvironment {
     protected final Map<ResourceType, Map<String, Object>> resources;
+    protected final Map<String, Agent> agents = new HashMap<>();
 
     protected AgentsExecutionEnvironment() {
         this.resources = new HashMap<>();
@@ -51,73 +54,61 @@ public abstract class AgentsExecutionEnvironment {
     }
 
     /**
-     * Get agents execution environment.
+     * Returns the agents registered on this environment, keyed by name.
      *
-     * <p>Factory method that creates an appropriate execution environment based on the provided
-     * StreamExecutionEnvironment. If no environment is provided, a local execution environment is
-     * returned for testing and development.
+     * <p>Populated by {@link #loadYaml(java.nio.file.Path...)} and friends.
+     */
+    public Map<String, Agent> getAgents() {
+        return agents;
+    }
+
+    /**
+     * Returns the resources registered on this environment, grouped by {@link ResourceType}.
      *
-     * <p>When integrating with Flink DataStream/Table APIs, users should pass the Flink
-     * StreamExecutionEnvironment to enable remote execution capabilities.
+     * <p>Exposed primarily so YAML loading code (in a sibling package) and tests can inspect
+     * registered shared resources without subclassing.
+     */
+    public Map<ResourceType, Map<String, Object>> getResources() {
+        return resources;
+    }
+
+    /**
+     * Get agents execution environment for the given Flink {@link StreamExecutionEnvironment}.
      *
-     * @param env Optional StreamExecutionEnvironment for remote execution. If null, a local
-     *     execution environment will be created.
+     * <p>Agents execute on a Flink environment, so {@code env} is required.
+     *
+     * @param env StreamExecutionEnvironment that agents execute on. Must not be null.
      * @param tEnv Optional StreamTableEnvironment for table-to-stream conversion.
-     * @return AgentsExecutionEnvironment appropriate for the execution context.
+     * @return AgentsExecutionEnvironment backed by the given Flink environment.
      */
     public static AgentsExecutionEnvironment getExecutionEnvironment(
             StreamExecutionEnvironment env, @Nullable StreamTableEnvironment tEnv) {
-        if (env == null) {
-            // Return local execution environment for testing/development
-            try {
-                Class<?> localEnvClass =
-                        Class.forName(
-                                "org.apache.flink.agents.runtime.env.LocalExecutionEnvironment");
-                return (AgentsExecutionEnvironment)
-                        localEnvClass.getDeclaredConstructor().newInstance();
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to create LocalExecutionEnvironment", e);
-            }
-        } else {
-            // Return remote execution environment for Flink integration
-            try {
-                Class<?> remoteEnvClass =
-                        Class.forName(
-                                "org.apache.flink.agents.runtime.env.RemoteExecutionEnvironment");
-                return (AgentsExecutionEnvironment)
-                        remoteEnvClass
-                                .getDeclaredConstructor(
-                                        StreamExecutionEnvironment.class,
-                                        StreamTableEnvironment.class)
-                                .newInstance(env, tEnv);
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to create RemoteExecutionEnvironment", e);
-            }
+        Preconditions.checkNotNull(env, "StreamExecutionEnvironment must not be null.");
+        // Return remote execution environment for Flink integration
+        try {
+            Class<?> remoteEnvClass =
+                    Class.forName("org.apache.flink.agents.runtime.env.RemoteExecutionEnvironment");
+            return (AgentsExecutionEnvironment)
+                    remoteEnvClass
+                            .getDeclaredConstructor(
+                                    StreamExecutionEnvironment.class, StreamTableEnvironment.class)
+                            .newInstance(env, tEnv);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create RemoteExecutionEnvironment", e);
         }
     }
 
     /**
-     * Convenience method to get execution environment without Flink StreamTableEnvironment. If
-     * StreamTableEnvironment is needed during execution, the environment will auto crate using
+     * Convenience method to get execution environment without a Flink StreamTableEnvironment. If a
+     * StreamTableEnvironment is needed during execution, it is created automatically from the
      * StreamExecutionEnvironment.
      *
-     * <p>* @param env Optional StreamExecutionEnvironment for remote execution. If null, a local
-     * execution environment will be created.
-     *
-     * @return Remote execution environment for testing and development.
+     * @param env StreamExecutionEnvironment that agents execute on. Must not be null.
+     * @return AgentsExecutionEnvironment backed by the given Flink environment.
      */
     public static AgentsExecutionEnvironment getExecutionEnvironment(
             StreamExecutionEnvironment env) {
         return getExecutionEnvironment(env, null);
-    }
-
-    /**
-     * Convenience method to get execution environment without Flink integration.
-     *
-     * @return Local execution environment for testing and development.
-     */
-    public static AgentsExecutionEnvironment getExecutionEnvironment() {
-        return getExecutionEnvironment(null);
     }
 
     /**
@@ -198,6 +189,16 @@ public abstract class AgentsExecutionEnvironment {
     public abstract void execute() throws Exception;
 
     /**
+     * Execute agent pipeline with a given job name.
+     *
+     * <p>This method triggers the execution of the configured agent pipeline with the specified job
+     * name.
+     *
+     * @param jobName The name for the Flink job.
+     */
+    public abstract void execute(String jobName) throws Exception;
+
+    /**
      * Register resource to agents execution environment.
      *
      * @param name The name indicate the resource.
@@ -218,5 +219,21 @@ public abstract class AgentsExecutionEnvironment {
                     String.format("Unsupported resource %s", instance.getClass().getName()));
         }
         return this;
+    }
+
+    /**
+     * Load one or more YAML files and register their agents and shared resources on this
+     * environment. Duplicate names — both within a single file and across the current environment —
+     * raise {@link IllegalArgumentException}.
+     */
+    public void loadYaml(java.nio.file.Path... paths) {
+        org.apache.flink.agents.api.yaml.YamlLoader.loadYaml(this, java.util.Arrays.asList(paths));
+    }
+
+    /**
+     * Load multiple YAML files and register their agents and shared resources on this environment.
+     */
+    public void loadYaml(java.util.List<java.nio.file.Path> paths) {
+        org.apache.flink.agents.api.yaml.YamlLoader.loadYaml(this, paths);
     }
 }

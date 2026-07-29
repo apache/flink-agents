@@ -43,6 +43,21 @@ public interface AgentBuilder {
     AgentBuilder apply(Agent agent);
 
     /**
+     * Apply an agent previously registered on the environment (typically via {@code
+     * env.loadYaml(...)}) by name.
+     *
+     * <p>Default implementation throws — concrete builders that have access to the environment
+     * override this to look up the named agent and delegate to {@link #apply(Agent)}.
+     *
+     * @param agentName the name under which the agent was registered on the environment.
+     * @return a configured AgentBuilder for method chaining.
+     */
+    default AgentBuilder apply(String agentName) {
+        throw new UnsupportedOperationException(
+                "apply(String) is not supported by this AgentBuilder; only Agent instances accepted.");
+    }
+
+    /**
      * Get output list of agent execution.
      *
      * <p>The elements in the list represent outputs produced by the agent. Each element is a Map

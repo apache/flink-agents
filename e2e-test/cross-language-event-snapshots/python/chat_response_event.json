@@ -1,0 +1,15 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "type": "_chat_response_event",
+  "attributes": {
+    "request_id": "00000000-0000-0000-0000-000000000002",
+    "response": {
+      "role": "assistant",
+      "content": "hi there",
+      "tool_calls": [],
+      "extra_args": {}
+    },
+    "retry_count": 0,
+    "total_retry_wait_sec": 0
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "type": "_tool_request_event",
+  "attributes": {
+    "model": "test-model",
+    "tool_calls": [
+      {
+        "id": "call_aaaa",
+        "name": "echo",
+        "arguments": {
+          "value": "ping"
+        }
+      }
+    ]
+  }
+}

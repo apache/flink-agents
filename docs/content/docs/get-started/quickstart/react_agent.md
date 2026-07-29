@@ -132,9 +132,11 @@ Produce a source DataStream by reading a product review text file, and use the R
 # Read product reviews from a text file as a streaming source.
 # Each line in the file should be a JSON string representing a ProductReview.
 product_review_stream = env.from_source(
+    # Target the single file, not the resources/ dir: Flink's enumerator
+    # recurses, so files like skills/SKILL.md would be parsed as reviews.
     source=FileSource.for_record_stream_format(
         StreamFormat.text_line_format(),
-        f"file:///{current_dir}/resources/",
+        f"file:///{current_dir}/resources/product_review.txt",
     )
     .monitor_continuously(Duration.of_minutes(1))
     .build(),
@@ -158,6 +160,9 @@ review_analysis_res_stream = (
 
 # Print the analysis results to stdout.
 review_analysis_res_stream.print()
+
+# Execute the Flink pipeline with the Flink job name.
+agents_env.execute("ReAct Agent Example Job")
 ```
 {{< /tab >}}
 
@@ -197,10 +202,17 @@ DataStream<Object> reviewAnalysisResStream =
 
 // Print the analysis results to stdout.
 reviewAnalysisResStream.print();
+
+// Execute the Flink pipeline with the Flink job name.
+agentsEnv.execute("ReAct Agent Example Job");
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
+
+{{< hint info >}}
+See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) for details on integrating agents with the Flink DataStream and Table API.
+{{< /hint >}}
 
 ## Run the Example
 
@@ -209,7 +221,7 @@ reviewAnalysisResStream.print();
 * Unix-like environment (we use Linux, Mac OS X, Cygwin, WSL)
 * Git
 * Java 11+
-* Python 3.10 or 3.11
+* Python 3.10, 3.11 or 3.12
 
 ### Preparation
 

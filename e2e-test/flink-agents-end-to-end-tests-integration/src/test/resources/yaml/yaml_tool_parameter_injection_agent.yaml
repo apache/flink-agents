@@ -1,0 +1,36 @@
+agents:
+  - name: yaml_tool_parameter_injection_agent
+    description: YAML-driven e2e agent with declarative tool parameter injection.
+
+    chat_model_connections:
+      - name: mockChatConnection
+        type: java
+        clazz: org.apache.flink.agents.integration.test.ToolParameterInjectionAgent$MockToolChatConnection
+
+    chat_model_setups:
+      - name: mockChatModel
+        type: java
+        clazz: org.apache.flink.agents.integration.test.ToolParameterInjectionAgent$MockToolChatModel
+        connection: mockChatConnection
+        model: mock
+        tools: [queryOrder]
+
+    tools:
+      - name: queryOrder
+        type: java
+        function: org.apache.flink.agents.integration.test.yaml.YamlChatActions:queryOrder
+        parameter_types: [java.lang.String, java.lang.String]
+        injected_args:
+          tenant_id:
+            source: config
+            key: tenant_id
+
+    actions:
+      - name: request_tool
+        type: java
+        function: org.apache.flink.agents.integration.test.ToolParameterInjectionAgent:requestTool
+        trigger_conditions: [input]
+      - name: emit_result
+        type: java
+        function: org.apache.flink.agents.integration.test.ToolParameterInjectionAgent:emitResult
+        trigger_conditions: [chat_response]

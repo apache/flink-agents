@@ -17,10 +17,41 @@
 #################################################################################
 from typing import Any, Dict, Sequence
 
+from typing_extensions import override
+
+from flink_agents.api.embedding_models.embedding_model import (
+    EmbeddingResult,
+    EmbeddingTokenUsage,
+)
 from flink_agents.api.embedding_models.java_embedding_model import (
     JavaEmbeddingModelConnection,
     JavaEmbeddingModelSetup,
 )
+from flink_agents.runtime.java.java_resource_wrapper import (
+    set_java_resource_metric_group,
+)
+
+
+def _from_java_embedding_result(
+    j_result: Any, text: str | Sequence[str]
+) -> EmbeddingResult[list[float] | list[list[float]]]:
+    """Convert a Java EmbeddingResult into the Python result contract."""
+    j_embeddings = j_result.getEmbeddings()
+    embeddings = (
+        list(j_embeddings)
+        if isinstance(text, str)
+        else [list(embedding) for embedding in j_embeddings]
+    )
+    j_usage = j_result.getTokenUsage()
+    token_usage = (
+        None
+        if j_usage is None
+        else EmbeddingTokenUsage(
+            prompt_tokens=j_usage.getPromptTokens(),
+            total_tokens=j_usage.getTotalTokens(),
+        )
+    )
+    return EmbeddingResult(embeddings=embeddings, token_usage=token_usage)
 
 
 class JavaEmbeddingModelConnectionImpl(JavaEmbeddingModelConnection):
@@ -43,10 +74,17 @@ class JavaEmbeddingModelConnectionImpl(JavaEmbeddingModelConnection):
             **kwargs: Additional keyword arguments
         """
         super().__init__(**kwargs)
-        self._j_resource=j_resource
-        self._j_resource_adapter=j_resource_adapter
+        self._j_resource = j_resource
+        self._j_resource_adapter = j_resource_adapter
 
-    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
+    @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
+
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text input.
         Converts the input text into a high-dimensional vector representation
         suitable for semantic similarity search and retrieval operations.
@@ -60,6 +98,16 @@ class JavaEmbeddingModelConnectionImpl(JavaEmbeddingModelConnection):
         )
         return list(result) if isinstance(text, str) else [list(emb) for emb in result]
 
+    @override
+    def embed_with_usage(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        """Generate embeddings through Java and preserve provider token usage."""
+        result = self._j_resource.embedWithUsage(
+            text if isinstance(text, str) else list(text), kwargs
+        )
+        return _from_java_embedding_result(result, text)
+
 
 class JavaEmbeddingModelSetupImpl(JavaEmbeddingModelSetup):
     """Java-based implementation of EmbeddingModelSetup that wraps a Java embedding
@@ -68,6 +116,7 @@ class JavaEmbeddingModelSetupImpl(JavaEmbeddingModelSetup):
     but unlike JavaEmbeddingModelConnection, it does not provide direct embedding
     functionality in Python.
     """
+
     _j_resource: Any
     _j_resource_adapter: Any
 
@@ -82,10 +131,15 @@ class JavaEmbeddingModelSetupImpl(JavaEmbeddingModelSetup):
         # connection,model are required parameters for BaseEmbeddingModelSetup
         connection = kwargs.pop("connection", "")
         model = kwargs.pop("model", "")
-        super().__init__(connection = connection, model = model, **kwargs)
+        super().__init__(connection=connection, model=model, **kwargs)
 
-        self._j_resource=j_resource
-        self._j_resource_adapter=j_resource_adapter
+        self._j_resource = j_resource
+        self._j_resource_adapter = j_resource_adapter
+
+    @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
 
     @property
     def model_kwargs(self) -> Dict[str, Any]:
@@ -96,7 +150,14 @@ class JavaEmbeddingModelSetupImpl(JavaEmbeddingModelSetup):
         """
         return {}
 
-    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
+    @override
+    def open(self) -> None:
+        """Open the java resource."""
+        self._j_resource.open()
+
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text query.
         Converts the input text into a high-dimensional vector representation
         suitable for semantic similarity search and retrieval operations.
@@ -109,3 +170,13 @@ class JavaEmbeddingModelSetupImpl(JavaEmbeddingModelSetup):
             text if isinstance(text, str) else list(text), kwargs
         )
         return list(result) if isinstance(text, str) else [list(emb) for emb in result]
+
+    @override
+    def embed_with_usage(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        """Generate embeddings through Java and preserve provider token usage."""
+        result = self._j_resource.embedWithUsage(
+            text if isinstance(text, str) else list(text), kwargs
+        )
+        return _from_java_embedding_result(result, text)

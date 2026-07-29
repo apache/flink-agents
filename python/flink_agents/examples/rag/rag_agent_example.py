@@ -17,6 +17,8 @@
 ################################################################################
 import os
 
+from pyflink.datastream import StreamExecutionEnvironment
+
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.decorators import (
@@ -31,7 +33,8 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
 )
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import (
@@ -100,14 +103,14 @@ Please provide a helpful answer based on the context provided."""
         return ResourceDescriptor(
             clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_chat_connection",
-            model=OLLAMA_CHAT_MODEL
+            model=OLLAMA_CHAT_MODEL,
         )
 
-    @action(InputEvent)
+    @action(EventType.InputEvent)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process user input and retrieve relevant context."""
-        user_query = str(event.input)
+        user_query = str(InputEvent.from_event(event).input)
         ctx.send_event(
             ContextRetrievalRequestEvent(
                 query=user_query,
@@ -116,14 +119,15 @@ Please provide a helpful answer based on the context provided."""
             )
         )
 
-    @action(ContextRetrievalResponseEvent)
+    @action(EventType.ContextRetrievalResponseEvent)
     @staticmethod
     def process_retrieved_context(
-            event: ContextRetrievalResponseEvent, ctx: RunnerContext
+        event: Event, ctx: RunnerContext
     ) -> None:
         """Process retrieved context and create enhanced chat request."""
-        user_query = event.query
-        retrieved_docs = event.documents
+        retrieval_event = ContextRetrievalResponseEvent.from_event(event)
+        user_query = retrieval_event.query
+        retrieved_docs = retrieval_event.documents
 
         # Create context from retrieved documents
         context_text = "\n\n".join(
@@ -131,10 +135,11 @@ Please provide a helpful answer based on the context provided."""
         )
 
         # Get prompt resource and format it
-        prompt_resource = ctx.get_resource("context_enhanced_prompt", ResourceType.PROMPT)
+        prompt_resource = ctx.get_resource(
+            "context_enhanced_prompt", ResourceType.PROMPT
+        )
         enhanced_prompt = prompt_resource.format_string(
-            context=context_text,
-            user_query=user_query
+            context=context_text, user_query=user_query
         )
 
         # Send chat request with enhanced prompt
@@ -145,12 +150,13 @@ Please provide a helpful answer based on the context provided."""
             )
         )
 
-    @action(ChatResponseEvent)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat model response and generate output."""
-        if event.response and event.response.content:
-            ctx.send_event(OutputEvent(output=event.response.content))
+        chat_response = ChatResponseEvent.from_event(event)
+        if chat_response.response and chat_response.response.content:
+            ctx.send_event(OutputEvent(output=chat_response.response.content))
 
 
 if __name__ == "__main__":
@@ -161,31 +167,38 @@ if __name__ == "__main__":
 
     agent = MyRAGAgent()
 
-    # Prepare example queries
-    input_list = []
-    test_queries = [
-        {"key": "001", "value": "What is Apache Flink?"},
-        {"key": "002", "value": "What is Apache Flink Agents?"},
-        {"key": "003", "value": "What is Python?"},
-    ]
-    input_list.extend(test_queries)
-
-    # Setup the Agents execution environment
-    agents_env = AgentsExecutionEnvironment.get_execution_environment()
+    # Set up the Flink streaming environment and the Agents execution environment.
+    env = StreamExecutionEnvironment.get_execution_environment()
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
     # Setup Ollama embedding and chat model connections
-    agents_env.add_resource("ollama_embedding_connection", ResourceType.EMBEDDING_MODEL_CONNECTION, ResourceDescriptor(clazz=ResourceName.EmbeddingModel.OLLAMA_CONNECTION))
-    agents_env.add_resource("ollama_chat_connection", ResourceType.EMBEDDING_MODEL, ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION))
+    agents_env.add_resource(
+        "ollama_embedding_connection",
+        ResourceType.EMBEDDING_MODEL_CONNECTION,
+        ResourceDescriptor(clazz=ResourceName.EmbeddingModel.OLLAMA_CONNECTION),
+    )
+    agents_env.add_resource(
+        "ollama_chat_connection",
+        ResourceType.EMBEDDING_MODEL,
+        ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION),
+    )
 
-    output_list = agents_env.from_list(input_list).apply(agent).to_list()
+    # A small stream of example queries, keyed by the query text.
+    query_stream = env.from_collection(
+        [
+            "What is Apache Flink?",
+            "What is Apache Flink Agents?",
+            "What is Python?",
+        ],
+    )
 
-    agents_env.execute()
+    # Use the RAG agent to answer each query and print the responses to stdout.
+    response_stream = (
+        agents_env.from_datastream(input=query_stream, key_selector=lambda x: x)
+        .apply(agent)
+        .to_datastream()
+    )
+    response_stream.print()
 
-    print("\n" + "=" * 50)
-    print("RAG Example Results:")
-    print("=" * 50)
-
-    for output in output_list:
-        for key, value in output.items():
-            print(f"\n[{key}] Response: {value}")
-            print("-" * 40)
+    # Execute the Flink pipeline.
+    agents_env.execute("RAG Agent Example Job")

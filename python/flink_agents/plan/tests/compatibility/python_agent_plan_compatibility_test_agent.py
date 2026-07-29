@@ -15,19 +15,27 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, Sequence
+from typing import Any, ClassVar, Dict, Sequence
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import action, chat_model_setup, tool
-from flink_agents.api.events.event import Event, InputEvent
+from flink_agents.api.events.event import Event
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.tools import InjectedArg
 
 
 class MyEvent(Event):
     """Test event."""
+
+    EVENT_TYPE: ClassVar[str] = "_my_event"
+
+    def __init__(self) -> None:
+        """Create a MyEvent."""
+        super().__init__(type=MyEvent.EVENT_TYPE)
 
 
 class MockChatModel(BaseChatModelSetup):
@@ -45,14 +53,14 @@ class MockChatModel(BaseChatModelSetup):
 class PythonAgentPlanCompatibilityTestAgent(Agent):
     """Agent for generating python agent plan json."""
 
-    @action(InputEvent)
+    @action(EventType.InputEvent)
     @staticmethod
-    def first_action(event: InputEvent, ctx: RunnerContext) -> None:
+    def first_action(event: Event, ctx: RunnerContext) -> None:
         """Test implementation."""
 
-    @action(InputEvent, MyEvent)
+    @action("_input_event", "_my_event")
     @staticmethod
-    def second_action(event: InputEvent, ctx: RunnerContext) -> None:
+    def second_action(event: Event, ctx: RunnerContext) -> None:
         """Test implementation."""
 
     @chat_model_setup
@@ -60,12 +68,17 @@ class PythonAgentPlanCompatibilityTestAgent(Agent):
     def chat_model() -> ResourceDescriptor:
         """ChatModel can be used in action."""
         return ResourceDescriptor(
-            clazz=f"{MockChatModel.__module__}.{MockChatModel.__name__}", name="chat_model", prompt="prompt", tools=["add"]
+            clazz=f"{MockChatModel.__module__}.{MockChatModel.__name__}",
+            name="chat_model",
+            prompt="prompt",
+            tools=["add"],
+            connection="mock_connection",
+            model="mock-model",
         )
 
-    @tool
+    @tool(injected_args={"tenant_id": InjectedArg.from_config("tenant.id")})
     @staticmethod
-    def add(a: int, b: int) -> int:
+    def add(a: int, b: int, tenant_id: str) -> int:
         """Calculate the sum of a and b.
 
         Parameters
@@ -74,6 +87,8 @@ class PythonAgentPlanCompatibilityTestAgent(Agent):
             The first operand
         b : int
             The second operand
+        tenant_id : str
+            The injected tenant id
 
         Returns:
         -------

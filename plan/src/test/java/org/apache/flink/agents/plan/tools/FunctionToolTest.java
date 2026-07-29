@@ -22,11 +22,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
+import java.util.Map;
 
 public class FunctionToolTest {
     @Tool(description = "Performs basic arithmetic operations")
@@ -72,11 +74,18 @@ public class FunctionToolTest {
                         method.getDeclaringClass(),
                         method.getName(),
                         new Class[] {Double.class, Double.class, String.class});
-        FunctionTool tool = new FunctionTool(metadata, javaFunction);
+        FunctionTool tool =
+                new FunctionTool(
+                        metadata,
+                        javaFunction,
+                        Map.of(
+                                "tenant_id",
+                                ToolParameterInjection.fromSensoryMemory("request.tenant_id")));
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(tool);
         FunctionTool deserialize = mapper.readValue(json, FunctionTool.class);
         Assertions.assertEquals(tool.getMetadata(), deserialize.getMetadata());
         Assertions.assertEquals(tool.getFunction(), deserialize.getFunction());
+        Assertions.assertEquals(tool.getInjectedArgs(), deserialize.getInjectedArgs());
     }
 }

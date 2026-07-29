@@ -43,6 +43,12 @@ under the License.
             <artifactId>ollama4j</artifactId>
             <version>${ollama4j.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-core</artifactId>
+            <version>${flink.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 </project>

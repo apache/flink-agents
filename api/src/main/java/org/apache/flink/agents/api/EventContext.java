@@ -25,13 +25,14 @@ import java.time.Instant;
 
 /** Contextual information about an event, such as its type and timestamp. */
 public class EventContext {
-    // Type of the event, the class name of the event
+    /** The routing key for the event, matching the {@code EVENT_TYPE} constant or type string. */
     private final String eventType;
+
     // Timestamp of when the event occurred
     private final String timestamp;
 
     public EventContext(Event event) {
-        this(event.getClass().getName(), Instant.now().toString());
+        this(event.getType(), Instant.now().toString());
     }
 
     @JsonCreator

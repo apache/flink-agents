@@ -9,10 +9,10 @@ This project bundles the following dependencies under the Apache Software Licens
 - com.fasterxml.jackson.core:jackson-annotations:2.18.2
 - com.fasterxml.jackson.core:jackson-core:2.18.2
 - com.fasterxml.jackson.core:jackson-databind:2.18.2
-- com.fasterxml.jackson.core:jackson-dataformat-yaml:2.18.2
-- com.fasterxml.jackson.core:jackson-datatype-jsr310:2.18.2
-- com.fasterxml.jackson.core:jackson-datatype-jdk8:2.18.2
-- com.fasterxml.jackson.core:jackson-module-kotlin:2.18.2
+- com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.18.2
+- com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.18.2
+- com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.18.2
+- com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2
 - com.fasterxml:classmate:1.7.0
 - org.apache.logging.log4j:log4j-api:2.23.1
 - org.apache.logging.log4j:log4j-core:2.23.1
@@ -21,13 +21,18 @@ This project bundles the following dependencies under the Apache Software Licens
 - org.lz4:lz4-java:1.8.0
 - org.xerial.snappy:snappy-java:1.1.10.5
 - com.openai:openai-java:4.8.0
+- com.openai:openai-java-core:4.8.0
+- com.openai:openai-java-client-okhttp:4.8.0
 - co.elastic.clients:elasticsearch-java:8.19.0
 - com.google.guava:guava:33.5.0-jre
-- com.google.errorprone:error_prone_annotations:2.41.0
-- com.google.j2objc:j2objc-annotations:3.1
+- com.google.guava:failureaccess:1.0.1
+- com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava
+- com.google.errorprone:error_prone_annotations:2.38.0
+- com.google.j2objc:j2objc-annotations:2.8
 - org.jspecify:jspecify:1.0.0
 - io.swagger.core.v3:swagger-annotations:2.2.31
 - org.apache.httpcomponents.core5:httpcore5:5.2.4
+- org.apache.httpcomponents.core5:httpcore5-h2:5.2.4
 - org.apache.httpcomponents.client5:httpclient5:5.3.1
 - com.github.victools:jsonschema-generator:4.38.0
 - com.github.victools:jsonschema-module-jackson:4.38.0
@@ -35,28 +40,30 @@ This project bundles the following dependencies under the Apache Software Licens
 - com.squareup.okhttp3:okhttp:4.12.0
 - com.squareup.okhttp3:logging-interceptor:4.12.0
 - com.squareup.okio:okio:3.6.0
-- com.squareup.okio:okio-jvm:3.9.1
-- org.jetbrains:annotations:13.0
+- com.squareup.okio:okio-jvm:3.6.0
+- org.jetbrains:annotations:17.0.0
+- org.jetbrains.kotlin:kotlin-stdlib:1.9.10
 - org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0
-- org.jetbrains.kotlin:kotlin-stdlib:1.8.0
-- org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.0
+- org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.10
+- org.jetbrains.kotlin:kotlin-stdlib-common:1.9.10
 - org.jetbrains.kotlin:kotlin-reflect:1.8.10
 - org.yaml:snakeyaml:2.3
 - io.netty:netty-handler:4.1.118.Final
+- io.netty:netty-handler-proxy:4.1.118.Final
 - io.netty:netty-resolver:4.1.118.Final
 - io.netty:netty-transport:4.1.118.Final
 - io.netty:netty-codec-socks:4.1.118.Final
-- io.netty:netty-buffer:4.1.118.Final:compile
-- io.netty:netty-codec:4.1.118.Final:compile
-- io.netty:netty-codec-http:4.1.118.Final:compile
-- io.netty:netty-codec-http2:4.1.118.Final:compile
-- io.netty:netty-transport-native-unix-common:4.1.118.Final:compile
+- io.netty:netty-buffer:4.1.118.Final
+- io.netty:netty-codec:4.1.118.Final
+- io.netty:netty-codec-http:4.1.118.Final
+- io.netty:netty-codec-http2:4.1.118.Final
+- io.netty:netty-transport-native-unix-common:4.1.118.Final
 - io.netty:netty-transport-native-epoll:linux-x86_64:4.1.118.Final
 - io.netty:netty-transport-classes-epoll:4.1.118.Final
 - io.netty:netty-transport-native-kqueue:osx-x86_64:4.1.118.Final
 - io.netty:netty-transport-classes-kqueue:4.1.118.Final
 - io.netty:netty-tcnative-boringssl-static:2.0.70.Final
-- io.netty:netty-tcnative-classes:2.0.70.Final:compile
+- io.netty:netty-tcnative-classes:2.0.70.Final
 - io.projectreactor.netty:reactor-netty-http:1.0.48
 - io.netty:netty-resolver-dns:4.1.112.Final
 - io.netty:netty-codec-dns:4.1.112.Final
@@ -64,36 +71,83 @@ This project bundles the following dependencies under the Apache Software Licens
 - io.netty:netty-resolver-dns-classes-macos:4.1.112.Final
 - io.projectreactor.netty:reactor-netty-core:1.0.48
 - io.netty:netty-common:4.1.118.Final
-- io.vertx:vertx-core:4.5.13:compile
+- io.projectreactor:reactor-core:3.4.41
+- io.projectreactor:reactor-test:3.4.41
+- io.vertx:vertx-core:4.5.13
 - org.apache.ant:ant:1.10.14
 - org.apache.ant:ant-launcher:1.10.14
-- com.nimbusds:content-type:2.3:compile
-- com.nimbusds:lang-tag:1.7:compile
-- com.nimbusds:nimbus-jose-jwt:9.40:compile
-- net.minidev:json-smart:2.5.0:compile
-- net.minidev:accessors-smart:2.5.0:compile
-- co.elastic.clients:elasticsearch-java:8.19.0
+- com.nimbusds:content-type:2.3
+- com.nimbusds:lang-tag:1.7
+- com.nimbusds:nimbus-jose-jwt:9.40
+- com.nimbusds:oauth2-oidc-sdk:11.18
+- net.minidev:json-smart:2.5.0
+- net.minidev:accessors-smart:2.5.0
 - org.elasticsearch.client:elasticsearch-rest-client:8.19.0
-- org.apache.httpcomponents:httpclient:4.5.14
+- org.apache.httpcomponents:httpclient:4.5.13
 - org.apache.httpcomponents:httpcore:4.4.16
 - org.apache.httpcomponents:httpasyncclient:4.1.5
 - org.apache.httpcomponents:httpcore-nio:4.4.16
-- commons-codec:commons-codec:1.15:compile
-- commons-logging:commons-logging:1.2:compile
-- com.google.code.findbugs:jsr305:3.0.2
+- commons-codec:commons-codec:1.17.1
+- commons-logging:commons-logging:1.2
+- com.google.code.findbugs:jsr305:1.3.9
 - io.opentelemetry:opentelemetry-api:1.29.0
 - io.opentelemetry:opentelemetry-context:1.29.0
 - com.networknt:json-schema-validator:2.0.0
 - com.ethlo.time:itu:1.14.0
 - org.opentest4j:opentest4j:1.3.0
 - org.apiguardian:apiguardian-api:1.1.2
+- org.apache.commons:commons-collections4:4.3
+- org.apache.commons:commons-lang3:3.12.0
+- org.apache.commons:commons-pool2:2.12.0
+- org.apache.commons:commons-text:1.10.0
+- com.github.stephenc.jcip:jcip-annotations:1.0-1
+- io.milvus:milvus-sdk-java:2.6.18
+- org.apache.fluss:fluss-client:0.9.0-incubating
+- com.google.code.gson:gson:2.13.1
+- com.google.api.grpc:proto-google-common-protos:2.22.0
+- com.google.android:annotations:4.1.1.4
+- io.perfmark:perfmark-api:0.26.0
+- io.prometheus:simpleclient:0.16.0
+- io.prometheus:simpleclient_tracer_common:0.16.0
+- io.prometheus:simpleclient_tracer_otel:0.16.0
+- io.prometheus:simpleclient_tracer_otel_agent:0.16.0
+- software.amazon.awssdk:bedrockruntime:2.32.16
+- software.amazon.awssdk:s3vectors:2.32.16
+- software.amazon.awssdk:sdk-core:2.32.16
+- software.amazon.awssdk:aws-core:2.32.16
+- software.amazon.awssdk:auth:2.32.16
+- software.amazon.awssdk:regions:2.32.16
+- software.amazon.awssdk:profiles:2.32.16
+- software.amazon.awssdk:utils:2.32.16
+- software.amazon.awssdk:annotations:2.32.16
+- software.amazon.awssdk:apache-client:2.32.16
+- software.amazon.awssdk:netty-nio-client:2.32.16
+- software.amazon.awssdk:http-client-spi:2.32.16
+- software.amazon.awssdk:http-auth:2.32.16
+- software.amazon.awssdk:http-auth-aws:2.32.16
+- software.amazon.awssdk:http-auth-aws-eventstream:2.32.16
+- software.amazon.awssdk:http-auth-spi:2.32.16
+- software.amazon.awssdk:identity-spi:2.32.16
+- software.amazon.awssdk:metrics-spi:2.32.16
+- software.amazon.awssdk:endpoints-spi:2.32.16
+- software.amazon.awssdk:checksums:2.32.16
+- software.amazon.awssdk:checksums-spi:2.32.16
+- software.amazon.awssdk:retries:2.32.16
+- software.amazon.awssdk:retries-spi:2.32.16
+- software.amazon.awssdk:aws-json-protocol:2.32.16
+- software.amazon.awssdk:protocol-core:2.32.16
+- software.amazon.awssdk:json-utils:2.32.16
+- software.amazon.awssdk:third-party-jackson-core:2.32.16
+- software.amazon.eventstream:eventstream:1.0.1
+- net.java.dev.jna:jna:5.13.0
+- net.java.dev.jna:jna-platform:5.6.0
 
 This project bundles the following dependencies under the MIT license.
 See bundled license files for details.
 
 - slf4j-api:slf4j-api:1.7.36
 - io.github.ollama4j:ollama4j:1.1.5
-- org.jsoup:jsoup:1.18.1
+- org.jsoup:jsoup:1.21.2
 - com.anthropic:anthropic-java:2.11.1
 - com.anthropic:anthropic-java-client-okhttp:2.11.1
 - com.anthropic:anthropic-java-core:2.11.1
@@ -108,18 +162,27 @@ See bundled license files for details.
 - com.azure:azure-core-http-okhttp:1.12.10
 - com.azure:azure-core-http-vertx:1.0.3
 - org.reactivestreams:reactive-streams:1.0.4
-- io.projectreactor:reactor-core:3.4.41
 - com.microsoft.azure:msal4j:1.17.1
 - com.microsoft.azure:msal4j-persistence-extension:1.3.0
 - io.modelcontextprotocol.sdk:mcp:0.16.0
 - io.modelcontextprotocol.sdk:mcp-json-jackson2:0.16.0
 - io.modelcontextprotocol.sdk:mcp-json:0.16.0
 - io.modelcontextprotocol.sdk:mcp-core:0.16.0
+- org.checkerframework:checker-qual:3.37.0
+- io.github.bonede:tree-sitter:0.25.3
+- io.github.bonede:tree-sitter-bash:0.23.3
+- org.codehaus.mojo:animal-sniffer-annotations:1.23
 
 This project bundles the following dependencies under the BSD 2-Clause license.
 See bundled license files for details.
 
 - com.github.luben:zstd-jni:1.5.6-6
+
+This project bundles the following dependencies under the BSD 3-Clause license.
+See bundled license files for details.
+
+- com.google.protobuf:protobuf-java:3.25.5
+- org.ow2.asm:asm:9.3
 
 This project bundles the following dependencies under the EPL2 license.
 See bundled license files for details.

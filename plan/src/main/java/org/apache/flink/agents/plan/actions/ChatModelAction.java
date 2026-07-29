@@ -34,7 +34,9 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
@@ -47,6 +49,7 @@ import javax.annotation.Nullable;
 import java.util.*;
 
 import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
+import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
 
 /** Built-in action for processing chat request and tool call result. */
 public class ChatModelAction {
@@ -57,6 +60,10 @@ public class ChatModelAction {
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
     private static final String MODEL = "model";
     private static final String OUTPUT_SCHEMA = "outputSchema";
+    private static final String PROMPT_ARGS = "prompt_args";
+    private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
+    private static final String TOTAL_RETRY_COUNT = "totalRetryCount";
+    private static final String TOTAL_RETRY_WAIT_SEC = "totalRetryWaitSec";
 
     private static final ObjectMapper mapper = new ObjectMapper();
 
@@ -67,7 +74,7 @@ public class ChatModelAction {
                         ChatModelAction.class,
                         "processChatRequestOrToolResponse",
                         new Class[] {Event.class, RunnerContext.class}),
-                List.of(ChatRequestEvent.class.getName(), ToolResponseEvent.class.getName()));
+                List.of(ChatRequestEvent.EVENT_TYPE, ToolResponseEvent.EVENT_TYPE));
     }
 
     @SuppressWarnings("unchecked")
@@ -102,6 +109,7 @@ public class ChatModelAction {
             UUID toolRequestEventId,
             UUID initialRequestId,
             String model,
+            Map<String, Object> promptArgs,
             Object outputSchema)
             throws Exception {
         Map<UUID, Object> toolRequestEventContext;
@@ -114,6 +122,7 @@ public class ChatModelAction {
         Map<String, Object> context = new HashMap<>();
         context.put(INITIAL_REQUEST_ID, initialRequestId);
         context.put(MODEL, model);
+        context.put(PROMPT_ARGS, promptArgs != null ? promptArgs : Collections.emptyMap());
         if (outputSchema != null) {
             context.put(OUTPUT_SCHEMA, outputSchema);
         }
@@ -129,11 +138,74 @@ public class ChatModelAction {
         return (Map<String, Object>) toolRequestEventContext.remove(requestId);
     }
 
+    @SuppressWarnings("unchecked")
+    private static void accumulateRetryStats(
+            MemoryObject sensoryMem, UUID initialRequestId, int retryCount, int retryWaitSec)
+            throws Exception {
+        Map<UUID, Map<String, Long>> retryStatsContext;
+        if (sensoryMem.isExist(RETRY_STATS_CONTEXT)) {
+            retryStatsContext =
+                    (Map<UUID, Map<String, Long>>) sensoryMem.get(RETRY_STATS_CONTEXT).getValue();
+        } else {
+            retryStatsContext = new HashMap<>();
+        }
+        Map<String, Long> stats = retryStatsContext.getOrDefault(initialRequestId, new HashMap<>());
+        stats.put(TOTAL_RETRY_COUNT, stats.getOrDefault(TOTAL_RETRY_COUNT, 0L) + retryCount);
+        stats.put(
+                TOTAL_RETRY_WAIT_SEC, stats.getOrDefault(TOTAL_RETRY_WAIT_SEC, 0L) + retryWaitSec);
+        retryStatsContext.put(initialRequestId, stats);
+        sensoryMem.set(RETRY_STATS_CONTEXT, retryStatsContext);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Long> getRetryStats(MemoryObject sensoryMem, UUID initialRequestId)
+            throws Exception {
+        if (!sensoryMem.isExist(RETRY_STATS_CONTEXT)) {
+            return Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_SEC, 0L);
+        }
+        Map<UUID, Map<String, Long>> retryStatsContext =
+                (Map<UUID, Map<String, Long>>) sensoryMem.get(RETRY_STATS_CONTEXT).getValue();
+        return retryStatsContext.getOrDefault(
+                initialRequestId, Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_SEC, 0L));
+    }
+
+    private static void recordRetryMetrics(
+            RunnerContext ctx, String model, int retryCount, int totalRetryWaitSec) {
+        if (retryCount <= 0) {
+            return;
+        }
+        FlinkAgentsMetricGroup metricGroup = ctx.getActionMetricGroup();
+        if (metricGroup != null) {
+            FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", model);
+            modelGroup.getCounter("retryCount").inc(retryCount);
+            modelGroup.getCounter("retryWaitSec").inc(totalRetryWaitSec);
+        }
+    }
+
+    static void recordChatTokenMetrics(BaseChatModelSetup chatModel, ChatMessage response) {
+        Map<String, Object> extraArgs = response.getExtraArgs();
+        Object modelName = extraArgs.get("model_name");
+        Object promptTokens = extraArgs.get("promptTokens");
+        Object completionTokens = extraArgs.get("completionTokens");
+        if (modelName != null
+                && !modelName.toString().isEmpty()
+                && promptTokens instanceof Number
+                && completionTokens instanceof Number) {
+            long prompt = ((Number) promptTokens).longValue();
+            long completion = ((Number) completionTokens).longValue();
+            if (prompt > 0 && completion > 0) {
+                chatModel.recordTokenMetrics(modelName.toString(), prompt, completion);
+            }
+        }
+    }
+
     private static void handleToolCalls(
             ChatMessage response,
             UUID initialRequestId,
             String model,
+            BaseChatModelSetup chatModel,
             List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
             Object outputSchema,
             RunnerContext ctx)
             throws Exception {
@@ -143,6 +215,8 @@ public class ChatModelAction {
                 messages,
                 Collections.singletonList(response));
 
+        injectBashToolArgs(response.getToolCalls(), chatModel);
+
         ToolRequestEvent toolRequestEvent = new ToolRequestEvent(model, response.getToolCalls());
 
         saveToolRequestEventContext(
@@ -150,15 +224,65 @@ public class ChatModelAction {
                 toolRequestEvent.getId(),
                 initialRequestId,
                 model,
+                promptArgs,
                 outputSchema);
 
         ctx.sendEvent(toolRequestEvent);
+    }
+
+    /**
+     * Inject framework-controlled args ({@code allowed_commands}, {@code allowed_script_dirs}) into
+     * bash tool calls so they remain hidden from the LLM. Mirrors Python {@code
+     * _inject_bash_tool_args}.
+     */
+    @SuppressWarnings("unchecked")
+    private static void injectBashToolArgs(
+            List<Map<String, Object>> toolCalls, BaseChatModelSetup chatModel) throws Exception {
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            return;
+        }
+        List<String> scriptDirs = new ArrayList<>(chatModel.getAllowedScriptDirs());
+        List<String> declaredSkills = chatModel.getSkills();
+        if (declaredSkills != null
+                && !declaredSkills.isEmpty()
+                && chatModel.getResourceContext() != null) {
+            scriptDirs.addAll(chatModel.getResourceContext().getSkillDirs(declaredSkills));
+        }
+        for (Map<String, Object> call : toolCalls) {
+            Object function = call.get("function");
+            if (!(function instanceof Map)) {
+                continue;
+            }
+            Map<String, Object> functionMap = (Map<String, Object>) function;
+            if (!Skills.BASH_TOOL.equals(functionMap.get("name"))) {
+                continue;
+            }
+            Object argsObj = functionMap.get("arguments");
+            Map<String, Object> args;
+            if (argsObj instanceof Map) {
+                args = (Map<String, Object>) argsObj;
+            } else {
+                args = new HashMap<>();
+                functionMap.put("arguments", args);
+            }
+            args.put("allowed_commands", new ArrayList<>(chatModel.getAllowedCommands()));
+            args.put("allowed_script_dirs", scriptDirs);
+        }
+    }
+
+    static String cleanLlmResponse(String rawResponse) {
+        String trimmed = rawResponse.trim();
+        if (trimmed.startsWith("```")) {
+            return trimmed.replaceAll("(?s)^```(?:json)?\\s*(.*?)\\s*```$", "$1");
+        }
+        return trimmed;
     }
 
     @SuppressWarnings("unchecked")
     private static ChatMessage generateStructuredOutput(ChatMessage response, Object outputSchema)
             throws JsonProcessingException {
         String output = response.getContent();
+        output = cleanLlmResponse(output);
         Object structuredOutput;
         if (outputSchema instanceof Class) {
             structuredOutput = mapper.readValue(String.valueOf(output), (Class<?>) outputSchema);
@@ -192,6 +316,7 @@ public class ChatModelAction {
             UUID initialRequestId,
             String model,
             List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             RunnerContext ctx)
             throws Exception {
@@ -199,21 +324,29 @@ public class ChatModelAction {
                 (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
 
         boolean chatAsync = ctx.getConfig().get(AgentExecutionOptions.CHAT_ASYNC);
-        // TODO: python chat model doesn't support async execution yet, see
-        // https://github.com/apache/flink-agents/issues/448 for details.
-        chatAsync = chatAsync && !(chatModel instanceof PythonChatModelSetup);
+
+        if ((chatModel instanceof PythonChatModelSetup) && !supportAsync()) {
+            chatAsync = false;
+        }
 
         Agent.ErrorHandlingStrategy strategy =
                 ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
         int numRetries = 0;
+        int retryWaitIntervalSec = 0;
         if (strategy == Agent.ErrorHandlingStrategy.RETRY) {
             numRetries =
                     ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES) > 0
                             ? ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES)
                             : 0;
+            retryWaitIntervalSec =
+                    ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL) > 0
+                            ? ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
+                            : 0;
         }
 
         ChatMessage response = null;
+        int actualRetryCount = 0;
+        int totalWaitTimeSec = 0;
 
         DurableCallable<ChatMessage> callable =
                 new DurableCallable<>() {
@@ -229,7 +362,7 @@ public class ChatModelAction {
 
                     @Override
                     public ChatMessage call() throws Exception {
-                        return chatModel.chat(messages, Map.of());
+                        return chatModel.chat(messages, promptArgs, Map.of());
                     }
                 };
 
@@ -239,6 +372,7 @@ public class ChatModelAction {
                         chatAsync
                                 ? ctx.durableExecuteAsync(callable)
                                 : ctx.durableExecute(callable);
+                recordChatTokenMetrics(chatModel, response);
                 // only generate structured output for final response.
                 if (outputSchema != null && response.getToolCalls().isEmpty()) {
                     response = generateStructuredOutput(response, outputSchema);
@@ -253,12 +387,19 @@ public class ChatModelAction {
                     if (attempt == numRetries) {
                         throw e;
                     }
+                    actualRetryCount = attempt + 1;
+                    int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
                     LOG.warn(
-                            "Chat request {} failed with error: {}, retrying {} / {}.",
+                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {} s.",
                             initialRequestId,
                             e,
-                            attempt,
-                            numRetries);
+                            actualRetryCount,
+                            numRetries,
+                            currentWaitSec);
+                    if (currentWaitSec > 0) {
+                        Thread.sleep(currentWaitSec * 1000L);
+                        totalWaitTimeSec += currentWaitSec;
+                    }
                 } else {
                     LOG.debug(
                             "Chat request {} failed, the input chat messages are {}.",
@@ -269,18 +410,47 @@ public class ChatModelAction {
             }
         }
 
+        if (actualRetryCount > 0) {
+            accumulateRetryStats(
+                    ctx.getSensoryMemory(), initialRequestId, actualRetryCount, totalWaitTimeSec);
+        }
+
         if (!Objects.requireNonNull(response).getToolCalls().isEmpty()) {
-            handleToolCalls(response, initialRequestId, model, messages, outputSchema, ctx);
+            handleToolCalls(
+                    response,
+                    initialRequestId,
+                    model,
+                    chatModel,
+                    messages,
+                    promptArgs,
+                    outputSchema,
+                    ctx);
         } else {
-            ctx.sendEvent(new ChatResponseEvent(initialRequestId, response));
+            Map<String, Long> retryStats = getRetryStats(ctx.getSensoryMemory(), initialRequestId);
+            int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
+            int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
+
+            recordRetryMetrics(
+                    ctx, chatModel.getConnectionName(), totalRetryCount, totalRetryWaitSec);
+
+            ctx.sendEvent(
+                    new ChatResponseEvent(
+                            initialRequestId, response, totalRetryCount, totalRetryWaitSec));
         }
     }
 
     private static void processChatRequest(ChatRequestEvent event, RunnerContext ctx)
             throws Exception {
-        chat(event.getId(), event.getModel(), event.getMessages(), event.getOutputSchema(), ctx);
+        chat(
+                event.getId(),
+                event.getModel(),
+                event.getMessages(),
+                event.getPromptArgs(),
+                event.getOutputSchema(),
+                ctx);
     }
 
+    @SuppressWarnings("unchecked")
     private static void processToolResponse(ToolResponseEvent event, RunnerContext ctx)
             throws Exception {
         MemoryObject sensoryMem = ctx.getSensoryMemory();
@@ -290,6 +460,8 @@ public class ChatModelAction {
 
         UUID initialRequestId = (UUID) context.get(INITIAL_REQUEST_ID);
         String model = (String) context.get(MODEL);
+        Map<String, Object> promptArgs =
+                (Map<String, Object>) context.getOrDefault(PROMPT_ARGS, Map.of());
         Object outputSchema = context.get(OUTPUT_SCHEMA);
 
         Map<String, ToolResponse> responses = event.getResponses();
@@ -323,7 +495,7 @@ public class ChatModelAction {
                         Collections.emptyList(),
                         toolResponseMessages);
 
-        chat(initialRequestId, model, messages, outputSchema, ctx);
+        chat(initialRequestId, model, messages, promptArgs, outputSchema, ctx);
     }
 
     /**
@@ -340,10 +512,10 @@ public class ChatModelAction {
     public static void processChatRequestOrToolResponse(Event event, RunnerContext ctx)
             throws Exception {
         MemoryObject sensoryMem = ctx.getSensoryMemory();
-        if (event instanceof ChatRequestEvent) {
-            processChatRequest((ChatRequestEvent) event, ctx);
-        } else if (event instanceof ToolResponseEvent) {
-            processToolResponse((ToolResponseEvent) event, ctx);
+        if (ChatRequestEvent.EVENT_TYPE.equals(event.getType())) {
+            processChatRequest(ChatRequestEvent.fromEvent(event), ctx);
+        } else if (ToolResponseEvent.EVENT_TYPE.equals(event.getType())) {
+            processToolResponse(ToolResponseEvent.fromEvent(event), ctx);
         } else {
             throw new RuntimeException(String.format("Unexpected type event %s", event));
         }

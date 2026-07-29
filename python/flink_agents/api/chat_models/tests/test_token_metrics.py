@@ -75,10 +75,11 @@ class _MockMetricGroup(MetricGroup):
         self._sub_groups: dict[str, _MockMetricGroup] = {}
         self._counters: dict[str, _MockCounter] = {}
 
-    def get_sub_group(self, name: str) -> "_MockMetricGroup":
-        if name not in self._sub_groups:
-            self._sub_groups[name] = _MockMetricGroup()
-        return self._sub_groups[name]
+    def get_sub_group(self, name: str, value: str | None = None) -> "_MockMetricGroup":
+        key = f"{name}={value}" if value is not None else name
+        if key not in self._sub_groups:
+            self._sub_groups[key] = _MockMetricGroup()
+        return self._sub_groups[key]
 
     def get_counter(self, name: str) -> _MockCounter:
         if name not in self._counters:
@@ -100,7 +101,7 @@ class TestBaseChatModelTokenMetrics:
 
     def test_record_token_metrics_with_metric_group(self) -> None:
         """Test token metrics are recorded when metric group is set."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         mock_metric_group = _MockMetricGroup()
 
         # Set the metric group
@@ -110,13 +111,13 @@ class TestBaseChatModelTokenMetrics:
         chat_model.test_record_token_metrics("gpt-4", 100, 50)
 
         # Verify the metrics were recorded
-        model_group = mock_metric_group.get_sub_group("gpt-4")
+        model_group = mock_metric_group.get_sub_group("model", "gpt-4")
         assert model_group.get_counter("promptTokens").get_count() == 100
         assert model_group.get_counter("completionTokens").get_count() == 50
 
     def test_record_token_metrics_without_metric_group(self) -> None:
         """Test token metrics are not recorded when metric group is null."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
 
         # Do not set metric group (should be None by default)
         # Record token metrics - should not throw
@@ -125,7 +126,7 @@ class TestBaseChatModelTokenMetrics:
 
     def test_token_metrics_hierarchy(self) -> None:
         """Test token metrics hierarchy: actionMetricGroup -> modelName -> counters."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         mock_metric_group = _MockMetricGroup()
 
         # Set the metric group
@@ -138,8 +139,8 @@ class TestBaseChatModelTokenMetrics:
         chat_model.test_record_token_metrics("gpt-3.5-turbo", 200, 100)
 
         # Verify each model has its own counters
-        gpt4_group = mock_metric_group.get_sub_group("gpt-4")
-        gpt35_group = mock_metric_group.get_sub_group("gpt-3.5-turbo")
+        gpt4_group = mock_metric_group.get_sub_group("model", "gpt-4")
+        gpt35_group = mock_metric_group.get_sub_group("model", "gpt-3.5-turbo")
 
         assert gpt4_group.get_counter("promptTokens").get_count() == 100
         assert gpt4_group.get_counter("completionTokens").get_count() == 50
@@ -148,7 +149,7 @@ class TestBaseChatModelTokenMetrics:
 
     def test_token_metrics_accumulation(self) -> None:
         """Test that token metrics accumulate across multiple calls."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         mock_metric_group = _MockMetricGroup()
 
         # Set the metric group
@@ -159,18 +160,18 @@ class TestBaseChatModelTokenMetrics:
         chat_model.test_record_token_metrics("gpt-4", 150, 75)
 
         # Verify the metrics accumulated
-        model_group = mock_metric_group.get_sub_group("gpt-4")
+        model_group = mock_metric_group.get_sub_group("model", "gpt-4")
         assert model_group.get_counter("promptTokens").get_count() == 250
         assert model_group.get_counter("completionTokens").get_count() == 125
 
     def test_resource_type(self) -> None:
         """Test resource type is CHAT_MODEL_CONNECTION."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         assert chat_model.resource_type() == ResourceType.CHAT_MODEL
 
     def test_bound_metric_group_property(self) -> None:
         """Test bound_metric_group property."""
-        chat_model = TestChatModelSetup(connection="mock")
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
 
         # Initially should be None
         assert chat_model.metric_group is None

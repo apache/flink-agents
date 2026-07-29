@@ -18,7 +18,9 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -27,9 +29,12 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** Test for {@link ActionJsonDeserializer}. */
@@ -51,10 +56,10 @@ public class ActionJsonDeserializerTest {
         assertEquals("org.apache.flink.agents.plan.TestAction", javaFunction.getQualName());
         assertEquals("legal", javaFunction.getMethodName());
         assertEquals(2, javaFunction.getParameterTypes().length);
-        assertEquals(InputEvent.class, javaFunction.getParameterTypes()[0]);
+        assertEquals(Event.class, javaFunction.getParameterTypes()[0]);
         assertEquals(RunnerContext.class, javaFunction.getParameterTypes()[1]);
         assertEquals(1, action.getListenEventTypes().size());
-        assertEquals(InputEvent.class.getName(), action.getListenEventTypes().get(0));
+        assertEquals(InputEvent.EVENT_TYPE, action.getListenEventTypes().get(0));
     }
 
     @Test
@@ -73,7 +78,7 @@ public class ActionJsonDeserializerTest {
         assertEquals("test_module", pythonFunction.getModule());
         assertEquals("test_function", pythonFunction.getQualName());
         assertEquals(1, action.getListenEventTypes().size());
-        assertEquals(InputEvent.class.getName(), action.getListenEventTypes().get(0));
+        assertEquals(InputEvent.EVENT_TYPE, action.getListenEventTypes().get(0));
     }
 
     @Test
@@ -104,5 +109,31 @@ public class ActionJsonDeserializerTest {
         // Attempt to deserialize the JSON
         ObjectMapper mapper = new ObjectMapper();
         assertThrows(RuntimeException.class, () -> mapper.readValue(json, Action.class));
+    }
+
+    @Test
+    public void testDeserializePythonConfigPreservesPrimitiveTypes() throws IOException {
+        JsonNode node =
+                new ObjectMapper()
+                        .readTree(
+                                "{\"timeout_sec\": 30,"
+                                        + " \"big\": 10000000000,"
+                                        + " \"enabled\": true,"
+                                        + " \"rate\": 1.5,"
+                                        + " \"label\": \"fast\","
+                                        + " \"extra\": null}");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result =
+                (Map<String, Object>) ActionJsonDeserializer.deserializePythonConfig(node);
+
+        assertThat(result)
+                .containsEntry("timeout_sec", 30)
+                .containsEntry("big", 10_000_000_000L)
+                .containsEntry("enabled", true)
+                .containsEntry("rate", 1.5)
+                .containsEntry("label", "fast")
+                .containsKey("extra");
+        assertNull(result.get("extra"));
     }
 }

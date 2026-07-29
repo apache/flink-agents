@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.resource.test;
 
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -77,6 +79,7 @@ public class ChatModelCrossLanguageAgent extends Agent {
         return ResourceDescriptor.Builder.newBuilder(
                         ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION)
                 .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_CONNECTION)
+                .addInitialArgument("request_timeout", 240)
                 .build();
     }
 
@@ -146,11 +149,12 @@ public class ChatModelCrossLanguageAgent extends Agent {
         return Math.random();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void process(InputEvent event, RunnerContext ctx) throws Exception {
+    @Action(EventType.InputEvent)
+    public static void process(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         String model;
-        if (event.getInput().toString().contains("temperature")
-                || event.getInput().toString().contains("degree")) {
+        if (inputEvent.getInput().toString().contains("temperature")
+                || inputEvent.getInput().toString().contains("degree")) {
             model = "temperatureChatModel";
         } else {
             model = "chatModel";
@@ -159,11 +163,13 @@ public class ChatModelCrossLanguageAgent extends Agent {
                 new ChatRequestEvent(
                         model,
                         Collections.singletonList(
-                                new ChatMessage(MessageRole.USER, (String) event.getInput()))));
+                                new ChatMessage(
+                                        MessageRole.USER, (String) inputEvent.getInput()))));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
-    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
-        ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
+    @Action(EventType.ChatResponseEvent)
+    public static void processChatResponse(Event event, RunnerContext ctx) {
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        ctx.sendEvent(new OutputEvent(chatResponse.getResponse().getContent()));
     }
 }

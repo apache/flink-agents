@@ -57,6 +57,7 @@ For more details, see [Sensory & Short-term Memory]({{< ref "docs/development/me
 * **Characteristics**: 
   * The lifecycle of the stored data can across multiple runs. 
   * Complete original data retrieval.
+  * Supports optional automatic expiration and cleanup.
 
 For more details, see [Sensory & Short-Term Memory]({{< ref "docs/development/memory/sensory_and_short_term_memory" >}}).
 

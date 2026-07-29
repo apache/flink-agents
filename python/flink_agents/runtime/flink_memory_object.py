@@ -17,7 +17,11 @@
 #################################################################################
 from typing import Any, Dict, List
 
-from flink_agents.api.memory_object import MemoryObject, MemoryType
+from flink_agents.api.memory_object import (
+    MemoryObject,
+    MemoryType,
+    validate_memory_value,
+)
 from flink_agents.api.memory_reference import MemoryRef
 
 
@@ -46,6 +50,8 @@ class FlinkMemoryObject(MemoryObject):
         Return None if the field does not exist.
         """
         try:
+            if isinstance(path_or_ref, dict) and "path" in path_or_ref:
+                path_or_ref = MemoryRef.model_validate(path_or_ref)
             path_to_get: str
             if isinstance(path_or_ref, MemoryRef):
                 path_to_get = path_or_ref.path
@@ -64,6 +70,7 @@ class FlinkMemoryObject(MemoryObject):
 
     def set(self, path: str, value: Any) -> MemoryRef:
         """Set a value at the given path. Creates intermediate objects if needed."""
+        validate_memory_value(path, value)
         try:
             j_ref = self._j_memory_object.set(path, value)
             return MemoryRef.create(memory_type=self.__type, path=j_ref.getPath())
@@ -74,7 +81,9 @@ class FlinkMemoryObject(MemoryObject):
     def new_object(self, path: str, *, overwrite: bool = False) -> "FlinkMemoryObject":
         """Create a new object at the given path."""
         try:
-            return FlinkMemoryObject(self.__type, self._j_memory_object.newObject(path, overwrite))
+            return FlinkMemoryObject(
+                self.__type, self._j_memory_object.newObject(path, overwrite)
+            )
         except Exception as e:
             msg = f"Failed to create new object at path '{path}'"
             raise MemoryObjectError(msg) from e

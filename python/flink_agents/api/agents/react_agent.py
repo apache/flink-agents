@@ -25,10 +25,15 @@ from pyflink.common.typeinfo import RowTypeInfo
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
 from flink_agents.api.agents.types import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    find_first_system_message,
+)
 from flink_agents.api.decorators import action
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -57,11 +62,12 @@ class ReActAgent(Agent):
                 result: int
 
 
-            env = AgentsExecutionEnvironment.get_execution_environment()
+            env = StreamExecutionEnvironment.get_execution_environment()
+            agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
             # register resource to execution environment
             (
-                env.add_resource(
+                agents_env.add_resource(
                     "ollama",
                     ResourceDescriptor(clazz=OllamaChatModelConnection, model=model),
                 )
@@ -87,6 +93,7 @@ class ReActAgent(Agent):
                 chat_model=ResourceDescriptor(
                     clazz=OllamaChatModelSetup,
                     connection="ollama_server",
+                    model="qwen3:8b",
                     tools=["notify_shipping_manager"],
                 ),
                 prompt=prompt,
@@ -136,15 +143,15 @@ class ReActAgent(Agent):
 
         self.add_action(
             name="start_action",
-            events=[InputEvent],
+            trigger_conditions=[InputEvent.EVENT_TYPE],
             func=self.start_action,
-            output_schema=OutputSchema(output_schema=output_schema),
+            output_schema=OutputSchema(output_schema=output_schema) if output_schema else None,
         )
 
     @staticmethod
-    def start_action(event: InputEvent, ctx: RunnerContext) -> None:
+    def start_action(event: Event, ctx: RunnerContext) -> None:
         """Start action to format user input and send chat request event."""
-        usr_input = event.input
+        usr_input = InputEvent.from_event(event).input
 
         try:
             prompt = cast(
@@ -170,6 +177,8 @@ class ReActAgent(Agent):
                 raise RuntimeError(err_msg)
             if isinstance(usr_input, Row):
                 usr_input = usr_input.as_dict(recursive=True)
+            elif isinstance(usr_input, dict):
+                pass
             else:  # regard as pojo
                 usr_input = usr_input.__dict__
             # Convert Any values to str to match format_messages signature
@@ -185,7 +194,8 @@ class ReActAgent(Agent):
 
         if schema_prompt:
             instruct = schema_prompt.format_messages()
-            usr_msgs = instruct + usr_msgs
+            index = find_first_system_message(usr_msgs)
+            usr_msgs = usr_msgs[: index + 1] + instruct + usr_msgs[index + 1 :]
 
         output_schema = ctx.get_action_config_value(key="output_schema")
 
@@ -197,11 +207,11 @@ class ReActAgent(Agent):
             )
         )
 
-    @action(ChatResponseEvent)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
-    def stop_action(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+    def stop_action(event: Event, ctx: RunnerContext) -> None:
         """Stop action to output result."""
-        response = event.response
+        response = ChatResponseEvent.from_event(event).response
 
         if STRUCTURED_OUTPUT in response.extra_args:
             output = response.extra_args[STRUCTURED_OUTPUT]

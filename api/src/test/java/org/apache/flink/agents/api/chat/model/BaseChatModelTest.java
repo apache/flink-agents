@@ -21,19 +21,20 @@ package org.apache.flink.agents.api.chat.model;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.Tool;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -51,10 +52,8 @@ class BaseChatModelTest {
     private static class TestChatModel extends BaseChatModelSetup {
         private String responsePrefix = "Test Response: ";
 
-        public TestChatModel(
-                ResourceDescriptor descriptor,
-                BiFunction<String, ResourceType, Resource> getResource) {
-            super(descriptor, getResource);
+        public TestChatModel(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
         }
 
         @Override
@@ -63,7 +62,10 @@ class BaseChatModelTest {
         }
 
         @Override
-        public ChatMessage chat(List<ChatMessage> messages, Map<String, Object> parameters) {
+        public ChatMessage chat(
+                List<ChatMessage> messages,
+                Map<String, Object> promptArgs,
+                Map<String, Object> modelParams) {
             // Simple test implementation that echoes the last user message
 
             String lastUserContent = "";
@@ -230,6 +232,212 @@ class BaseChatModelTest {
         assertNotNull(response.getToolCalls());
         assertNotNull(response.getExtraArgs());
         assertTrue(response.getContent().length() > 0);
+    }
+
+    /** Connection that captures the messages passed to it for assertions. */
+    private static class RecordingConnection extends BaseChatModelConnection {
+        List<ChatMessage> capturedMessages;
+        Map<String, Object> capturedModelParams;
+
+        RecordingConnection() {
+            super(
+                    new ResourceDescriptor(
+                            RecordingConnection.class.getName(), Collections.emptyMap()),
+                    null);
+        }
+
+        @Override
+        public ChatMessage chat(
+                List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+            this.capturedMessages = new ArrayList<>(messages);
+            this.capturedModelParams = new HashMap<>(modelParams);
+            return new ChatMessage(MessageRole.ASSISTANT, "ok");
+        }
+    }
+
+    /** Subclass that exposes setters so we can inject the connection and prompt directly. */
+    private static class RecordingChatModelSetup extends BaseChatModelSetup {
+        RecordingChatModelSetup(BaseChatModelConnection connection, Prompt prompt) {
+            super(
+                    new ResourceDescriptor(
+                            RecordingChatModelSetup.class.getName(), Collections.emptyMap()),
+                    null);
+            this.connection = connection;
+            this.prompt = prompt;
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return new HashMap<>();
+        }
+    }
+
+    @Test
+    @DisplayName("chat() fills prompt template from promptArgs parameter")
+    void testChatFillsTemplateFromPromptArgsParameter() {
+        RecordingConnection connection = new RecordingConnection();
+        Prompt prompt = Prompt.fromText("Task: {key}");
+        RecordingChatModelSetup setup = new RecordingChatModelSetup(connection, prompt);
+
+        setup.chat(Collections.emptyList(), Map.of("key", "value"), Map.of());
+
+        assertNotNull(connection.capturedMessages);
+        assertEquals(1, connection.capturedMessages.size());
+        assertEquals("Task: value", connection.capturedMessages.get(0).getContent());
+    }
+
+    @Test
+    @DisplayName("chat() does not read template vars from ChatMessage.extraArgs")
+    void testChatDoesNotReadTemplateVarsFromExtraArgs() {
+        RecordingConnection connection = new RecordingConnection();
+        Prompt prompt = Prompt.fromText("Task: {key}");
+        RecordingChatModelSetup setup = new RecordingChatModelSetup(connection, prompt);
+
+        ChatMessage userMessage =
+                new ChatMessage(MessageRole.USER, "hello", Map.of("key", "value"));
+        setup.chat(List.of(userMessage), Map.of(), Map.of());
+
+        assertNotNull(connection.capturedMessages);
+        assertEquals(2, connection.capturedMessages.size());
+        assertEquals("Task: {key}", connection.capturedMessages.get(0).getContent());
+        assertEquals("hello", connection.capturedMessages.get(1).getContent());
+    }
+
+    @Test
+    @DisplayName("chat() re-fills prompt template on subsequent invocations when args supplied")
+    void testChatRefillsTemplateOnSubsequentInvocations() {
+        RecordingConnection connection = new RecordingConnection();
+        Prompt prompt = Prompt.fromText("Task: {key}");
+        RecordingChatModelSetup setup = new RecordingChatModelSetup(connection, prompt);
+
+        setup.chat(Collections.emptyList(), Map.of("key", "v1"), Map.of());
+        assertNotNull(connection.capturedMessages);
+        assertEquals(1, connection.capturedMessages.size());
+        assertEquals("Task: v1", connection.capturedMessages.get(0).getContent());
+
+        ChatMessage toolResponse = new ChatMessage(MessageRole.TOOL, "tool result");
+        setup.chat(List.of(toolResponse), Map.of("key", "v1"), Map.of());
+        assertEquals(2, connection.capturedMessages.size());
+        assertEquals("Task: v1", connection.capturedMessages.get(0).getContent());
+        assertEquals("tool result", connection.capturedMessages.get(1).getContent());
+    }
+
+    @Test
+    @DisplayName("Default chat() overload rejects an outputSchema it cannot translate")
+    void testDefaultChatOverloadRejectsOutputSchema() {
+        RecordingConnection connection = new RecordingConnection();
+
+        // Dropping the schema instead would return an unconstrained response that the
+        // caller has no way to tell apart from a schema-conforming one.
+        assertThrows(
+                UnsupportedOperationException.class,
+                () ->
+                        connection.chat(
+                                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                                List.of(),
+                                new HashMap<>(),
+                                new Object()));
+
+        // The rejection has to precede the delegation: a delegate-then-throw ordering
+        // would still issue a real provider request before failing.
+        assertNull(connection.capturedMessages);
+    }
+
+    @Test
+    @DisplayName("Default chat() overload delegates to the 3-arg chat() for a null outputSchema")
+    void testDefaultChatOverloadDelegatesForNullOutputSchema() {
+        RecordingConnection connection = new RecordingConnection();
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("temperature", 0.5);
+
+        ChatMessage response =
+                connection.chat(
+                        List.of(new ChatMessage(MessageRole.USER, "hi")),
+                        List.of(),
+                        modelParams,
+                        null);
+
+        // The 3-arg chat() ran (it is what produces "ok") and the overload added nothing
+        // to modelParams that could travel on to a provider SDK request.
+        assertEquals("ok", response.getContent());
+        assertEquals(Map.of("temperature", 0.5), connection.capturedModelParams);
+    }
+
+    @Test
+    @DisplayName("Default capability predicate reports no native structured output for any model")
+    void testDefaultCapabilityPredicateIsFalse() {
+        RecordingConnection connection = new RecordingConnection();
+
+        assertFalse(connection.supportsNativeStructuredOutput("gpt-4o"));
+        assertFalse(connection.supportsNativeStructuredOutput("gpt-3.5-turbo"));
+        assertFalse(connection.supportsNativeStructuredOutput(null));
+    }
+
+    @Test
+    @DisplayName("Structured-output strategy defaults to AUTO when the descriptor omits it")
+    void testStructuredOutputStrategyDefaultsToAuto() {
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(new RecordingConnection(), null);
+
+        assertEquals(StructuredOutputStrategy.AUTO, setup.getStructuredOutputStrategy());
+    }
+
+    @Test
+    @DisplayName("Structured-output strategy defaults to AUTO when the descriptor argument is null")
+    void testStructuredOutputStrategyDefaultsToAutoForNullArgument() {
+        // A descriptor argument present with a null value is indistinguishable from an
+        // absent one here, so it resolves to the same default rather than failing.
+        TestChatModel model =
+                new TestChatModel(
+                        new ResourceDescriptor(
+                                TestChatModel.class.getName(),
+                                Collections.singletonMap("structured_output_strategy", null)),
+                        null);
+
+        assertEquals(StructuredOutputStrategy.AUTO, model.getStructuredOutputStrategy());
+    }
+
+    @Test
+    @DisplayName("Structured-output strategy is read from the descriptor argument")
+    void testStructuredOutputStrategyReadFromDescriptor() {
+        TestChatModel model =
+                new TestChatModel(
+                        new ResourceDescriptor(
+                                TestChatModel.class.getName(),
+                                Map.of("structured_output_strategy", "native")),
+                        null);
+
+        assertEquals(StructuredOutputStrategy.NATIVE, model.getStructuredOutputStrategy());
+    }
+
+    @Test
+    @DisplayName("An unrecognized structured-output strategy is rejected instead of defaulting")
+    void testUnknownStructuredOutputStrategyRejected() {
+        ResourceDescriptor descriptor =
+                new ResourceDescriptor(
+                        TestChatModel.class.getName(),
+                        Map.of("structured_output_strategy", "bogus"));
+
+        assertThrows(IllegalArgumentException.class, () -> new TestChatModel(descriptor, null));
+    }
+
+    @Test
+    @DisplayName("AUTO resolves to native only when the effective model is capable")
+    void testAutoStrategyResolvesToNativeOnlyWhenCapable() {
+        assertTrue(StructuredOutputStrategy.AUTO.resolvesToNative(true));
+        assertFalse(StructuredOutputStrategy.AUTO.resolvesToNative(false));
+    }
+
+    @Test
+    @DisplayName("NATIVE forces native even when the model is not capable")
+    void testNativeStrategyForcesNativeRegardlessOfCapability() {
+        assertTrue(StructuredOutputStrategy.NATIVE.resolvesToNative(false));
+    }
+
+    @Test
+    @DisplayName("PROMPT never resolves to native even when the model is capable")
+    void testPromptStrategyNeverResolvesToNative() {
+        assertFalse(StructuredOutputStrategy.PROMPT.resolvesToNative(true));
     }
 
     @Test

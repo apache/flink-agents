@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Literal, Sequence
 from ollama import Client, Message
 from pydantic import Field
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -85,9 +86,17 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
-        """Process a sequence of messages, and return a response."""
+        """Process a sequence of messages, and return a response.
+
+        A non-``None`` ``output_schema`` is rejected: this connection has no native
+        structured-output translation, so callers stay on the prompt-engineering
+        fallback. Declaring the parameter keeps a caller-supplied schema out of
+        ``**kwargs``, which is forwarded to the provider SDK.
+        """
+        self._reject_unsupported_output_schema(output_schema)
         ollama_messages = self.__convert_to_ollama_messages(messages)
 
         # Convert tool format
@@ -176,12 +185,12 @@ class OllamaChatModelSetup(BaseChatModelSetup):
     ----------
     connection : str
         Name of the referenced connection. (Inherited from BaseChatModelSetup)
+    model : str
+        Model name to use. (Inherited from BaseChatModelSetup)
     prompt : Optional[Union[Prompt, str]
         Prompt template or string for the model. (Inherited from BaseChatModelSetup)
     tools : Optional[List[str]]
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
-    model : str
-        Model name to use.
     temperature : float
         The temperature to use for sampling.
     num_ctx : int
@@ -195,8 +204,6 @@ class OllamaChatModelSetup(BaseChatModelSetup):
         If True, extracts content within <think></think> tags from the response and
         stores it in additional_kwargs.
     """
-
-    model: str = Field(description="Model name to use.")
 
     temperature: float = Field(
         default=0.75,

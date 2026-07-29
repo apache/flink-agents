@@ -18,9 +18,7 @@
 package org.apache.flink.agents.integrations.chatmodels.azureai;
 
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 
 /**
  * A chat model integration for Azure AI Chat Completions service.
@@ -52,8 +50,8 @@ public class AzureAIChatModelSetup extends BaseChatModelSetup {
 
     public AzureAIChatModelSetup(
             ResourceDescriptor descriptor,
-            java.util.function.BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            org.apache.flink.agents.api.resource.ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
     }
 
     // For any other specific parameters, please refer to ChatCompletionsOptions

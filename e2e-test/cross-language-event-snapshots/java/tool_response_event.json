@@ -1,0 +1,22 @@
+{
+  "id" : "00000000-0000-0000-0000-000000000001",
+  "attributes" : {
+    "request_id" : "00000000-0000-0000-0000-000000000002",
+    "responses" : {
+      "call_aaaa" : {
+        "result" : "pong",
+        "success" : true,
+        "error" : null,
+        "execution_time_ms" : 0,
+        "tool_name" : null
+      }
+    },
+    "success" : {
+      "call_aaaa" : true
+    },
+    "error" : { },
+    "external_ids" : { },
+    "timestamp" : 1700000000000
+  },
+  "type" : "_tool_response_event"
+}

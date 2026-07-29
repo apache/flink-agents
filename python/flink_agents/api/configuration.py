@@ -30,11 +30,14 @@ class ConfigOption:
         default: The default value for this configuration option
     """
 
-    def __init__(self, key: str, config_type: Type[Any], default: Any | None=None) -> None:
+    def __init__(
+        self, key: str, config_type: Type[Any], default: Any | None = None
+    ) -> None:
         """Initialize a configuration option."""
         self._key = key
         self._type = config_type
         self._default_value = default
+
     def get_key(self) -> str:
         """Gets the configuration key."""
         return self._key
@@ -46,6 +49,7 @@ class ConfigOption:
     def get_default_value(self) -> Any:
         """Returns the default value."""
         return self._default_value
+
 
 class WritableConfiguration(ABC):
     """Abstract base class providing write access to a configuration object.
@@ -98,6 +102,7 @@ class WritableConfiguration(ABC):
             value: The value to set for the key
         """
 
+
 class ReadableConfiguration(ABC):
     """Abstract base class providing read access to a configuration object.
 
@@ -105,7 +110,7 @@ class ReadableConfiguration(ABC):
     """
 
     @abstractmethod
-    def get_int(self, key: str, default: int | None=None) -> int:
+    def get_int(self, key: str, default: int | None = None) -> int:
         """Get the int configuration value by key.
 
         Args:
@@ -117,7 +122,7 @@ class ReadableConfiguration(ABC):
         """
 
     @abstractmethod
-    def get_float(self, key: str, default: float | None=None) -> float:
+    def get_float(self, key: str, default: float | None = None) -> float:
         """Get the float configuration value by key.
 
         Args:
@@ -129,7 +134,7 @@ class ReadableConfiguration(ABC):
         """
 
     @abstractmethod
-    def get_bool(self, key: str, default: bool | None=None) -> bool:
+    def get_bool(self, key: str, default: bool | None = None) -> bool:
         """Get the boolean configuration value by key.
 
         Args:
@@ -141,7 +146,7 @@ class ReadableConfiguration(ABC):
         """
 
     @abstractmethod
-    def get_str(self, key: str, default: str | None=None) -> str:
+    def get_str(self, key: str, default: str | None = None) -> str:
         """Get the string configuration value by key.
 
         Args:
@@ -162,6 +167,7 @@ class ReadableConfiguration(ABC):
         Returns:
             The value of the given option
         """
+
 
 class Configuration(WritableConfiguration, ReadableConfiguration, ABC):
     """A configuration object that provides both read and write access to a

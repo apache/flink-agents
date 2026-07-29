@@ -7,8 +7,8 @@
                 "module": "flink_agents.plan.tests.test_agent_plan",
                 "qualname": "MyAgent.first_action"
             },
-            "listen_event_types": [
-                "flink_agents.api.events.event.InputEvent"
+            "trigger_conditions": [
+                "_input_event"
             ],
             "config": null
         },
@@ -19,9 +19,9 @@
                 "module": "flink_agents.plan.tests.test_agent_plan",
                 "qualname": "MyAgent.second_action"
             },
-            "listen_event_types": [
-                "flink_agents.api.events.event.InputEvent",
-                "flink_agents.plan.tests.test_agent_plan.MyEvent"
+            "trigger_conditions": [
+                "_input_event",
+                "_my_event"
             ],
             "config": null
         },
@@ -32,9 +32,9 @@
                 "module": "flink_agents.plan.actions.chat_model_action",
                 "qualname": "process_chat_request_or_tool_response"
             },
-            "listen_event_types": [
-                "flink_agents.api.events.chat_event.ChatRequestEvent",
-                "flink_agents.api.events.tool_event.ToolResponseEvent"
+            "trigger_conditions": [
+                "_chat_request_event",
+                "_tool_response_event"
             ],
             "config": null
         },
@@ -45,8 +45,8 @@
                 "module": "flink_agents.plan.actions.tool_call_action",
                 "qualname": "process_tool_request"
             },
-            "listen_event_types": [
-                "flink_agents.api.events.tool_event.ToolRequestEvent"
+            "trigger_conditions": [
+                "_tool_request_event"
             ],
             "config": null
         },
@@ -57,30 +57,30 @@
                 "module": "flink_agents.plan.actions.context_retrieval_action",
                 "qualname": "process_context_retrieval_request"
             },
-            "listen_event_types": [
-                "flink_agents.api.events.context_retrieval_event.ContextRetrievalRequestEvent"
+            "trigger_conditions": [
+                "_context_retrieval_request_event"
             ],
             "config": null
         }
     },
     "actions_by_event": {
-        "flink_agents.api.events.event.InputEvent": [
+        "_input_event": [
             "first_action",
             "second_action"
         ],
-        "flink_agents.plan.tests.test_agent_plan.MyEvent": [
+        "_my_event": [
             "second_action"
         ],
-        "flink_agents.api.events.chat_event.ChatRequestEvent": [
+        "_chat_request_event": [
             "chat_model_action"
         ],
-        "flink_agents.api.events.tool_event.ToolResponseEvent": [
+        "_tool_response_event": [
             "chat_model_action"
         ],
-        "flink_agents.api.events.tool_event.ToolRequestEvent": [
+        "_tool_request_event": [
             "tool_call_action"
         ],
-        "flink_agents.api.events.context_retrieval_event.ContextRetrievalRequestEvent": [
+        "_context_retrieval_request_event": [
             "context_retrieval_action"
         ]
     },
@@ -95,7 +95,8 @@
                     "arguments": {
                         "host": "8.8.8.8",
                         "desc": "mock resource just for testing.",
-                        "connection": "mock"
+                        "connection": "mock",
+                        "model": "mock-model"
                     }
                 },
                 "__resource_provider_type__": "PythonResourceProvider"

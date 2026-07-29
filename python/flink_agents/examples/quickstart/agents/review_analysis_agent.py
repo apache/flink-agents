@@ -16,8 +16,6 @@
 # limitations under the License.
 #################################################################################
 import json
-import logging
-from typing import TYPE_CHECKING
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -28,20 +26,17 @@ from flink_agents.api.decorators import (
     tool,
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceName
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
+    ProductReview,
     ProductReviewAnalysisRes,
     notify_shipping_manager,
     review_analysis_prompt,
 )
-
-if TYPE_CHECKING:
-    from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
-        ProductReview,
-    )
 
 
 class ReviewAnalysisAgent(Agent):
@@ -89,38 +84,44 @@ class ReviewAnalysisAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent)
+    @action(EventType.InputEvent)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
-        input: ProductReview = event.input
+        input = ProductReview.model_validate(InputEvent.from_event(event).input)
         ctx.short_term_memory.set("id", input.id)
 
         content = f"""
             "id": {input.id},
             "review": {input.review}
         """
-        msg = ChatMessage(role=MessageRole.USER, extra_args={"input": content})
-        ctx.send_event(ChatRequestEvent(model="review_analysis_model", messages=[msg]))
+        msg = ChatMessage(role=MessageRole.USER)
+        ctx.send_event(
+            ChatRequestEvent(
+                model="review_analysis_model",
+                messages=[msg],
+                prompt_args={"input": content},
+            )
+        )
 
-    @action(ChatResponseEvent)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
-        try:
-            json_content = json.loads(event.response.content)
-            ctx.send_event(
-                OutputEvent(
-                    output=ProductReviewAnalysisRes(
-                        id=ctx.short_term_memory.get("id"),
-                        score=json_content["score"],
-                        reasons=json_content["reasons"],
-                    )
+        chat_response = ChatResponseEvent.from_event(event)
+        # Fail fast on a malformed LLM response: a parse error here propagates
+        # and fails the agent, so a dropped input is surfaced instead of
+        # silently lost. In production, choose the handling that fits your
+        # pipeline: raise to fail the input (as below), emit an OutputEvent
+        # carrying an error sentinel, or send a custom error event so
+        # downstream operators can detect the failure.
+        json_content = json.loads(chat_response.response.content)
+        ctx.send_event(
+            OutputEvent(
+                output=ProductReviewAnalysisRes(
+                    id=ctx.short_term_memory.get("id"),
+                    score=json_content["score"],
+                    reasons=json_content["reasons"],
                 )
             )
-        except Exception:
-            logging.exception(
-                f"Error processing chat response {event.response.content}"
-            )
-
-            # To fail the agent, you can raise an exception here.
+        )

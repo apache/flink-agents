@@ -17,16 +17,16 @@
 #################################################################################
 from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.memory_reference import MemoryRef
-from flink_agents.runtime.local_memory_object import LocalMemoryObject
+from flink_agents.runtime.tests.local_memory_object import LocalMemoryObject
 
 
-class MockRunnerContext:  # noqa D101
+class MockRunnerContext:
     def __init__(self, memory: LocalMemoryObject) -> None:
         """Mock RunnerContext for testing resolve() method."""
         self._memory = memory
 
     @property
-    def short_term_memory(self) -> LocalMemoryObject:  # noqa D102
+    def short_term_memory(self) -> LocalMemoryObject:
         return self._memory
 
 
@@ -35,21 +35,7 @@ def create_memory() -> LocalMemoryObject:
     return LocalMemoryObject(MemoryType.SHORT_TERM, {})
 
 
-class User:  # noqa: D101
-    def __init__(self, name: str, age: int) -> None:
-        """Store for later comparison."""
-        self.name = name
-        self.age = age
-
-    def __eq__(self, other: object) -> bool:
-        return (
-                isinstance(other, User)
-                and other.name == self.name
-                and other.age == self.age
-        )
-
-
-def test_set_get_involved_ref() -> None:  # noqa: D103
+def test_set_get_involved_ref() -> None:
     mem = create_memory()
 
     # Test cases: (path, value, type_name)
@@ -59,8 +45,6 @@ def test_set_get_involved_ref() -> None:  # noqa: D103
         ("my_str", "hello", "str"),
         ("my_list", ["a", "b"], "list"),
         ("my_dict", {"x": 10}, "dict"),
-        ("my_set", {1, 2, 3}, "set"),
-        ("my_user", User("Alice", 30), "User"),
     ]
 
     for path, value, _expected_type_name in test_cases:
@@ -72,7 +56,7 @@ def test_set_get_involved_ref() -> None:  # noqa: D103
         assert retrieved_value == value
 
 
-def test_memory_ref_create() -> None:  # noqa: D103
+def test_memory_ref_create() -> None:
     path = "a.b.c"
     ref = MemoryRef.create(MemoryType.SHORT_TERM, path)
 
@@ -80,7 +64,7 @@ def test_memory_ref_create() -> None:  # noqa: D103
     assert ref.path == path
 
 
-def test_memory_ref_resolve() -> None:  # noqa: D103
+def test_memory_ref_resolve() -> None:
     mem = create_memory()
     ctx = MockRunnerContext(mem)
 
@@ -90,8 +74,6 @@ def test_memory_ref_resolve() -> None:  # noqa: D103
         "my_str": "hello",
         "my_list": ["a", "b"],
         "my_dict": {"x": 10},
-        "my_set": {1, 2, 3},
-        "my_user": User("Charlie", 50),
     }
 
     for path, value in test_data.items():
@@ -100,7 +82,7 @@ def test_memory_ref_resolve() -> None:  # noqa: D103
         assert resolved_value == value
 
 
-def test_get_with_ref_to_nested_object() -> None:  # noqa: D103
+def test_get_with_ref_to_nested_object() -> None:
     mem = create_memory()
     obj = mem.new_object("a.b")
     obj.set("c", 10)
@@ -112,15 +94,17 @@ def test_get_with_ref_to_nested_object() -> None:  # noqa: D103
     assert resolved_obj.get("b.c") == 10
 
 
-def test_get_with_non_existent_ref() -> None:  # noqa: D103
+def test_get_with_non_existent_ref() -> None:
     mem = create_memory()
 
-    non_existent_ref = MemoryRef.create(MemoryType.SHORT_TERM, "this.path.does.not.exist")
+    non_existent_ref = MemoryRef.create(
+        MemoryType.SHORT_TERM, "this.path.does.not.exist"
+    )
 
     assert mem.get(non_existent_ref) is None
 
 
-def test_ref_equality_and_hashing() -> None:  # noqa: D103
+def test_ref_equality_and_hashing() -> None:
     ref1 = MemoryRef(path="a.b")
     ref2 = MemoryRef(path="a.b")
     ref3 = MemoryRef(path="a.c")

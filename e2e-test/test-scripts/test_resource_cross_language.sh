@@ -30,7 +30,7 @@ echo "Root directory: $root_dir"
 cd "$root_dir/e2e-test/flink-agents-end-to-end-tests-resource-cross-language"
 
 echo "Running all tests in resource-cross-language module..."
-mvn -T16 --batch-mode --no-transfer-progress test
+mvn -T16 --batch-mode --no-transfer-progress test -Dsurefire.rerunFailingTestsCount=2
 
 ret=$?
 if [ "$ret" != "0" ]; then

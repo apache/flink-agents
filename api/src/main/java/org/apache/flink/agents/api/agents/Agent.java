@@ -18,7 +18,8 @@
 
 package org.apache.flink.agents.api.agents;
 
-import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.function.Function;
+import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
@@ -32,8 +33,7 @@ import java.util.Map;
 
 /** Base class for defining agent logic. */
 public class Agent {
-    private final Map<String, Tuple3<Class<? extends Event>[], Method, Map<String, Object>>>
-            actions;
+    private final Map<String, Tuple3<String[], Function, Map<String, Object>>> actions;
 
     private final Map<ResourceType, Map<String, Object>> resources;
 
@@ -45,7 +45,7 @@ public class Agent {
         this.actions = new HashMap<>();
     }
 
-    public Map<String, Tuple3<Class<? extends Event>[], Method, Map<String, Object>>> getActions() {
+    public Map<String, Tuple3<String[], Function, Map<String, Object>>> getActions() {
         return actions;
     }
 
@@ -56,28 +56,48 @@ public class Agent {
     /**
      * Add action to agent.
      *
-     * @param events The event types this action listened.
+     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
+     *     future condition-expression form.
      * @param method The method of this action, should be static method.
      * @param config The optional config can be used by this action.
      */
     public Agent addAction(
-            Class<? extends Event>[] events, Method method, @Nullable Map<String, Object> config) {
-        String name = method.getName();
-        if (actions.containsKey(name)) {
-            throw new IllegalArgumentException(String.format("Action %s already defined.", name));
-        }
-        actions.put(name, new Tuple3<>(events, method, config));
-        return this;
+            String[] triggerConditions, Method method, @Nullable Map<String, Object> config) {
+        return addAction(
+                method.getName(), triggerConditions, JavaFunction.fromMethod(method), config);
     }
 
     /**
      * Add action to agent.
      *
-     * @param events The event types this action listened.
+     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
+     *     future condition-expression form.
      * @param method The method of this action, should be static method.
      */
-    public Agent addAction(Class<? extends Event>[] events, Method method) {
-        return addAction(events, method, null);
+    public Agent addAction(String[] triggerConditions, Method method) {
+        return addAction(triggerConditions, method, null);
+    }
+
+    /**
+     * Add action to agent.
+     *
+     * @param name The action name. Must be unique within this agent.
+     * @param triggerConditions Trigger condition strings — each is either an event-type name or a
+     *     future condition-expression form.
+     * @param function The api-layer function descriptor; will be promoted to a plan-layer
+     *     executable at {@code AgentPlan} construction.
+     * @param config Optional config for this action.
+     */
+    public Agent addAction(
+            String name,
+            String[] triggerConditions,
+            Function function,
+            @Nullable Map<String, Object> config) {
+        if (actions.containsKey(name)) {
+            throw new IllegalArgumentException(String.format("Action %s already defined.", name));
+        }
+        actions.put(name, new Tuple3<>(triggerConditions, function, config));
+        return this;
     }
 
     public void addResourcesIfAbsent(Map<ResourceType, Map<String, Object>> resources) {

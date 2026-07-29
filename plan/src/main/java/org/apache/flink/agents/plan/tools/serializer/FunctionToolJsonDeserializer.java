@@ -24,12 +24,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.plan.Function;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 
 import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Custom deserializer for {@link FunctionTool} that handles the deserialization of the metadata and
@@ -61,7 +64,30 @@ public class FunctionToolJsonDeserializer extends StdDeserializer<FunctionTool> 
             throw new IOException("Unsupported function type: " + funcType);
         }
 
-        return new FunctionTool(metadata, func);
+        Map<String, ToolParameterInjection> injectedArgs = new LinkedHashMap<>();
+        JsonNode injectedArgsNode = node.get("injected_args");
+        if (injectedArgsNode != null && injectedArgsNode.isObject()) {
+            ObjectMapper mapper = new ObjectMapper();
+            injectedArgsNode
+                    .fields()
+                    .forEachRemaining(
+                            entry -> {
+                                try {
+                                    injectedArgs.put(
+                                            entry.getKey(),
+                                            mapper.treeToValue(
+                                                            entry.getValue(),
+                                                            ToolParameterInjection.class)
+                                                    .withDefaultKey(entry.getKey()));
+                                } catch (IOException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            });
+        } else if (injectedArgsNode != null && !injectedArgsNode.isNull()) {
+            throw new IOException("'injected_args' must be an object.");
+        }
+
+        return new FunctionTool(metadata, func, injectedArgs);
     }
 
     private PythonFunction deserializePythonFunction(JsonNode execNode) {

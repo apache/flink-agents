@@ -42,15 +42,21 @@ public class PythonFunction implements Function {
     @Override
     public Object call(Object... args) throws Exception {
         if (interpreter == null) {
-            throw new IllegalStateException("Python interpreter is not set.");
+            throw new IllegalStateException(
+                    "PythonFunction requires the Python interpreter; not set on this "
+                            + "descriptor. The runtime injects it via setInterpreter before "
+                            + "invocation.");
         }
 
         return interpreter.invoke(CALL_PYTHON_FUNCTION, module, qualName, args);
     }
 
-    // TODO: check Python function signature compatibility with given parameter types
     @Override
-    public void checkSignature(Class<?>[] parameterTypes) throws Exception {}
+    public void checkSignature(Class<?>[] parameterTypes) throws Exception {
+        // No-op: descriptor carries no parameter types, and the Python module
+        // cannot be inspected without an interpreter. Mismatches surface at
+        // dispatch time.
+    }
 
     public String getModule() {
         return module;

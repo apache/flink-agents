@@ -67,12 +67,20 @@ public interface RunnerContext {
     /**
      * Gets the metric group for Flink Agents.
      *
+     * <p>The returned group must only be accessed from the operator/mailbox (action) thread, not
+     * from inside a {@link #durableExecute} or {@link #durableExecuteAsync} callable, which runs on
+     * a separate thread pool.
+     *
      * @return the metric group shared across all actions.
      */
     FlinkAgentsMetricGroup getAgentMetricGroup();
 
     /**
      * Gets the individual metric group dedicated for each action.
+     *
+     * <p>The returned group must only be accessed from the operator/mailbox (action) thread, not
+     * from inside a {@link #durableExecute} or {@link #durableExecuteAsync} callable, which runs on
+     * a separate thread pool.
      *
      * @return the individual metric group specific to the current action.
      */
@@ -115,6 +123,9 @@ public interface RunnerContext {
      * <p>The result will be stored and returned from cache during job recovery. The callable is
      * executed synchronously, blocking the operator until completion.
      *
+     * <p>If the callable provides a reconcile callable via {@link DurableCallable#reconciler()},
+     * recovery may invoke it for an in-flight durable call.
+     *
      * <p>Access to memory and sendEvent are prohibited within the callable.
      */
     <T> T durableExecute(DurableCallable<T> callable) throws Exception;
@@ -127,6 +138,9 @@ public interface RunnerContext {
      * synchronous execution.
      *
      * <p>The result will be stored and returned from cache during job recovery.
+     *
+     * <p>If the callable provides a reconcile callable via {@link DurableCallable#reconciler()},
+     * recovery may invoke it for an in-flight durable call.
      *
      * <p>Access to memory and sendEvent are prohibited within the callable.
      */

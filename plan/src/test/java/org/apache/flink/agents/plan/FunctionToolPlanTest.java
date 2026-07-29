@@ -20,13 +20,16 @@
 
 package org.apache.flink.agents.plan;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.tools.FunctionTool;
@@ -61,6 +64,12 @@ class FunctionToolPlanTest {
         }
     }
 
+    public static String queryOrder(
+            @ToolParam(name = "order_id") String orderId,
+            @ToolParam(name = "tenant_id", injected = true) String tenantId) {
+        return tenantId + ":" + orderId;
+    }
+
     static class TestAgent extends Agent {
         @Tool private final FunctionTool javaTool;
 
@@ -90,7 +99,17 @@ class FunctionToolPlanTest {
     void functionToolAgentPlan() throws Exception {
         AgentPlan plan = new AgentPlan(new TestAgent());
 
-        FunctionTool javaTool = (FunctionTool) plan.getResource("javaTool", ResourceType.TOOL);
+        FunctionTool javaTool =
+                (FunctionTool)
+                        plan.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("javaTool")
+                                .provide(
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
         ToolResponse ok =
                 javaTool.call(
                         new ToolParameters(
@@ -102,7 +121,17 @@ class FunctionToolPlanTest {
         assertTrue(ok.isSuccess());
         assertEquals(36.0, (Double) ok.getResult(), 1e-9);
 
-        FunctionTool pyTool = (FunctionTool) plan.getResource("pyTool", ResourceType.TOOL);
+        FunctionTool pyTool =
+                (FunctionTool)
+                        plan.getResourceProviders()
+                                .get(ResourceType.TOOL)
+                                .get("pyTool")
+                                .provide(
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
         ToolResponse err = pyTool.call(new ToolParameters(new HashMap<>(Map.of("x", 1))));
         assertFalse(err.isSuccess());
     }
@@ -120,5 +149,20 @@ class FunctionToolPlanTest {
                                 new HashMap<>(Map.of("a", 10, "b", 2.5, "operation", "div"))));
         assertTrue(ok.isSuccess());
         assertEquals(4.0, (Double) ok.getResult(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("Injected @ToolParam is hidden from metadata schema")
+    void injectedToolParamHiddenFromMetadata() throws Exception {
+        Method m = FunctionToolPlanTest.class.getMethod("queryOrder", String.class, String.class);
+        FunctionTool tool = FunctionTool.fromStaticMethod("query order", m);
+
+        JsonNode schema = new ObjectMapper().readTree(tool.getMetadata().getInputSchema());
+
+        assertEquals(
+                Map.of("tenant_id", ToolParameterInjection.fromSensoryMemory("tenant_id")),
+                tool.getInjectedArgs());
+        assertTrue(schema.get("properties").has("order_id"));
+        assertFalse(schema.get("properties").has("tenant_id"));
     }
 }

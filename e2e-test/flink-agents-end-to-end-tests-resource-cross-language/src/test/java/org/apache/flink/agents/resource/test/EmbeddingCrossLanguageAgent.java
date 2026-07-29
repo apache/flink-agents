@@ -19,6 +19,8 @@ package org.apache.flink.agents.resource.test;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -27,6 +29,7 @@ import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
 import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 
@@ -67,10 +70,10 @@ public class EmbeddingCrossLanguageAgent extends Agent {
     }
 
     /** Main test action that processes input and validates embedding generation. */
-    @Action(listenEvents = {InputEvent.class})
-    public static void testEmbeddingGeneration(InputEvent event, RunnerContext ctx)
-            throws Exception {
-        String input = (String) event.getInput();
+    @Action(EventType.InputEvent)
+    public static void testEmbeddingGeneration(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        String input = (String) inputEvent.getInput();
         MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
         // Parse test input
@@ -103,11 +106,14 @@ public class EmbeddingCrossLanguageAgent extends Agent {
                                     org.apache.flink.agents.api.resource.ResourceType
                                             .EMBEDDING_MODEL);
 
-            float[] embedding = embeddingModel.embed(text);
+            EmbeddingResult<float[]> embeddingResult = embeddingModel.embedWithUsage(text);
+            float[] embedding = embeddingResult.getEmbeddings();
             System.out.printf("[TEST] Generated embedding with dimension: %d%n", embedding.length);
             validateEmbeddingResult(id, text, embedding);
 
-            List<float[]> embeddings = embeddingModel.embed(List.of(text));
+            EmbeddingResult<List<float[]>> embeddingsResult =
+                    embeddingModel.embedWithUsage(List.of(text));
+            List<float[]> embeddings = embeddingsResult.getEmbeddings();
             validateEmbeddingResults(id, List.of(text), embeddings);
 
             // Create a minimal test result to avoid serialization issues

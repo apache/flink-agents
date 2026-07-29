@@ -19,13 +19,14 @@ package org.apache.flink.agents.runtime.python.utils;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
-import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
@@ -36,7 +37,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 public class PythonResourceAdapterImpl implements PythonResourceAdapter {
 
@@ -46,13 +46,15 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
 
     static final String JAVA_RESOURCE_ADAPTER = "j_resource_adapter";
 
-    static final String GET_RESOURCE_KEY = "get_resource";
+    static final String RESOURCE_CONTEXT_KEY = "resource_context";
 
     static final String PYTHON_MODULE_PREFIX = "python_java_utils.";
 
-    static final String GET_RESOURCE_FUNCTION = PYTHON_MODULE_PREFIX + "get_resource_function";
+    static final String GET_RESOURCE_CONTEXT = PYTHON_MODULE_PREFIX + "get_resource_context";
 
     static final String CALL_METHOD = PYTHON_MODULE_PREFIX + "call_method";
+
+    static final String SET_METRIC_GROUP = PYTHON_MODULE_PREFIX + "set_metric_group";
 
     static final String CREATE_RESOURCE = PYTHON_MODULE_PREFIX + "create_resource";
 
@@ -73,28 +75,41 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     static final String FROM_JAVA_VECTOR_STORE_QUERY =
             PYTHON_MODULE_PREFIX + "from_java_vector_store_query";
 
-    private final BiFunction<String, ResourceType, Resource> getResource;
+    static final String GET_PYTHON_TOOL_METADATA =
+            PYTHON_MODULE_PREFIX + "get_python_tool_metadata";
+
+    static final String INVOKE_PYTHON_TOOL = PYTHON_MODULE_PREFIX + "invoke_python_tool";
+
+    private final ResourceContext resourceContext;
     private final PythonInterpreter interpreter;
     private final JavaResourceAdapter javaResourceAdapter;
-    private Object pythonGetResourceFunction;
+    private PyObject pythonResourceContext;
 
     public PythonResourceAdapterImpl(
-            BiFunction<String, ResourceType, Resource> getResource,
+            ResourceContext resourceContext,
             PythonInterpreter interpreter,
             JavaResourceAdapter javaResourceAdapter) {
-        this.getResource = getResource;
+        this.resourceContext = resourceContext;
         this.interpreter = interpreter;
         this.javaResourceAdapter = javaResourceAdapter;
     }
 
     public void open() {
         interpreter.exec(PYTHON_IMPORTS);
-        pythonGetResourceFunction = interpreter.invoke(GET_RESOURCE_FUNCTION, this);
+        pythonResourceContext = (PyObject) interpreter.invoke(GET_RESOURCE_CONTEXT, this);
     }
 
     public Object getResource(String resourceName, String resourceType) {
-        Resource resource =
-                this.getResource.apply(resourceName, ResourceType.fromValue(resourceType));
+        Resource resource;
+        try {
+            resource =
+                    this.resourceContext.getResource(
+                            resourceName, ResourceType.fromValue(resourceType));
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
         if (resource instanceof PythonResourceWrapper) {
             PythonResourceWrapper pythonResource = (PythonResourceWrapper) resource;
             return pythonResource.getPythonResource();
@@ -112,13 +127,13 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
         Map<String, Object> kwargs = new HashMap<>();
         kwargs.put(JAVA_RESOURCE, resource);
         kwargs.put(JAVA_RESOURCE_ADAPTER, javaResourceAdapter);
-        kwargs.put(GET_RESOURCE_KEY, pythonGetResourceFunction);
+        kwargs.put(RESOURCE_CONTEXT_KEY, pythonResourceContext);
         return interpreter.invoke(FROM_JAVA_RESOURCE, resourceType, kwargs);
     }
 
     @Override
     public PyObject initPythonResource(String module, String clazz, Map<String, Object> kwargs) {
-        kwargs.put(GET_RESOURCE_KEY, pythonGetResourceFunction);
+        kwargs.put(RESOURCE_CONTEXT_KEY, pythonResourceContext);
         return (PyObject) interpreter.invoke(CREATE_RESOURCE, module, clazz, kwargs);
     }
 
@@ -175,14 +190,6 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     }
 
     @Override
-    public CollectionManageableVectorStore.Collection fromPythonCollection(
-            PyObject pythonCollection) {
-        return new CollectionManageableVectorStore.Collection(
-                pythonCollection.getAttr("name").toString(),
-                (Map<String, Object>) pythonCollection.getAttr("metadata", Map.class));
-    }
-
-    @Override
     public Object convertToPythonTool(Tool tool) {
         return interpreter.invoke(FROM_JAVA_TOOL, tool);
     }
@@ -197,7 +204,37 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     }
 
     @Override
+    public void setMetricGroup(Object pythonResource, FlinkAgentsMetricGroup metricGroup) {
+        interpreter.invoke(SET_METRIC_GROUP, pythonResource, metricGroup);
+    }
+
+    @Override
     public Object invoke(String name, Object... args) {
         return interpreter.invoke(name, args);
+    }
+
+    @Override
+    public Map<String, String> getPythonToolMetadata(String module, String qualName) {
+        return getPythonToolMetadata(module, qualName, java.util.List.of());
+    }
+
+    @Override
+    public Map<String, String> getPythonToolMetadata(
+            String module, String qualName, java.util.List<String> injectedArgs) {
+        @SuppressWarnings("unchecked")
+        Map<String, String> result =
+                (Map<String, String>)
+                        interpreter.invoke(
+                                GET_PYTHON_TOOL_METADATA, module, qualName, injectedArgs);
+        if (result == null) {
+            throw new IllegalStateException(
+                    "Python get_python_tool_metadata returned null for " + module + ":" + qualName);
+        }
+        return result;
+    }
+
+    @Override
+    public Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs) {
+        return interpreter.invoke(INVOKE_PYTHON_TOOL, module, qualName, kwargs);
     }
 }

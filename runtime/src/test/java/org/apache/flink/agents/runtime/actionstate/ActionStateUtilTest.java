@@ -17,10 +17,7 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
-import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.context.RunnerContext;
-import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.junit.jupiter.api.Test;
 
@@ -38,7 +35,7 @@ public class ActionStateUtilTest {
     public void testGenerateKeyConsistency() throws Exception {
         // Create test data
         Object key = "consistency-test";
-        Action action = new TestAction("consistency-action");
+        Action action = new NoOpAction("consistency-action");
         InputEvent inputEvent = new InputEvent("same-input");
         InputEvent inputEvent2 = new InputEvent("same-input");
 
@@ -54,7 +51,7 @@ public class ActionStateUtilTest {
     public void testGenerateKeyDifferentInputs() throws Exception {
         // Create test data
         Object key = "diff-test";
-        Action action = new TestAction("diff-action");
+        Action action = new NoOpAction("diff-action");
         InputEvent inputEvent1 = new InputEvent("input1");
         InputEvent inputEvent2 = new InputEvent("input2");
 
@@ -68,7 +65,7 @@ public class ActionStateUtilTest {
 
     @Test
     public void testGenerateKeyWithNullKey() throws Exception {
-        Action action = new TestAction("test-action");
+        Action action = new NoOpAction("test-action");
         InputEvent inputEvent = new InputEvent("test-input");
 
         assertThrows(
@@ -93,7 +90,7 @@ public class ActionStateUtilTest {
     @Test
     public void testGenerateKeyWithNullEvent() throws Exception {
         Object key = "test-key";
-        Action action = new TestAction("test-action");
+        Action action = new NoOpAction("test-action");
 
         assertThrows(
                 NullPointerException.class,
@@ -106,7 +103,7 @@ public class ActionStateUtilTest {
     public void testParseKeyValidKey() throws Exception {
         // Create test data and generate a key
         Object key = "test-key";
-        Action action = new TestAction("test-action");
+        Action action = new NoOpAction("test-action");
         InputEvent inputEvent = new InputEvent("test-input");
         long seqNum = 123;
 
@@ -128,7 +125,7 @@ public class ActionStateUtilTest {
     public void testParseKeyRoundTrip() throws Exception {
         // Test that generate -> parse -> values match original inputs
         Object originalKey = "round-trip-test";
-        Action action = new TestAction("round-trip-action");
+        Action action = new NoOpAction("round-trip-action");
         InputEvent inputEvent = new InputEvent("round-trip-input");
         long seqNum = 456;
 
@@ -176,7 +173,7 @@ public class ActionStateUtilTest {
     public void testParseKeyWithSpecialCharacters() throws Exception {
         // Test with keys containing special characters (but not the separator)
         Object key = "key-with-special@chars#123";
-        Action action = new TestAction("action-with-special@chars");
+        Action action = new NoOpAction("action-with-special@chars");
         InputEvent inputEvent = new InputEvent("input-with-special@chars");
         long seqNum = 789;
 
@@ -190,7 +187,7 @@ public class ActionStateUtilTest {
     @Test
     public void testParseKeyConsistencyWithDifferentKeys() throws Exception {
         // Generate keys with different inputs and verify parsing consistency
-        Action action = new TestAction("consistency-action");
+        Action action = new NoOpAction("consistency-action");
         InputEvent inputEvent = new InputEvent("consistency-input");
 
         String key1 = ActionStateUtil.generateKey("key1", 100, action, inputEvent);
@@ -206,22 +203,5 @@ public class ActionStateUtilTest {
         // But event and action UUIDs should be the same (same event and action)
         assertEquals(parsed1.get(2), parsed2.get(2)); // Event UUID
         assertEquals(parsed1.get(3), parsed2.get(3)); // Action UUID
-    }
-
-    private static class TestAction extends Action {
-
-        public static void doNothing(Event event, RunnerContext context) {
-            // No operation
-        }
-
-        public TestAction(String name) throws Exception {
-            super(
-                    name,
-                    new JavaFunction(
-                            TestAction.class.getName(),
-                            "doNothing",
-                            new Class[] {Event.class, RunnerContext.class}),
-                    List.of(InputEvent.class.getName()));
-        }
     }
 }

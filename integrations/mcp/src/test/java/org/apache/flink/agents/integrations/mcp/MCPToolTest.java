@@ -36,6 +36,35 @@ class MCPToolTest {
 
     @Test
     @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName(
+            "JSON round-trip works because @JsonIgnore on Tool getters prevents redundant fields")
+    void testJsonDeserializationWithDefaultMapper() throws Exception {
+        ToolMetadata metadata = new ToolMetadata("add", "Add two numbers", "{\"type\":\"object\"}");
+        MCPServer server = MCPServer.builder(DEFAULT_ENDPOINT).build();
+        MCPTool original = new MCPTool(metadata, server);
+
+        // Use a default ObjectMapper — @JsonIgnore on Tool.getName()/getDescription()/
+        // getResourceType() prevents these from being serialized, so deserialization
+        // succeeds without needing @JsonIgnoreProperties on MCPTool.
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(original);
+
+        // Verify redundant top-level fields are not serialized
+        // (name/description inside metadata are expected)
+        com.fasterxml.jackson.databind.JsonNode tree = mapper.readTree(json);
+        assertThat(tree.has("name")).isFalse();
+        assertThat(tree.has("description")).isFalse();
+        assertThat(tree.has("resourceType")).isFalse();
+
+        MCPTool deserialized = mapper.readValue(json, MCPTool.class);
+
+        assertThat(deserialized.getName()).isEqualTo("add");
+        assertThat(deserialized.getMetadata()).isEqualTo(metadata);
+        assertThat(deserialized.getMcpServer()).isEqualTo(server);
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPTool with metadata and server")
     void testCreation() {
         ToolMetadata metadata = new ToolMetadata("add", "Add two numbers", "{\"type\":\"object\"}");

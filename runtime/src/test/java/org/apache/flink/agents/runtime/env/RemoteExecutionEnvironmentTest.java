@@ -17,7 +17,10 @@
  */
 package org.apache.flink.agents.runtime.env;
 
+import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.api.common.JobExecutionResult;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -29,6 +32,10 @@ import java.util.UUID;
 import static org.apache.flink.agents.runtime.env.RemoteExecutionEnvironment.FLINK_CONF_FILENAME;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class RemoteExecutionEnvironmentTest {
     @TempDir private File tmpDir;
@@ -73,5 +80,19 @@ public class RemoteExecutionEnvironmentTest {
     void testLoadAgentConfigurationFailIfNull() {
         AgentConfiguration conf = RemoteExecutionEnvironment.loadAgentConfiguration(null);
         assertThat(conf.getConfData()).isEmpty();
+    }
+
+    @Test
+    void testExecuteWithCustomJobNameDelegatesToStreamExecutionEnvironment() throws Exception {
+        StreamExecutionEnvironment flinkEnv = mock(StreamExecutionEnvironment.class);
+        when(flinkEnv.execute(anyString())).thenReturn(mock(JobExecutionResult.class));
+
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(flinkEnv);
+
+        String customJobName = "my-custom-agents-job";
+        agentsEnv.execute(customJobName);
+
+        verify(flinkEnv).execute(customJobName);
     }
 }

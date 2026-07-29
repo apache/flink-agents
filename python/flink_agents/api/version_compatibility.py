@@ -34,11 +34,11 @@ def _normalize_version(version_str: str) -> str:
         str: Normalized version string in format "major.minor.patch"
     """
     # Remove any version suffix with hyphen (e.g., -SNAPSHOT, -dev)
-    base_version = version_str.split('-')[0]
+    base_version = version_str.split("-")[0]
 
     # Split by dot and keep only numeric parts
     parts = []
-    for part in base_version.split('.'):
+    for part in base_version.split("."):
         # Only keep parts that are purely numeric
         if part.isdigit():
             parts.append(part)
@@ -48,9 +48,9 @@ def _normalize_version(version_str: str) -> str:
 
     # Ensure we have at least three parts (major.minor.patch)
     while len(parts) < 3:
-        parts.append('0')
+        parts.append("0")
 
-    return '.'.join(parts[:3])
+    return ".".join(parts[:3])
 
 
 class FlinkVersionManager:
@@ -98,6 +98,7 @@ class FlinkVersionManager:
         """
         try:
             from importlib.metadata import version as get_version
+
             return get_version("apache-flink")
         except Exception:
             return None
@@ -129,7 +130,7 @@ class FlinkVersionManager:
 
         # Extract major.minor from full version string
         # Examples: "2.2.0" -> "2.2", "1.20.3" -> "1.20", "2.2.0-SNAPSHOT" -> "2.2"
-        version_parts = self.version.split('-')[0].split('.')
+        version_parts = self.version.split("-")[0].split(".")
         if len(version_parts) >= 2:
             return f"{version_parts[0]}.{version_parts[1]}"
         return self.version

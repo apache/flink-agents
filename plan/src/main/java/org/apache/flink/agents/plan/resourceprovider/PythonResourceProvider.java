@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
 import org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
@@ -34,7 +35,6 @@ import java.lang.reflect.Constructor;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.BiFunction;
 
 import static org.apache.flink.util.Preconditions.checkState;
 
@@ -74,8 +74,7 @@ public class PythonResourceProvider extends ResourceProvider {
     }
 
     @Override
-    public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
-            throws Exception {
+    public Resource provide(ResourceContext resourceContext) throws Exception {
         checkState(pythonResourceAdapter != null, "PythonResourceAdapter is not set");
 
         Class<?> clazz = RESOURCE_TYPE_TO_CLASS.get(getType());
@@ -120,9 +119,10 @@ public class PythonResourceProvider extends ResourceProvider {
                         PythonResourceAdapter.class,
                         PyObject.class,
                         ResourceDescriptor.class,
-                        BiFunction.class);
+                        ResourceContext.class);
         return (Resource)
-                constructor.newInstance(pythonResourceAdapter, pyResource, descriptor, getResource);
+                constructor.newInstance(
+                        pythonResourceAdapter, pyResource, descriptor, resourceContext);
     }
 
     @Override

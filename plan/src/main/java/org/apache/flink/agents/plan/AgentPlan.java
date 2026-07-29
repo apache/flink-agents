@@ -21,16 +21,25 @@ package org.apache.flink.agents.plan;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
-import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.Agent;
-import org.apache.flink.agents.api.annotation.*;
+import org.apache.flink.agents.api.annotation.ChatModelConnection;
+import org.apache.flink.agents.api.annotation.ChatModelSetup;
+import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
+import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
+import org.apache.flink.agents.api.annotation.MCPServer;
+import org.apache.flink.agents.api.annotation.Prompt;
+import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.annotation.VectorStore;
+import org.apache.flink.agents.api.function.JavaFunctionUtils;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
-import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
+import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameterInjection;
+import org.apache.flink.agents.api.tools.ToolParameterInjectionValidator;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ContextRetrievalAction;
@@ -44,6 +53,7 @@ import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.plan.tools.ToolMetadataFactory;
+import org.apache.flink.agents.plan.tools.bash.BashTool;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,11 +66,14 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
@@ -78,7 +91,7 @@ public class AgentPlan implements Serializable {
     /** Mapping from action name to action itself. */
     private Map<String, Action> actions;
 
-    /** Mapping from event class name to list of actions that should be triggered by the event. */
+    /** Mapping from event type string to list of actions that should be triggered by the event. */
     private Map<String, List<Action>> actionsByEvent;
 
     /** Two-level mapping of resource type to resource name to resource provider. */
@@ -86,17 +99,11 @@ public class AgentPlan implements Serializable {
 
     private AgentConfiguration config;
 
-    private transient PythonResourceAdapter pythonResourceAdapter;
-
-    /** Cache for instantiated resources. */
-    private transient Map<ResourceType, Map<String, Resource>> resourceCache;
-
     public AgentPlan(Map<String, Action> actions, Map<String, List<Action>> actionsByEvent) {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = new HashMap<>();
         this.config = new AgentConfiguration();
-        this.resourceCache = new ConcurrentHashMap<>();
     }
 
     public AgentPlan(
@@ -106,7 +113,6 @@ public class AgentPlan implements Serializable {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = resourceProviders;
-        this.resourceCache = new ConcurrentHashMap<>();
         this.config = new AgentConfiguration();
     }
 
@@ -118,7 +124,6 @@ public class AgentPlan implements Serializable {
         this.actions = actions;
         this.actionsByEvent = actionsByEvent;
         this.resourceProviders = resourceProviders;
-        this.resourceCache = new ConcurrentHashMap<>();
         this.config = config;
     }
 
@@ -138,62 +143,6 @@ public class AgentPlan implements Serializable {
         extractActionsFromAgent(agent);
         extractResourceProvidersFromAgent(agent);
         this.config = config;
-    }
-
-    public void setPythonResourceAdapter(PythonResourceAdapter adapter) throws Exception {
-        this.pythonResourceAdapter = adapter;
-        Map<String, ResourceProvider> servers = resourceProviders.get(MCP_SERVER);
-        if (servers == null) {
-            return;
-        }
-        servers.values().stream()
-                .filter(PythonResourceProvider.class::isInstance)
-                .map(PythonResourceProvider.class::cast)
-                .forEach(
-                        provider -> {
-                            provider.setPythonResourceAdapter(adapter);
-
-                            // Get tools and prompts from server
-                            try {
-                                PythonMCPServer server =
-                                        (PythonMCPServer)
-                                                provider.provide(
-                                                        (String anotherName,
-                                                                ResourceType anotherType) -> {
-                                                            try {
-                                                                return this.getResource(
-                                                                        anotherName, anotherType);
-                                                            } catch (Exception e) {
-                                                                throw new RuntimeException(e);
-                                                            }
-                                                        });
-
-                                // Add tools to cache
-                                server.listTools()
-                                        .forEach(
-                                                tool ->
-                                                        resourceCache
-                                                                .computeIfAbsent(
-                                                                        TOOL,
-                                                                        k ->
-                                                                                new ConcurrentHashMap<>())
-                                                                .put(tool.getName(), tool));
-
-                                // Add prompts to cache
-                                server.listPrompts()
-                                        .forEach(
-                                                prompt ->
-                                                        resourceCache
-                                                                .computeIfAbsent(
-                                                                        PROMPT,
-                                                                        k ->
-                                                                                new ConcurrentHashMap<>())
-                                                                .put(prompt.getName(), prompt));
-                            } catch (Exception e) {
-                                throw new RuntimeException(
-                                        "Failed to process Python MCP server in Java", e);
-                            }
-                        });
     }
 
     public Map<String, Action> getActions() {
@@ -220,64 +169,12 @@ public class AgentPlan implements Serializable {
         return actionsByEvent.get(eventType);
     }
 
-    /**
-     * Get resource from agent plan.
-     *
-     * @param name the resource name
-     * @param type the resource type
-     * @return the resource instance
-     * @throws Exception if the resource cannot be found or created
-     */
-    public Resource getResource(String name, ResourceType type) throws Exception {
-        // Check cache first
-        if (resourceCache.containsKey(type) && resourceCache.get(type).containsKey(name)) {
-            return resourceCache.get(type).get(name);
-        }
-
-        // Get resource provider
-        if (!resourceProviders.containsKey(type)
-                || !resourceProviders.get(type).containsKey(name)) {
-            throw new IllegalArgumentException("Resource not found: " + name + " of type " + type);
-        }
-
-        ResourceProvider provider = resourceProviders.get(type).get(name);
-
-        if (pythonResourceAdapter != null && provider instanceof PythonResourceProvider) {
-            ((PythonResourceProvider) provider).setPythonResourceAdapter(pythonResourceAdapter);
-        }
-
-        // Create resource using provider
-        Resource resource =
-                provider.provide(
-                        (String anotherName, ResourceType anotherType) -> {
-                            try {
-                                return this.getResource(anotherName, anotherType);
-                            } catch (Exception e) {
-                                throw new RuntimeException(e);
-                            }
-                        });
-
-        // Cache the resource
-        resourceCache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
-
-        return resource;
-    }
-
     public AgentConfiguration getConfig() {
         return config;
     }
 
     public Map<String, Object> getConfigData() {
         return config.getConfData();
-    }
-
-    public void close() throws Exception {
-        for (Map<String, Resource> resources : resourceCache.values()) {
-            for (Resource resource : resources.values()) {
-                resource.close();
-            }
-        }
-        resourceCache.clear();
     }
 
     private void writeObject(ObjectOutputStream out) throws IOException {
@@ -292,31 +189,31 @@ public class AgentPlan implements Serializable {
         this.actionsByEvent = agentPlan.getActionsByEvent();
         this.resourceProviders = agentPlan.getResourceProviders();
         this.config = agentPlan.getConfig();
-        this.resourceCache = new ConcurrentHashMap<>();
     }
 
     private void extractActions(
-            Class<? extends Event>[] listenEventTypes, Method method, Map<String, Object> config)
+            String actionName,
+            String[] triggerEntries,
+            org.apache.flink.agents.plan.Function function,
+            Map<String, Object> config)
             throws Exception {
-        // Convert event types to string names
-        List<String> eventTypeNames = new ArrayList<>();
-        for (Class<? extends Event> eventType : listenEventTypes) {
-            eventTypeNames.add(eventType.getName());
+        List<String> triggerConditions = new ArrayList<>(Arrays.asList(triggerEntries));
+
+        if (triggerConditions.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Action "
+                            + actionName
+                            + " must specify at least one trigger entry via @Action(EventType.x).");
         }
 
-        // Create a JavaFunction for this method
-        JavaFunction javaFunction =
-                new JavaFunction(
-                        method.getDeclaringClass(), method.getName(), method.getParameterTypes());
-
         // Create an Action
-        Action action = new Action(method.getName(), javaFunction, eventTypeNames, config);
+        Action action = new Action(actionName, function, triggerConditions, config);
 
         // Add to actions map
         actions.put(action.getName(), action);
 
         // Add to actionsByEvent map
-        for (String eventTypeName : eventTypeNames) {
+        for (String eventTypeName : triggerConditions) {
             actionsByEvent.computeIfAbsent(eventTypeName, k -> new ArrayList<>()).add(action);
         }
     }
@@ -339,52 +236,119 @@ public class AgentPlan implements Serializable {
 
         // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
-        for (Method method : agentClass.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
-                org.apache.flink.agents.api.annotation.Action actionAnnotation =
-                        method.getAnnotation(org.apache.flink.agents.api.annotation.Action.class);
-
-                // Get the event types this action listens to
-                Class<? extends Event>[] listenEventTypes =
-                        Objects.requireNonNull(actionAnnotation).listenEvents();
-
-                extractActions(listenEventTypes, method, null);
+        // getDeclaredMethods() skips inherited @Action methods; reject loudly.
+        for (Class<?> parent = agentClass.getSuperclass();
+                parent != null && parent != Agent.class;
+                parent = parent.getSuperclass()) {
+            for (Method inherited : parent.getDeclaredMethods()) {
+                if (inherited.isAnnotationPresent(
+                        org.apache.flink.agents.api.annotation.Action.class)) {
+                    throw new IllegalStateException(
+                            "Inherited @Action '"
+                                    + parent.getName()
+                                    + "#"
+                                    + inherited.getName()
+                                    + "' is not supported; declare on the concrete agent.");
+                }
             }
         }
+        for (Method method : agentClass.getDeclaredMethods()) {
+            if (!method.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
+                continue;
+            }
+            org.apache.flink.agents.api.annotation.Action actionAnnotation =
+                    Objects.requireNonNull(
+                            method.getAnnotation(
+                                    org.apache.flink.agents.api.annotation.Action.class));
+            String[] triggerEntries = actionAnnotation.value();
+            org.apache.flink.agents.api.annotation.PythonFunction target =
+                    actionAnnotation.target();
+            String targetModule = target.module();
+            String targetQualname = target.qualname();
+            boolean moduleSet = !targetModule.isEmpty();
+            boolean qualnameSet = !targetQualname.isEmpty();
 
-        for (Map.Entry<String, Tuple3<Class<? extends Event>[], Method, Map<String, Object>>>
+            org.apache.flink.agents.plan.Function execFunction;
+            if (!moduleSet && !qualnameSet) {
+                execFunction =
+                        new org.apache.flink.agents.plan.JavaFunction(
+                                method.getDeclaringClass(),
+                                method.getName(),
+                                method.getParameterTypes());
+            } else if (moduleSet && qualnameSet) {
+                execFunction =
+                        new org.apache.flink.agents.plan.PythonFunction(
+                                targetModule, targetQualname);
+            } else {
+                throw new IllegalStateException(
+                        "PythonFunction target on '"
+                                + method.getName()
+                                + "' must set both module and qualname");
+            }
+            extractActions(method.getName(), triggerEntries, execFunction, null);
+        }
+
+        for (Map.Entry<
+                        String,
+                        Tuple3<
+                                String[],
+                                org.apache.flink.agents.api.function.Function,
+                                Map<String, Object>>>
                 action : agent.getActions().entrySet()) {
-            Tuple3<Class<? extends Event>[], Method, Map<String, Object>> tuple = action.getValue();
-            extractActions(tuple.f0, tuple.f1, tuple.f2);
+            String actionName = action.getKey();
+            Tuple3<String[], org.apache.flink.agents.api.function.Function, Map<String, Object>>
+                    tuple = action.getValue();
+            extractActions(actionName, tuple.f0, toPlanFunction(tuple.f1), tuple.f2);
         }
     }
 
+    private static ResourceDescriptor requireResourceDescriptor(
+            String name, ResourceType type, Object value) {
+        if (!(value instanceof ResourceDescriptor)) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Resource '%s' of type %s must be a ResourceDescriptor when added via"
+                                    + " Agent.addResource, but got %s",
+                            name, type, value == null ? "null" : value.getClass().getName()));
+        }
+        return (ResourceDescriptor) value;
+    }
+
     private void extractResource(ResourceType type, Method method) throws Exception {
-        extractResource(type, method, null);
+        extractResource(type, method, null, false);
     }
 
     private void extractResource(
             ResourceType type,
             Method method,
-            Function<ResourceDescriptor, ResourceDescriptor> descriptorDecorator)
+            Function<ResourceDescriptor, ResourceDescriptor> descriptorDecorator,
+            boolean isPython)
             throws Exception {
         String name = method.getName();
-        ResourceProvider provider;
         ResourceDescriptor descriptor = (ResourceDescriptor) method.invoke(null);
 
         descriptor =
                 descriptorDecorator != null ? descriptorDecorator.apply(descriptor) : descriptor;
 
-        if (PythonResourceWrapper.class.isAssignableFrom(
-                Class.forName(
-                        descriptor.getClazz(),
-                        true,
-                        Thread.currentThread().getContextClassLoader()))) {
-            provider = new PythonResourceProvider(name, type, descriptor);
-        } else {
-            provider = new JavaResourceProvider(name, type, descriptor);
+        addResourceProvider(createDescriptorResourceProvider(name, type, descriptor, isPython));
+    }
+
+    private ResourceProvider createDescriptorResourceProvider(
+            String name, ResourceType type, ResourceDescriptor descriptor) {
+        return createDescriptorResourceProvider(name, type, descriptor, false);
+    }
+
+    private ResourceProvider createDescriptorResourceProvider(
+            String name, ResourceType type, ResourceDescriptor descriptor, boolean isPython) {
+        if (isPython || isPythonResource(descriptor)) {
+            return new PythonResourceProvider(name, type, descriptor);
         }
-        addResourceProvider(provider);
+        return new JavaResourceProvider(name, type, descriptor);
+    }
+
+    private boolean isPythonResource(ResourceDescriptor descriptor) {
+        String pythonClazz = descriptor.getArgument("pythonClazz");
+        return pythonClazz != null && !pythonClazz.isEmpty();
     }
 
     private void extractTool(Method method) throws Exception {
@@ -397,7 +361,8 @@ public class AgentPlan implements Serializable {
         JavaFunction javaFunction =
                 new JavaFunction(method.getDeclaringClass(), method.getName(), paramTypes);
 
-        FunctionTool tool = new FunctionTool(metadata, javaFunction);
+        FunctionTool tool =
+                new FunctionTool(metadata, javaFunction, FunctionTool.getInjectedArgs(method));
         JavaSerializableResourceProvider provider =
                 JavaSerializableResourceProvider.createResourceProvider(name, TOOL, tool);
 
@@ -453,6 +418,9 @@ public class AgentPlan implements Serializable {
 
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
         Class<?> agentClass = agent.getClass();
+
+        // Collect Skills declarations from both @Skills methods and Agent.addResource(SKILLS, ...)
+        Map<String, Skills> skillsObjects = new LinkedHashMap<>();
 
         // Scan all fields in the agent class for @Tool and @ChatModel annotations
         for (Field field : agentClass.getDeclaredFields()) {
@@ -528,6 +496,17 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
             } else if (method.isAnnotationPresent(VectorStore.class)) {
                 extractResource(ResourceType.VECTOR_STORE, method);
+            } else if (method.isAnnotationPresent(
+                            org.apache.flink.agents.api.annotation.Skills.class)
+                    && Modifier.isStatic(method.getModifiers())) {
+                Object value = method.invoke(null);
+                if (!(value instanceof Skills)) {
+                    throw new IllegalStateException(
+                            "@Skills method "
+                                    + method.getName()
+                                    + " must return org.apache.flink.agents.api.skills.Skills");
+                }
+                skillsObjects.put(method.getName(), (Skills) value);
             } else if (method.isAnnotationPresent(MCPServer.class)) {
                 // Check the MCPServer annotation version to determine which version to use.
                 MCPServer MCPServerAnnotation = method.getAnnotation(MCPServer.class);
@@ -554,32 +533,15 @@ public class AgentPlan implements Serializable {
                                     new ResourceDescriptor(
                                             desc.getModule(),
                                             PythonMCPServer.class.getName(),
-                                            new HashMap<>(desc.getInitialArguments())));
+                                            new HashMap<>(desc.getInitialArguments())),
+                            true);
                 }
             }
         }
 
         for (Map.Entry<ResourceType, Map<String, Object>> entry : agent.getResources().entrySet()) {
             ResourceType type = entry.getKey();
-            if (type == ResourceType.CHAT_MODEL || type == ResourceType.CHAT_MODEL_CONNECTION) {
-                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
-                    ResourceProvider provider;
-                    if (PythonResourceWrapper.class.isAssignableFrom(
-                            Class.forName(
-                                    ((ResourceDescriptor) kv.getValue()).getClazz(),
-                                    true,
-                                    Thread.currentThread().getContextClassLoader()))) {
-                        provider =
-                                new PythonResourceProvider(
-                                        kv.getKey(), type, (ResourceDescriptor) kv.getValue());
-                    } else {
-                        provider =
-                                new JavaResourceProvider(
-                                        kv.getKey(), type, (ResourceDescriptor) kv.getValue());
-                    }
-                    addResourceProvider(provider);
-                }
-            } else if (type == PROMPT) {
+            if (type == PROMPT) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     JavaSerializableResourceProvider provider =
                             JavaSerializableResourceProvider.createResourceProvider(
@@ -589,12 +551,87 @@ public class AgentPlan implements Serializable {
                 }
             } else if (type == TOOL) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
-                    extractTool(
-                            ((org.apache.flink.agents.api.tools.FunctionTool) kv.getValue())
-                                    .getMethod());
+                    String resourceName = kv.getKey();
+                    Object value = kv.getValue();
+                    if (value instanceof org.apache.flink.agents.api.tools.FunctionTool) {
+                        registerApiFunctionTool(
+                                resourceName,
+                                (org.apache.flink.agents.api.tools.FunctionTool) value);
+                    } else if (value instanceof SerializableResource) {
+                        // Plan-layer tools added directly (MCP-generated, etc.) — pass through.
+                        addResourceProvider(
+                                JavaSerializableResourceProvider.createResourceProvider(
+                                        resourceName, TOOL, (SerializableResource) value));
+                    } else {
+                        throw new IllegalStateException(
+                                "Unsupported tool resource '" + resourceName + "': " + value);
+                    }
+                }
+            } else if (type == ResourceType.SKILLS) {
+                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
+                    if (kv.getValue() instanceof Skills) {
+                        skillsObjects.put(kv.getKey(), (Skills) kv.getValue());
+                    }
+                }
+            } else if (type == MCP_SERVER) {
+                if (!entry.getValue().isEmpty()) {
+                    throw new UnsupportedOperationException(
+                            "Adding an MCP server via Agent.addResource is not supported."
+                                    + " Declare the MCP server with a @MCPServer-annotated static"
+                                    + " method on your Agent class so its tools and prompts can be"
+                                    + " discovered.");
+                }
+            } else {
+                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
+                    ResourceDescriptor descriptor =
+                            requireResourceDescriptor(kv.getKey(), type, kv.getValue());
+                    addResourceProvider(
+                            createDescriptorResourceProvider(kv.getKey(), type, descriptor));
                 }
             }
         }
+
+        addSkills(skillsObjects);
+    }
+
+    /**
+     * Mirror of Python {@code _add_skills}: register the merged Skills config under {@link
+     * Skills#SKILLS_CONFIG} plus the built-in {@code load_skill} and {@code bash} tools.
+     *
+     * <p>{@link BashTool} lives in this module so we can reference its class directly; {@code
+     * LoadSkillTool} lives in the runtime module and is referenced by FQN string to avoid a reverse
+     * dependency.
+     */
+    private void addSkills(Map<String, Skills> skillsObjects) throws Exception {
+        if (skillsObjects.isEmpty()) {
+            return;
+        }
+
+        addResourceProvider(
+                new JavaResourceProvider(
+                        Skills.LOAD_SKILL_TOOL,
+                        ResourceType.TOOL,
+                        new ResourceDescriptor(
+                                "org.apache.flink.agents.runtime.skill.LoadSkillTool",
+                                new HashMap<>())));
+        addResourceProvider(
+                new JavaResourceProvider(
+                        Skills.BASH_TOOL,
+                        ResourceType.TOOL,
+                        new ResourceDescriptor(BashTool.class.getName(), new HashMap<>())));
+
+        // Sort by key before merging: getDeclaredMethods() makes no order guarantee, so without
+        // this the winner on a duplicate skill name would vary across JDK / class layout.
+        List<String> orderedKeys = new ArrayList<>(skillsObjects.keySet());
+        Collections.sort(orderedKeys);
+        LinkedHashSet<SkillSourceSpec> sources = new LinkedHashSet<>();
+        for (String key : orderedKeys) {
+            sources.addAll(skillsObjects.get(key).getSources());
+        }
+        Skills merged = new Skills(new ArrayList<>(sources));
+        addResourceProvider(
+                JavaSerializableResourceProvider.createResourceProvider(
+                        Skills.SKILLS_CONFIG, ResourceType.SKILLS, merged));
     }
 
     /**
@@ -620,5 +657,102 @@ public class AgentPlan implements Serializable {
         resourceProviders
                 .computeIfAbsent(provider.getType(), k -> new HashMap<>())
                 .put(provider.getName(), provider);
+    }
+
+    /**
+     * Promote an api-layer {@link org.apache.flink.agents.api.function.Function} descriptor to its
+     * plan-layer twin. Java parameter type strings are resolved to {@link Class} here; Python
+     * descriptors pass through unchanged.
+     */
+    private static org.apache.flink.agents.plan.Function toPlanFunction(
+            org.apache.flink.agents.api.function.Function f) throws Exception {
+        if (f instanceof org.apache.flink.agents.api.function.JavaFunction) {
+            org.apache.flink.agents.api.function.JavaFunction jf =
+                    (org.apache.flink.agents.api.function.JavaFunction) f;
+            Method method = JavaFunctionUtils.resolveMethod(jf);
+            return new org.apache.flink.agents.plan.JavaFunction(
+                    method.getDeclaringClass(), method.getName(), method.getParameterTypes());
+        }
+        if (f instanceof org.apache.flink.agents.api.function.PythonFunction) {
+            org.apache.flink.agents.api.function.PythonFunction pf =
+                    (org.apache.flink.agents.api.function.PythonFunction) f;
+            return new org.apache.flink.agents.plan.PythonFunction(
+                    pf.getModule(), pf.getQualName());
+        }
+        throw new IllegalStateException("Unknown api.function.Function: " + f);
+    }
+
+    /**
+     * Promote an api-layer {@link org.apache.flink.agents.api.tools.FunctionTool} to a plan-layer
+     * executable {@link FunctionTool} and register it under the YAML-declared resource name.
+     */
+    private void registerApiFunctionTool(
+            String resourceName, org.apache.flink.agents.api.tools.FunctionTool apiTool)
+            throws Exception {
+        org.apache.flink.agents.api.function.Function func = apiTool.getFunc();
+        if (func instanceof org.apache.flink.agents.api.function.JavaFunction) {
+            org.apache.flink.agents.api.function.JavaFunction jf =
+                    (org.apache.flink.agents.api.function.JavaFunction) func;
+            Method method = JavaFunctionUtils.resolveMethod(jf);
+            Map<String, ToolParameterInjection> injectedArgs =
+                    mergeInjectedArgs(
+                            FunctionTool.getInjectedArgs(method),
+                            apiTool.getInjectedArgs(),
+                            resourceName);
+            ToolParameterInjectionValidator.validate(func, injectedArgs, resourceName);
+            ToolMetadata metadata =
+                    ToolMetadataFactory.fromStaticMethod(method, injectedArgs.keySet());
+            org.apache.flink.agents.plan.JavaFunction planFunc =
+                    new org.apache.flink.agents.plan.JavaFunction(
+                            method.getDeclaringClass(),
+                            method.getName(),
+                            method.getParameterTypes());
+            FunctionTool tool = new FunctionTool(metadata, planFunc, injectedArgs);
+            addResourceProvider(
+                    JavaSerializableResourceProvider.createResourceProvider(
+                            resourceName, TOOL, tool));
+        } else if (func instanceof org.apache.flink.agents.api.function.PythonFunction) {
+            org.apache.flink.agents.api.function.PythonFunction pf =
+                    (org.apache.flink.agents.api.function.PythonFunction) func;
+            org.apache.flink.agents.plan.PythonFunction planFunc =
+                    new org.apache.flink.agents.plan.PythonFunction(
+                            pf.getModule(), pf.getQualName());
+            // Placeholder metadata: ResourceCache will replace it with introspected values from
+            // the Python bridge via FunctionTool.setPythonResourceAdapter at first resolve.
+            ToolMetadata metadata = new ToolMetadata(resourceName, "", "{}");
+            FunctionTool tool = new FunctionTool(metadata, planFunc, apiTool.getInjectedArgs());
+            addResourceProvider(
+                    JavaSerializableResourceProvider.createResourceProvider(
+                            resourceName, TOOL, tool));
+        } else {
+            throw new IllegalStateException(
+                    "Unknown api.function.Function for tool '" + resourceName + "': " + func);
+        }
+    }
+
+    private static Map<String, ToolParameterInjection> mergeInjectedArgs(
+            Map<String, ToolParameterInjection> annotatedArgs,
+            Map<String, ToolParameterInjection> declaredArgs,
+            String resourceName) {
+        Map<String, ToolParameterInjection> merged = new LinkedHashMap<>();
+        if (annotatedArgs != null) {
+            merged.putAll(annotatedArgs);
+        }
+        if (declaredArgs != null) {
+            declaredArgs.forEach(
+                    (name, injection) -> {
+                        ToolParameterInjection existing = merged.get(name);
+                        if (existing != null && !existing.equals(injection)) {
+                            throw new IllegalArgumentException(
+                                    "Tool '"
+                                            + resourceName
+                                            + "': injected_args conflict for parameter '"
+                                            + name
+                                            + "' between @ToolParam and descriptor.");
+                        }
+                        merged.put(name, injection);
+                    });
+        }
+        return Map.copyOf(merged);
     }
 }

@@ -18,20 +18,23 @@
 
 package org.apache.flink.agents.api.event;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.tools.ToolResponse;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
 /** Event representing a result from tool call */
 public class ToolResponseEvent extends Event {
-    private final UUID requestId;
-    private final Map<String, ToolResponse> responses;
-    private final Map<String, String> externalIds;
-    private final Map<String, Boolean> success;
-    private final Map<String, String> error;
-    private final long timestamp;
+
+    public static final String EVENT_TYPE = "_tool_response_event";
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public ToolResponseEvent(
             UUID requestId,
@@ -39,12 +42,13 @@ public class ToolResponseEvent extends Event {
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, String> externalIds) {
-        this.requestId = requestId;
-        this.responses = responses;
-        this.success = success;
-        this.error = error;
-        this.externalIds = externalIds;
-        this.timestamp = System.currentTimeMillis();
+        super(EVENT_TYPE);
+        setAttr("request_id", requestId);
+        setAttr("responses", responses);
+        setAttr("success", success);
+        setAttr("error", error);
+        setAttr("external_ids", externalIds);
+        setAttr("timestamp", System.currentTimeMillis());
     }
 
     public ToolResponseEvent(
@@ -55,40 +59,101 @@ public class ToolResponseEvent extends Event {
         this(requestId, responses, success, error, Map.of());
     }
 
+    @JsonCreator
+    public ToolResponseEvent(
+            @JsonProperty("id") UUID id,
+            @JsonProperty("attributes") Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, normalizeAttributes(attributes));
+    }
+
+    /** Converts nested attributes back to their typed forms. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> normalizeAttributes(Map<String, Object> attributes) {
+        Object rawId = attributes.get("request_id");
+        if (rawId instanceof String) {
+            attributes.put("request_id", UUID.fromString((String) rawId));
+        }
+        Map<String, ?> rawResponses = (Map<String, ?>) attributes.get("responses");
+        if (rawResponses != null) {
+            Map<String, ToolResponse> responses = new HashMap<>();
+            for (Map.Entry<String, ?> entry : rawResponses.entrySet()) {
+                Object v = entry.getValue();
+                if (v instanceof ToolResponse) {
+                    responses.put(entry.getKey(), (ToolResponse) v);
+                } else if (v instanceof Map) {
+                    responses.put(entry.getKey(), MAPPER.convertValue(v, ToolResponse.class));
+                } else {
+                    responses.put(entry.getKey(), ToolResponse.success(v));
+                }
+            }
+            attributes.put("responses", responses);
+        }
+        return attributes;
+    }
+
+    /**
+     * Reconstructs a typed ToolResponseEvent from a base Event, deserializing nested types.
+     *
+     * @param event the base event containing tool response data in attributes
+     * @return a typed ToolResponseEvent
+     */
+    public static ToolResponseEvent fromEvent(Event event) {
+        ToolResponseEvent result =
+                new ToolResponseEvent(event.getId(), new HashMap<>(event.getAttributes()));
+        if (event.hasSourceTimestamp()) {
+            result.setSourceTimestamp(event.getSourceTimestamp());
+        }
+        return result;
+    }
+
+    @JsonIgnore
     public UUID getRequestId() {
-        return requestId;
+        Object val = getAttr("request_id");
+        if (val instanceof String) {
+            return UUID.fromString((String) val);
+        }
+        return (UUID) val;
     }
 
+    @JsonIgnore
+    @SuppressWarnings("unchecked")
     public Map<String, ToolResponse> getResponses() {
-        return responses;
+        return (Map<String, ToolResponse>) getAttr("responses");
     }
 
+    @JsonIgnore
+    @SuppressWarnings("unchecked")
     public Map<String, String> getExternalIds() {
-        return externalIds;
+        return (Map<String, String>) getAttr("external_ids");
     }
 
+    @JsonIgnore
+    @SuppressWarnings("unchecked")
     public Map<String, Boolean> getSuccess() {
-        return success;
+        return (Map<String, Boolean>) getAttr("success");
     }
 
+    @JsonIgnore
+    @SuppressWarnings("unchecked")
     public Map<String, String> getError() {
-        return error;
+        return (Map<String, String>) getAttr("error");
     }
 
+    @JsonIgnore
     public long getTimestamp() {
-        return timestamp;
+        return ((Number) getAttr("timestamp")).longValue();
     }
 
     @Override
     public String toString() {
         return "ToolResponseEvent{"
                 + "requestId="
-                + requestId
+                + getRequestId()
                 + ", response="
-                + responses
+                + getResponses()
                 + ", success=true"
                 + ", timestamp="
-                + timestamp
+                + getTimestamp()
                 + '}';
     }
 }

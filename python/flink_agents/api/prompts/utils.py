@@ -35,7 +35,7 @@ class SafeFormatter:
         return str(self.kwargs.get(key, match.group(0)))
 
 
-def format_string(text: str, **kwargs: str) -> str:
+def format_string(_template: str, **kwargs: str) -> str:
     """Format a string with kwargs."""
     formatter = SafeFormatter(kwargs=kwargs)
-    return formatter.format(text)
+    return formatter.format(_template)

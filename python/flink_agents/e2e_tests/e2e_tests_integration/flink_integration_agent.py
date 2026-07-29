@@ -18,7 +18,7 @@
 import copy
 import random
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel
 from pyflink.common import Row
@@ -27,6 +27,7 @@ from pyflink.datastream import KeySelector
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action, tool
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 
@@ -50,8 +51,26 @@ class ItemData(BaseModel):
     memory_info: dict | None = None
 
 
-class MyEvent(Event):  # noqa D101
-    value: Any
+class MyEvent(Event):
+    EVENT_TYPE: ClassVar[str] = "_my_event"
+
+    def __init__(self, value: Any) -> None:
+        """Create a MyEvent with the given value."""
+        super().__init__(
+            type=MyEvent.EVENT_TYPE,
+            attributes={"value": value},
+        )
+
+    @classmethod
+    def from_event(cls, event: "Event") -> "MyEvent":
+        """Reconstruct a MyEvent from a generic Event."""
+        assert "value" in event.attributes, "Missing 'value' in event attributes"
+        return cls(value=event.attributes["value"])
+
+    @property
+    def value(self) -> Any:
+        """Return the event value."""
+        return self.attributes["value"]
 
 
 class MyKeySelector(KeySelector):
@@ -87,16 +106,16 @@ class DataStreamAgent(Agent):
         """
         return input + " call my tool"
 
-    @action(InputEvent)
+    @action(EventType.InputEvent)
     @staticmethod
-    async def first_action(event: Event, ctx: RunnerContext):  # noqa D102
+    async def first_action(event: Event, ctx: RunnerContext) -> None:
         def log_to_stdout(input: Any, total: int) -> bool:
             # Simulating asynchronous time consumption
             time.sleep(random.random())
             print(f"[log_to_stdout] Logging input={input}, total reviews now={total}")
             return True
 
-        input_data = event.input
+        input_data = ItemData.model_validate(InputEvent.from_event(event).input)
         stm = ctx.short_term_memory
 
         current_total = stm.get("status.total_reviews") or 0
@@ -109,15 +128,17 @@ class DataStreamAgent(Agent):
         content.review += " first action, log success=" + str(log_success) + ","
         content.memory_info = {"total_reviews": total}
 
-        data_ref = stm.set(f"processed_items.item_{content.id}", content)
+        data_ref = stm.set(
+            f"processed_items.item_{content.id}", content.model_dump(mode="json")
+        )
         ctx.send_event(MyEvent(value=data_ref))
 
-    @action(MyEvent)
+    @action(MyEvent.EVENT_TYPE)
     @staticmethod
-    def second_action(event: Event, ctx: RunnerContext):  # noqa D102
-        input_data = event.value
+    def second_action(event: Event, ctx: RunnerContext) -> None:
+        input_data = MyEvent.from_event(event).value
         stm = ctx.short_term_memory
-        resolved_data: ItemData = stm.get(input_data)
+        resolved_data = ItemData.model_validate(stm.get(input_data))
 
         content = copy.deepcopy(resolved_data)
         content.review += " second action"
@@ -134,19 +155,17 @@ class TableAgent(Agent):
     to __main__.
     """
 
-    @action(InputEvent)
+    @action(EventType.InputEvent)
     @staticmethod
-    def first_action(event: Event, ctx: RunnerContext):  # noqa D102
-        input = event.input
-        content = input
+    def first_action(event: Event, ctx: RunnerContext) -> None:
+        content = InputEvent.from_event(event).input
         content["review"] += " first action"
         ctx.send_event(MyEvent(value=content))
 
-    @action(MyEvent)
+    @action(MyEvent.EVENT_TYPE)
     @staticmethod
-    def second_action(event: Event, ctx: RunnerContext):  # noqa D102
-        input = event.value
-        content = input
+    def second_action(event: Event, ctx: RunnerContext) -> None:
+        content = MyEvent.from_event(event).value
         content["review"] += " second action"
         ctx.send_event(OutputEvent(output=content))
 
@@ -159,19 +178,17 @@ class DataStreamToTableAgent(Agent):
     to __main__.
     """
 
-    @action(InputEvent)
+    @action(EventType.InputEvent)
     @staticmethod
-    def first_action(event: Event, ctx: RunnerContext):  # noqa D102
-        input = event.input
-        content = copy.deepcopy(input)
+    def first_action(event: Event, ctx: RunnerContext) -> None:
+        content = ItemData.model_validate(InputEvent.from_event(event).input)
         content.review += " first action"
         ctx.send_event(MyEvent(value=content))
 
-    @action(MyEvent)
+    @action(MyEvent.EVENT_TYPE)
     @staticmethod
-    def second_action(event: Event, ctx: RunnerContext):  # noqa D102
-        input = event.value
-        content = input
+    def second_action(event: Event, ctx: RunnerContext) -> None:
+        content = ItemData.model_validate(MyEvent.from_event(event).value)
         content.review += " second action"
         ctx.send_event(
             OutputEvent(output=Row(**content.model_dump(exclude="memory_info")))

@@ -26,7 +26,8 @@ import java.util.List;
 /** Interface for storing and retrieving the state of actions performed by agents. */
 public interface ActionStateStore extends AutoCloseable {
     enum BackendType {
-        KAFKA("kafka");
+        KAFKA("kafka"),
+        FLUSS("fluss");
 
         private final String type;
 

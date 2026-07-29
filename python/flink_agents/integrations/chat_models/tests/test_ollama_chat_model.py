@@ -16,52 +16,32 @@
 # limitations under the License.
 #################################################################################
 import os
-import subprocess
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from ollama import Client
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource_context import ResourceContext
+from flink_agents.e2e_tests.test_utils import pull_model
 from flink_agents.integrations.chat_models.ollama_chat_model import (
     OllamaChatModelConnection,
     OllamaChatModelSetup,
 )
-from flink_agents.plan.tools.function_tool import FunctionTool, from_callable
+from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.tools.function_tool import FunctionTool
+
+pytestmark = pytest.mark.integration
 
 test_model = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
-current_dir = Path(__file__).parent
 
-try:
-    # only auto setup ollama in ci with python 3.10 to reduce ci cost.
-    if "3.10" in sys.version:
-        subprocess.run(
-            ["bash", f"{current_dir}/start_ollama_server.sh", test_model],
-            timeout=300,
-            check=True,
-        )
-    client = Client()
-    models = client.list()
-
-    model_found = False
-    for model in models["models"]:
-        if model.model == test_model:
-            model_found = True
-            break
-
-    if not model_found:
-        client = None  # type: ignore
-except Exception:
-    client = None  # type: ignore
+client = pull_model(test_model)
 
 
 @pytest.mark.skipif(
     client is None, reason="Ollama client is not available or test model is missing"
 )
-def test_ollama_chat() -> None:  # noqa :D103
+def test_ollama_chat() -> None:
     server = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
     response = server.chat(
         [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
@@ -88,14 +68,14 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-def get_tool(name: str, type: ResourceType) -> FunctionTool:  # noqa :D103
-    return from_callable(func=add)
+def get_tool(name: str, type: ResourceType) -> FunctionTool:
+    return FunctionTool(func=PythonFunction.from_callable(add))
 
 
 @pytest.mark.skipif(
     client is None, reason="Ollama client is not available or test model is missing"
 )
-def test_ollama_chat_with_tools() -> None:  # noqa :D103
+def test_ollama_chat_with_tools() -> None:
     connection = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
@@ -104,13 +84,19 @@ def test_ollama_chat_with_tools() -> None:  # noqa :D103
         else:
             return connection
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     llm = OllamaChatModelSetup(
         name="ollama",
         connection="ollama",
         model=test_model,
         tools=["add"],
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
+
+    llm.open()
+
     response = llm.chat(
         [
             ChatMessage(
@@ -124,6 +110,13 @@ def test_ollama_chat_with_tools() -> None:  # noqa :D103
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
     assert add(**tool_call["function"]["arguments"]) == 3
+
+
+def test_model_field_roundtrip() -> None:
+    """Verify `model` is preserved through pydantic dump/validate round-trip."""
+    setup = OllamaChatModelSetup(connection="conn", model="test-model")
+    restored = OllamaChatModelSetup.model_validate(setup.model_dump())
+    assert restored.model == "test-model"
 
 
 def test_extract_think_tags() -> None:
@@ -167,13 +160,18 @@ def test_ollama_chat_with_extract_reasoning() -> None:
     def get_resource(name: str, type: ResourceType) -> Resource:
         return connection
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     llm = OllamaChatModelSetup(
         name="ollama",
         connection="ollama",
         model=test_model,
         extract_reasoning=True,
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
+
+    llm.open()
 
     # Replace the real client with our mock client
     connection._OllamaChatModelConnection__client = mock_client

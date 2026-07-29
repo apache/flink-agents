@@ -123,6 +123,16 @@ public class ActionState {
     }
 
     /**
+     * Replaces the call result at the specified index.
+     *
+     * @param index the index to replace
+     * @param callResult the call result to store at the index
+     */
+    public void replaceCallResult(int index, CallResult callResult) {
+        callResults.set(index, callResult);
+    }
+
+    /**
      * Gets the call result at the specified index.
      *
      * @param index the index of the call result

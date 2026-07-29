@@ -20,6 +20,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 from flink_agents.plan.configuration import AgentConfiguration
@@ -171,6 +172,52 @@ def test_remote_execution_environment_prioritizes_legacy_config() -> None:
                 os.environ.pop("FLINK_CONF_DIR", None)
             else:
                 os.environ["FLINK_CONF_DIR"] = original_env
+
+
+def test_execute_with_job_name() -> None:
+    """Test that execute() passes job_name to StreamExecutionEnvironment."""
+    mock_stream_env = MagicMock()
+
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+    ):
+        remote_env = RemoteExecutionEnvironment(env=mock_stream_env)
+        remote_env.execute(job_name="my-test-job")
+
+    mock_stream_env.execute.assert_called_once_with(job_name="my-test-job")
+
+
+def test_execute_without_job_name() -> None:
+    """Test execute() passes None to StreamExecutionEnvironment when no job_name."""
+    mock_stream_env = MagicMock()
+
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+    ):
+        remote_env = RemoteExecutionEnvironment(env=mock_stream_env)
+        remote_env.execute()
+
+    mock_stream_env.execute.assert_called_once_with(job_name=None)
+
+
+def test_apply_by_unknown_name_errors() -> None:
+    """Applying an unregistered agent name raises ValueError before execution.
+
+    The guard fires at apply() time on the remote builder, so no cluster is
+    started and no job is submitted. The Flink environment and input datastream
+    are never exercised to reach the guard, so both are mocked.
+    """
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+    ):
+        remote_env = RemoteExecutionEnvironment(env=MagicMock())
+
+    builder = remote_env.from_datastream(
+        input=MagicMock(), key_selector=lambda record: record["key"]
+    )
+
+    with pytest.raises(ValueError, match="ghost"):
+        builder.apply("ghost")
 
 
 def _verify_config(config: AgentConfiguration) -> None:

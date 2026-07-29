@@ -1,6 +1,6 @@
 ---
 title: Chat Models
-weight: 3
+weight: 4
 type: docs
 ---
 <!--
@@ -80,22 +80,24 @@ class MyAgent(Agent):
             temperature=0.7
         )
 
-    @action(InputEvent)
+    @action(EventType.InputEvent)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        input_event = InputEvent.from_event(event)
         # Create a chat request with user message
         user_message = ChatMessage(
             role=MessageRole.USER,
-            content=f"input: {event.input}"
+            content=f"input: {input_event.input}"
         )
         ctx.send_event(
             ChatRequestEvent(model="ollama_chat_model", messages=[user_message])
         )
 
-    @action(ChatResponseEvent)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
-    def process_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
-        response_content = event.response.content
+    def process_response(event: Event, ctx: RunnerContext) -> None:
+        chat_response = ChatResponseEvent.from_event(event)
+        response_content = chat_response.response.content
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```
@@ -119,17 +121,19 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    @Action(EventType.InputEvent)
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         ChatMessage userMessage =
-                new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
+                new ChatMessage(MessageRole.USER, String.format("input: {%s}", inputEvent.getInput()));
         ctx.sendEvent(new ChatRequestEvent("ollamaChatModel", List.of(userMessage)));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
-    public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
+    @Action(EventType.ChatResponseEvent)
+    public static void processResponse(Event event, RunnerContext ctx)
             throws Exception {
-        String response = event.getResponse().getContent();
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        String response = chatResponse.getResponse().getContent();
         // Handle the LLM's response
         // Process the response as needed for your use case
     }
@@ -141,6 +145,103 @@ public class MyAgent extends Agent {
 
 
 ## Built-in Providers
+
+### Amazon Bedrock
+
+Amazon Bedrock provides access to a wide range of foundation models from leading AI providers through a unified API. The Flink Agents Bedrock integration uses the [Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html), which provides a consistent interface across all supported models with native tool calling support. Authentication is handled via SigV4 using the AWS default credentials chain. No API keys are required.
+
+{{< hint info >}}
+Amazon Bedrock is only supported in Java currently. To use Amazon Bedrock from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. An AWS account with [Amazon Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) enabled for the models you plan to use
+2. IAM credentials configured via any method supported by the [AWS Default Credentials Provider](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/credentials-chain.html) (environment variables, `~/.aws/credentials`, IAM role, etc.)
+
+#### BedrockChatModelConnection Parameters
+
+{{< tabs "BedrockChatModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `region` | String | `"us-east-1"` | AWS region for the Bedrock service |
+| `model` | String | None | Default model ID (can be overridden per setup) |
+| `max_retries` | int | `5` | Maximum number of API retry attempts (retries on throttling, 429, 503) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### BedrockChatModelSetup Parameters
+
+{{< tabs "BedrockChatModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | Required | Bedrock model ID (e.g. `"us.anthropic.claude-sonnet-4-20250514-v1:0"`) |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 1.0) |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Amazon Bedrock Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor bedrockConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.BEDROCK_CONNECTION)
+                .addInitialArgument("region", "us-east-1")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor bedrockChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.BEDROCK_SETUP)
+                .addInitialArgument("connection", "bedrockConnection")
+                .addInitialArgument("model", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+                .addInitialArgument("temperature", 0.1d)
+                .addInitialArgument("max_tokens", 4096)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Amazon Bedrock supports models from multiple providers through a single API. Visit the [Amazon Bedrock Model IDs documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the complete and up-to-date list of available models.
+
+Some popular options include:
+- **Claude** (Anthropic): `us.anthropic.claude-sonnet-4-6`, `us.anthropic.claude-opus-4-7`, `us.anthropic.claude-opus-4-6-v1`
+- **Llama** (Meta): `us.meta.llama4-scout-17b-16e-instruct-v1:0`
+- **Mistral**: `mistral.mistral-large-2402-v1:0`
+- **Amazon Nova**: `us.amazon.nova-pro-v1:0`, `us.amazon.nova-lite-v1:0`
+
+{{< hint warning >}}
+Model availability varies by AWS region and requires explicit model access enablement in the Bedrock console. Always check the [Amazon Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-regions.html) for regional availability before implementing in production.
+{{< /hint >}}
+
+{{< hint warning >}}
+**Current limitations:** The integration uses text content blocks only. Extended thinking / reasoning content blocks (e.g. Claude extended thinking), citation blocks, and image / document content blocks are not yet supported.
+{{< /hint >}}
 
 ### Anthropic
 
@@ -386,10 +487,6 @@ Model availability and specifications may change. Always check the official Azur
 
 Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azure's cloud infrastructure, using the same OpenAI SDK with Azure-specific authentication and endpoints. This offers enterprise security, compliance, and regional availability while using familiar OpenAI APIs.
 
-{{< hint info >}}
-Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
-{{< /hint >}}
-
 {{< hint warning >}}
 **Azure OpenAI vs Azure AI:** Azure OpenAI uses the OpenAI SDK to access OpenAI models (GPT-4, etc.) hosted on Azure. If you want to use other models like Llama, Mistral, or Phi deployed via Azure AI Studio, see [Azure AI](#azure-ai) instead.
 {{< /hint >}}
@@ -416,6 +513,19 @@ Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Jav
 
 {{< /tab >}}
 
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | Azure OpenAI API key for authentication |
+| `api_version` | String | Required | Azure OpenAI REST API version (e.g., "2024-02-01"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
+| `azure_endpoint` | String | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) — either a direct Azure resource or a proxy/gateway URL that fronts an Azure OpenAI service |
+| `timeout` | int | None | Timeout in seconds for API requests; must be greater than 0, otherwise ignored (SDK default applies) |
+| `max_retries` | int | None | Maximum number of API retry attempts; must be non-negative, otherwise ignored (SDK default applies) |
+| `azure_url_path_mode` | String | `"AUTO"` | Controls how the SDK constructs Azure OpenAI request URLs. One of `"AUTO"`, `"LEGACY"`, or `"UNIFIED"`. Custom gateways that proxy Azure OpenAI typically need `"LEGACY"` to force the `/openai/deployments/{model}` path |
+
+{{< /tab >}}
+
 {{< /tabs >}}
 
 #### AzureOpenAIChatModelSetup Parameters
@@ -435,6 +545,22 @@ Azure OpenAI is only supported in Python currently. To use Azure OpenAI from Jav
 | `max_tokens` | int | None | Maximum number of tokens to generate |
 | `logprobs` | bool | `False` | Whether to return log probabilities of output tokens |
 | `additional_kwargs` | dict | `{}` | Additional Azure OpenAI API parameters |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | Required | Azure deployment name (not the underlying OpenAI model name) |
+| `model_of_azure_deployment` | String | None | The underlying model name (e.g., 'gpt-4', 'gpt-4o'). Used solely for token metrics tracking |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | None | Sampling temperature (0.0 to 2.0). Not supported by reasoning models |
+| `max_tokens` | int | None | Maximum number of tokens to generate (must be greater than 0) |
+| `logprobs` | boolean | `false` | Whether to return log probabilities of output tokens |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Azure OpenAI API parameters (forwarded to the OpenAI request body) |
 
 {{< /tab >}}
 
@@ -473,6 +599,34 @@ class MyAgent(Agent):
 ```
 {{< /tab >}}
 
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor azureOpenAIConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_OPENAI_CONNECTION)
+                .addInitialArgument("api_key", "<your-api-key>")
+                .addInitialArgument("api_version", "2024-02-01")
+                .addInitialArgument("azure_endpoint", "https://your-resource.openai.azure.com")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor azureOpenAIChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_OPENAI_SETUP)
+                .addInitialArgument("connection", "azureOpenAIConnection")
+                .addInitialArgument("model", "my-gpt4-deployment")          // Your Azure deployment name
+                .addInitialArgument("model_of_azure_deployment", "gpt-4")   // Underlying model for metrics
+                .addInitialArgument("temperature", 0.3d)
+                .addInitialArgument("max_tokens", 1000)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
 {{< /tabs >}}
 
 #### Available Models
@@ -487,6 +641,102 @@ Some popular options include:
 
 {{< hint warning >}}
 Model availability depends on your Azure region and subscription. Always check the official Azure OpenAI documentation for regional availability before implementing in production.
+{{< /hint >}}
+
+### Gemini
+
+Google Gemini provides cloud-based chat models through the Gemini Developer API and Vertex AI. The Flink Agents Gemini integration uses the official Google Gen AI SDK and supports text conversations, system instructions, and tool calling.
+
+{{< hint warning >}}
+Vertex AI support is experimental. The connection path has been smoke-tested during construction but has not yet been verified end to end.
+{{< /hint >}}
+
+{{< hint info >}}
+Gemini is only supported in Java currently. To use Gemini from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. For the Gemini Developer API, create an API key in [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. For Vertex AI, enable Vertex AI in your Google Cloud project and configure Google Cloud credentials
+
+#### GeminiChatModelConnection Parameters
+
+{{< tabs "GeminiChatModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required unless `base_url` is set or `vertex_ai` is `true` | Gemini Developer API key |
+| `base_url` | String | None | Custom endpoint, such as a proxy that injects credentials |
+| `model` | String | None | Default model name, used when no model is supplied per setup |
+| `timeout` | int | None | API request timeout in seconds |
+| `vertex_ai` | boolean | `false` | Use the experimental Vertex AI backend; not yet verified end to end |
+| `project` | String | None | Vertex AI project id |
+| `location` | String | None | Vertex AI location |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### GeminiChatModelSetup Parameters
+
+{{< tabs "GeminiChatModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"gemini-3.1-pro-preview"` | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_output_tokens` | long | `1024` | Maximum number of tokens to generate |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Gemini parameters (`top_k`, `top_p`, `stop_sequences`) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Gemini Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor geminiConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.GEMINI_CONNECTION)
+                .addInitialArgument("api_key", System.getenv("GEMINI_API_KEY"))
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor geminiChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.GEMINI_SETUP)
+                .addInitialArgument("connection", "geminiConnection")
+                .addInitialArgument("model", "gemini-3.1-pro-preview")
+                .addInitialArgument("temperature", 0.1d)
+                .addInitialArgument("max_output_tokens", 1024)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Visit the [Gemini models documentation](https://ai.google.dev/gemini-api/docs/models) for the complete and up-to-date list of available models.
+
+{{< hint warning >}}
+Model availability and names may differ between the Gemini Developer API and Vertex AI. Always check the official Gemini documentation before implementing in production.
 {{< /hint >}}
 
 ### Ollama
@@ -648,9 +898,11 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 1. Create an account at [OpenAI Platform](https://platform.openai.com/)
 2. Navigate to [API Keys](https://platform.openai.com/api-keys) and create a new secret key
 
-#### OpenAIChatModelConnection Parameters
+#### Completions API
 
-{{< tabs "OpenAIChatModelConnection Parameters" >}}
+##### OpenAICompletionsConnection Parameters
+
+{{< tabs "OpenAICompletionsConnection Parameters" >}}
 
 {{< tab "Python" >}}
 
@@ -680,16 +932,16 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 {{< /tabs >}}
 
-#### OpenAIChatModelSetup Parameters
+##### OpenAICompletionsSetup Parameters
 
-{{< tabs "OpenAIChatModelSetup Parameters" >}}
+{{< tabs "OpenAICompletionsSetup Parameters" >}}
 
 {{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Reference to connection method name |
-| `model` | str | `"gpt-3.5-turbo"` | Name of the chat model to use |
+| `model` | str | `"gpt-4o-mini"` | Name of the chat model to use |
 | `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
 | `tools` | List[str] | None | List of tool names available to the model |
 | `temperature` | float | `0.1` | Sampling temperature (0.0 to 2.0) |
@@ -707,7 +959,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | String | Required | Reference to connection method name |
-| `model` | String | `"gpt-3.5-turbo"` | Name of the chat model to use |
+| `model` | String | `"gpt-4o-mini"` | Name of the chat model to use |
 | `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
 | `tools` | List<String> | None | List of tool names available to the model |
 | `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
@@ -722,9 +974,9 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 {{< /tabs >}}
 
-#### Usage Example
+##### Usage Example
 
-{{< tabs "OpenAI Usage Example" >}}
+{{< tabs "OpenAI Chat Completions Usage Example" >}}
 
 {{< tab "Python" >}}
 ```python
@@ -734,7 +986,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OPENAI_CONNECTION,
+            clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION,
             api_key="<your-api-key>",
             api_base_url="https://api.openai.com/v1",
             max_retries=3,
@@ -745,7 +997,7 @@ class MyAgent(Agent):
     @staticmethod
     def openai_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OPENAI_SETUP,
+            clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP,
             connection="openai_connection",
             model="gpt-4",
             temperature=0.7,
@@ -761,7 +1013,7 @@ class MyAgent(Agent):
 public class MyAgent extends Agent {
     @ChatModelConnection
     public static ResourceDescriptor openaiConnection() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_CONNECTION)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
                 .addInitialArgument("api_base_url", "https://api.openai.com/v1")
                 .addInitialArgument("timeout", 60)
@@ -771,11 +1023,94 @@ public class MyAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor openaiChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_SETUP)
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP)
                 .addInitialArgument("connection", "openaiConnection")
                 .addInitialArgument("model", "gpt-4")
                 .addInitialArgument("temperature", 0.7d)
                 .addInitialArgument("max_tokens", 1000)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Responses API
+
+{{< hint info >}}
+Responses API is only supported in Java currently. To use OpenAI Responses API from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+##### OpenAIResponsesModelConnection Parameters
+
+{{< tabs "OpenAIResponsesModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | OpenAI API key for authentication |
+| `api_base_url` | String | None | Base URL for OpenAI API (useful for proxies) |
+| `max_retries` | int | `2` | Maximum number of API retry attempts |
+| `timeout` | int | None | Timeout in seconds for API requests |
+| `default_headers` | Map<String, String> | None | Default headers for API requests |
+| `model` | String | None | Default model to use if not specified in setup |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+##### OpenAIResponsesModelSetup Parameters
+
+{{< tabs "OpenAIResponsesModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"gpt-4o"` | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `strict` | boolean | `false` | Enable strict mode for tool calling schemas |
+| `reasoning_effort` | String | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
+| `store` | boolean | `false` | Whether to store the response for later retrieval |
+| `instructions` | String | None | System-level instructions for the model |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Responses API parameters |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+##### Usage Example
+
+{{< tabs "OpenAI Responses API Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor openaiResponsesConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_RESPONSES_CONNECTION)
+                .addInitialArgument("api_key", "<your-api-key>")
+                .addInitialArgument("timeout", 120)
+                .addInitialArgument("max_retries", 3)
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor openaiResponsesChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_RESPONSES_SETUP)
+                .addInitialArgument("connection", "openaiResponsesConnection")
+                .addInitialArgument("model", "gpt-4o")
+                .addInitialArgument("temperature", 0.3d)
+                .addInitialArgument("max_tokens", 2048)
+                .addInitialArgument("store", true)
                 .build();
     }
 
@@ -939,22 +1274,24 @@ class MyAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent)
+    @action(EventType.InputEvent)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        input_event = InputEvent.from_event(event)
         # Create a chat request with user message
         user_message = ChatMessage(
             role=MessageRole.USER,
-            content=f"input: {event.input}"
+            content=f"input: {input_event.input}"
         )
         ctx.send_event(
             ChatRequestEvent(model="java_chat_model", messages=[user_message])
         )
 
-    @action(ChatResponseEvent)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
-    def process_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
-        response_content = event.response.content
+    def process_response(event: Event, ctx: RunnerContext) -> None:
+        chat_response = ChatResponseEvent.from_event(event)
+        response_content = chat_response.response.content
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```
@@ -996,17 +1333,19 @@ public class MyAgent extends Agent {
                 .build();
     }
 
-    @Action(listenEvents = {InputEvent.class})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
+    @Action(EventType.InputEvent)
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
         ChatMessage userMessage =
-                new ChatMessage(MessageRole.USER, String.format("input: {%s}", event.getInput()));
+                new ChatMessage(MessageRole.USER, String.format("input: {%s}", inputEvent.getInput()));
         ctx.sendEvent(new ChatRequestEvent("pythonChatModel", List.of(userMessage)));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
-    public static void processResponse(ChatResponseEvent event, RunnerContext ctx)
+    @Action(EventType.ChatResponseEvent)
+    public static void processResponse(Event event, RunnerContext ctx)
             throws Exception {
-        String response = event.getResponse().getContent();
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        String response = chatResponse.getResponse().getContent();
         // Handle the LLM's response
         // Process the response as needed for your use case
     }
@@ -1057,11 +1396,11 @@ public class MyChatModelConnection extends BaseChatModelConnection {
      * Creates a new chat model connection.
      *
      * @param descriptor a resource descriptor contains the initial parameters
-     * @param getResource a function to resolve resources (e.g., tools) by name and type
+     * @param resourceContext context for resolving resources (e.g., tools) by name and type
      */
     public MyChatModelConnection(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         // get custom arguments from descriptor
         String endpoint = descriptor.getArgument("endpoint");
         ...
@@ -1123,3 +1462,8 @@ public class MyChatModelSetup extends BaseChatModelSetup {
 
 {{< /tabs >}}
 
+## Built-in Events and Actions
+
+The built-in `chat_model_action` listens to `ChatRequestEvent` and `ToolResponseEvent`. To request a chat completion, send a `ChatRequestEvent`. If the model returns a final answer, the action sends a `ChatResponseEvent`.
+
+If the model asks to call tools, `chat_model_action` sends a `ToolRequestEvent` instead of a final `ChatResponseEvent`. After the tools finish, it receives the matching `ToolResponseEvent`, appends the tool results to the chat history, and calls the model again. This loop continues until the model returns a final response. For details on how tools are executed, see [Built-in Events and Actions in Tool Use]({{< ref "docs/development/tool_use#built-in-events-and-actions" >}}).

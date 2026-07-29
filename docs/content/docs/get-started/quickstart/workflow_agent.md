@@ -128,26 +128,33 @@ class ReviewAnalysisAgent(Agent):
             extract_reasoning=True,
         )
 
-    @action(InputEvent)
+    @action(EventType.InputEvent)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
-        input: ProductReview = event.input
+        input = ProductReview.model_validate(InputEvent.from_event(event).input)
         ctx.short_term_memory.set("id", input.id)
 
         content = f"""
             "id": {input.id},
             "review": {input.review}
         """
-        msg = ChatMessage(role=MessageRole.USER, extra_args={"input": content})
-        ctx.send_event(ChatRequestEvent(model="review_analysis_model", messages=[msg]))
+        msg = ChatMessage(role=MessageRole.USER)
+        ctx.send_event(
+            ChatRequestEvent(
+                model="review_analysis_model",
+                messages=[msg],
+                prompt_args={"input": content},
+            )
+        )
 
-    @action(ChatResponseEvent)
+    @action(EventType.ChatResponseEvent)
     @staticmethod
-    def process_chat_response(event: ChatResponseEvent, ctx: RunnerContext) -> None:
+    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
+        chat_response = ChatResponseEvent.from_event(event)
         try:
-            json_content = json.loads(event.response.content)
+            json_content = json.loads(chat_response.response.content)
             ctx.send_event(
                 OutputEvent(
                     output=ProductReviewAnalysisRes(
@@ -159,7 +166,7 @@ class ReviewAnalysisAgent(Agent):
             )
         except Exception:
             logging.exception(
-                f"Error processing chat response {event.response.content}"
+                f"Error processing chat response {chat_response.response.content}"
             )
 
             # To fail the agent, you can raise an exception here.
@@ -211,9 +218,10 @@ public class ReviewAnalysisAgent extends Agent {
     }
 
     /** Process input event and send chat request for review analysis. */
-    @Action(listenEvents = {InputEvent.class})
-    public static void processInput(InputEvent event, RunnerContext ctx) throws Exception {
-        String input = (String) event.getInput();
+    @Action(EventType.InputEvent)
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        String input = (String) inputEvent.getInput();
         MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         CustomTypesAndResources.ProductReview inputObj =
                 MAPPER.readValue(input, CustomTypesAndResources.ProductReview.class);
@@ -224,15 +232,18 @@ public class ReviewAnalysisAgent extends Agent {
                 String.format(
                         "{\n" + "\"id\": %s,\n" + "\"review\": \"%s\"\n" + "}",
                         inputObj.getId(), inputObj.getReview());
-        ChatMessage msg = new ChatMessage(MessageRole.USER, "", Map.of("input", content));
+        ChatMessage msg = new ChatMessage(MessageRole.USER, "");
 
-        ctx.sendEvent(new ChatRequestEvent("reviewAnalysisModel", List.of(msg)));
+        ctx.sendEvent(
+                new ChatRequestEvent(
+                        "reviewAnalysisModel", List.of(msg), Map.of("input", content), null));
     }
 
-    @Action(listenEvents = ChatResponseEvent.class)
-    public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx)
+    @Action(EventType.ChatResponseEvent)
+    public static void processChatResponse(Event event, RunnerContext ctx)
             throws Exception {
-        JsonNode jsonNode = MAPPER.readTree(event.getResponse().getContent());
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getContent());
         JsonNode scoreNode = jsonNode.findValue("score");
         JsonNode reasonsNode = jsonNode.findValue("reasons");
         if (scoreNode == null || reasonsNode == null) {
@@ -272,8 +283,11 @@ Create the input DataStream by reading the product reviews from a text file as a
 # Read product reviews from a text file as a streaming source.
 # Each line in the file should be a JSON string representing a ProductReview.
 product_review_stream = env.from_source(
+    # Target the single file, not the resources/ dir: Flink's enumerator
+    # recurses, so files like skills/SKILL.md would be parsed as reviews.
     source=FileSource.for_record_stream_format(
-        StreamFormat.text_line_format(), f"file:///{current_dir}/resources"
+        StreamFormat.text_line_format(),
+        f"file:///{current_dir}/resources/product_review.txt",
     )
     .monitor_continuously(Duration.of_minutes(1))
     .build(),
@@ -297,8 +311,8 @@ review_analysis_res_stream = (
 # Print the analysis results to stdout.
 review_analysis_res_stream.print()
 
-# Execute the Flink pipeline.
-agents_env.execute()
+# Execute the Flink pipeline with the Flink job name.
+agents_env.execute("Workflow Agent Example Job")
 ```
 {{< /tab >}}
 
@@ -325,12 +339,101 @@ DataStream<Object> reviewAnalysisResStream =
 // Print the analysis results to stdout.
 reviewAnalysisResStream.print();
 
-// Execute the Flink pipeline.
-agentsEnv.execute();
+// Execute the Flink pipeline with the Flink job name.
+agentsEnv.execute("Workflow Agent Example Job");
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
+
+### Read Input via the Table API
+
+The multiple-agent example reads product reviews through the Flink Table API instead of a DataStream. Because Table rows arrive as `Row` (Java) / `dict` (Python) instead of a `ProductReview` POJO, it uses a dedicated `TableReviewAnalysisAgent` — identical to `ReviewAnalysisAgent` except its `process_input` action reads the `id` and `review` columns out of the row, and it ships a key selector that extracts the key from that row.
+
+{{< tabs "Create the Table Agent" >}}
+
+{{< tab "Python" >}}
+```python
+class TableKeySelector(KeySelector):
+    """Extract the partition key from a Table row (dict)."""
+
+    def get_key(self, value: Any) -> str:
+        return str(value["id"])
+
+
+class TableReviewAnalysisAgent(Agent):
+    # prompt / tool / chat_model_setup are identical to ReviewAnalysisAgent.
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        # Table input arrives as a dict keyed by column name, not a POJO.
+        input_dict = InputEvent.from_event(event).input
+        product_id = str(input_dict["id"])
+        review_text = str(input_dict["review"])
+        ...
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class TableReviewAnalysisAgent extends Agent {
+
+    /** Extract the partition key from a Table Row. */
+    public static class RowKeySelector implements KeySelector<Object, String> {
+        @Override
+        public String getKey(Object value) {
+            return (String) ((Row) value).getField("id");
+        }
+    }
+
+    // prompt / tool / chat model setup are identical to ReviewAnalysisAgent.
+
+    @Action(EventType.InputEvent)
+    public static void processInput(Event event, RunnerContext ctx) {
+        // Table input arrives as a Row keyed by column name, not a POJO.
+        Row row = (Row) InputEvent.fromEvent(event).getInput();
+        String productId = (String) row.getField("id");
+        String reviewText = (String) row.getField("review");
+        ...
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+Register the input file as a table and feed it to the agent with `from_table` / `fromTable`, providing the key selector:
+
+{{< tabs "Integrate via Table API" >}}
+
+{{< tab "Python" >}}
+```python
+input_table = t_env.from_path("product_reviews")
+
+review_analysis_res_stream = (
+    agents_env.from_table(input=input_table, key_selector=TableKeySelector())
+    .apply(TableReviewAnalysisAgent())
+    .to_datastream()
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+Table inputTable = tableEnv.from("product_reviews");
+
+DataStream<Object> reviewAnalysisResStream =
+        agentsEnv
+                .fromTable(inputTable, new TableReviewAnalysisAgent.RowKeySelector())
+                .apply(new TableReviewAnalysisAgent())
+                .toDataStream();
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}#fromto-flink-table-api) for the full Table API integration reference.
 
 ## Run the Example
 
@@ -338,8 +441,8 @@ agentsEnv.execute();
 
 * Unix-like environment (we use Linux, Mac OS X, Cygwin, WSL)
 * Git
-* Java 11
-* Python 3.10 or 3.11
+* Java 11+
+* Python 3.10, 3.11 or 3.12
 
 ### Preparation
 

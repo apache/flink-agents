@@ -16,12 +16,31 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Sequence
+from dataclasses import dataclass
+from typing import Any, Dict, Generic, Sequence, TypeVar, cast
 
 from pydantic import Field
 from typing_extensions import override
 
 from flink_agents.api.resource import Resource, ResourceType
+
+EmbeddingValue = TypeVar("EmbeddingValue", list[float], list[list[float]])
+
+
+@dataclass(frozen=True)
+class EmbeddingTokenUsage:
+    """Token usage reported by an embedding provider."""
+
+    prompt_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class EmbeddingResult(Generic[EmbeddingValue]):
+    """Embedding provider result with optional token usage metadata."""
+
+    embeddings: EmbeddingValue
+    token_usage: EmbeddingTokenUsage | None = None
 
 
 class BaseEmbeddingModelConnection(Resource, ABC):
@@ -45,7 +64,9 @@ class BaseEmbeddingModelConnection(Resource, ABC):
         return ResourceType.EMBEDDING_MODEL_CONNECTION
 
     @abstractmethod
-    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text input.
 
         Converts the input text into a high-dimensional vector representation
@@ -60,6 +81,12 @@ class BaseEmbeddingModelConnection(Resource, ABC):
             The dimension of the vector depends on the specific embedding model used.
         """
 
+    def embed_with_usage(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        """Generate embeddings and return provider token usage when available."""
+        return EmbeddingResult(embeddings=self.embed(text, **kwargs))
+
 
 class BaseEmbeddingModelSetup(Resource, ABC):
     """Base abstract class for text embedding model setup.
@@ -71,7 +98,9 @@ class BaseEmbeddingModelSetup(Resource, ABC):
     Provides the basic embedding interface for generating embeddings from text inputs.
     """
 
-    connection: str = Field(description="Name of the referenced connection.")
+    connection: str | BaseEmbeddingModelConnection = Field(
+        description="The referenced connection."
+    )
     model: str = Field(description="Name of the embedding model to use.")
 
     @classmethod
@@ -85,7 +114,24 @@ class BaseEmbeddingModelSetup(Resource, ABC):
     def model_kwargs(self) -> Dict[str, Any]:
         """Return embedding model settings."""
 
-    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
+    @override
+    def open(self) -> None:
+        self.connection = cast(
+            "BaseEmbeddingModelConnection",
+            self.resource_context.get_resource(
+                self.connection, ResourceType.EMBEDDING_MODEL_CONNECTION
+            ),
+        )
+
+    def _get_connection(self) -> BaseEmbeddingModelConnection:
+        if not isinstance(self.connection, BaseEmbeddingModelConnection):
+            err_msg = f"Expect BaseEmbeddingModelConnection, but is {self.connection.__class__.__name__}"
+            raise TypeError(err_msg)
+        return self.connection
+
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text query.
 
         Converts the input text into a high-dimensional vector representation
@@ -99,9 +145,14 @@ class BaseEmbeddingModelSetup(Resource, ABC):
             A list of floating-point numbers representing the embedding vector.
             The dimension of the vector depends on the specific embedding model used.
         """
-        connection = self.get_resource(
-            self.connection, ResourceType.EMBEDDING_MODEL_CONNECTION
-        )
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
-        return connection.embed(text, **merged_kwargs)
+        return self._get_connection().embed(text, **merged_kwargs)
+
+    def embed_with_usage(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        """Generate embeddings and return provider token usage when available."""
+        merged_kwargs = self.model_kwargs.copy()
+        merged_kwargs.update(kwargs)
+        return self._get_connection().embed_with_usage(text, **merged_kwargs)

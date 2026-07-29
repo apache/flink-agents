@@ -24,11 +24,59 @@ under the License.
 
 ## Overview
 
-ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. Leveraging this paradigm, the user only needs to specify the goal with prompt and provide available tools, and the LLM will decide how to achieve the goal and take actions autonomously
+ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. Leveraging this paradigm, the user only needs to specify the goal with prompt and provide available tools, and the LLM will decide how to achieve the goal and take actions autonomously.
 
 {{< hint info >}}
 For guidance on choosing Java or Python, see [Should I choose Java or Python?]({{< ref "docs/faq/faq#q3-should-i-choose-java-or-python" >}}).
 {{< /hint >}}
+
+{{< hint info >}}
+The snippets on this page are fragments that each focus on a single concept. For an end-to-end runnable walkthrough, see the [ReAct Agent Quickstart]({{< ref "docs/get-started/quickstart/react_agent" >}}) and the full source: [`react_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/react_agent_example.py) (Python) and [`ReActAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java) (Java).
+{{< /hint >}}
+
+The snippets below assume the following imports:
+
+{{< tabs "ReAct Agent Imports" >}}
+
+{{< tab "Python" >}}
+```python
+from pydantic import BaseModel
+from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
+
+from flink_agents.api.agents.react_agent import ReActAgent
+from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+from flink_agents.api.prompts.prompt import Prompt
+from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
+from flink_agents.api.tools.tool import Tool
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.agents.ReActAgent;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
+import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
+
+import java.util.Arrays;
+import java.util.List;
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ## ReAct Agent Example
 
@@ -91,10 +139,37 @@ ResourceDescriptor chatModelDescriptor =
 
 {{< /tabs >}}
 
-### Prompt
-User can provide prompt to instruct agent. 
+{{< hint warning >}}
+The tools listed in `tools=[...]` must be registered on the `AgentsExecutionEnvironment` **before** the agent runs, using a name that matches the entry in the list — otherwise the agent fails at runtime with a "resource not found" error.
+{{< /hint >}}
 
-The prompt should contain two messages. The first message tells the agent what to do, and gives the input and output example. The second message tells how to convert input element to text string.
+Register the referenced tools (this can also be done with a YAML file — see [Tool Use]({{< ref "docs/development/tool_use#register-tool-to-execution-environment" >}}) for the full guide):
+
+{{< tabs "Register Tools" >}}
+
+{{< tab "Python" >}}
+```python
+agents_env.add_resource(
+    "my_tool1", ResourceType.TOOL, Tool.from_callable(my_tool1)
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+agentsEnv.addResource(
+        "myTool1",
+        ResourceType.TOOL,
+        Tool.fromMethod(MyAgentExample.class.getMethod("myTool1", String.class)));
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+### Prompt
+User can provide prompt to instruct agent.
+
+A typical prompt contains two messages: a SYSTEM message that tells the agent what to do (and gives input and output examples), and a USER message that describes how to convert the input element into a text string. This is a recommended pattern, not a strict requirement — the agent uses all messages in the prompt, and the SYSTEM message is optional (if it is omitted, the framework still prepends the output-schema instruction automatically).
 
 {{< tabs "Prompt" >}}
 
@@ -154,6 +229,15 @@ Prompt myPrompt = Prompt.fromMessages(
 
 {{< /tabs >}}
 
+The USER-message template uses `{placeholder}` syntax. The placeholder names are derived from the agent input element, and depend on its type:
+
+- **Primitive** (`int`, `str`, `float`, `bool`, ...): a single `{input}` placeholder.
+- **`Row`**: one placeholder per field name (`row.as_dict()` keys in Python, `row.getFieldNames()` in Java).
+- **`dict` / `Map`**: the keys are used directly.
+- **`BaseModel` (Python) / Pojo (Java)**: the object's field names.
+
+For example, the prompt snippet above uses `{id}` and `{review}` because the input element's fields are named `id` and `review`. A placeholder whose name does not match a field is left unchanged in the text.
+
 If the input element is primitive types, like `int`, `str` and so on, the second message should be
 
 {{< tabs "Prepare Agents Execution Environment" >}}
@@ -180,7 +264,7 @@ See [Prompt]({{< ref "docs/development/prompts" >}}) for more details.
 ### Output Schema
 User can set output schema to configure the ReAct Agent output type. If output schema is set, the ReAct Agent will deserialize the llm response to expected type. 
 
-The output schema should be `BaseModel` or `RowTypeInfo`.
+The output schema should be a `BaseModel` subclass (Python) / a Pojo class (Java), or a `RowTypeInfo` (both).
 
 {{< tabs "Output Schema" >}}
 

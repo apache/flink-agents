@@ -26,7 +26,9 @@ import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
+import org.apache.flink.api.java.functions.KeySelector;
 
+import java.io.Serializable;
 import java.util.Arrays;
 import java.util.List;
 
@@ -221,6 +223,66 @@ public class CustomTypesAndResources {
             return String.format(
                     "ProductReviewSummary{id='%s', scoreHist=%s, unsatisfiedReasons=%s}",
                     id, scoreHist, unsatisfiedReasons);
+        }
+    }
+
+    /** Single input record carrying an id and text for parallel sentiment analysis. */
+    public static class SentimentRequest implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private final int id;
+        private final String text;
+
+        public SentimentRequest(int id, String text) {
+            this.id = id;
+            this.text = text;
+        }
+
+        public int getId() {
+            return id;
+        }
+
+        public String getText() {
+            return text;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("SentimentRequest{id=%d, text='%s'}", id, text);
+        }
+    }
+
+    /** Key selector that extracts the id field from a {@link SentimentRequest}. */
+    public static class SentimentKeySelector implements KeySelector<SentimentRequest, Integer> {
+        @Override
+        public Integer getKey(SentimentRequest request) {
+            return request.getId();
+        }
+    }
+
+    /** LLM response for a single aspect judgment. */
+    public static class AspectResponse implements Serializable {
+        private static final long serialVersionUID = 1L;
+        public String aspect;
+        public String result;
+
+        public AspectResponse() {}
+
+        @Override
+        public String toString() {
+            return String.format("AspectResponse{aspect='%s', result='%s'}", aspect, result);
+        }
+    }
+
+    /** LLM response for the aggregation phase. */
+    public static class SummaryResponse implements Serializable {
+        private static final long serialVersionUID = 1L;
+        public String summary;
+
+        public SummaryResponse() {}
+
+        @Override
+        public String toString() {
+            return String.format("SummaryResponse{summary='%s'}", summary);
         }
     }
 

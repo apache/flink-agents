@@ -22,6 +22,7 @@ from openai import NOT_GIVEN, OpenAI
 from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -35,7 +36,7 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
     resolve_openai_credentials,
 )
 
-DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 
 class OpenAIChatModelConnection(BaseChatModelConnection):
@@ -138,6 +139,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
         """Direct communication with model service for chat conversation.
@@ -148,6 +150,11 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             Input message sequence
         tools : Optional[List]
             List of tools that can be called by the model
+        output_schema : OutputSchema | None
+            Rejected when non-``None``: this connection has no native structured-output
+            translation, so callers stay on the prompt-engineering fallback. Declaring
+            the parameter keeps a caller-supplied schema out of ``**kwargs``, which is
+            forwarded to the provider SDK.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
@@ -157,6 +164,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message
         """
+        self._reject_unsupported_output_schema(output_schema)
         tool_specs = None
         if tools is not None:
             tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]
@@ -203,12 +211,13 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
     ----------
     connection : str
         Name of the referenced connection. (Inherited from BaseChatModelSetup)
+    model : str
+        The OpenAI model to use. Defaults to ``DEFAULT_OPENAI_MODEL`` when omitted via
+        ``__init__``. (Inherited from BaseChatModelSetup)
     prompt : Optional[Union[Prompt, str]
         Prompt template or string for the model. (Inherited from BaseChatModelSetup)
     tools : Optional[List[str]]
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
-    model : str
-        The OpenAI model to use.
     temperature : float
         The temperature to use during generation.
     max_tokens : Optional[int]
@@ -225,9 +234,6 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         The effort to use for reasoning models.
     """
 
-    model: str = Field(
-        default=DEFAULT_OPENAI_MODEL, description="The OpenAI model to use."
-    )
     temperature: float = Field(
         default=DEFAULT_TEMPERATURE,
         description="The temperature to use during generation.",

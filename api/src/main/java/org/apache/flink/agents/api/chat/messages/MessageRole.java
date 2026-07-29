@@ -18,6 +18,9 @@
 
 package org.apache.flink.agents.api.chat.messages;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonValue;
+
 /**
  * Enumeration of message roles in a chat conversation. Each role represents a different participant
  * type in the conversation.
@@ -42,6 +45,7 @@ public enum MessageRole {
         this.value = value;
     }
 
+    @JsonCreator
     public static MessageRole fromValue(String value) {
         for (MessageRole messageRole : MessageRole.values()) {
             if (messageRole.getValue().equals(value)) {
@@ -51,6 +55,7 @@ public enum MessageRole {
         throw new IllegalArgumentException("Invalid MessageRole value: " + value);
     }
 
+    @JsonValue
     public String getValue() {
         return this.value;
     }

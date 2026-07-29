@@ -47,7 +47,7 @@ def foo(bar: int, baz: str) -> str:
 
 
 @pytest.fixture(scope="module")
-def tool_metadata() -> ToolMetadata:  # noqa: D103
+def tool_metadata() -> ToolMetadata:
     return ToolMetadata(
         name="foo",
         description="Function for testing ToolMetadata",
@@ -55,7 +55,7 @@ def tool_metadata() -> ToolMetadata:  # noqa: D103
     )
 
 
-def test_serialize_tool_metadata(tool_metadata: ToolMetadata) -> None:  # noqa: D103
+def test_serialize_tool_metadata(tool_metadata: ToolMetadata) -> None:
     json_value = tool_metadata.model_dump_json(serialize_as_any=True)
     with Path(f"{current_dir}/resources/tool_metadata.json").open() as f:
         expected_json = f.read()
@@ -64,7 +64,7 @@ def test_serialize_tool_metadata(tool_metadata: ToolMetadata) -> None:  # noqa: 
     assert actual == expected
 
 
-def test_deserialize_tool_metadata(tool_metadata: ToolMetadata) -> None:  # noqa: D103
+def test_deserialize_tool_metadata(tool_metadata: ToolMetadata) -> None:
     with Path(f"{current_dir}/resources/tool_metadata.json").open() as f:
         expected_json = f.read()
     actual_tool_metadata = tool_metadata.model_validate_json(expected_json)

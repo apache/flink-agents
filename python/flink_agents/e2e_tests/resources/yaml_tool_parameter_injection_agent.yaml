@@ -1,0 +1,30 @@
+agents:
+  - name: yaml_tool_parameter_injection_agent
+    description: YAML-driven e2e agent with declarative tool parameter injection.
+
+    chat_model_connections:
+      - name: mock_connection
+        clazz: flink_agents.e2e_tests.e2e_tests_integration.tool_parameter_injection_agent.MockToolChatConnection
+
+    chat_model_setups:
+      - name: mock_model
+        clazz: flink_agents.e2e_tests.e2e_tests_integration.tool_parameter_injection_agent.MockToolChatModel
+        connection: mock_connection
+        model: mock
+        tools: [query_order]
+
+    tools:
+      - name: query_order
+        function: flink_agents.e2e_tests.e2e_tests_integration.yaml_test_actions:query_order
+        injected_args:
+          tenant_id:
+            source: config
+            key: tenant_id
+
+    actions:
+      - name: request_chat
+        function: flink_agents.e2e_tests.e2e_tests_integration.tool_parameter_injection_agent:ToolParameterInjectionAgent.request_chat
+        trigger_conditions: [input]
+      - name: emit_result
+        function: flink_agents.e2e_tests.e2e_tests_integration.tool_parameter_injection_agent:ToolParameterInjectionAgent.emit_result
+        trigger_conditions: [chat_response]

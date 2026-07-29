@@ -17,7 +17,10 @@
 #################################################################################
 import importlib
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from importlib_resources import files
 from pyflink.common import TypeInformation
@@ -38,25 +41,14 @@ class AgentBuilder(ABC):
     """Builder for integrating agent with input and output."""
 
     @abstractmethod
-    def apply(self, agent: Agent) -> "AgentBuilder":
+    def apply(self, agent: "Agent | str") -> "AgentBuilder":
         """Set agent of AgentBuilder.
 
         Parameters
         ----------
-        agent : Agent
-            The agent user defined to run in execution environment.
-        """
-
-    @abstractmethod
-    def to_list(self) -> List[Dict[str, Any]]:
-        """Get output list of agent execution.
-
-        The element in the list is a dict like {'key': output}.
-
-        Returns:
-        -------
-        list
-            Outputs of agent execution.
+        agent : Agent | str
+            Either an Agent instance, or the name of an agent registered
+            on the environment (e.g. by ``load_yaml``).
         """
 
     @abstractmethod
@@ -92,6 +84,7 @@ class AgentsExecutionEnvironment(ABC):
     """Base class for agent execution environment."""
 
     _resources: Dict[ResourceType, Dict[str, Any]]
+    _agents: Dict[str, Agent]
 
     def __init__(self) -> None:
         """Init method."""
@@ -99,6 +92,7 @@ class AgentsExecutionEnvironment(ABC):
         self._resources = {}
         for type in ResourceType:
             self._resources[type] = {}
+        self._agents: Dict[str, Agent] = {}
 
     @property
     def resources(self) -> Dict[ResourceType, Dict[str, Any]]:
@@ -113,10 +107,14 @@ class AgentsExecutionEnvironment(ABC):
     ) -> "AgentsExecutionEnvironment":
         """Get agents execution environment.
 
-        Currently, user can run flink agents in ide using LocalExecutionEnvironment or
-        RemoteExecutionEnvironment. To distinguish which environment to use, when run
-        flink agents with pyflink datastream/table, user should pass flink
-        StreamExecutionEnvironment when get AgentsExecutionEnvironment.
+        A Flink ``StreamExecutionEnvironment`` is required. When running flink agents
+        with pyflink datastream/table, pass the ``StreamExecutionEnvironment`` so the
+        agents run on the Flink runtime.
+
+        Parameters
+        ----------
+        env : StreamExecutionEnvironment
+            The Flink stream execution environment the agents run on. Must not be None.
 
         Returns:
         -------
@@ -124,34 +122,42 @@ class AgentsExecutionEnvironment(ABC):
             Environment for agent execution.
         """
         if env is None:
-            return importlib.import_module(
-                "flink_agents.runtime.local_execution_environment"
-            ).create_instance(env=env, t_env=t_env, **kwargs)
+            err_msg = "A StreamExecutionEnvironment is required."
+            raise ValueError(err_msg)
+
+        major_version = flink_version_manager.major_version
+        if not major_version:
+            err_msg = "Apache Flink is not installed."
+            raise ModuleNotFoundError(err_msg)
+
+        lib_base = files("flink_agents.lib")
+
+        # Load the common JAR (shared dependencies)
+        common_lib = lib_base / "common"
+        if common_lib.is_dir():
+            for jar_file in common_lib.iterdir():
+                if jar_file.is_file() and str(jar_file).endswith(".jar"):
+                    env.add_jars(f"file://{jar_file}")
         else:
-            major_version = flink_version_manager.major_version
-            if major_version:
-                # Determine the version-specific lib directory
-                version_dir = f"flink-{major_version}"
-                lib_base = files("flink_agents.lib")
-                version_lib = lib_base / version_dir
+            err_msg = "Flink Agents common JAR not found."
+            raise FileNotFoundError(err_msg)
 
-                # Check if version-specific directory exists
-                if version_lib.is_dir():
-                    for jar_file in version_lib.iterdir():
-                        if jar_file.is_file() and str(jar_file).endswith(".jar"):
-                            env.add_jars(f"file://{jar_file}")
-                else:
-                    err_msg = (
-                        f"Flink Agents dist JAR for Flink {major_version} not found."
-                    )
-                    raise FileNotFoundError(err_msg)
+        # Load the version-specific thin JAR
+        version_dir = f"flink-{major_version}"
+        version_lib = lib_base / version_dir
 
-                return importlib.import_module(
-                    "flink_agents.runtime.remote_execution_environment"
-                ).create_instance(env=env, t_env=t_env, **kwargs)
-            else:
-                err_msg = "Apache Flink is not installed."
-                raise ModuleNotFoundError(err_msg)
+        # Check if version-specific directory exists
+        if version_lib.is_dir():
+            for jar_file in version_lib.iterdir():
+                if jar_file.is_file() and str(jar_file).endswith(".jar"):
+                    env.add_jars(f"file://{jar_file}")
+        else:
+            err_msg = f"Flink Agents dist JAR for Flink {major_version} not found."
+            raise FileNotFoundError(err_msg)
+
+        return importlib.import_module(
+            "flink_agents.runtime.remote_execution_environment"
+        ).create_instance(env=env, t_env=t_env, **kwargs)
 
     @abstractmethod
     def get_config(self, path: str | None = None) -> Configuration:
@@ -161,22 +167,6 @@ class AgentsExecutionEnvironment(ABC):
         -------
         WritableConfiguration
             The configuration for flink agents.
-        """
-
-    @abstractmethod
-    def from_list(self, input: List[Dict[str, Any]]) -> AgentBuilder:
-        """Set input for agents. Used for local execution.
-
-        Parameters
-        ----------
-        input : list
-            Receive a list as input. The element in the list should be a dict like
-            {'key': Any, 'value': Any} or {'value': Any} , extra field will be ignored.
-
-        Returns:
-        -------
-        AgentBuilder
-            A new builder to build an agent for specific input.
         """
 
     @abstractmethod
@@ -222,11 +212,14 @@ class AgentsExecutionEnvironment(ABC):
         """
 
     @abstractmethod
-    def execute(self) -> None:
+    def execute(self, job_name: str | None = None) -> None:
         """Execute agent individually."""
 
     def add_resource(
-        self, name: str, resource_type: ResourceType, instance: SerializableResource | ResourceDescriptor
+        self,
+        name: str,
+        resource_type: ResourceType,
+        instance: SerializableResource | ResourceDescriptor,
     ) -> "AgentsExecutionEnvironment":
         """Register resource to agent execution environment.
 
@@ -250,3 +243,13 @@ class AgentsExecutionEnvironment(ABC):
 
         self._resources[resource_type][name] = instance
         return self
+
+    def load_yaml(self, paths: "Path | str | List[Path | str]") -> None:
+        """Load one or more YAML files and register their declared agents
+        and shared resources on this environment.
+
+        See :mod:`flink_agents.api.yaml.loader` for the format reference.
+        """
+        from flink_agents.api.yaml.loader import load_yaml as _load_yaml
+
+        _load_yaml(self, paths)

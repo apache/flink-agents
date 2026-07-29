@@ -30,7 +30,9 @@ from flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_
 # correspond modification should be applied to it when modify this file.
 if __name__ == "__main__":
     json_path = sys.argv[1]
-    agent_plan = AgentPlan.from_agent(PythonAgentPlanCompatibilityTestAgent(), AgentConfiguration())
+    agent_plan = AgentPlan.from_agent(
+        PythonAgentPlanCompatibilityTestAgent(), AgentConfiguration()
+    )
     json_value = agent_plan.model_dump_json(serialize_as_any=True, indent=4)
     with Path(json_path).open("w") as f:
         f.write(json_value)

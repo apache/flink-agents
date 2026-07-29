@@ -17,36 +17,81 @@
 #################################################################################
 from typing import Callable, Type
 
-from flink_agents.api.events.event import Event
+from flink_agents.api.function import Function, JavaFunction, PythonFunction
+from flink_agents.api.tools.tool_parameter_injection import (
+    InjectedArg,
+    normalize_injected_args,
+    validate_injected_arg_names,
+)
 
 
-def action(*listen_events: Type[Event]) -> Callable:
+def _validate_target(target: Function, owner: str) -> None:
+    """Reject targets with empty required identifiers, attributed to ``owner``."""
+    if isinstance(target, PythonFunction):
+        if not target.module or not target.qualname:
+            msg = f"PythonFunction target on '{owner}' must set both module and qualname"
+            raise ValueError(msg)
+    elif isinstance(target, JavaFunction):
+        if not target.qualname or not target.method_name:
+            msg = f"JavaFunction target on '{owner}' must set both qualname and method_name"
+            raise ValueError(msg)
+
+
+def action(
+    *trigger_conditions: str,
+    target: Function | None = None,
+) -> Callable:
     """Decorator for marking a function as an agent action.
+
+    Each argument is an event-type name string that this action responds to.
+    Multiple entries combine with OR semantics — the action triggers if any
+    one matches.
 
     Parameters
     ----------
-    listen_events : list[Type[Event]]
-        List of event types that this action should respond to.
+    trigger_conditions : str
+        Event-type name strings that this action responds to.
+    target : Function, optional
+        Cross-language function descriptor dispatched instead of the
+        decorated body. The body becomes a stub — raise
+        ``NotImplementedError`` so direct calls fail loud.
 
     Returns:
     -------
     Callable
-        Decorator function that marks the target function with event listeners.
+        Decorator function that marks the target function with trigger conditions.
 
     Raises:
     ------
     AssertionError
-        If no events are provided to listen to.
+        If no conditions are given or any entry is not a non-empty string.
+    TypeError
+        If ``target`` is provided but is not a :class:`Function` descriptor.
     """
-    assert len(listen_events) > 0, (
-        "action must have at least one event type to listen to"
+    assert len(trigger_conditions) > 0, (
+        "action must have at least one trigger condition (event-type name)"
     )
 
-    for event in listen_events:
-        assert issubclass(event, Event), "action must only listen to event types."
+    for entry in trigger_conditions:
+        assert isinstance(entry, str), (
+            f"action trigger condition must be a string, got {entry!r}"
+        )
+        assert entry != "", (
+            f"action trigger condition must be non-empty, got {entry!r}"
+        )
+
+    if target is not None and not isinstance(target, Function):
+        msg = (
+            f"action(target=...) must be an api-layer Function descriptor, "
+            f"got {type(target).__name__}"
+        )
+        raise TypeError(msg)
 
     def decorator(func: Callable) -> Callable:
-        func._listen_events = listen_events
+        if target is not None:
+            _validate_target(target, func.__qualname__)
+            func._target = target
+        func._trigger_conditions = trigger_conditions
         return func
 
     return decorator
@@ -122,21 +167,37 @@ def embedding_model_setup(func: Callable) -> Callable:
     return func
 
 
-def tool(func: Callable) -> Callable:
+def tool(
+    func: Callable | None = None,
+    *,
+    injected_args: dict[str, InjectedArg | dict] | None = None,
+) -> Callable:
     """Decorator for marking a function declaring a tool.
 
     Parameters
     ----------
     func : Callable
         Function to be decorated.
+    injected_args : dict, optional
+        Mapping from parameter name to its framework-owned value source.
+        These arguments are hidden from the model-facing tool schema.
 
     Returns:
     -------
     Callable
         Decorator function that marks the target function declare a tool.
     """
-    func._is_tool = True
-    return func
+    injected = normalize_injected_args(injected_args)
+
+    def decorator(target: Callable) -> Callable:
+        validate_injected_arg_names(target, injected)
+        target._is_tool = True
+        target._injected_args = injected
+        return target
+
+    if func is not None:
+        return decorator(func)
+    return decorator
 
 
 def prompt(func: Callable) -> Callable:
@@ -188,6 +249,24 @@ def vector_store(func: Callable) -> Callable:
     """
     func._is_vector_store = True
     return func
+
+
+def skills(func: Callable) -> Callable:
+    """Decorator for marking a function declaring skills.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare skills.
+    """
+    func._is_skills = True
+    return func
+
 
 def java_resource(cls: Type) -> Type:
     """Decorator to mark a class as Java resource."""

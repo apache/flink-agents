@@ -18,24 +18,23 @@
 
 package org.apache.flink.agents.api.vectorstores.python;
 
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
-import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
-import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import pemja.core.object.PyObject;
 
 import javax.annotation.Nullable;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /**
  * Python-based implementation of VectorStore that bridges Java and Python vector store
@@ -45,13 +44,19 @@ import java.util.function.BiFunction;
  *
  * <p>This class serves as a connection layer between Java and Python vector store environments,
  * enabling seamless integration of Python-based vector stores within Java applications.
+ *
+ * <p>Embedding is generated on the Java side via {@link BaseVectorStore}'s public add/update/query;
+ * the {@code *Embedding} hooks then forward the pre-computed vectors to the Python {@code
+ * _add_embedding}/{@code _update_embedding}/{@code _query_embedding}. This keeps each store
+ * operation a single Java->Python crossing, avoiding a Python->Java re-entry that deadlocks when
+ * run on the async pool thread.
  */
 public class PythonVectorStore extends BaseVectorStore implements PythonResourceWrapper {
     protected final PyObject vectorStore;
     protected final PythonResourceAdapter adapter;
 
     /**
-     * Creates a new PythonEmbeddingModelConnection.
+     * Creates a new PythonVectorStore.
      *
      * @param adapter The Python resource adapter (required by PythonResourceProvider's
      *     reflection-based instantiation but not used directly in this implementation)
@@ -63,53 +68,42 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
             PythonResourceAdapter adapter,
             PyObject vectorStore,
             ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.vectorStore = vectorStore;
         this.adapter = adapter;
     }
 
     @Override
+    public void open() throws Exception {
+        // Resolve the Java-side embedding model so embeddings are generated on the mailbox thread
+        // (single Java->Python crossing per op). Without this, add/query would re-embed inside
+        // Python and re-enter Java, which deadlocks when run on the async pool thread.
+        super.open();
+        adapter.callMethod(vectorStore, "open", Collections.emptyMap());
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
-    public List<String> add(
-            List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
-            throws IOException {
-        Object pythonDocuments = adapter.toPythonDocuments(documents);
-
-        Map<String, Object> kwargs = new HashMap<>(extraArgs);
-        kwargs.put("documents", pythonDocuments);
-
-        if (collection != null) {
-            kwargs.put("collection", collection);
-        }
-
-        return (List<String>) adapter.callMethod(vectorStore, "add", kwargs);
-    }
-
-    @Override
-    public VectorStoreQueryResult query(VectorStoreQuery query) {
-        Object pythonQuery = adapter.toPythonVectorStoreQuery(query);
-
-        PyObject pythonResult = (PyObject) vectorStore.invokeMethod("query", pythonQuery);
-
-        return adapter.fromPythonVectorStoreQueryResult(pythonResult);
-    }
-
-    @Override
-    public long size(@Nullable String collection) throws Exception {
-        return (long) vectorStore.invokeMethod("size", collection);
-    }
-
-    @Override
     public List<Document> get(
-            @Nullable List<String> ids, @Nullable String collection, Map<String, Object> extraArgs)
+            @Nullable List<String> ids,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            @Nullable Integer limit,
+            Map<String, Object> extraArgs)
             throws IOException {
         Map<String, Object> kwargs = new HashMap<>(extraArgs);
         if (ids != null && !ids.isEmpty()) {
             kwargs.put("ids", ids);
         }
         if (collection != null) {
-            kwargs.put("collection", collection);
+            kwargs.put("collection_name", collection);
+        }
+        if (filters != null) {
+            kwargs.put("filters", filters);
+        }
+        if (limit != null) {
+            kwargs.put("limit", limit);
         }
 
         Object pythonDocuments = adapter.callMethod(vectorStore, "get", kwargs);
@@ -119,38 +113,136 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
 
     @Override
     public void delete(
-            @Nullable List<String> ids, @Nullable String collection, Map<String, Object> extraArgs)
+            @Nullable List<String> ids,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            Map<String, Object> extraArgs)
             throws IOException {
         Map<String, Object> kwargs = new HashMap<>(extraArgs);
         if (ids != null && !ids.isEmpty()) {
             kwargs.put("ids", ids);
         }
         if (collection != null) {
-            kwargs.put("collection", collection);
+            kwargs.put("collection_name", collection);
+        }
+        if (filters != null) {
+            kwargs.put("filters", filters);
         }
         adapter.callMethod(vectorStore, "delete", kwargs);
     }
 
     @Override
     public Map<String, Object> getStoreKwargs() {
-        return Map.of();
+        return new HashMap<>();
     }
 
     @Override
-    protected List<Document> queryEmbedding(
-            float[] embedding, int limit, @Nullable String collection, Map<String, Object> args) {
-        return List.of();
+    @SuppressWarnings("unchecked")
+    public List<Document> queryEmbedding(
+            float[] embedding,
+            int limit,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            Map<String, Object> args) {
+        Map<String, Object> kwargs = new HashMap<>(args);
+        // pemja maps float[] to a Python tuple, which Chroma rejects; pass a list instead.
+        List<Float> embeddingList = new ArrayList<>(embedding.length);
+        for (float v : embedding) {
+            embeddingList.add(v);
+        }
+        kwargs.put("embedding", embeddingList);
+        kwargs.put("limit", limit);
+        if (collection != null) {
+            kwargs.put("collection_name", collection);
+        }
+        if (filters != null) {
+            kwargs.put("filters", filters);
+        }
+        Object pythonDocuments = adapter.callMethod(vectorStore, "_query_embedding", kwargs);
+        return adapter.fromPythonDocuments((List<PyObject>) pythonDocuments);
+    }
+
+    /** Embed query text via the configured model (no numpy, so it stays on the async pool). */
+    public float[] embedQuery(String text) {
+        return getEmbeddingModel().embed(text);
+    }
+
+    /**
+     * Convert the raw embedding to the Python store's native vector form. This runs the numpy
+     * conversion on the mailbox thread: numpy releases/re-acquires the GIL during the copy, and
+     * pemja keeps a single PyThreadState, so doing it on an async worker thread can stall the
+     * interpreter (observed as a hang in CI; benign with spare cores locally). The returned Python
+     * object is forwarded back into {@link #queryNormalized}. See
+     * https://github.com/apache/flink-agents/issues/844.
+     */
+    public Object normalizeEmbedding(float[] embedding) {
+        List<Float> embeddingList = new ArrayList<>(embedding.length);
+        for (float v : embedding) {
+            embeddingList.add(v);
+        }
+        Map<String, Object> kwargs = new HashMap<>();
+        kwargs.put("embeddings", embeddingList);
+        return adapter.callMethod(vectorStore, "_normalize_embeddings", kwargs);
+    }
+
+    /** Query with a pre-normalized embedding; numpy-free, so it stays on the async pool. */
+    @SuppressWarnings("unchecked")
+    public List<Document> queryNormalized(
+            Object normalizedEmbedding,
+            int limit,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            Map<String, Object> args) {
+        Map<String, Object> kwargs = new HashMap<>(args);
+        kwargs.put("embedding", normalizedEmbedding);
+        kwargs.put("limit", limit);
+        if (collection != null) {
+            kwargs.put("collection_name", collection);
+        }
+        if (filters != null) {
+            kwargs.put("filters", filters);
+        }
+        Object pythonDocuments = adapter.callMethod(vectorStore, "_query_embedding", kwargs);
+        return adapter.fromPythonDocuments((List<PyObject>) pythonDocuments);
     }
 
     @Override
-    protected List<String> addEmbedding(
+    @SuppressWarnings("unchecked")
+    public List<String> addEmbedding(
             List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
-        return List.of();
+        Map<String, Object> kwargs = new HashMap<>(extraArgs);
+        kwargs.put("documents", adapter.toPythonDocuments(documents));
+        if (collection != null) {
+            kwargs.put("collection_name", collection);
+        }
+        return (List<String>) adapter.callMethod(vectorStore, "_add_embedding", kwargs);
+    }
+
+    @Override
+    public void updateEmbedding(
+            List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs) {
+        Map<String, Object> kwargs = new HashMap<>(extraArgs);
+        kwargs.put("documents", adapter.toPythonDocuments(documents));
+        if (collection != null) {
+            kwargs.put("collection_name", collection);
+        }
+        adapter.callMethod(vectorStore, "_update_embedding", kwargs);
     }
 
     @Override
     public Object getPythonResource() {
         return vectorStore;
+    }
+
+    @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
+    @Override
+    public void setMetricGroup(FlinkAgentsMetricGroup metricGroup) {
+        super.setMetricGroup(metricGroup);
+        setPythonResourceMetricGroup(metricGroup);
     }
 }

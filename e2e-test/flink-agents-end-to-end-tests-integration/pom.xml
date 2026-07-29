@@ -29,13 +29,14 @@ under the License.
     <name>Flink Agents : E2E Tests: Integration</name>
 
     <properties>
-        <flink.1.20.version>1.20.3</flink.1.20.version>
-        <flink.2.0.version>2.0.1</flink.2.0.version>
-        <flink.2.1.version>2.1.1</flink.2.1.version>
-        <flink.2.2.version>2.2.0</flink.2.2.version>
+        <flink.1.20.version>1.20.5</flink.1.20.version>
+        <flink.2.0.version>2.0.2</flink.2.0.version>
+        <flink.2.1.version>2.1.3</flink.2.1.version>
+        <flink.2.2.version>2.2.1</flink.2.2.version>
+        <flink.2.3.version>2.3.0</flink.2.3.version>
 
-        <flink.version>${flink.2.2.version}</flink.version>
-        <flink.agents.dist.artifactId>flink-agents-dist-flink-2.2</flink.agents.dist.artifactId>
+        <flink.version>${flink.2.3.version}</flink.version>
+        <flink.agents.dist.artifactId>flink-agents-dist-flink-2.3</flink.agents.dist.artifactId>
     </properties>
 
     <dependencies>
@@ -109,6 +110,25 @@ under the License.
             <artifactId>jackson-datatype-jsr310</artifactId>
             <version>${jackson.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-runtime</artifactId>
+            <version>${flink.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-test-utils</artifactId>
+            <version>${flink.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>mockwebserver</artifactId>
+            <version>4.12.0</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <profiles>
@@ -139,6 +159,28 @@ under the License.
                 <flink.version>${flink.1.20.version}</flink.version>
                 <flink.agents.dist.artifactId>flink-agents-dist-flink-1.20</flink.agents.dist.artifactId>
             </properties>
+            <dependencies>
+                <!-- Flink 1.20 does not transitively provide log4j-core in test classpath,
+                     needed for Slf4jEventLogger which uses log4j2 core APIs -->
+                <dependency>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-api</artifactId>
+                    <version>${log4j2.version}</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-core</artifactId>
+                    <version>${log4j2.version}</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-slf4j-impl</artifactId>
+                    <version>${log4j2.version}</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
         </profile>
 
         <!-- Flink 2.0 Profile -->
@@ -156,6 +198,15 @@ under the License.
             <properties>
                 <flink.version>${flink.2.1.version}</flink.version>
                 <flink.agents.dist.artifactId>flink-agents-dist-flink-2.1</flink.agents.dist.artifactId>
+            </properties>
+        </profile>
+
+        <!-- Flink 2.2 Profile -->
+        <profile>
+            <id>flink-2.2</id>
+            <properties>
+                <flink.version>${flink.2.2.version}</flink.version>
+                <flink.agents.dist.artifactId>flink-agents-dist-flink-2.2</flink.agents.dist.artifactId>
             </properties>
         </profile>
     </profiles>

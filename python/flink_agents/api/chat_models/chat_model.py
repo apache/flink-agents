@@ -17,15 +17,86 @@
 #################################################################################
 import re
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Dict, List, Sequence, Tuple
+from enum import Enum
+from typing import Any, ClassVar, Dict, List, Mapping, Sequence, Tuple, cast
 
-from pydantic import Field
+from pydantic import Field, PrivateAttr, field_validator
 from typing_extensions import override
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    find_first_system_message,
+)
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL
 from flink_agents.api.tools.tool import Tool
+
+
+class StructuredOutputStrategy(str, Enum):
+    """User intent about how an output schema should be applied to a chat request.
+
+    This expresses *policy* only. Whether a connection *can* apply the provider's
+    native structured-output API is a separate, model-dependent *capability*
+    question. Policy and capability are combined at request-build time.
+
+    Inherits from ``str`` so the value survives the JSON-carried bridge to Java.
+    Java serializes this enum as its *name* ("NATIVE") while the value here is
+    lowercase, so ``_missing_`` accepts either form in any case — matching the
+    case-insensitive resolver on the Java side.
+
+    Attributes:
+    ----------
+    AUTO : str
+        Use the provider's native structured-output API when the effective model is
+        capable of it, and fall back to prompt engineering otherwise. The default.
+    NATIVE : str
+        Always use the provider's native structured-output API, without consulting
+        the capability predicate.
+    PROMPT : str
+        Never use the provider's native structured-output API; rely on prompt
+        engineering alone. Matches the behavior of connections that have no native
+        translation.
+    """
+
+    AUTO = "auto"
+    NATIVE = "native"
+    PROMPT = "prompt"
+
+    def resolves_to_native(self, model_capable: bool) -> bool:  # noqa: FBT001
+        """Resolve this policy against a model's capability into whether to go native.
+
+        ``AUTO`` defers to ``model_capable`` (native when the effective model can, else
+        the prompt-engineering fallback); ``NATIVE`` always resolves to native, ignoring
+        ``model_capable``, so an explicit user intent surfaces a provider error rather
+        than silently degrading; ``PROMPT`` never resolves to native.
+
+        Parameters
+        ----------
+        model_capable : bool
+            Whether the connection reports the effective model as natively capable.
+
+        Returns:
+        -------
+        bool
+            ``True`` if native structured output should be applied.
+        """
+        if self is StructuredOutputStrategy.NATIVE:
+            return True
+        if self is StructuredOutputStrategy.PROMPT:
+            return False
+        return model_capable
+
+    @classmethod
+    def _missing_(cls, value: object) -> "StructuredOutputStrategy | None":
+        if isinstance(value, str):
+            normalized = value.lower()
+            for member in cls:
+                if normalized in (member.value, member.name.lower()):
+                    return member
+        return None
 
 
 class BaseChatModelConnection(Resource, ABC):
@@ -49,12 +120,71 @@ class BaseChatModelConnection(Resource, ABC):
         """Return resource type of class."""
         return ResourceType.CHAT_MODEL_CONNECTION
 
-    DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str],...]] = (
+    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+        """Whether this connection can natively structure output for a given model.
+
+        Capability is *model-dependent*, not connection-wide: a single provider
+        connection commonly serves both models that accept a native schema parameter and
+        models that do not, so it is evaluated against the *effective* model at
+        request-build time — the model actually being called, which per-request
+        parameters may override.
+
+        The default ``False`` keeps a connection on the prompt-engineering fallback. A
+        connection that translates a schema into a native provider parameter overrides
+        this; an unrecognized model must report ``False`` so it degrades to the fallback
+        rather than failing at the provider.
+
+        Parameters
+        ----------
+        effective_model : str | None
+            The model the request will be issued against, may be ``None``.
+
+        Returns:
+        -------
+        bool
+            ``True`` if a schema can be applied natively for ``effective_model``.
+        """
+        return False
+
+    def _reject_unsupported_output_schema(
+        self, output_schema: OutputSchema | None
+    ) -> None:
+        """Refuse an output schema this connection cannot translate natively.
+
+        ``chat`` is abstract here, so there is no inherited body that could absorb a
+        schema loudly. A connection without a native structured-output translation
+        calls this as the first statement of its ``chat`` instead, which turns a
+        schema it could only drop into an error rather than an unconstrained response
+        that the caller would mistake for a schema-conforming one.
+
+        Args:
+            output_schema: The schema the response should conform to. ``None`` returns
+                without effect.
+
+        Raises:
+            NotImplementedError: If ``output_schema`` is not ``None``.
+        """
+        if output_schema is None:
+            return
+        cls = type(self)
+        msg = (
+            f"{cls.__module__}.{cls.__qualname__} has no native structured-output"
+            " translation, so it cannot honor the given output schema. Override chat()"
+            " to translate the schema natively, or pass no schema so the caller applies"
+            " the prompt-engineering fallback."
+        )
+        raise NotImplementedError(msg)
+
+    DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str], ...]] = (
         re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE),
         re.compile(r"<analysis>(.*?)</analysis>", re.DOTALL | re.IGNORECASE),
         re.compile(r"<reasoning>(.*?)</reasoning>", re.DOTALL | re.IGNORECASE),
-        re.compile(r"```(?:think|reasoning|thought)\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE),
-        re.compile(r"(?:^|\n)Reasoning:\s*(.*?)(?:\n{2,}|$)", re.DOTALL | re.IGNORECASE),
+        re.compile(
+            r"```(?:think|reasoning|thought)\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE
+        ),
+        re.compile(
+            r"(?:^|\n)Reasoning:\s*(.*?)(?:\n{2,}|$)", re.DOTALL | re.IGNORECASE
+        ),
     )
 
     @staticmethod
@@ -97,6 +227,7 @@ class BaseChatModelConnection(Resource, ABC):
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
         """Direct communication with model service for chat conversation.
@@ -107,6 +238,15 @@ class BaseChatModelConnection(Resource, ABC):
             Input message sequence
         tools : Optional[List]
             List of tools that can be called by the model
+        output_schema : OutputSchema | None
+            The schema the response should conform to, or ``None`` for an
+            unconstrained response. This is framework-level execution metadata, and
+            every implementation must declare it as a named parameter rather than let
+            it fall into ``**kwargs``: ``**kwargs`` is forwarded to the provider SDK,
+            so a schema landing there would reach the request body. Implementations
+            without a native structured-output translation reject a non-``None`` value
+            via ``_reject_unsupported_output_schema``, so a caller that wants the
+            prompt-engineering fallback must pass ``None``.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
@@ -122,6 +262,8 @@ class BaseChatModelSetup(Resource):
     """Base abstract class for chat model setup.
 
     Responsible for managing chat configurations, such as:
+    - Connection to chat model service (connection)
+    - Model name (model)
     - Prompt templates (prompt)
     - Available tools (tools)
     - Generation parameters (temperature, max_tokens, etc.)
@@ -133,9 +275,39 @@ class BaseChatModelSetup(Resource):
     different chat configurations.
     """
 
-    connection: str = Field(description="Name of the referenced connection.")
+    connection: str = Field(description="The referenced connection name.")
+    model: str = Field(description="Name of the chat model to use.")
+    _resolved_connection: BaseChatModelConnection | None = PrivateAttr(default=None)
     prompt: Prompt | str | None = None
-    tools: List[str] | None = None
+    tools: List[str] | List[Tool] = Field(default_factory=list)
+    skills: List[str] | None = None
+    skill_discovery_prompt: str | None = None
+    allowed_commands: List[str] = Field(default_factory=list)
+    allowed_script_dirs: List[str] = Field(default_factory=list)
+    structured_output_strategy: StructuredOutputStrategy = Field(
+        default=StructuredOutputStrategy.AUTO,
+        description=(
+            "Intent about how an output schema should be applied. Whether native "
+            "structured output is actually used combines this policy with the "
+            "connection's model-dependent capability. An explicitly null value is "
+            "normalized to AUTO, so a validated setup always carries a real strategy."
+        ),
+    )
+
+    @field_validator("structured_output_strategy", mode="before")
+    @classmethod
+    def _normalize_null_strategy(cls, value: Any) -> Any:
+        """Normalize an explicitly null strategy to the ``AUTO`` default.
+
+        A configuration source can carry the key with a null value instead of
+        omitting it. Java cannot tell those two apart — its descriptor argument
+        lookup returns null in both cases and resolves them to ``AUTO`` — so an
+        explicit null resolves to ``AUTO`` here too rather than being rejected.
+        Unknown non-null values still fail validation.
+        """
+        if value is None:
+            return StructuredOutputStrategy.AUTO
+        return value
 
     @property
     @abstractmethod
@@ -148,10 +320,47 @@ class BaseChatModelSetup(Resource):
         """Return resource type of class."""
         return ResourceType.CHAT_MODEL
 
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    @override
+    def open(self) -> None:
+        self._resolved_connection = cast(
+            "BaseChatModelConnection",
+            self.resource_context.get_resource(
+                self.connection, ResourceType.CHAT_MODEL_CONNECTION
+            ),
+        )
+        if self.prompt is not None:
+            if isinstance(self.prompt, str):
+                # Get prompt resource if it's a string
+                self.prompt = cast(
+                    "Prompt",
+                    self.resource_context.get_resource(
+                        self.prompt, ResourceType.PROMPT
+                    ),
+                )
+        if self.skills is not None:
+            self.skill_discovery_prompt = (
+                self.resource_context.generate_available_skills_prompt(*self.skills)
+            )
+            self.tools.extend([LOAD_SKILL_TOOL, BASH_TOOL])
+
+        if len(self.tools) > 0:
+            self.tools = [
+                cast(
+                    "Tool",
+                    self.resource_context.get_resource(tool_name, ResourceType.TOOL),
+                )
+                for tool_name in self.tools
+            ]
+
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
         """Execute chat conversation.
 
-        1. Apply prompt template (if any)
+        1. Apply prompt template (if any), filled from ``prompt_args``
         2. Bind tools (if any)
         3. Call ChatModelConnection to perform actual communication
         4. Process response
@@ -160,6 +369,10 @@ class BaseChatModelSetup(Resource):
         ----------
         messages : Sequence[ChatMessage]
             Input message sequence
+        prompt_args : Mapping[str, Any] | None
+            Variables used to fill the prompt template, if a prompt resource is
+            configured. Values are stringified via ``str()`` to match the
+            ``Prompt.format_messages`` contract.
         **kwargs : Any
             Additional parameters passed to the model service
 
@@ -168,45 +381,38 @@ class BaseChatModelSetup(Resource):
         ChatMessage
             Model response message
         """
-        # Get model connection
-        connection = self.get_resource(
-            self.connection, ResourceType.CHAT_MODEL_CONNECTION
-        )
-
         # Apply prompt template
         if self.prompt is not None:
-            if isinstance(self.prompt, str):
-                # Get prompt resource if it's a string
-                prompt = self.get_resource(self.prompt, ResourceType.PROMPT)
-            else:
-                prompt = self.prompt
-
-            input_variable = {}
-
-            # fill the prompt template
-            for msg in messages:
-                # Convert Any values to str to match format_messages signature
-                str_extra_args = {k: str(v) for k, v in msg.extra_args.items()}
-                input_variable.update(str_extra_args)
-            prompt_messages = prompt.format_messages(**input_variable)
+            str_prompt_args: Dict[str, str] = (
+                {k: str(v) for k, v in prompt_args.items()} if prompt_args else {}
+            )
+            prompt_messages = self._get_prompt().format_messages(**str_prompt_args)
 
             # append meaningful messages
             for msg in messages:
-                if (msg.content is not None and msg.content != "") or msg.role == MessageRole.ASSISTANT:
+                if (
+                    msg.content is not None and msg.content != ""
+                ) or msg.role == MessageRole.ASSISTANT:
                     prompt_messages.append(msg)
             messages = prompt_messages
-        # Bind tools
-        tools = None
-        if self.tools is not None:
-            tools = [
-                self.get_resource(tool_name, ResourceType.TOOL)
-                for tool_name in self.tools
-            ]
+
+        if self.skills is not None:
+            index = find_first_system_message(messages)
+            messages = (
+                messages[: index + 1]
+                + [
+                    ChatMessage(
+                        role=MessageRole.SYSTEM, content=self.skill_discovery_prompt
+                    )
+                ]
+                + messages[index + 1 :]
+            )
 
         # Call chat model connection to execute chat
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
-        return connection.chat(messages, tools=tools, **merged_kwargs)
+        connection = self._get_connection()
+        return connection.chat(messages, tools=self._get_tools(), **merged_kwargs)
 
     def _record_token_metrics(
         self, model_name: str, prompt_tokens: int, completion_tokens: int
@@ -226,6 +432,28 @@ class BaseChatModelSetup(Resource):
         if metric_group is None:
             return
 
-        model_group = metric_group.get_sub_group(model_name)
+        model_group = metric_group.get_sub_group("model", model_name)
         model_group.get_counter("promptTokens").inc(prompt_tokens)
         model_group.get_counter("completionTokens").inc(completion_tokens)
+
+    def _get_connection(self) -> BaseChatModelConnection:
+        if self._resolved_connection is None:
+            err_msg = (
+                f"Connection '{self.connection}' has not been resolved. "
+                "Ensure open() is called before using the connection."
+            )
+            raise TypeError(err_msg)
+        return self._resolved_connection
+
+    def _get_prompt(self) -> Prompt:
+        if not isinstance(self.prompt, Prompt):
+            err_msg = f"Expect Prompt, but is {self.prompt.__class__.__name__}"
+            raise TypeError(err_msg)
+        return self.prompt
+
+    def _get_tools(self) -> List[Tool]:
+        for tool in self.tools:
+            if not isinstance(tool, Tool):
+                err_msg = f"Expect Tool, but is {tool.__class__.__name__}"
+                raise TypeError(err_msg)
+        return self.tools

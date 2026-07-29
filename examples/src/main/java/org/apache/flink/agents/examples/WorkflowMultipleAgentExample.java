@@ -194,7 +194,7 @@ public class WorkflowMultipleAgentExample {
         // Print the final product improvement suggestions to stdout.
         productSuggestionResStream.print();
 
-        // Execute the pipeline.
-        agentsEnv.execute();
+        // Execute the Flink pipeline with the Flink job name.
+        agentsEnv.execute("Workflow Multiple Agent Example Job");
     }
 }

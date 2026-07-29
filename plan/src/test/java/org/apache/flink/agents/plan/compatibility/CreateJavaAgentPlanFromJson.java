@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -54,9 +55,8 @@ public class CreateJavaAgentPlanFromJson {
         AgentPlan agentPlan = new ObjectMapper().readValue(json, AgentPlan.class);
         assertEquals(5, agentPlan.getActions().size());
 
-        String myEvent =
-                "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent.MyEvent";
-        String inputEvent = "flink_agents.api.events.event.InputEvent";
+        String myEvent = "_my_event";
+        String inputEvent = "_input_event";
 
         // Check the first action
         String testModule =
@@ -90,8 +90,8 @@ public class CreateJavaAgentPlanFromJson {
         assertEquals(
                 "flink_agents.plan.actions.chat_model_action", processChatRequestFunc.getModule());
         assertEquals("process_chat_request_or_tool_response", processChatRequestFunc.getQualName());
-        String chatRequestEvent = "flink_agents.api.events.chat_event.ChatRequestEvent";
-        String toolResponseEvent = "flink_agents.api.events.tool_event.ToolResponseEvent";
+        String chatRequestEvent = "_chat_request_event";
+        String toolResponseEvent = "_tool_response_event";
         assertEquals(
                 List.of(chatRequestEvent, toolResponseEvent),
                 chatModelAction.getListenEventTypes());
@@ -103,7 +103,7 @@ public class CreateJavaAgentPlanFromJson {
         assertEquals(
                 "flink_agents.plan.actions.tool_call_action", processToolRequestFunc.getModule());
         assertEquals("process_tool_request", processToolRequestFunc.getQualName());
-        String toolRequestEvent = "flink_agents.api.events.tool_event.ToolRequestEvent";
+        String toolRequestEvent = "_tool_request_event";
         assertEquals(List.of(toolRequestEvent), toolCallAction.getListenEventTypes());
 
         assertTrue(agentPlan.getActions().containsKey("context_retrieval_action"));
@@ -117,8 +117,7 @@ public class CreateJavaAgentPlanFromJson {
         assertEquals(
                 "process_context_retrieval_request",
                 processContextRetrievalRequestFunc.getQualName());
-        String contextRetrievalRequestEvent =
-                "flink_agents.api.events.context_retrieval_event.ContextRetrievalRequestEvent";
+        String contextRetrievalRequestEvent = "_context_retrieval_request_event";
         assertEquals(
                 List.of(contextRetrievalRequestEvent),
                 contextRetrievalAction.getListenEventTypes());
@@ -146,6 +145,8 @@ public class CreateJavaAgentPlanFromJson {
         kwargs.put("name", "chat_model");
         kwargs.put("prompt", "prompt");
         kwargs.put("tools", List.of("add"));
+        kwargs.put("connection", "mock_connection");
+        kwargs.put("model", "mock-model");
         ResourceDescriptor chatModelDescriptor =
                 new ResourceDescriptor(
                         "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent",
@@ -184,6 +185,9 @@ public class CreateJavaAgentPlanFromJson {
         metadata.put("args_schema", argsSchema);
 
         serialized.put("metadata", metadata);
+        serialized.put(
+                "injected_args",
+                Map.of("tenant_id", Map.of("source", "config", "key", "tenant.id")));
 
         Map<String, String> func = new HashMap<>();
         func.put("func_type", "PythonFunction");
@@ -200,13 +204,40 @@ public class CreateJavaAgentPlanFromJson {
                         "FunctionTool",
                         serialized);
 
-        Map<ResourceType, Map<String, ResourceProvider>> resourceProviders = new HashMap<>();
         Map<String, ResourceProvider> chatModels = new HashMap<>();
-        Map<String, ResourceProvider> tools = new HashMap<>();
         chatModels.put("chat_model", resourceProvider);
-        tools.put("add", serializableResourceProvider);
-        resourceProviders.put(ResourceType.CHAT_MODEL, chatModels);
-        resourceProviders.put(ResourceType.TOOL, tools);
-        assertEquals(resourceProviders, agentPlan.getResourceProviders());
+        assertEquals(chatModels, agentPlan.getResourceProviders().get(ResourceType.CHAT_MODEL));
+
+        ResourceProvider actualToolProvider =
+                agentPlan.getResourceProviders().get(ResourceType.TOOL).get("add");
+        assertInstanceOf(PythonSerializableResourceProvider.class, actualToolProvider);
+        PythonSerializableResourceProvider actualSerializableToolProvider =
+                (PythonSerializableResourceProvider) actualToolProvider;
+        assertEquals(
+                serializableResourceProvider.getName(), actualSerializableToolProvider.getName());
+        assertEquals(
+                serializableResourceProvider.getType(), actualSerializableToolProvider.getType());
+        assertEquals(
+                serializableResourceProvider.getModule(),
+                actualSerializableToolProvider.getModule());
+        assertEquals(
+                serializableResourceProvider.getClazz(), actualSerializableToolProvider.getClazz());
+
+        Map<String, Object> actualSerialized = actualSerializableToolProvider.getSerialized();
+        Map<String, Object> actualMetadata = (Map<String, Object>) actualSerialized.get("metadata");
+        Map<String, Object> actualArgsSchema =
+                (Map<String, Object>) actualMetadata.get("args_schema");
+        Map<String, Object> actualProperties =
+                (Map<String, Object>) actualArgsSchema.get("properties");
+        assertTrue(actualProperties.containsKey("a"));
+        assertTrue(actualProperties.containsKey("b"));
+        assertFalse(actualProperties.containsKey("tenant_id"));
+
+        Map<String, Object> actualInjectedArgs =
+                (Map<String, Object>) actualSerialized.get("injected_args");
+        Map<String, Object> tenantInjection =
+                (Map<String, Object>) actualInjectedArgs.get("tenant_id");
+        assertEquals("config", tenantInjection.get("source"));
+        assertEquals("tenant.id", tenantInjection.get("key"));
     }
 }

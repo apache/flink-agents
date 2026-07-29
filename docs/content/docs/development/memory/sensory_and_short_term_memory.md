@@ -65,13 +65,29 @@ The root of the sensory memory and short-term memory is `MemoryObject`. User can
 
 ### Supported Value Types
 
-The key of the pairs store in `MemoryObject` must be string, and the value can be follow types
+The key of the pairs stored in `MemoryObject` must be a string. The supported value types differ between Java and Python.
+
+**Java** supports a broad set of types:
 
 - **Primitive Types**: integer, float, boolean, string
 - **Collections**: list, map
 - **Java POJOs**: See [Flink POJOs](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/datastream/fault-tolerance/serialization/types_serialization/#pojos) for details.
-- **General Class Types**: Any objects can be serialized by kryo. See [General Class Types](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/datastream/fault-tolerance/serialization/types_serialization/#general-class-types) for details.
-- **Memory Object**: The value can also be a `MemoryObject`, which means user can store nested objects.
+- **General Class Types**: Any objects that can be serialized by kryo. See [General Class Types](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/datastream/fault-tolerance/serialization/types_serialization/#general-class-types) for details.
+- **Memory Object**: The value can also be a `MemoryObject`, which means users can store nested objects.
+
+**Python** is restricted to recursively *checkpoint-stable* values:
+
+- **Primitive Types**: `None`, `bool`, `int`, `float`, `str`, `bytes`
+- **Collections**: `list`, and `dict` with `str` keys (values are recursively validated)
+- **Memory Object**: A nested `MemoryObject` created via `new_object()`.
+
+Anything else — Pydantic models, `uuid.UUID`, `Enum`, custom classes, `tuple`, `set`, `bytearray`, or a `dict` with non-`str` keys — is **rejected by `set()` with a `TypeError`**. Exact `bytes` is supported (it converts to a native Java `byte[]`), but `bytearray` and `bytes` subclasses are not — Pemja wraps them as non-checkpoint-stable objects rather than materializing a `byte[]`.
+
+This is because Python values are converted across the Pemja boundary into Flink state, and only the types above materialize into native, checkpoint-stable JVM values; other objects would be stored as wrappers that fail on state restore. To store a richer object, materialize it to a primitive form first (e.g. `model.model_dump(mode="json")` for a Pydantic model, or `str(value)` for a UUID) and reconstruct it on read.
+
+{{< hint warning >}}
+Python memory values must be checkpoint-stable primitives, unlike the Java contract which also supports POJOs and Kryo-serializable objects. Python values materialize across the Pemja boundary before reaching Flink state, so models and other objects must be materialized first with `model_dump(mode="json")` (or `str(...)`) and reconstructed on read. Use exact `bytes` rather than `bytearray` for binary values, since only `bytes` materializes into a native `byte[]`.
+{{< /hint >}}
 
 ### Read & Write
 
@@ -79,15 +95,15 @@ The key of the pairs store in `MemoryObject` must be string, and the value can b
 
 {{< tab "Python" >}}
 ```python
-@action(InputEvent)
-def process_event(event: InputEvent, ctx: RunnerContext) -> None:
+@action(EventType.InputEvent)
+def process_event(event: Event, ctx: RunnerContext) -> None:
     memory: MemoryObject = ctx.sensory_memory # or ctx.short_term_memory
     # store primitive
     memory.set("primitive",  123)
     # store collection
     memory.set("collection", [1, 2, 3])
-    # store general class types
-    memory.set("object", Prompt.from_text("the test {content}"))
+    # store a Pydantic model by materializing it to a checkpoint-stable dict first
+    memory.set("model", my_model.model_dump(mode="json"))
     # store memory object
     obj1: MemoryObject = memory.new_object("obj1")
     obj1.set("field1", "foo")
@@ -95,7 +111,8 @@ def process_event(event: InputEvent, ctx: RunnerContext) -> None:
     # read values from memory
     value1: int = memory.get("primitive")
     value2: List[int] = memory.get("collection")
-    value3: Prompt = memory.get("object")
+    # reconstruct the Pydantic model on read
+    model: MyModel = MyModel.model_validate(memory.get("model"))
     value4: MemoryObject = memory.get("obj1")
     value5: str = value4.get("field1")
 ```
@@ -103,8 +120,9 @@ def process_event(event: InputEvent, ctx: RunnerContext) -> None:
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEvents = {InputEvent.class})
-public static void processEvent(InputEvent event, RunnerContext ctx) throws Exception {
+@Action(EventType.InputEvent)
+public static void processEvent(Event event, RunnerContext ctx) throws Exception {
+    InputEvent inputEvent = InputEvent.fromEvent(event);
     MemoryObject memory = ctx.getSensoryMemory(); // ctx.getShortTermMemory();
     // store primitive
     memory.set("primitive", 123);
@@ -210,20 +228,21 @@ def first_action(event: Event, ctx: RunnerContext):
     ctx.send_event(MyEvent(value=data_ref))
     ...
 
-@action(MyEvent)
+@action("MyEvent")
 @staticmethod
 def second_action(event: Event, ctx: RunnerContext):
+    my_event = MyEvent.from_event(event)
     ...
-    processed_data: ProcessedData = ctx.sensory_memory.get(event.value)
+    processed_data: ProcessedData = ctx.sensory_memory.get(my_event.value)
     # or
-    processed_data: ProcessedData = event.value.resolve(ctx)
+    processed_data: ProcessedData = my_event.value.resolve(ctx)
     ...
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
-@Action(listenEvents = {InputEvent.class})
+@Action(EventType.InputEvent)
 public static void firstAction(Event event, RunnerContext ctx) throws Exception {
     ...
     MemoryObject sensoryMemory = ctx.getSensoryMemory();
@@ -233,23 +252,27 @@ public static void firstAction(Event event, RunnerContext ctx) throws Exception 
     ...
 }
 
-@Action(listenEvents = {MyEvent.class})
+@Action("MyEvent")
 public static void secondAction(Event event, RunnerContext ctx) throws Exception {
+    MyEvent myEvent = MyEvent.fromEvent(event);
     ...
     MemoryObject sensoryMemory = ctx.getSensoryMemory();
 
     ProcessedData processedData = (ProcessedData) ctx.getSensoryMemory()
-                                                     .get(event.getValue())
+                                                     .get(myEvent.getValue())
                                                      .getValue();
     // or
-    processedData = (ProcessedData) event.getValue().resolve(ctx);
+    processedData = (ProcessedData) myEvent.getValue().resolve(ctx).getValue();
     ...
 }
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
+
 ## Auto-Cleanup Behavior
+
+### Sensory Memory
 
 Sensory Memory is automatically cleared by the framework after each agent run completes. This cleanup happens:
 
@@ -261,3 +284,55 @@ Sensory Memory is automatically cleared by the framework after each agent run co
 {{< hint info >}}
 During execution, sensory memory data is checkpointed by Flink for fault tolerance. However, once the run completes, all sensory memory is cleared and will not be available in subsequent runs.
 {{< /hint >}}
+
+### Short-Term Memory
+
+Short-term memory can be configured with a time-to-live (TTL) so that older state expires automatically. This is useful for agents that may run for a long time: if the agent only needs recent memories, expiring historical data directly keeps the stored state focused on the latest context and avoids retaining stale information.
+
+Set `short-term-memory.state-ttl.ms` to a value greater than 0 in milliseconds to enable TTL. You can also configure how the TTL is refreshed and whether expired state can be returned before Flink cleans it up:
+
+- `short-term-memory.state-ttl.update-type`: controls whether TTL is refreshed on create/write or on read/write.
+- `short-term-memory.state-ttl.visibility`: controls whether expired memory is never returned or may be returned if it has not been cleaned up yet.
+
+{{< tabs "Short-Term Memory TTL Configuration" >}}
+
+{{< tab "Python" >}}
+```python
+from flink_agents.api.core_options import (
+    AgentExecutionOptions,
+    ShortTermMemoryTtlUpdate,
+    ShortTermMemoryTtlVisibility,
+)
+from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+agents_config = agents_env.get_config()
+
+agents_config.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, 60_000)
+agents_config.set(
+    AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,
+    ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE,
+)
+agents_config.set(
+    AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY,
+    ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED,
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+AgentsExecutionEnvironment agentsEnv = AgentsExecutionEnvironment.getExecutionEnvironment(env);
+AgentConfiguration agentsConfig = (AgentConfiguration) agentsEnv.getConfig();
+
+agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, 60_000L);
+agentsConfig.set(
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,
+        ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE);
+agentsConfig.set(
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY,
+        ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED);
+```
+{{< /tab >}}
+
+{{< /tabs >}}

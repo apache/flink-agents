@@ -2,7 +2,7 @@
 title: Memory
 bold: true
 bookCollapseSection: true
-weight: 7
+weight: 8
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one

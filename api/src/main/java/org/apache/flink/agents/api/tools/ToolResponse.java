@@ -18,6 +18,10 @@
 
 package org.apache.flink.agents.api.tools;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.Objects;
 
 /**
@@ -29,11 +33,20 @@ public class ToolResponse {
     private final Object result;
     private final boolean success;
     private final String error;
+
+    @JsonProperty("execution_time_ms")
     private final long executionTimeMs;
+
+    @JsonProperty("tool_name")
     private final String toolName;
 
+    @JsonCreator
     private ToolResponse(
-            Object result, boolean success, String error, long executionTimeMs, String toolName) {
+            @JsonProperty("result") Object result,
+            @JsonProperty("success") boolean success,
+            @JsonProperty("error") String error,
+            @JsonProperty("execution_time_ms") long executionTimeMs,
+            @JsonProperty("tool_name") String toolName) {
         this.result = result;
         this.success = success;
         this.error = error;
@@ -148,6 +161,7 @@ public class ToolResponse {
     }
 
     /** Get the result as a string representation. */
+    @JsonIgnore
     public String getResultAsString() {
         if (result == null) {
             return null;

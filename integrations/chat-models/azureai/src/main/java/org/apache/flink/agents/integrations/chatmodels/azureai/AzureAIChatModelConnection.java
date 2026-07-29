@@ -28,13 +28,11 @@ import com.nimbusds.jose.shaded.gson.Gson;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 
 import java.util.*;
-import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 /**
@@ -74,8 +72,8 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
      * @throws IllegalArgumentException if endpoint is null or empty
      */
     public AzureAIChatModelConnection(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
 
         String endpoint = descriptor.getArgument("endpoint");
         String apiKey = descriptor.getArgument("apiKey");
@@ -163,7 +161,7 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
 
     @Override
     public ChatMessage chat(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         try {
             final List<ChatCompletionsToolDefinition> azureTools = convertToAzureAITools(tools);
             final List<ChatRequestMessage> chatMessages =
@@ -171,7 +169,7 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
                             .map(this::convertToChatRequestMessage)
                             .collect(Collectors.toList());
 
-            final String modelName = (String) arguments.get("model");
+            final String modelName = (String) modelParams.get("model");
             ChatCompletionsOptions options =
                     new ChatCompletionsOptions(chatMessages)
                             .setModel(modelName)
@@ -189,12 +187,15 @@ public class AzureAIChatModelConnection extends BaseChatModelConnection {
                 chatMessage.setToolCalls(convertedToolCalls);
             }
 
-            // Record token metrics if model name is available
+            // Stash token usage if model name is available
             if (modelName != null && !modelName.isBlank()) {
                 CompletionsUsage usage = completions.getUsage();
                 if (usage != null) {
-                    recordTokenMetrics(
-                            modelName, usage.getPromptTokens(), usage.getCompletionTokens());
+                    chatMessage.getExtraArgs().put("model_name", modelName);
+                    chatMessage.getExtraArgs().put("promptTokens", (long) usage.getPromptTokens());
+                    chatMessage
+                            .getExtraArgs()
+                            .put("completionTokens", (long) usage.getCompletionTokens());
                 }
             }
 

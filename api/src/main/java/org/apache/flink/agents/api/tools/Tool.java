@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.tools;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
@@ -29,9 +30,18 @@ import java.lang.reflect.Method;
  */
 public abstract class Tool extends SerializableResource {
 
-    protected final ToolMetadata metadata;
+    protected ToolMetadata metadata;
 
     protected Tool(ToolMetadata metadata) {
+        this.metadata = java.util.Objects.requireNonNull(metadata, "metadata cannot be null");
+    }
+
+    /**
+     * Replace this tool's metadata. Intended for subclasses that derive metadata lazily once a
+     * runtime bridge becomes available (e.g. {@code FunctionTool} backed by a {@code
+     * PythonFunction} refreshing placeholder metadata via the JVM&rarr;Python adapter).
+     */
+    protected void setMetadata(ToolMetadata metadata) {
         this.metadata = java.util.Objects.requireNonNull(metadata, "metadata cannot be null");
     }
 
@@ -41,6 +51,7 @@ public abstract class Tool extends SerializableResource {
     }
 
     /** Return resource type of class. */
+    @JsonIgnore
     @Override
     public final ResourceType getResourceType() {
         return ResourceType.TOOL;
@@ -53,17 +64,19 @@ public abstract class Tool extends SerializableResource {
     public abstract ToolResponse call(ToolParameters parameters);
 
     /** Get the tool name from metadata. */
+    @JsonIgnore
     public final String getName() {
         return metadata.getName();
     }
 
     /** Get the tool description from metadata. */
+    @JsonIgnore
     public final String getDescription() {
         return metadata.getDescription();
     }
 
     /** Get tool keeps a method. */
     public static FunctionTool fromMethod(Method method) {
-        return new FunctionTool(method);
+        return FunctionTool.fromMethod(method);
     }
 }

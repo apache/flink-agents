@@ -1,0 +1,11 @@
+agents:
+  - name: a1
+    actions:
+      - name: increment
+        function: flink_agents.api.yaml.tests.fixtures.loader_targets:increment
+        trigger_conditions: [input]
+  - name: a2
+    actions:
+      - name: decrement
+        function: flink_agents.api.yaml.tests.fixtures.loader_targets:decrement
+        trigger_conditions: [input]

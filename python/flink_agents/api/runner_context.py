@@ -24,6 +24,8 @@ from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 
+__all__ = ["AsyncExecutionResult", "RunnerContext"]
+
 if TYPE_CHECKING:
     from flink_agents.api.memory_object import MemoryObject
 
@@ -37,7 +39,9 @@ class AsyncExecutionResult:
     and `asyncio.sleep` are NOT supported because there is no asyncio event loop.
     """
 
-    def __init__(self, executor: Any, func: Callable, args: tuple, kwargs: dict) -> None:
+    def __init__(
+        self, executor: Any, func: Callable, args: tuple, kwargs: dict
+    ) -> None:
         """Initialize an AsyncExecutionResult.
 
         Parameters
@@ -86,11 +90,13 @@ class RunnerContext(ABC):
         Parameters
         ----------
         event : Event
-            The event to be processed by the agent system.
+            The event to be sent.
         """
 
     @abstractmethod
-    def get_resource(self, name: str, type: ResourceType, metric_group: MetricGroup = None) -> Resource:
+    def get_resource(
+        self, name: str, type: ResourceType, metric_group: MetricGroup = None
+    ) -> Resource:
         """Get resource from context.
 
         Parameters
@@ -169,24 +175,26 @@ class RunnerContext(ABC):
 
     @property
     @abstractmethod
-    def agent_metric_group(self) -> MetricGroup:
+    def agent_metric_group(self) -> MetricGroup | None:
         """Get the metric group for flink agents.
 
         Returns:
         -------
-        MetricGroup
+        MetricGroup | None
             The metric group shared across all actions.
+            May return None when not running on Flink.
         """
 
     @property
     @abstractmethod
-    def action_metric_group(self) -> MetricGroup:
+    def action_metric_group(self) -> MetricGroup | None:
         """Get the individual metric group dedicated for each action.
 
         Returns:
         -------
-        MetricGroup
+        MetricGroup | None
             The individual metric group specific to the current action.
+            May return None when not running on Flink.
         """
 
     @abstractmethod
@@ -194,6 +202,7 @@ class RunnerContext(ABC):
         self,
         func: Callable[[Any], Any],
         *args: Any,
+        reconciler: Callable[[], Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Synchronously execute the provided function with durable execution support.
@@ -210,6 +219,16 @@ class RunnerContext(ABC):
         will always make the durable_execute call with the same arguments and in the
         same order during job recovery. Otherwise, the behavior is undefined.
 
+        If `reconciler` is provided, recovery invokes it only when revisiting
+        this durable call and no terminal outcome from the previous durable
+        invocation has been persisted yet. The reconciler may:
+
+        * return a result to provide the recovered successful outcome for this
+          durable call; The runtime persists and replays that recovered result
+        * raise an exception to provide the recovered failed outcome for this
+          durable call; The runtime persists and replays that recovered
+          failure
+
         Usage::
 
             def my_action(event, ctx):
@@ -222,6 +241,10 @@ class RunnerContext(ABC):
             The function to be executed.
         *args : Any
             Positional arguments to pass to the function.
+        reconciler : Callable[[], Any] | None
+            Optional zero-argument reconciler callable used only during recovery.
+            This is a reserved keyword-only parameter and is not forwarded to
+            `func`.
         **kwargs : Any
             Keyword arguments to pass to the function.
 
@@ -236,6 +259,7 @@ class RunnerContext(ABC):
         self,
         func: Callable[[Any], Any],
         *args: Any,
+        reconciler: Callable[[], Any] | None = None,
         **kwargs: Any,
     ) -> "AsyncExecutionResult":
         """Asynchronously execute the provided function with durable execution support.
@@ -248,6 +272,16 @@ class RunnerContext(ABC):
         The action that calls this API should be deterministic, meaning that it
         will always make the durable_execute_async call with the same arguments and in
         the same order during job recovery. Otherwise, the behavior is undefined.
+
+        If `reconciler` is provided, recovery invokes it only when revisiting
+        this durable call and no terminal outcome from the previous durable
+        invocation has been persisted yet. The reconciler may:
+
+        * return a result to provide the recovered successful outcome for this
+          durable call; The runtime persists and replays that recovered result
+        * raise an exception to provide the recovered failed outcome for this
+          durable call; The runtime persists and replays that recovered
+          failure
 
         Usage::
 
@@ -265,6 +299,10 @@ class RunnerContext(ABC):
             The function to be executed asynchronously.
         *args : Any
             Positional arguments to pass to the function.
+        reconciler : Callable[[], Any] | None
+            Optional zero-argument reconciler callable used only during recovery.
+            This is a reserved keyword-only parameter and is not forwarded to
+            `func`.
         **kwargs : Any
             Keyword arguments to pass to the function.
 

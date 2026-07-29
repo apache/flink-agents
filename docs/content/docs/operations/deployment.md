@@ -24,96 +24,23 @@ under the License.
 
 ## Overview
 
-We provide two options to run the job:
+Flink Agents jobs run on Flink:
 
-- **Run without Flink**
-    - **Language Support**: Only Python
-    - **Input and Output**: Python List
-    - **Suitable Use Case**: Local Testing and Debugging
-
-- **Run in Flink**
-    - **Language Support**: Python & Java
-    - **Input and Output**: DataStream or Table
-    - **Suitable Use Case**: Production
-
-These deployment modes differ in supported languages and data formats, allowing you to choose the one that best fits your use case.
-
-## Run without Flink
-
-After completing the [installation of flink-agents]({{< ref "docs/get-started/installation" >}}) and building your [ReAct Agent]({{< ref "docs/development/react_agent" >}}) or [Workflow Agent]({{< ref "docs/development/workflow_agent" >}}), you can test and execute your agent locally using a simple Python script. This allows you to validate logic without requiring a Flink cluster.
-
-### Example for Local Run with Test Data
-
-```python
-from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from my_module.agents import MyAgent  # Replace with your actual agent path
-
-if __name__ == "__main__":
-    # 1. Initialize environment
-    env = AgentsExecutionEnvironment.get_execution_environment()
-    
-    # 2. Prepare test data
-    input_data = [
-        {"key": "0001", "value": "Calculate the sum of 1 and 2."},
-        {"key": "0002", "value": "Tell me a joke about cats."}
-    ]
-    
-    # 3. Create agent instance
-    agent = MyAgent()
-    
-    # 4. Build pipeline
-    output_data = env.from_list(input_data) \
-                     .apply(agent) \
-                     .to_list()
-    
-    # 5. Execute and show results
-    env.execute()
-    
-    print("\nExecution Results:")
-    for record in output_data:
-        for key, value in record.items():
-            print(f"{key}: {value}")
-
-```
-
-#### Input Data Format
-
-The input data should be a list of dictionaries `List[Dict[str, Any]]` with the following structure:
-
-```python
-[
-    {
-        # Optional field: Input key. 
-        # The key is randomly generated if not provided.
-        "key": "key_1",
-        
-        # Required field: Input content
-        # This becomes the `input` field in InputEvent
-        "value": "Calculate the sum of 1 and 2.",
-    },
-    ...
-]
-```
-
-#### Output Data Format
-
-The output data is a list of dictionaries `List[Dict[str, Any]]` where each dictionary contains a single key-value pair representing the processed result. The structure is generated from `OutputEvent` objects:
-
-```python
-[
-    {key_1: output_1},  # From first OutputEvent
-    {key_2: output_2},  # From second OutputEvent
-    ...
-]
-```
+- **Language Support**: Python & Java
+- **Input and Output**: DataStream or Table
+- **Suitable Use Case**: Production
 
 ## Run in Flink
 
 ### Prerequisites
 
 - **Operating System**: Unix-like environment (Linux, macOS, Cygwin, or WSL)  
-- **Python**: Version 3.10 or 3.11  
+- **Python**: Version 3.10, 3.11 or 3.12
 - **Flink**: A running Flink cluster with version above 1.20.3 (including 1.20.3) and the Flink Agents dependency installed
+
+{{< hint info >}}
+**Note**: Python 3.12 requires Flink above 2.1 (including 2.1).
+{{< /hint >}}
 
 ### Prepare Flink Agents
 
@@ -167,8 +94,10 @@ After recovery from a checkpoint, Flink Agents reprocess events that arrived aft
 
 To ensure exactly-once action consistency, you must configure an external action state store. Flink Agents record action state in this store on a per-action basis. After recovering from a checkpoint, Flink Agents consult the external store and will not re-execute actions that were already completed. This guarantees each action is executed exactly once after recovering from a checkpoint.
 
+The same persisted action state is also used by fine-grained durable execution.
+
 {{< hint info >}}
-**Note**: Currently, Kafka is supported as the external action state store.
+**Note**: Currently, Kafka and Fluss are supported as the external action state store.
 {{< /hint >}}
 
 See [Action State Store Configuration]({{< ref "docs/operations/configuration#action-state-store" >}}) for configuration options.

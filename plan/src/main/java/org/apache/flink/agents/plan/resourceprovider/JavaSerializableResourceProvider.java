@@ -22,10 +22,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
-
-import java.util.function.BiFunction;
 
 /**
  * Serializable Resource Provider for Java-based resources.
@@ -78,8 +77,7 @@ public class JavaSerializableResourceProvider extends SerializableResourceProvid
     }
 
     @Override
-    public Resource provide(BiFunction<String, ResourceType, Resource> getResource)
-            throws Exception {
+    public Resource provide(ResourceContext resourceContext) throws Exception {
         if (resource == null) {
             resource =
                     (SerializableResource)

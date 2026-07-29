@@ -1,0 +1,19 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "type": "_my_custom_event",
+  "attributes": {
+    "k_int": 42,
+    "k_float": 1.5,
+    "k_bool": true,
+    "k_str": "hello",
+    "k_null": null,
+    "k_list": [
+      1,
+      2,
+      3
+    ],
+    "k_dict": {
+      "nested": "value"
+    }
+  }
+}

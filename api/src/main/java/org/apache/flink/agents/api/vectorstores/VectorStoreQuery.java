@@ -28,7 +28,8 @@ import java.util.Map;
  *
  * <p>A query consists of a textual prompt that will be embedded (for semantic search) or used as a
  * keyword string, an optional {@code limit} for the number of results, a {@link
- * VectorStoreQueryMode}, and an optional map of store-specific arguments.
+ * VectorStoreQueryMode}, an optional metadata {@code filters} map (see {@link BaseVectorStore} for
+ * the unified filter DSL), and an optional map of store-specific arguments.
  */
 public class VectorStoreQuery {
 
@@ -40,11 +41,16 @@ public class VectorStoreQuery {
     private final Integer limit;
     /** The name of the collection to query to. */
     private final @Nullable String collection;
+    /**
+     * Metadata filter in the flink-agents unified filter DSL — equality shorthand only. {@code
+     * null} means no filter. See {@link BaseVectorStore} for the DSL grammar.
+     */
+    private final @Nullable Map<String, Object> filters;
     /** Additional store-specific parameters. */
     private final Map<String, Object> extraArgs;
 
     public VectorStoreQuery(String queryText, Integer limit) {
-        this(VectorStoreQueryMode.SEMANTIC, queryText, limit, null, new HashMap<>());
+        this(VectorStoreQueryMode.SEMANTIC, queryText, limit, null, null, new HashMap<>());
     }
 
     /**
@@ -57,11 +63,11 @@ public class VectorStoreQuery {
      */
     public VectorStoreQuery(
             String queryText, Integer limit, String collection, Map<String, Object> extraArgs) {
-        this(VectorStoreQueryMode.SEMANTIC, queryText, limit, collection, extraArgs);
+        this(VectorStoreQueryMode.SEMANTIC, queryText, limit, collection, null, extraArgs);
     }
 
     /**
-     * Creates a query with explicit mode and extra arguments.
+     * Creates a query with explicit mode and extra arguments (no filters).
      *
      * @param mode the query mode
      * @param queryText the text to search for
@@ -75,10 +81,31 @@ public class VectorStoreQuery {
             Integer limit,
             @Nullable String collection,
             Map<String, Object> extraArgs) {
+        this(mode, queryText, limit, collection, null, extraArgs);
+    }
+
+    /**
+     * Creates a fully specified query.
+     *
+     * @param mode the query mode
+     * @param queryText the text to search for
+     * @param limit maximum number of results to return
+     * @param collection the collection to query to
+     * @param filters unified filter DSL (equality shorthand) or {@code null} for no filter
+     * @param extraArgs store-specific additional parameters
+     */
+    public VectorStoreQuery(
+            VectorStoreQueryMode mode,
+            String queryText,
+            Integer limit,
+            @Nullable String collection,
+            @Nullable Map<String, Object> filters,
+            Map<String, Object> extraArgs) {
         this.mode = mode;
         this.queryText = queryText;
         this.limit = limit;
         this.collection = collection;
+        this.filters = filters;
         this.extraArgs = extraArgs;
     }
 
@@ -105,5 +132,14 @@ public class VectorStoreQuery {
     @Nullable
     public String getCollection() {
         return collection;
+    }
+
+    /**
+     * Returns the unified-DSL filter map, or {@code null} when no filter is set. See {@link
+     * BaseVectorStore} for the DSL grammar.
+     */
+    @Nullable
+    public Map<String, Object> getFilters() {
+        return filters;
     }
 }

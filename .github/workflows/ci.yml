@@ -36,21 +36,61 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: '17'
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.11
+          python-version: 3.12
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Check code style
         run: ./tools/lint.sh -c
+      - name: Check AGENTS.md freshness
+        run: python3 tools/check-agents-md.py
+
+  install_sh_tests:
+    name: install.sh tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bash 4+ (macOS)
+        if: runner.os == 'macOS'
+        run: brew install bash
+      - name: Run install.sh tests
+        run: bash tools/test/run.sh
+
+  build_backend_tests:
+    name: ut-build-backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Run build-backend tests
+        working-directory: python
+        run: |
+          uv sync --extra test
+          PYTHONPATH="${PWD}" uv run --no-sync pytest _build_backend/tests \
+            -o log_cli=true \
+            -o log_cli_level=INFO
 
   java_tests:
-    name: ut-java [${{ matrix.os }}] [java-${{ matrix.java-version}}]
+    name: ut-java [${{ matrix.os }}] [java-${{ matrix.java-version}}] [python-3.12]
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -62,15 +102,15 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: ${{ matrix.java-version }}
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Install python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Install Python dependencies for MCP tests
         run: |
           cd python
@@ -85,67 +125,88 @@ jobs:
           tools/ut.sh -j
 
   python_tests:
-    name: ut-python [${{ matrix.os }}] [python-${{ matrix.python-version}}]
+    name: ut-python [${{ matrix.os }}] [java-17] [python-${{ matrix.python-version}}]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ 'macos-latest', 'ubuntu-latest' ]
-        python-version: [ '3.10', '3.11' ]
+        python-version: [ '3.10', '3.11', '3.12' ]
     steps:
       - uses: actions/checkout@v4
       - name: Install java
         uses: actions/setup-java@v4
         with:
           java-version: '17'
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Install python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Run Python Tests
         env:  
           LOG_LEVEL: INFO
         run: tools/ut.sh -p
 
   python_it_tests:
-    name: it-python [${{ matrix.os }}] [python-${{ matrix.python-version}}] [flink-${{ matrix.flink-version}}]
+    name: it-python [${{ matrix.os }}] [java-17] [python-${{ matrix.python-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
-        os: [ 'ubuntu-latest' ]
-        python-version: [ '3.11' ]
-        flink-version: [ "1.20", "2.0", "2.1", "2.2" ]
+        include:
+          - os: 'ubuntu-latest'
+            python-version: '3.11'
+            flink-version: "1.20"
+          - os: 'ubuntu-latest'
+            python-version: '3.11'
+            flink-version: "2.0"
+          - os: 'ubuntu-latest'
+            python-version: '3.12'
+            flink-version: "2.1"
+          - os: 'ubuntu-latest'
+            python-version: '3.12'
+            flink-version: "2.2"
+          - os: 'ubuntu-latest'
+            python-version: '3.12'
+            flink-version: "2.3"
     steps:
       - uses: actions/checkout@v4
       - name: Install java
         uses: actions/setup-java@v4
         with:
           java-version: '17'
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Install python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Install flink-agents
         run: bash tools/build.sh
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
       - name: Run Python IT
+        env:
+          ACTION_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
         run: tools/ut.sh -p -e -f ${{ matrix.flink-version }}
 
   java_it_tests:
-    name: it-java [${{ matrix.os }}] [java-${{ matrix.java-version}}]  [flink-${{ matrix.flink-version}}]
+    name: it-java [${{ matrix.os }}] [java-${{ matrix.java-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
@@ -162,13 +223,16 @@ jobs:
           - os: 'ubuntu-latest'
             java-version: "21"
             flink-version: "2.2"
+          - os: 'ubuntu-latest'
+            java-version: "17"
+            flink-version: "2.3"
     steps:
       - uses: actions/checkout@v4
       - name: Install java
         uses: actions/setup-java@v4
         with:
           java-version: ${{ matrix.java-version }}
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Install flink-agents Java
         run: bash tools/build.sh -j
       - name: Install ollama
@@ -181,26 +245,14 @@ jobs:
   cross_language_tests:
     name: cross-language [${{ matrix.os }}] [python-${{ matrix.python-version}}] [java-${{ matrix.java-version}}]
     runs-on: ${{ matrix.os }}
-    services:
-      elasticsearch:
-        image: docker.elastic.co/elasticsearch/elasticsearch:8.19.0
-        env:
-          discovery.type: single-node
-          xpack.security.enabled: false
-          ES_JAVA_OPTS: "-Xms512m -Xmx512m"
-        ports:
-          - 9200:9200
-        options: >-
-          --health-cmd "curl -f http://localhost:9200/_cluster/health || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-          --health-start-period 30s
+    timeout-minutes: 60
+    env:
+      SKIP_SPOTLESS_CHECK: true
     strategy:
       fail-fast: false
       matrix:
         os: [ 'ubuntu-latest' ]
-        python-version: [ '3.11' ]
+        python-version: [ '3.12' ]
         java-version: [ '21' ]
     steps:
       - uses: actions/checkout@v4
@@ -219,22 +271,39 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: ${{ matrix.java-version }}
-          distribution: 'adopt'
+          distribution: 'temurin'
       - name: Install python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
+        run: |
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Build flink-agents
         run: bash tools/build.sh
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
+      - name: Start Elasticsearch
+        run: |
+          docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v
+          docker compose -f tools/docker/elasticsearch/docker-compose.yml up -d
+          timeout 180 bash -c 'until curl -fsS http://localhost:9200/_cluster/health; do sleep 5; done'
+      - name: Start Milvus
+        run: |
+          docker compose -f tools/docker/milvus/docker-compose.yml down -v
+          docker compose -f tools/docker/milvus/docker-compose.yml up -d
+          timeout 180 bash -c 'until curl -fsS http://localhost:9091/healthz; do sleep 5; done'
       - name: Run e2e tests
         env:
           LOG_LEVEL: INFO
         run: |
           export ES_HOST="http://localhost:9200"
+          export MILVUS_URI="http://localhost:19530"
           tools/e2e.sh
+      - name: Stop Milvus
+        if: always()
+        run: docker compose -f tools/docker/milvus/docker-compose.yml down -v
+      - name: Stop Elasticsearch
+        if: always()
+        run: docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v

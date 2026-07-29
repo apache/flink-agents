@@ -18,12 +18,17 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -42,18 +47,20 @@ public class AgentPlanJsonSerializerTest {
     /** Test Agent class with @Action annotated methods. */
     public static class TestAgent extends Agent {
 
-        @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
-        public void handleInputEvent(InputEvent event, RunnerContext context) {
-            // Test action logic
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        public void handleInputEvent(Event event, RunnerContext context) {
+            InputEvent inputEvent = InputEvent.fromEvent(event);
         }
 
-        @org.apache.flink.agents.api.annotation.Action(listenEvents = {OutputEvent.class})
-        public void processOutputEvent(OutputEvent event, RunnerContext context) {
-            // Test action logic
+        @org.apache.flink.agents.api.annotation.Action(EventType.OutputEvent)
+        public void processOutputEvent(Event event, RunnerContext context) {
+            OutputEvent outputEvent = OutputEvent.fromEvent(event);
         }
 
-        @org.apache.flink.agents.api.annotation.Action(
-                listenEvents = {InputEvent.class, OutputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action({
+            EventType.InputEvent,
+            EventType.OutputEvent
+        })
         public void handleMultipleEvents(Event event, RunnerContext context) {
             // Test action logic for multiple event types
         }
@@ -64,6 +71,22 @@ public class AgentPlanJsonSerializerTest {
         }
     }
 
+    /** Test Agent class with @Tool annotated methods. */
+    public static class TestAgentWithInjectedTool extends Agent {
+
+        @Tool
+        public static String queryOrder(
+                @ToolParam(name = "order_id", description = "Order id.") String orderId,
+                @ToolParam(
+                                name = "tenant_id",
+                                injected = true,
+                                source = ToolParameterSource.CONFIG,
+                                key = "tenant.id")
+                        String tenantId) {
+            return tenantId + ":" + orderId;
+        }
+    }
+
     @Test
     public void testSerializeAgentPlanWithActions() throws Exception {
         // Create a JavaFunction
@@ -71,10 +94,10 @@ public class AgentPlanJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class, RunnerContext.class});
+                        new Class[] {Event.class, RunnerContext.class});
 
         // Create an Action
-        Action action = new Action("testAction", function, List.of(InputEvent.class.getName()));
+        Action action = new Action("testAction", function, List.of(InputEvent.EVENT_TYPE));
 
         // Create a map of actions
         Map<String, Action> actions = new HashMap<>();
@@ -94,8 +117,8 @@ public class AgentPlanJsonSerializerTest {
         assertThat(json).contains("\"func_type\":\"JavaFunction\"");
         assertThat(json).contains("\"qualname\":\"org.apache.flink.agents.plan.TestAction\"");
         assertThat(json).contains("\"method_name\":\"legal\"");
-        assertThat(json).contains("\"listen_event_types\":[");
-        assertThat(json).contains("\"org.apache.flink.agents.api.InputEvent\"");
+        assertThat(json).contains("\"trigger_conditions\":[");
+        assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\"");
         assertThat(json).contains("\"actions_by_event\":{}");
     }
 
@@ -106,14 +129,14 @@ public class AgentPlanJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class, RunnerContext.class});
+                        new Class[] {Event.class, RunnerContext.class});
 
         // Create an Action
-        Action action = new Action("testAction", function, List.of(InputEvent.class.getName()));
+        Action action = new Action("testAction", function, List.of(InputEvent.EVENT_TYPE));
 
         // Create a map of event trigger actions
         Map<String, List<Action>> actionsByEvent = new HashMap<>();
-        actionsByEvent.put(InputEvent.class.getName(), List.of(action));
+        actionsByEvent.put(InputEvent.EVENT_TYPE, List.of(action));
 
         // Create a AgentPlan with event trigger actions but no regular actions
         AgentPlan agentPlan = new AgentPlan(new HashMap<>(), actionsByEvent);
@@ -124,7 +147,7 @@ public class AgentPlanJsonSerializerTest {
         // Verify the JSON contains the expected fields
         assertThat(json).contains("\"actions\":{}");
         assertThat(json).contains("\"actions_by_event\":{");
-        assertThat(json).contains("\"org.apache.flink.agents.api.InputEvent\":[");
+        assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\":[");
         assertThat(json).contains("\"testAction\"");
     }
 
@@ -135,16 +158,16 @@ public class AgentPlanJsonSerializerTest {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class, RunnerContext.class});
+                        new Class[] {Event.class, RunnerContext.class});
         JavaFunction function2 =
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class, RunnerContext.class});
+                        new Class[] {Event.class, RunnerContext.class});
 
         // Create Actions
-        Action action1 = new Action("action1", function1, List.of(InputEvent.class.getName()));
-        Action action2 = new Action("action2", function2, List.of(OutputEvent.class.getName()));
+        Action action1 = new Action("action1", function1, List.of(InputEvent.EVENT_TYPE));
+        Action action2 = new Action("action2", function2, List.of(OutputEvent.EVENT_TYPE));
 
         // Create a map of actions
         Map<String, Action> actions = new HashMap<>();
@@ -153,8 +176,8 @@ public class AgentPlanJsonSerializerTest {
 
         // Create a map of event trigger actions
         Map<String, List<Action>> actionsByEvent = new HashMap<>();
-        actionsByEvent.put(InputEvent.class.getName(), List.of(action1));
-        actionsByEvent.put(OutputEvent.class.getName(), List.of(action2));
+        actionsByEvent.put(InputEvent.EVENT_TYPE, List.of(action1));
+        actionsByEvent.put(OutputEvent.EVENT_TYPE, List.of(action2));
 
         // Create a AgentPlan with both actions and event trigger actions
         AgentPlan agentPlan = new AgentPlan(actions, actionsByEvent);
@@ -167,8 +190,8 @@ public class AgentPlanJsonSerializerTest {
         assertThat(json).contains("\"action1\":{");
         assertThat(json).contains("\"action2\":{");
         assertThat(json).contains("\"actions_by_event\":{");
-        assertThat(json).contains("\"org.apache.flink.agents.api.InputEvent\":[");
-        assertThat(json).contains("\"org.apache.flink.agents.api.OutputEvent\":[");
+        assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\":[");
+        assertThat(json).contains("\"" + OutputEvent.EVENT_TYPE + "\":[");
         assertThat(json).contains("\"action1\"");
         assertThat(json).contains("\"action2\"");
     }
@@ -211,9 +234,9 @@ public class AgentPlanJsonSerializerTest {
         assertThat(json).contains("\"processOutputEvent\"");
         assertThat(json).contains("\"handleMultipleEvents\"");
 
-        // Verify event mappings
-        assertThat(json).contains("\"org.apache.flink.agents.api.InputEvent\"");
-        assertThat(json).contains("\"org.apache.flink.agents.api.OutputEvent\"");
+        // Verify event mappings use EVENT_TYPE constants
+        assertThat(json).contains("\"" + InputEvent.EVENT_TYPE + "\"");
+        assertThat(json).contains("\"" + OutputEvent.EVENT_TYPE + "\"");
 
         // Verify function details
         assertThat(json).contains("\"func_type\":\"JavaFunction\"");
@@ -226,5 +249,31 @@ public class AgentPlanJsonSerializerTest {
 
         // Verify that config data from AgentConfiguration is present
         assertThat(json).contains("\"conf_data\":{\"config.key\":\"config.value\"}");
+    }
+
+    @Test
+    public void testSerializeAgentPlanWithInjectedToolArgs() throws Exception {
+        AgentPlan agentPlan =
+                new AgentPlan(new TestAgentWithInjectedTool(), new AgentConfiguration());
+
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(agentPlan);
+
+        JsonNode plan = mapper.readTree(json);
+        JsonNode tools =
+                plan.get("resource_providers").has("tool")
+                        ? plan.get("resource_providers").get("tool")
+                        : plan.get("resource_providers").get("TOOL");
+        JsonNode serializedTool =
+                mapper.readTree(tools.get("queryOrder").get("serializedResource").asText());
+        JsonNode inputSchema =
+                mapper.readTree(serializedTool.get("metadata").get("inputSchema").asText());
+
+        assertThat(inputSchema.get("properties").has("order_id")).isTrue();
+        assertThat(inputSchema.get("properties").has("tenant_id")).isFalse();
+        assertThat(serializedTool.get("injected_args").get("tenant_id").get("source").asText())
+                .isEqualTo("config");
+        assertThat(serializedTool.get("injected_args").get("tenant_id").get("key").asText())
+                .isEqualTo("tenant.id");
     }
 }

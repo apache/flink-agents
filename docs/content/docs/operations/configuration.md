@@ -44,7 +44,8 @@ Users can explicitly modify the configuration when defining the `AgentsExecution
 
 ```python
 # Get Flink Agents execution environment
-agents_env = AgentsExecutionEnvironment.get_execution_environment()
+env = StreamExecutionEnvironment.get_execution_environment()
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
 # Get configuration object from the environment
 config = agents_env.get_configuration()
@@ -71,6 +72,9 @@ Configuration config = agentsEnv.getConfig();
 
 // Set custom configuration using key (direct string key)
 config.setInt("kafkaActionStateTopicNumPartitions", 128);  // Kafka topic partitions count
+
+// Set the list of event listeners
+config.set(AgentConfigOptions.EVENT_LISTENERS, List.of(MyCustomListener.class.getName()));
 
 // Set framework configuration using ConfigOption (predefined option class)
 config.set(AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY);
@@ -101,7 +105,7 @@ By default, the configuration is automatically loaded from `$FLINK_HOME/conf/con
 
 **Special Condition**
 
-In the following two cases, Flink Agents may not locate the corresponding configuration file, necessitating manual configuration. If the files are not set, no configuration files will be loaded, potentially resulting in unexpected behavior or failures.
+In the following case, Flink Agents may not locate the corresponding configuration file, necessitating manual configuration. If the file is not set, no configuration file will be loaded, potentially resulting in unexpected behavior or failures.
 
 - **For MiniCluster**:
   Manual setup is **required** — always export the environment variable before running the job:
@@ -112,30 +116,41 @@ In the following two cases, Flink Agents may not locate the corresponding config
 
   This ensures that Flink can locate and load the configuration file correctly.
 
-- **Local mode**: When [run without flink]({{< ref "docs/operations/deployment">}}), use the `AgentsExecutionEnvironment.get_configuration()` API to load the YAML file directly:
-
-  ```python
-  config = agents_env.get_configuration("path/to/your/config.yaml")
-  ```
-  
-
 ## Built-in configuration options
 
 ### Core Options
 Here is the list of all built-in core configuration options.
+
 | Key                       | Default                    | Type                  | Description                                                                                                                                                                                                                                                     |
 |---------------------------|----------------------------|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `baseLogDir`              | (none)                     | String                | Base directory for file-based event logs. If not set, uses `java.io.tmpdir/flink-agents`.                                                                                                                                                                       |
+| `eventLoggerType`         | `SLF4J`                    | LoggerType            | Which built-in event logger to use. Valid values: `SLF4J` (writes JSON through a dedicated SLF4J logger so events show up in Flink's Web UI **Logs** tab) and `FILE` (writes per-subtask `.log` files under `baseLogDir`). Setting `baseLogDir` overrides this and forces `FILE`. |
+| `baseLogDir`              | (none)                     | String                | Base directory for file-based event logs. If not set, uses `java.io.tmpdir/flink-agents`. Setting this value also implicitly switches `eventLoggerType` to `file`.                                                                                              |
+| `prettyPrint`             | false                      | boolean               | Whether to enable pretty-printed JSON format for event logs. When set to `true`, each event is written as formatted multi-line JSON instead of JSONL (JSON Lines) format. {{< hint info >}}Note: enabling this option makes the log file no longer valid JSONL format.  {{< /hint >}} |
+| `event-listeners`         | none                       | `List<String>`        | The list of event listener class names. Each class must implement the EventListener interface and provide a public no-argument constructor. {{< hint warning >}} Note: Currently, custom event listeners are only supported in Java. {{< /hint >}} |
 | `error-handling-strategy` | ErrorHandlingStrategy.FAIL | ErrorHandlingStrategy | Strategy for handling errors during model requests, include timeout and unexpected output schema. <br/>The option value could be:<br/> <ul><li>`ErrorHandlingStrategy.FAIL`</li> <li>`ErrorHandlingStrategy.RETRY`</li> <li>`ErrorHandlingStrategy.IGNORE`</li> |
 | `max-retries`             | 3                          | int                   | Number of retries when using `ErrorHandlingStrategy.RETRY`.                                                                                                                                                                                                     |
+| `retry-wait-interval`     | 1                          | int                   | Base wait interval in seconds between retries when using `ErrorHandlingStrategy.RETRY`. Uses exponential backoff: the actual wait time for the Nth retry is `retry-wait-interval * 2^(N-1)` seconds. For example, with default 1s, waits are 1s, 2s, 4s, etc. Retry count and total wait time are reported in `ChatResponseEvent` and recorded as metrics (`retryCount`, `retryWaitSec`) under the connection name. |
 | `chat.async`              | true                       | boolean               | Whether chat asynchronously for built-in chat action.                                                                                                                                                                                                           |
 | `tool-call.async`         | true                       | boolean               | Whether process tool call for built-in tool call action.                                                                                                                                                                                                        |
 | `rag.async`               | true                       | boolean               | Whether retrieve context asynchronously for built-in context retrieval action.                                                                                                                                                                                  |
 | `num-async-threads`       | os cpu count * 2           | int                   | The thread pool size for async executor.                                                                                                                                                                                                                        |
 | `job-identifier`          | none                       | String                | The unique identifier of job, remaining consistent after restoring from a savepoint. If not set, uses flink job id.                                                                                                                                             |
-
+| `event-log.level`         | STANDARD                   | EventLogLevel         | Global default verbosity for the [Event Log]({{< ref "docs/operations/monitoring#event-log" >}}). Valid values: `OFF` (skip event), `STANDARD` (payload may be truncated/summarized to keep logs concise), `VERBOSE` (full payload). Can be overridden per event type — see [Per-event-type log levels]({{< ref "docs/operations/monitoring#per-event-type-log-levels" >}}). |
+| `event-log.type.<EVENT_TYPE>.level` | (inherits) | EventLogLevel         | Override the log level for a specific event type. `<EVENT_TYPE>` is the event's routing type string (the same value that appears as `eventType` in the JSON log, e.g., `_chat_request_event` for built-ins, or `com.example.myapp.OrderEvent` for user-defined types). For dotted types, resolution walks up dot segments before falling back to `event-log.level`. See [Per-event-type log levels]({{< ref "docs/operations/monitoring#per-event-type-log-levels" >}}) for examples. |
+| `event-log.standard.max-string-length` | 2000              | int                   | At `STANDARD` level, strings in the event payload longer than this are truncated. Has no effect at `VERBOSE`.                                                                                                                                                  |
+| `event-log.standard.max-array-elements` | 20               | int                   | At `STANDARD` level, arrays in the event payload with more than this many elements are truncated. Has no effect at `VERBOSE`.                                                                                                                                  |
+| `event-log.standard.max-depth` | 5                     | int                   | At `STANDARD` level, objects nested deeper than this are summarized. Has no effect at `VERBOSE`.                                                                                                                                                               |
+| `short-term-memory.state-ttl.ms` | 0                    | long                  | Time-to-live for short-term memory state in milliseconds. Set to a value greater than 0 to enable TTL; 0 disables it.                                                                                                                                           |
+| `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | Update policy for short-term memory TTL. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `ON_CREATE_AND_WRITE`, `ON_READ_AND_WRITE`.                                                                                       |
+| `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | Visibility policy for expired short-term memory state. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `NEVER_RETURN_EXPIRED`, `RETURN_EXPIRED_IF_NOT_CLEANED_UP`.                                                        |
 
 ### Action State Store
+
+#### Common
+
+| Key                          | Default          | Type    | Description                                                                              |
+|------------------------------|------------------|---------|------------------------------------------------------------------------------------------|
+| `actionStateStoreBackend`    | (none)           | String  | The backend for action state store. Supported values: `"kafka"`, `"fluss"`.              |
 
 #### Kafka-based Action State Store
 
@@ -143,8 +158,23 @@ Here are the configuration options for Kafka-based Action State Store.
 
 | Key                                 | Default                  | Type    | Description                                                                 |
 |-------------------------------------|--------------------------|---------|-----------------------------------------------------------------------------|
-| `actionStateStoreBackend`           | (none)                   | String  | The config parameter specifies the backend for action state store.          |
 | `kafkaBootstrapServers`             | "localhost:9092"         | String  | The config parameter specifies the Kafka bootstrap server.                  |
 | `kafkaActionStateTopic`             | (none)                   | String  | The config parameter specifies the Kafka topic for action state.            |
 | `kafkaActionStateTopicNumPartitions`| 64                       | Integer | The config parameter specifies the number of partitions for the Kafka action state topic. |
 | `kafkaActionStateTopicReplicationFactor` | 1                     | Integer | The config parameter specifies the replication factor for the Kafka action state topic. |
+
+#### Fluss-based Action State Store
+
+Here are the configuration options for Fluss-based Action State Store.
+
+| Key                          | Default          | Type    | Description                                                                              |
+|------------------------------|------------------|---------|------------------------------------------------------------------------------------------|
+| `flussBootstrapServers`      | "localhost:9123" | String  | The Fluss bootstrap servers address.                                                     |
+| `flussActionStateDatabase`   | "flink_agents"   | String  | The Fluss database name for storing action state.                                        |
+| `flussActionStateTable`      | (none)           | String  | The Fluss table name for storing action state.                                           |
+| `flussActionStateTableBuckets` | 64             | Integer | The number of buckets for the Fluss action state table.                                  |
+| `flussSecurityProtocol`      | "PLAINTEXT"      | String  | The authentication protocol for Fluss client. Valid values: `PLAINTEXT` (default, no authentication), `SASL` (SASL/PLAIN authentication). |
+| `flussSaslMechanism`         | "PLAIN"          | String  | The SASL mechanism for Fluss authentication.                                             |
+| `flussSaslJaasConfig`        | (none)           | String  | The JAAS configuration string for Fluss SASL authentication.                             |
+| `flussSaslUsername`          | (none)           | String  | The username for Fluss SASL authentication.                                              |
+| `flussSaslPassword`          | (none)           | String  | The password for Fluss SASL authentication.                                              |

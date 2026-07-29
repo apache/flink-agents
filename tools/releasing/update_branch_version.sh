@@ -56,6 +56,8 @@ cd ..
 cd python
 perl -pi -e "s#^version = \".*\"#version = \"${NEW_VERSION}\"#" pyproject.toml
 perl -pi -e "s#-SNAPSHOT#\\.dev0#" pyproject.toml
+# Update jar_manifest.json version to match project version
+perl -pi -e "s#\"version\": \".*\"#\"version\": \"${NEW_VERSION}\"#" jar_manifest.json
 cd ..
 
 git commit -am "Update version to $NEW_VERSION"

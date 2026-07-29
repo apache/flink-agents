@@ -36,19 +36,28 @@ from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.e2e_tests.e2e_tests_resource_cross_language.chat_model_cross_language_agent import (
     ChatModelCrossLanguageAgent,
 )
-from flink_agents.e2e_tests.test_utils import pull_model
+from flink_agents.e2e_tests.test_utils import (
+    assert_tool_invoked,
+    collect_tool_invocations,
+    pull_model,
+)
 
 current_dir = Path(__file__).parent
 
 OLLAMA_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b")
-os.environ["OLLAMA_CHAT_MODEL"] = OLLAMA_MODEL
 
 client = pull_model(OLLAMA_MODEL)
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
-@pytest.mark.skipif(client is None, reason="Ollama client is not available or test model is missing.")
-def test_java_chat_model_integration(tmp_path: Path) -> None:  # noqa: D103
+
+@pytest.mark.skipif(
+    client is None, reason="Ollama client is not available or test model is missing."
+)
+def test_java_chat_model_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OLLAMA_CHAT_MODEL", OLLAMA_MODEL)
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
@@ -57,20 +66,22 @@ def test_java_chat_model_integration(tmp_path: Path) -> None:  # noqa: D103
     # we use continuous file source here.
     input_datastream = env.from_source(
         source=FileSource.for_record_stream_format(
-            StreamFormat.text_line_format(), f"file:///{current_dir}/../resources/java_chat_module_input"
+            StreamFormat.text_line_format(),
+            f"file:///{current_dir}/../resources/java_chat_module_input",
         ).build(),
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
     )
 
-    deserialize_datastream = input_datastream.map(
-        lambda x: str(x)
-    )
+    deserialize_datastream = input_datastream.map(lambda x: str(x))
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    log_dir = tmp_path / "event_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    agents_env.get_config().set_str("baseLogDir", str(log_dir))
     output_datastream = (
         agents_env.from_datastream(
-            input=deserialize_datastream, key_selector= lambda x: "orderKey"
+            input=deserialize_datastream, key_selector=lambda x: "orderKey"
         )
         .apply(ChatModelCrossLanguageAgent())
         .to_datastream()
@@ -79,13 +90,16 @@ def test_java_chat_model_integration(tmp_path: Path) -> None:  # noqa: D103
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    (output_datastream.map(lambda x: str(x).replace('\n', '')
-                          .replace('\r', ''), Types.STRING()).add_sink(
-        StreamingFileSink.for_row_format(
-            base_path=str(result_dir.absolute()),
-            encoder=Encoder.simple_string_encoder(),
-        ).build()
-    ))
+    (
+        output_datastream.map(
+            lambda x: str(x).replace("\n", "").replace("\r", ""), Types.STRING()
+        ).add_sink(
+            StreamingFileSink.for_row_format(
+                base_path=str(result_dir.absolute()),
+                encoder=Encoder.simple_string_encoder(),
+            ).build()
+        )
+    )
 
     agents_env.execute()
 
@@ -99,5 +113,8 @@ def test_java_chat_model_integration(tmp_path: Path) -> None:  # noqa: D103
             with file.open() as f:
                 actual_result.extend(f.readlines())
 
-    assert "3" in actual_result[0]
-    assert "cat" in actual_result[1]
+    invocations = collect_tool_invocations(log_dir)
+    assert_tool_invoked(invocations, "add", {"a": 1, "b": 2})
+
+    joined = "\n".join(actual_result).lower()
+    assert "cat" in joined, f"creative answer missing 'cat': {actual_result!r}"

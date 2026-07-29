@@ -19,8 +19,10 @@
 package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -29,23 +31,37 @@ import java.util.UUID;
  * data.
  */
 public class OutputEvent extends Event {
-    private final Object output;
+
+    public static final String EVENT_TYPE = "_output_event";
 
     public OutputEvent(Object output) {
-        super();
-        this.output = output;
+        super(EVENT_TYPE);
+        setAttr("output", output);
     }
 
     @JsonCreator
     public OutputEvent(
             @JsonProperty("id") UUID id,
-            @JsonProperty("attributes") Map<String, Object> attributes,
-            @JsonProperty("output") Object output) {
-        super(id, attributes);
-        this.output = output;
+            @JsonProperty("attributes") Map<String, Object> attributes) {
+        super(id, EVENT_TYPE, attributes);
     }
 
+    /**
+     * Reconstructs a typed OutputEvent from a base Event.
+     *
+     * @param event the base event containing the output data in attributes
+     * @return a typed OutputEvent
+     */
+    public static OutputEvent fromEvent(Event event) {
+        OutputEvent result = new OutputEvent(event.getId(), new HashMap<>(event.getAttributes()));
+        if (event.hasSourceTimestamp()) {
+            result.setSourceTimestamp(event.getSourceTimestamp());
+        }
+        return result;
+    }
+
+    @JsonIgnore
     public Object getOutput() {
-        return output;
+        return getAttr("output");
     }
 }

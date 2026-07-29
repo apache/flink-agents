@@ -19,34 +19,19 @@ package org.apache.flink.agents.api.memory;
 
 import org.apache.flink.agents.api.configuration.ConfigOption;
 
+/** Config options for long-term memory. */
 public class LongTermMemoryOptions {
-    public enum LongTermMemoryBackend {
-        EXTERNAL_VECTOR_STORE("external_vector_store");
 
-        private final String value;
+    /** Config options for the Mem0-based long-term memory backend. */
+    public static class Mem0 {
+        public static final ConfigOption<String> CHAT_MODEL_SETUP =
+                new ConfigOption<>("long-term-memory.mem0.chat-model-setup", String.class, null);
 
-        LongTermMemoryBackend(String value) {
-            this.value = value;
-        }
+        public static final ConfigOption<String> EMBEDDING_MODEL_SETUP =
+                new ConfigOption<>(
+                        "long-term-memory.mem0.embedding-model-setup", String.class, null);
 
-        public String getValue() {
-            return value;
-        }
+        public static final ConfigOption<String> VECTOR_STORE =
+                new ConfigOption<>("long-term-memory.mem0.vector-store", String.class, null);
     }
-
-    /** The backend for long-term memory. */
-    public static final ConfigOption<LongTermMemoryBackend> BACKEND =
-            new ConfigOption<>("long-term-memory.backend", LongTermMemoryBackend.class, null);
-
-    /** The name of the vector store to server as the backend for long-term memory. */
-    public static final ConfigOption<String> EXTERNAL_VECTOR_STORE_NAME =
-            new ConfigOption<>("long-term-memory.external-vector-store-name", String.class, null);
-
-    /** Whether execute compaction asynchronously . */
-    public static final ConfigOption<Boolean> ASYNC_COMPACTION =
-            new ConfigOption<>("long-term-memory.async-compaction", Boolean.class, true);
-
-    /** The thread count of executor for async compaction. */
-    public static final ConfigOption<Integer> THREAD_COUNT =
-            new ConfigOption<>("long-term-memory.async-compaction.thread-count", Integer.class, 16);
 }

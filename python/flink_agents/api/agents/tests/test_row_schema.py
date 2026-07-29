@@ -21,7 +21,7 @@ from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 from flink_agents.api.agents.react_agent import OutputSchema
 
 
-def test_output_schema_serializable() -> None:  # noqa: D103
+def test_output_schema_serializable() -> None:
     schema = OutputSchema(
         output_schema=RowTypeInfo(
             [BasicTypeInfo.INT_TYPE_INFO()],

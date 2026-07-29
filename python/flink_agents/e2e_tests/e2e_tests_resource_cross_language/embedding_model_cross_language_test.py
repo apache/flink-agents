@@ -41,14 +41,19 @@ from flink_agents.e2e_tests.test_utils import pull_model
 current_dir = Path(__file__).parent
 
 OLLAMA_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest")
-os.environ["OLLAMA_EMBEDDING_MODEL"] = OLLAMA_MODEL
 
 client = pull_model(OLLAMA_MODEL)
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
-@pytest.mark.skipif(client is None, reason="Ollama client is not available or test model is missing.")
-def test_java_embedding_model_integration(tmp_path: Path) -> None:  # noqa: D103
+
+@pytest.mark.skipif(
+    client is None, reason="Ollama client is not available or test model is missing."
+)
+def test_java_embedding_model_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OLLAMA_EMBEDDING_MODEL", OLLAMA_MODEL)
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
@@ -57,20 +62,19 @@ def test_java_embedding_model_integration(tmp_path: Path) -> None:  # noqa: D103
     # we use continuous file source here.
     input_datastream = env.from_source(
         source=FileSource.for_record_stream_format(
-            StreamFormat.text_line_format(), f"file:///{current_dir}/../resources/java_chat_module_input"
+            StreamFormat.text_line_format(),
+            f"file:///{current_dir}/../resources/java_chat_module_input",
         ).build(),
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
     )
 
-    deserialize_datastream = input_datastream.map(
-        lambda x: str(x)
-    )
+    deserialize_datastream = input_datastream.map(lambda x: str(x))
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
     output_datastream = (
         agents_env.from_datastream(
-            input=deserialize_datastream, key_selector= lambda x: "orderKey"
+            input=deserialize_datastream, key_selector=lambda x: "orderKey"
         )
         .apply(EmbeddingModelCrossLanguageAgent())
         .to_datastream()
@@ -79,13 +83,16 @@ def test_java_embedding_model_integration(tmp_path: Path) -> None:  # noqa: D103
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    (output_datastream.map(lambda x: str(x).replace('\n', '')
-                          .replace('\r', ''), Types.STRING()).add_sink(
-        StreamingFileSink.for_row_format(
-            base_path=str(result_dir.absolute()),
-            encoder=Encoder.simple_string_encoder(),
-        ).build()
-    ))
+    (
+        output_datastream.map(
+            lambda x: str(x).replace("\n", "").replace("\r", ""), Types.STRING()
+        ).add_sink(
+            StreamingFileSink.for_row_format(
+                base_path=str(result_dir.absolute()),
+                encoder=Encoder.simple_string_encoder(),
+            ).build()
+        )
+    )
 
     agents_env.execute()
 

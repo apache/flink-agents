@@ -16,26 +16,29 @@
 # limitations under the License.
 #################################################################################
 import os
+from unittest.mock import MagicMock
 
 import pytest
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource_context import ResourceContext
+from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import (
+    DEFAULT_ANTHROPIC_MODEL,
     AnthropicChatModelConnection,
     AnthropicChatModelSetup,
 )
-from flink_agents.plan.tools.function_tool import from_callable
+
+pytestmark = pytest.mark.integration
 
 test_model = os.environ.get("TEST_MODEL")
 api_key = os.environ.get("TEST_API_KEY")
 
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
-def test_anthropic_chat_model() -> None:  # noqa: D103
-    connection = AnthropicChatModelConnection(
-        name="anthropic_server", api_key=api_key
-    )
+def test_anthropic_chat_model() -> None:
+    connection = AnthropicChatModelConnection(name="anthropic_server", api_key=api_key)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
@@ -43,8 +46,14 @@ def test_anthropic_chat_model() -> None:  # noqa: D103
         else:
             return get_resource(name, ResourceType.TOOL)
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     chat_model = AnthropicChatModelSetup(
-        name="anthropic", model=test_model, connection="anthropic_server", get_resource=get_resource
+        name="anthropic",
+        model=test_model,
+        connection="anthropic_server",
+        resource_context=mock_ctx,
     )
     response = chat_model.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
     assert response is not None
@@ -70,23 +79,24 @@ def add(a: int, b: int) -> int:
 
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
-def test_anthropic_chat_with_tools() -> None:  # noqa : D103
-    connection = AnthropicChatModelConnection(
-        name="anthropic_server", api_key=api_key
-    )
+def test_anthropic_chat_with_tools() -> None:
+    connection = AnthropicChatModelConnection(name="anthropic_server", api_key=api_key)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
             return connection
         else:
-            return from_callable(func=add)
+            return Tool.from_callable(func=add)
+
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
 
     chat_model = AnthropicChatModelSetup(
         name="anthropic",
         model=test_model,
         connection="anthropic_server",
         tools=["add"],
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
     response = chat_model.chat(
         [ChatMessage(role=MessageRole.USER, content="What is 1 + 1?")]
@@ -96,3 +106,16 @@ def test_anthropic_chat_with_tools() -> None:  # noqa : D103
     tool_call = tool_calls[0]
     assert add(**tool_call["function"]["arguments"]) == 2
     assert tool_call.get("original_id") is not None
+
+
+def test_model_field_roundtrip() -> None:
+    """Verify `model` is preserved through pydantic dump/validate round-trip."""
+    setup = AnthropicChatModelSetup(connection="conn", model="test-model")
+    restored = AnthropicChatModelSetup.model_validate(setup.model_dump())
+    assert restored.model == "test-model"
+
+
+def test_default_model_when_omitted() -> None:
+    """Verify per-integration default applies when `model` is omitted from __init__."""
+    setup = AnthropicChatModelSetup(connection="conn")
+    assert setup.model == DEFAULT_ANTHROPIC_MODEL

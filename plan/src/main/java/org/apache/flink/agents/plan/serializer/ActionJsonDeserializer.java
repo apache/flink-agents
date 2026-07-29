@@ -66,10 +66,10 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
             throw new IOException("Unsupported function type: " + funcType);
         }
 
-        // Deserialize listenEventTypes
-        List<String> listenEventTypes = new ArrayList<>();
-        node.get("listen_event_types")
-                .forEach(eventTypeNode -> listenEventTypes.add(eventTypeNode.asText()));
+        // Deserialize trigger_conditions
+        List<String> triggerConditions = new ArrayList<>();
+        node.get("trigger_conditions")
+                .forEach(entryNode -> triggerConditions.add(entryNode.asText()));
 
         // Deserialize params
         Map<String, Object> config = null;
@@ -88,7 +88,7 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
         }
 
         try {
-            return new Action(name, func, listenEventTypes, config);
+            return new Action(name, func, triggerConditions, config);
         } catch (Exception e) {
             throw new RuntimeException(
                     String.format("Failed to create Action with name \"%s\"", name), e);
@@ -158,7 +158,7 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
         return config;
     }
 
-    private Object deserializePythonConfig(JsonNode node) {
+    static Object deserializePythonConfig(JsonNode node) {
         if (node.isObject()) {
             Map<String, Object> map = new HashMap<>();
             node.fields()
@@ -172,8 +172,16 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
             List<Object> list = new ArrayList<>();
             node.forEach(element -> list.add(deserializePythonConfig(element)));
             return list;
-        } else if (node.isValueNode()) {
-            return node.asText();
+        } else if (node.isNull()) {
+            return null;
+        } else if (node.isBoolean()) {
+            return node.booleanValue();
+        } else if (node.isIntegralNumber()) {
+            return node.canConvertToInt() ? (Object) node.intValue() : (Object) node.longValue();
+        } else if (node.isFloatingPointNumber()) {
+            return node.doubleValue();
+        } else if (node.isTextual()) {
+            return node.textValue();
         } else {
             throw new UnsupportedOperationException("Unsupported node type: " + node.getNodeType());
         }

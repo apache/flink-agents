@@ -26,9 +26,11 @@ import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.spec.McpSchema;
+import org.apache.flink.agents.api.RetryExecutor;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -41,11 +43,11 @@ import java.net.URI;
 import java.net.http.HttpRequest;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.BiFunction;
 
 /**
  * Resource representing an MCP server and exposing its tools/prompts.
@@ -79,8 +81,13 @@ public class MCPServer extends Resource {
 
     private static final String FIELD_ENDPOINT = "endpoint";
     private static final String FIELD_HEADERS = "headers";
-    private static final String FIELD_TIMEOUT_SECONDS = "timeoutSeconds";
+    private static final String FIELD_TIMEOUT = "timeout";
     private static final String FIELD_AUTH = "auth";
+    private static final String FIELD_MAX_RETRIES = "maxRetries";
+    private static final String FIELD_INITIAL_BACKOFF_MS = "initialBackoffMs";
+    private static final String FIELD_MAX_BACKOFF_MS = "maxBackoffMs";
+
+    private static final long DEFAULT_TIMEOUT_VALUE = 30L;
 
     @JsonProperty(FIELD_ENDPOINT)
     private final String endpoint;
@@ -88,11 +95,19 @@ public class MCPServer extends Resource {
     @JsonProperty(FIELD_HEADERS)
     private final Map<String, String> headers;
 
-    @JsonProperty(FIELD_TIMEOUT_SECONDS)
+    @JsonProperty(FIELD_TIMEOUT)
     private final long timeoutSeconds;
 
     @JsonProperty(FIELD_AUTH)
     private final Auth auth;
+
+    private final Integer maxRetries;
+
+    private final Long initialBackoffMs;
+
+    private final Long maxBackoffMs;
+
+    @JsonIgnore private transient RetryExecutor retryExecutor;
 
     @JsonIgnore private transient McpSyncClient client;
 
@@ -100,8 +115,11 @@ public class MCPServer extends Resource {
     public static class Builder {
         private String endpoint;
         private final Map<String, String> headers = new HashMap<>();
-        private long timeoutSeconds = 30;
+        private long timeoutSeconds = DEFAULT_TIMEOUT_VALUE;
         private Auth auth = null;
+        private Integer maxRetries;
+        private Long initialBackoffMs;
+        private Long maxBackoffMs;
 
         public Builder endpoint(String endpoint) {
             this.endpoint = endpoint;
@@ -128,21 +146,60 @@ public class MCPServer extends Resource {
             return this;
         }
 
+        public Builder maxRetries(int maxRetries) {
+            this.maxRetries = maxRetries;
+            return this;
+        }
+
+        public Builder initialBackoff(Duration backoff) {
+            this.initialBackoffMs = backoff.toMillis();
+            return this;
+        }
+
+        public Builder maxBackoff(Duration backoff) {
+            this.maxBackoffMs = backoff.toMillis();
+            return this;
+        }
+
         public MCPServer build() {
-            return new MCPServer(endpoint, headers, timeoutSeconds, auth);
+            return new MCPServer(
+                    endpoint,
+                    headers,
+                    timeoutSeconds,
+                    auth,
+                    maxRetries,
+                    initialBackoffMs,
+                    maxBackoffMs);
         }
     }
 
-    public MCPServer(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+    public MCPServer(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.endpoint =
                 Objects.requireNonNull(
-                        descriptor.getArgument("endpoint"), "endpoint cannot be null");
-        Map<String, String> headers = descriptor.getArgument("headers");
+                        descriptor.getArgument(FIELD_ENDPOINT), "endpoint cannot be null");
+        Map<String, String> headers = descriptor.getArgument(FIELD_HEADERS);
         this.headers = headers != null ? new HashMap<>(headers) : new HashMap<>();
-        this.timeoutSeconds = (int) descriptor.getArgument("timeout");
-        this.auth = descriptor.getArgument("auth");
+        Object timeoutArg = descriptor.getArgument(FIELD_TIMEOUT);
+        this.timeoutSeconds =
+                timeoutArg instanceof Number
+                        ? ((Number) timeoutArg).longValue()
+                        : DEFAULT_TIMEOUT_VALUE;
+        this.auth = descriptor.getArgument(FIELD_AUTH);
+
+        Object maxRetriesArg = descriptor.getArgument(FIELD_MAX_RETRIES);
+        this.maxRetries =
+                maxRetriesArg instanceof Number ? ((Number) maxRetriesArg).intValue() : null;
+
+        Object initialBackoffArg = descriptor.getArgument(FIELD_INITIAL_BACKOFF_MS);
+        this.initialBackoffMs =
+                initialBackoffArg instanceof Number
+                        ? ((Number) initialBackoffArg).longValue()
+                        : null;
+
+        Object maxBackoffArg = descriptor.getArgument(FIELD_MAX_BACKOFF_MS);
+        this.maxBackoffMs =
+                maxBackoffArg instanceof Number ? ((Number) maxBackoffArg).longValue() : null;
     }
 
     /**
@@ -151,19 +208,25 @@ public class MCPServer extends Resource {
      * @param endpoint The HTTP endpoint of the MCP server
      */
     public MCPServer(String endpoint) {
-        this(endpoint, new HashMap<>(), 30, null);
+        this(endpoint, new HashMap<>(), DEFAULT_TIMEOUT_VALUE, null, null, null, null);
     }
 
     @JsonCreator
     public MCPServer(
             @JsonProperty(FIELD_ENDPOINT) String endpoint,
             @JsonProperty(FIELD_HEADERS) Map<String, String> headers,
-            @JsonProperty(FIELD_TIMEOUT_SECONDS) long timeoutSeconds,
-            @JsonProperty(FIELD_AUTH) Auth auth) {
+            @JsonProperty(FIELD_TIMEOUT) Long timeoutSeconds,
+            @JsonProperty(FIELD_AUTH) Auth auth,
+            @JsonProperty(FIELD_MAX_RETRIES) Integer maxRetries,
+            @JsonProperty(FIELD_INITIAL_BACKOFF_MS) Long initialBackoffMs,
+            @JsonProperty(FIELD_MAX_BACKOFF_MS) Long maxBackoffMs) {
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint cannot be null");
         this.headers = headers != null ? new HashMap<>(headers) : new HashMap<>();
-        this.timeoutSeconds = timeoutSeconds;
+        this.timeoutSeconds = timeoutSeconds != null ? timeoutSeconds : DEFAULT_TIMEOUT_VALUE;
         this.auth = auth;
+        this.maxRetries = maxRetries;
+        this.initialBackoffMs = initialBackoffMs;
+        this.maxBackoffMs = maxBackoffMs;
     }
 
     public static Builder builder(String endpoint) {
@@ -192,6 +255,46 @@ public class MCPServer extends Resource {
         return auth;
     }
 
+    @JsonProperty(FIELD_MAX_RETRIES)
+    public int getMaxRetries() {
+        return maxRetries != null ? maxRetries : getRetryExecutor().getMaxRetries();
+    }
+
+    @JsonProperty(FIELD_INITIAL_BACKOFF_MS)
+    public long getInitialBackoffMs() {
+        return initialBackoffMs != null
+                ? initialBackoffMs
+                : getRetryExecutor().getInitialBackoffMs();
+    }
+
+    @JsonProperty(FIELD_MAX_BACKOFF_MS)
+    public long getMaxBackoffMs() {
+        return maxBackoffMs != null ? maxBackoffMs : getRetryExecutor().getMaxBackoffMs();
+    }
+
+    /**
+     * Get or create the retry executor.
+     *
+     * @return The retry executor
+     */
+    @JsonIgnore
+    private synchronized RetryExecutor getRetryExecutor() {
+        if (retryExecutor == null) {
+            RetryExecutor.Builder builder = RetryExecutor.builder();
+            if (maxRetries != null) {
+                builder.maxRetries(maxRetries);
+            }
+            if (initialBackoffMs != null) {
+                builder.initialBackoffMs(initialBackoffMs);
+            }
+            if (maxBackoffMs != null) {
+                builder.maxBackoffMs(maxBackoffMs);
+            }
+            retryExecutor = builder.build();
+        }
+        return retryExecutor;
+    }
+
     /**
      * Get or create a synchronized MCP client.
      *
@@ -200,7 +303,7 @@ public class MCPServer extends Resource {
     @JsonIgnore
     private synchronized McpSyncClient getClient() {
         if (client == null) {
-            client = createClient();
+            client = getRetryExecutor().execute(this::createClient, "createClient");
         }
         return client;
     }
@@ -258,27 +361,49 @@ public class MCPServer extends Resource {
     }
 
     /**
+     * Check if the MCP server supports prompts based on its declared capabilities.
+     *
+     * @return true if the server declared prompt capabilities during initialization
+     */
+    public boolean supportsPrompts() {
+        try {
+            McpSyncClient mcpClient = getClient();
+            McpSchema.ServerCapabilities caps = mcpClient.getServerCapabilities();
+            return caps != null && caps.prompts() != null;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * List available tools from the MCP server.
      *
      * @return List of MCPTool instances
      */
     public List<MCPTool> listTools() {
-        McpSyncClient mcpClient = getClient();
-        McpSchema.ListToolsResult toolsResult = mcpClient.listTools();
+        return getRetryExecutor()
+                .execute(
+                        () -> {
+                            McpSyncClient mcpClient = getClient();
+                            McpSchema.ListToolsResult toolsResult = mcpClient.listTools();
 
-        List<MCPTool> tools = new ArrayList<>();
-        for (McpSchema.Tool toolData : toolsResult.tools()) {
-            ToolMetadata metadata =
-                    new ToolMetadata(
-                            toolData.name(),
-                            toolData.description() != null ? toolData.description() : "",
-                            serializeInputSchema(toolData.inputSchema()));
+                            List<MCPTool> tools = new ArrayList<>();
+                            for (McpSchema.Tool toolData : toolsResult.tools()) {
+                                ToolMetadata metadata =
+                                        new ToolMetadata(
+                                                toolData.name(),
+                                                toolData.description() != null
+                                                        ? toolData.description()
+                                                        : "",
+                                                serializeInputSchema(toolData.inputSchema()));
 
-            MCPTool tool = new MCPTool(metadata, this);
-            tools.add(tool);
-        }
+                                MCPTool tool = new MCPTool(metadata, this);
+                                tools.add(tool);
+                            }
 
-        return tools;
+                            return tools;
+                        },
+                        "listTools");
     }
 
     /**
@@ -320,18 +445,24 @@ public class MCPServer extends Resource {
      * @return The result as a list of content items
      */
     public List<Object> callTool(String toolName, Map<String, Object> arguments) {
-        McpSyncClient mcpClient = getClient();
-        McpSchema.CallToolRequest request =
-                new McpSchema.CallToolRequest(
-                        toolName, arguments != null ? arguments : new HashMap<>());
-        McpSchema.CallToolResult result = mcpClient.callTool(request);
+        return getRetryExecutor()
+                .execute(
+                        () -> {
+                            McpSyncClient mcpClient = getClient();
+                            McpSchema.CallToolRequest request =
+                                    new McpSchema.CallToolRequest(
+                                            toolName,
+                                            arguments != null ? arguments : new HashMap<>());
+                            McpSchema.CallToolResult result = mcpClient.callTool(request);
 
-        List<Object> content = new ArrayList<>();
-        for (var item : result.content()) {
-            content.add(MCPContentExtractor.extractContentItem(item));
-        }
+                            List<Object> content = new ArrayList<>();
+                            for (var item : result.content()) {
+                                content.add(MCPContentExtractor.extractContentItem(item));
+                            }
 
-        return content;
+                            return content;
+                        },
+                        "callTool:" + toolName);
     }
 
     /**
@@ -340,27 +471,42 @@ public class MCPServer extends Resource {
      * @return List of MCPPrompt instances
      */
     public List<MCPPrompt> listPrompts() {
-        McpSyncClient mcpClient = getClient();
-        McpSchema.ListPromptsResult promptsResult = mcpClient.listPrompts();
-
-        List<MCPPrompt> prompts = new ArrayList<>();
-        for (McpSchema.Prompt promptData : promptsResult.prompts()) {
-            Map<String, MCPPrompt.PromptArgument> argumentsMap = new HashMap<>();
-            if (promptData.arguments() != null) {
-                for (var arg : promptData.arguments()) {
-                    argumentsMap.put(
-                            arg.name(),
-                            new MCPPrompt.PromptArgument(
-                                    arg.name(), arg.description(), arg.required()));
-                }
-            }
-
-            MCPPrompt prompt =
-                    new MCPPrompt(promptData.name(), promptData.description(), argumentsMap, this);
-            prompts.add(prompt);
+        if (!supportsPrompts()) {
+            return Collections.emptyList();
         }
+        return getRetryExecutor()
+                .execute(
+                        () -> {
+                            McpSyncClient mcpClient = getClient();
+                            McpSchema.ListPromptsResult promptsResult = mcpClient.listPrompts();
 
-        return prompts;
+                            List<MCPPrompt> prompts = new ArrayList<>();
+                            for (McpSchema.Prompt promptData : promptsResult.prompts()) {
+                                Map<String, MCPPrompt.PromptArgument> argumentsMap =
+                                        new HashMap<>();
+                                if (promptData.arguments() != null) {
+                                    for (var arg : promptData.arguments()) {
+                                        argumentsMap.put(
+                                                arg.name(),
+                                                new MCPPrompt.PromptArgument(
+                                                        arg.name(),
+                                                        arg.description(),
+                                                        arg.required()));
+                                    }
+                                }
+
+                                MCPPrompt prompt =
+                                        new MCPPrompt(
+                                                promptData.name(),
+                                                promptData.description(),
+                                                argumentsMap,
+                                                this);
+                                prompts.add(prompt);
+                            }
+
+                            return prompts;
+                        },
+                        "listPrompts");
     }
 
     /**
@@ -371,22 +517,29 @@ public class MCPServer extends Resource {
      * @return List of chat messages
      */
     public List<ChatMessage> getPrompt(String name, Map<String, Object> arguments) {
-        McpSyncClient mcpClient = getClient();
-        McpSchema.GetPromptRequest request =
-                new McpSchema.GetPromptRequest(
-                        name, arguments != null ? arguments : new HashMap<>());
-        McpSchema.GetPromptResult result = mcpClient.getPrompt(request);
+        return getRetryExecutor()
+                .execute(
+                        () -> {
+                            McpSyncClient mcpClient = getClient();
+                            McpSchema.GetPromptRequest request =
+                                    new McpSchema.GetPromptRequest(
+                                            name, arguments != null ? arguments : new HashMap<>());
+                            McpSchema.GetPromptResult result = mcpClient.getPrompt(request);
 
-        List<ChatMessage> chatMessages = new ArrayList<>();
-        for (var message : result.messages()) {
-            if (message.content() instanceof McpSchema.TextContent) {
-                var textContent = (McpSchema.TextContent) message.content();
-                MessageRole role = MessageRole.valueOf(message.role().name().toUpperCase());
-                chatMessages.add(new ChatMessage(role, textContent.text()));
-            }
-        }
+                            List<ChatMessage> chatMessages = new ArrayList<>();
+                            for (var message : result.messages()) {
+                                if (message.content() instanceof McpSchema.TextContent) {
+                                    var textContent = (McpSchema.TextContent) message.content();
+                                    MessageRole role =
+                                            MessageRole.valueOf(
+                                                    message.role().name().toUpperCase());
+                                    chatMessages.add(new ChatMessage(role, textContent.text()));
+                                }
+                            }
 
-        return chatMessages;
+                            return chatMessages;
+                        },
+                        "getPrompt:" + name);
     }
 
     /** Close the MCP client and clean up resources. */
@@ -420,6 +573,9 @@ public class MCPServer extends Resource {
         if (o == null || getClass() != o.getClass()) return false;
         MCPServer that = (MCPServer) o;
         return timeoutSeconds == that.timeoutSeconds
+                && getMaxRetries() == that.getMaxRetries()
+                && getInitialBackoffMs() == that.getInitialBackoffMs()
+                && getMaxBackoffMs() == that.getMaxBackoffMs()
                 && Objects.equals(endpoint, that.endpoint)
                 && Objects.equals(headers, that.headers)
                 && Objects.equals(auth, that.auth);
@@ -427,7 +583,14 @@ public class MCPServer extends Resource {
 
     @Override
     public int hashCode() {
-        return Objects.hash(endpoint, headers, timeoutSeconds, auth);
+        return Objects.hash(
+                endpoint,
+                headers,
+                timeoutSeconds,
+                auth,
+                getMaxRetries(),
+                getInitialBackoffMs(),
+                getMaxBackoffMs());
     }
 
     @Override

@@ -18,10 +18,12 @@
 """Tests for durable execution helper functions."""
 
 import cloudpickle
+import pytest
 
-from flink_agents.runtime.flink_runner_context import (
+from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
+    _validate_reconciler_callable,
 )
 
 
@@ -46,6 +48,22 @@ class SampleClass:
     def class_method(cls, x: int) -> int:
         """A class method."""
         return x * 4
+
+
+class ReconcilerCallables:
+    """Helpers for reconciler callable validation tests."""
+
+    def __init__(self, prefix: str) -> None:
+        """Store a prefix used by the helper callables."""
+        self.prefix = prefix
+
+    def bound_no_arg(self) -> str:
+        """Return a bound zero-argument reconciler result."""
+        return f"bound:{self.prefix}"
+
+    def requires_arg(self, value: int) -> str:
+        """Require an argument so validation can reject the callable."""
+        return f"{self.prefix}:{value}"
 
 
 def test_compute_function_id_for_function() -> None:
@@ -125,6 +143,50 @@ def test_compute_args_digest_kwargs_vs_args() -> None:
     digest1 = _compute_args_digest((1,), {"y": 2})
     digest2 = _compute_args_digest((1, 2), {})
     assert digest1 != digest2
+
+
+def test_validate_reconciler_callable_accepts_none() -> None:
+    """Allow omitting the reconciler callable."""
+    assert _validate_reconciler_callable(None) is None
+
+
+def test_validate_reconciler_callable_accepts_zero_arg_function() -> None:
+    """Accept a zero-argument reconciler function."""
+
+    def reconciler() -> str:
+        return "ok"
+
+    validated = _validate_reconciler_callable(reconciler)
+
+    assert validated is reconciler
+    assert validated() == "ok"
+
+
+def test_validate_reconciler_callable_accepts_bound_zero_arg_method() -> None:
+    """Accept a bound reconciler method with no remaining arguments."""
+    callables = ReconcilerCallables("client")
+    bound_method = callables.bound_no_arg
+
+    validated = _validate_reconciler_callable(bound_method)
+
+    assert validated is bound_method
+    assert validated() == "bound:client"
+
+
+def test_validate_reconciler_callable_requires_callable() -> None:
+    """Reject non-callable reconciler values."""
+    with pytest.raises(TypeError, match="reconciler must be callable"):
+        _validate_reconciler_callable(1)  # type: ignore[arg-type]
+
+
+def test_validate_reconciler_callable_requires_zero_args() -> None:
+    """Reject reconciler callables that require arguments."""
+    callables = ReconcilerCallables("client")
+
+    with pytest.raises(
+        TypeError, match="reconciler must be a callable that takes no arguments"
+    ):
+        _validate_reconciler_callable(callables.requires_arg)
 
 
 def test_cloudpickle_serialization() -> None:
@@ -216,4 +278,3 @@ def test_cloudpickle_none_exception_message() -> None:
     assert isinstance(deserialized, RuntimeError)
     # str() of an exception with None message is "None"
     assert str(deserialized) == "None"
-

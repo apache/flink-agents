@@ -18,16 +18,19 @@
 import json
 import typing
 from inspect import signature
-from typing import Any, Callable, Optional, Type, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Type, Union
 
 from docstring_parser import parse
 from pydantic import BaseModel, create_model
 from pydantic.fields import Field, FieldInfo
 
 
-def create_schema_from_function(name: str, func: Callable) -> Type[BaseModel]:
+def create_schema_from_function(
+    name: str, func: Callable, injected_args: Iterable[str] | None = None
+) -> Type[BaseModel]:
     """Create a pydantic schema from a function's signature."""
     docstr = func.__doc__
+    injected = set(injected_args or ())
 
     docstr = parse(docstr)
     doc_params = {}
@@ -37,6 +40,8 @@ def create_schema_from_function(name: str, func: Callable) -> Type[BaseModel]:
     fields = {}
     params = signature(func).parameters
     for param_name in params:
+        if param_name in injected:
+            continue
         param_type = params[param_name].annotation
         param_default = params[param_name].default
         description = doc_params.get(param_name)
@@ -127,7 +132,7 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
             if type(None) in types:
                 types.remove(type(None))
                 if len(types) == 1:
-                    return typing.Optional[types[0]] # noqa: UP007
+                    return typing.Optional[types[0]]  # noqa: UP007
                 return Optional[tuple(types)]  # # noqa: UP007
             else:
                 return Union[tuple(types)]  # noqa: UP007
@@ -178,19 +183,23 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
 
     return create_model(name, **main_fields, __doc__=schema.get("description", ""))
 
-def create_model_from_java_tool_schema_str(name: str, schema_str: str) -> type[BaseModel]:
+
+def create_model_from_java_tool_schema_str(
+    name: str, schema_str: str
+) -> type[BaseModel]:
     """Create Pydantic model from a java tool input schema."""
     json_schema = json.loads(schema_str)
     properties = json_schema["properties"]
 
     fields = {}
     for param_name in properties:
-        description = properties[param_name]["description"]
+        description = properties[param_name].get("description")
         if description is None:
             description = f"Parameter: {param_name}"
         type = TYPE_MAPPING.get(properties[param_name]["type"])
         fields[param_name] = (type, FieldInfo(description=description))
     return create_model(name, **fields)
+
 
 def create_java_tool_schema_str_from_model(model: type[BaseModel]) -> str:
     """Create a java tool input schema string from a Pydantic model.
@@ -206,6 +215,7 @@ def create_java_tool_schema_str_from_model(model: type[BaseModel]) -> str:
     REVERSE_TYPE_MAPPING = {v: k for k, v in TYPE_MAPPING.items()}
 
     properties = {}
+    required = []
     for field_name, field_info in model.model_fields.items():
         field_type = field_info.annotation
 
@@ -224,7 +234,11 @@ def create_java_tool_schema_str_from_model(model: type[BaseModel]) -> str:
             description = f"Parameter: {field_name}"
 
         properties[field_name] = {"type": json_type, "description": description}
+        if field_info.is_required():
+            required.append(field_name)
 
-    json_schema = {"properties": properties}
+    json_schema: Dict[str, Any] = {"properties": properties}
+    if required:
+        json_schema["required"] = required
 
     return json.dumps(json_schema, ensure_ascii=False, indent=2)

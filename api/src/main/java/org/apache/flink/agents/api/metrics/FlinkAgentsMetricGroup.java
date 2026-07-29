@@ -38,6 +38,15 @@ public interface FlinkAgentsMetricGroup {
     FlinkAgentsMetricGroup getSubGroup(String name);
 
     /**
+     * Create or retrieve a key-value sub-metric group.
+     *
+     * @param key The key of the metric group variable.
+     * @param value The value of the metric group variable.
+     * @return the sub-metric group instance.
+     */
+    FlinkAgentsMetricGroup getSubGroup(String key, String value);
+
+    /**
      * Create or retrieve a gauge with the given name.
      *
      * <p>Note: We use StringGauge here to ensure consistency across Python and Java interactions,

@@ -58,10 +58,10 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
     __client: Client = None
 
     def __init__(
-            self,
-            base_url: str = "http://localhost:11434",
-            request_timeout: float | None = DEFAULT_REQUEST_TIMEOUT,
-            **kwargs: Any,
+        self,
+        base_url: str = "http://localhost:11434",
+        request_timeout: float | None = DEFAULT_REQUEST_TIMEOUT,
+        **kwargs: Any,
     ) -> None:
         """Init method."""
         super().__init__(
@@ -77,7 +77,9 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
             self.__client = Client(host=self.base_url, timeout=self.request_timeout)
         return self.__client
 
-    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text query."""
         # Extract specific parameters
         model = kwargs.pop("model")
@@ -117,6 +119,7 @@ class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
         Additional model parameters for the Ollama embeddings API,
         e.g. num_ctx, temperature, etc.
     """
+
     truncate: bool = Field(
         default=True,
         description="Controls what happens if input text exceeds model's maximum length (default: True).",
@@ -124,7 +127,7 @@ class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
     keep_alive: float | str | None = Field(
         default="5m",
         description="Controls how long the model will stay loaded into memory following the "
-                    "request(default: 5m)",
+        "request(default: 5m)",
     )
     additional_kwargs: Dict[str, Any] = Field(
         default_factory=dict,
@@ -132,14 +135,14 @@ class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
     )
 
     def __init__(
-            self,
-            *,
-            connection: str,
-            model: str,
-            truncate: bool = True,
-            additional_kwargs: Dict[str, Any] | None = None,
-            keep_alive: float | str | None = None,
-            **kwargs: Any,
+        self,
+        *,
+        connection: str,
+        model: str,
+        truncate: bool = True,
+        additional_kwargs: Dict[str, Any] | None = None,
+        keep_alive: float | str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Init method."""
         if additional_kwargs is None:

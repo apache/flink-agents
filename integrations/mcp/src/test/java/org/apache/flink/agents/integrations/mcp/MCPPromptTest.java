@@ -182,4 +182,14 @@ class MCPPromptTest {
         assertThat(prompt.getPromptArguments()).hasSize(1);
         assertThat(prompt.getPromptArguments()).doesNotContainKey("arg3");
     }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("Test PromptArgument defaults required to false when null")
+    void testPromptArgumentDefaultsRequiredToFalseWhenNull() {
+        MCPPrompt.PromptArgument arg = new MCPPrompt.PromptArgument("name", "Name", null);
+
+        // Required should default to false when null
+        assertThat(arg.isRequired()).isFalse();
+    }
 }

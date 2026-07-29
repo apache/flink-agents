@@ -31,7 +31,8 @@ class JavaChatModelConnection(BaseChatModelConnection):
     unlike JavaChatModelSetup, it does not provide direct chat functionality in Python.
     """
 
-    java_class_name: str=""
+    java_class_name: str = ""
+
 
 @java_resource
 class JavaChatModelSetup(BaseChatModelSetup):
@@ -43,4 +44,4 @@ class JavaChatModelSetup(BaseChatModelSetup):
     implementation.
     """
 
-    java_class_name: str=""
+    java_class_name: str = ""

@@ -19,6 +19,7 @@ package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
@@ -45,6 +46,17 @@ public class PythonMCPPrompt extends Prompt implements PythonResourceWrapper {
     @Override
     public Object getPythonResource() {
         return prompt;
+    }
+
+    @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
+    @Override
+    public void setMetricGroup(FlinkAgentsMetricGroup metricGroup) {
+        super.setMetricGroup(metricGroup);
+        setPythonResourceMetricGroup(metricGroup);
     }
 
     public String getName() {

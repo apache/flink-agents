@@ -19,6 +19,9 @@
 package org.apache.flink.agents.integrations.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.integrations.mcp.auth.ApiKeyAuth;
 import org.apache.flink.agents.integrations.mcp.auth.BasicAuth;
@@ -30,6 +33,7 @@ import org.junit.jupiter.api.condition.JRE;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES;
@@ -68,6 +72,28 @@ class MCPServerTest {
         assertThat(server.getHeaders()).isEmpty();
         assertThat(server.getTimeoutSeconds()).isEqualTo(30);
         assertThat(server.getAuth()).isNull();
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("Read timeout from ResourceDescriptor")
+    void testTimeoutFromResourceDescriptor() {
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
+                        .addInitialArgument("endpoint", DEFAULT_ENDPOINT)
+                        .addInitialArgument("timeout", 60)
+                        .build();
+
+        MCPServer server =
+                new MCPServer(
+                        descriptor,
+                        ResourceContext.fromGetResource(
+                                (name, type) -> {
+                                    throw new UnsupportedOperationException(
+                                            "No dependencies expected");
+                                }));
+
+        assertThat(server.getTimeoutSeconds()).isEqualTo(60);
     }
 
     @Test
@@ -242,5 +268,42 @@ class MCPServerTest {
         // Should not throw any exception
         server.close();
         server.close(); // Calling twice should be safe
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("Default retry configuration")
+    void testDefaultRetryConfiguration() {
+        MCPServer server = MCPServer.builder(DEFAULT_ENDPOINT).build();
+
+        assertThat(server.getMaxRetries()).isEqualTo(3);
+        assertThat(server.getInitialBackoffMs()).isEqualTo(100);
+        assertThat(server.getMaxBackoffMs()).isEqualTo(10000);
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("Custom retry configuration via builder")
+    void testCustomRetryConfiguration() {
+        MCPServer server =
+                MCPServer.builder(DEFAULT_ENDPOINT)
+                        .maxRetries(5)
+                        .initialBackoff(Duration.ofMillis(200))
+                        .maxBackoff(Duration.ofMillis(5000))
+                        .build();
+
+        assertThat(server.getMaxRetries()).isEqualTo(5);
+        assertThat(server.getInitialBackoffMs()).isEqualTo(200);
+        assertThat(server.getMaxBackoffMs()).isEqualTo(5000);
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    @DisplayName("listPrompts returns empty list when server does not support prompts")
+    void testListPromptsReturnsEmptyWhenNotSupported() {
+        MCPServer server = MCPServer.builder(DEFAULT_ENDPOINT).build();
+
+        List<MCPPrompt> prompts = server.listPrompts();
+        assertThat(prompts).isEmpty();
     }
 }

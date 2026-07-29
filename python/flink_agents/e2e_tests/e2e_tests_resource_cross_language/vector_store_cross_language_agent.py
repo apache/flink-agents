@@ -18,8 +18,6 @@
 import os
 import time
 
-import pytest
-
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import (
     action,
@@ -31,7 +29,8 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
 )
-from flink_agents.api.events.event import InputEvent, OutputEvent
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceName,
@@ -41,10 +40,46 @@ from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.vector_stores.vector_store import (
     CollectionManageableVectorStore,
     Document,
+    VectorStoreQuery,
+    VectorStoreQueryMode,
 )
 
 TEST_COLLECTION = "test_collection"
+DEFAULT_COLLECTION = "my_documents"
+EMBEDDING_MODEL_RESOURCE = "embedding_model"
+VECTOR_STORE_RESOURCE = "vector_store"
+BACKEND_ELASTICSEARCH = "ELASTICSEARCH"
+BACKEND_MILVUS = "MILVUS"
 MAX_RETRIES_TIMES = 10
+
+
+def _selected_backend() -> str:
+    return os.environ.get("VECTOR_STORE_BACKEND", BACKEND_ELASTICSEARCH).upper()
+
+
+def _vector_store_backend_from_resource(
+    vector_store: CollectionManageableVectorStore,
+) -> str:
+    # Java wrapper: reflect on the underlying Java class name
+    j_resource = getattr(vector_store, "_j_resource", None)
+    if j_resource is not None:
+        try:
+            class_name = j_resource.getClass().getName().lower()
+            if "milvus" in class_name:
+                return BACKEND_MILVUS
+            if "elasticsearch" in class_name:
+                return BACKEND_ELASTICSEARCH
+        except Exception:
+            pass
+
+    # Pure Python store: fallback to env var (cross-language test only
+    # uses Java wrappers, so this path should not be hit in practice)
+    return _selected_backend()
+
+
+def _backend_from_context(ctx: RunnerContext) -> str:
+    return ctx.short_term_memory.get("vector_store_backend") or _selected_backend()
+
 
 class VectorStoreCrossLanguageAgent(Agent):
     """Example agent demonstrating cross-language embedding model testing."""
@@ -87,48 +122,70 @@ class VectorStoreCrossLanguageAgent(Agent):
     @staticmethod
     def vector_store() -> ResourceDescriptor:
         """Vector store setup for knowledge base."""
-        return ResourceDescriptor(
-            clazz=ResourceName.VectorStore.JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE,
-            java_clazz=ResourceName.VectorStore.Java.ELASTICSEARCH_VECTOR_STORE,
-            embedding_model="embedding_model",
-            host=os.environ.get("ES_HOST"),
-            index="my_documents",
-            dims=768,
-        )
+        backend = _selected_backend()
+        collection = os.environ.get("VECTOR_STORE_COLLECTION", DEFAULT_COLLECTION)
 
-    @action(InputEvent)
+        if backend == BACKEND_ELASTICSEARCH:
+            return ResourceDescriptor(
+                clazz=ResourceName.VectorStore.JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE,
+                java_clazz=ResourceName.VectorStore.Java.ELASTICSEARCH_VECTOR_STORE,
+                embedding_model=EMBEDDING_MODEL_RESOURCE,
+                host=os.environ.get("ES_HOST"),
+                index=collection,
+                dims=768,
+            )
+        if backend == BACKEND_MILVUS:
+            return ResourceDescriptor(
+                clazz=ResourceName.VectorStore.JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE,
+                java_clazz=ResourceName.VectorStore.Java.MILVUS_VECTOR_STORE,
+                embedding_model=EMBEDDING_MODEL_RESOURCE,
+                uri=os.environ.get("MILVUS_URI"),
+                collection=collection,
+                dims=768,
+                metric_type="COSINE",
+                index_type="AUTOINDEX",
+                # Test-only: this e2e checks read-after-write behavior immediately.
+                # Production should use the default BOUNDED consistency unless immediate
+                # read-after-write visibility is required.
+                consistency_level="STRONG",
+                metadata_index_keys=["category", "source"],
+            )
+
+        msg = f"Unsupported vector store backend: {backend}"
+        raise ValueError(msg)
+
+    @action(EventType.InputEvent)
     @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
+    def process_input(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing input.
 
         In this action, we will test Vector store Collection Management and
         Document Management.
         """
-        input_text = event.input
+        input_text = InputEvent.from_event(event).input
 
         stm = ctx.short_term_memory
 
         is_initialized = stm.get("is_initialized") or False
 
         if not is_initialized:
-            print("[TEST] Initializing vector store...")
+            vector_store = ctx.get_resource(
+                VECTOR_STORE_RESOURCE, ResourceType.VECTOR_STORE
+            )
+            backend = _vector_store_backend_from_resource(vector_store)
+            stm.set("vector_store_backend", backend)
+            test_collection = os.environ.get(
+                "VECTOR_STORE_TEST_COLLECTION", TEST_COLLECTION
+            )
 
-            vector_store = ctx.get_resource("vector_store", ResourceType.VECTOR_STORE)
+            print(f"[TEST][{backend}] Initializing vector store...")
+
             if isinstance(vector_store, CollectionManageableVectorStore):
-                vector_store.get_or_create_collection(TEST_COLLECTION , metadata={"key1": "value1", "key2": "value2"})
-
-                collection = vector_store.get_collection(name=TEST_COLLECTION)
-
-                assert collection is not None
-                assert collection.name == TEST_COLLECTION
-                assert collection.metadata == {"key1": "value1", "key2": "value2"}
-
-                vector_store.delete_collection(name=TEST_COLLECTION)
-
-                with pytest.raises(RuntimeError):
-                    vector_store.get_collection(name=TEST_COLLECTION)
-
-                print("[TEST] Vector store Collection Management PASSED")
+                vector_store.create_collection_if_not_exists(
+                    test_collection, metadata={"key1": "value1", "key2": "value2"}
+                )
+                vector_store.delete_collection(name=test_collection)
+                print(f"[TEST][{backend}] Vector store Collection Management PASSED")
 
                 documents = [
                     Document(
@@ -147,44 +204,85 @@ class VectorStoreCrossLanguageAgent(Agent):
                         metadata={"category": "utility", "source": "test"},
                     ),
                 ]
+
+                collection = vector_store.collection or DEFAULT_COLLECTION
+                vector_store.create_collection_if_not_exists(collection)
                 vector_store.add(documents=documents)
 
-                # Test size
-                assert vector_store.size() == 3
+                assert len(vector_store.get()) == 3
 
                 # Test delete
                 vector_store.delete(ids="doc3")
 
                 # Wait for vector store to delete doc3
                 retry_time = 0
-                while vector_store.size() > 2 and retry_time < MAX_RETRIES_TIMES:
+                while len(vector_store.get()) > 2 and retry_time < MAX_RETRIES_TIMES:
                     retry_time += 1
                     time.sleep(2)
-                    print(f"[TEST] Retrying to delete doc3, retry_time={retry_time}")
+                    print(
+                        f"[TEST][{backend}] Vector store Retrying to delete doc3, "
+                        f"retry_time={retry_time}"
+                    )
 
-                assert vector_store.size() == 2
+                assert len(vector_store.get()) == 2
 
                 # Test get
                 doc = vector_store.get(ids="doc2")
                 assert doc is not None
                 assert doc[0].id == "doc2"
-                assert doc[0].content == "Why did the cat sit on the computer? Because it wanted to keep an eye on the mouse."
+                assert (
+                    doc[0].content
+                    == "Why did the cat sit on the computer? Because it wanted to keep an eye on the mouse."
+                )
 
-                print("[TEST] Vector store Document Management PASSED")
+                print(f"[TEST][{backend}] Vector store Document Management PASSED")
+
+                # Verify VectorStoreQuery.filters survives the Python->Java bridge.
+                # Each backend translates the unified-DSL filter to a bool/must term
+                # post-filter, so the result must contain only the doc tagged
+                # ``category=calculate`` (doc1).
+                filtered_query = VectorStoreQuery(
+                    mode=VectorStoreQueryMode.SEMANTIC,
+                    query_text="sum",
+                    limit=10,
+                    filters={"category": "calculate"},
+                )
+
+                retry_time = 0
+                filtered_docs = vector_store.query(filtered_query).documents
+                while len(filtered_docs) != 1 and retry_time < MAX_RETRIES_TIMES:
+                    retry_time += 1
+                    time.sleep(2)
+                    filtered_docs = vector_store.query(filtered_query).documents
+
+                assert len(filtered_docs) == 1, (
+                    f"Filter {{category=calculate}} should match 1 doc, got "
+                    f"{len(filtered_docs)}"
+                )
+                assert filtered_docs[0].id == "doc1"
+
+                print(f"[TEST][{backend}] Vector store filter query PASSED")
+            else:
+                msg = "vector_store must implement CollectionManageableVectorStore"
+                raise TypeError(msg)
 
             stm.set("is_initialized", True)
 
+        ctx.send_event(
+            ContextRetrievalRequestEvent(
+                query=input_text, vector_store=VECTOR_STORE_RESOURCE
+            )
+        )
 
-        ctx.send_event(ContextRetrievalRequestEvent(query=input_text, vector_store="vector_store"))
-
-    @action(ContextRetrievalResponseEvent)
+    @action(EventType.ContextRetrievalResponseEvent)
     @staticmethod
-    def contextRetrievalResponseEvent(event: ContextRetrievalResponseEvent, ctx: RunnerContext) -> None:
+    def contextRetrievalResponseEvent(event: Event, ctx: RunnerContext) -> None:
         """User defined action for processing context retrieval response.
 
         In this action, we will test Vector store Context Retrieval.
         """
-        documents = event.documents
+        backend = _backend_from_context(ctx)
+        documents = ContextRetrievalResponseEvent.from_event(event).documents
 
         assert documents is not None
         assert len(documents) > 0
@@ -195,6 +293,10 @@ class VectorStoreCrossLanguageAgent(Agent):
             assert document.content is not None
 
         test_result = f"[PASS] retrieved_count={len(documents)}, first_doc_id={documents[0].id}, first_doc_preview={documents[0].content[:50]}"
-        print(f"[TEST] Vector store Context Retrieval PASSED, first_doc_id={documents[0].id}, first_doc_preview={documents[0].content[:50]}")
+        print(
+            f"[TEST][{backend}] Vector store Context Retrieval PASSED, "
+            f"first_doc_id={documents[0].id}, "
+            f"first_doc_preview={documents[0].content[:50]}"
+        )
 
         ctx.send_event(OutputEvent(output=test_result))

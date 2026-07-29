@@ -138,7 +138,7 @@ under the License.
                 </executions>
             </plugin>
 
-            <!-- Extend parent's shade plugin with flink-1.20 specific exclusions -->
+            <!-- Extend parent's shade plugin with flink-1.20 specific configurations -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -146,17 +146,43 @@ under the License.
                     <execution>
                         <id>shade-flink-agents</id>
                         <configuration>
-                            <!-- Append flink-1.20 specific filter to parent's filters -->
-                            <filters combine.children="append">
-                                <!-- Exclude the conflict classes of the runtime module, using version flink-1.20. -->
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                        </configuration>
+                    </execution>
+                    <!-- Build thin jar for Python wheel (only flink-agents code) -->
+                    <execution>
+                        <id>shade-flink-agents-thin</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadeTestJar>false</shadeTestJar>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>thin</shadedClassifierName>
+                            <!-- Only include flink-agents artifacts -->
+                            <artifactSet>
+                                <includes>
+                                    <include>org.apache.flink:flink-agents-*</include>
+                                </includes>
+                            </artifactSet>
+                            <filters>
+                                <!-- Only include flink-agents classes -->
                                 <filter>
-                                    <artifact>org.apache.flink:flink-agents-runtime</artifact>
-                                    <excludes>
-                                        <exclude>org/apache/flink/agents/runtime/operator/OperatorUtils.class</exclude>
-                                    </excludes>
+                                    <artifact>*:*</artifact>
+                                    <includes>
+                                        <include>org/apache/flink/agents/**</include>
+                                    </includes>
                                 </filter>
                             </filters>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <manifestEntries>
+                                        <Multi-Release>true</Multi-Release>
+                                    </manifestEntries>
+                                </transformer>
+                            </transformers>
                         </configuration>
                     </execution>
                 </executions>

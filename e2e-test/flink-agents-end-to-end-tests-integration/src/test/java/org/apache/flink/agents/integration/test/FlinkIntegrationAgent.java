@@ -18,6 +18,7 @@
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
@@ -61,9 +62,12 @@ public class FlinkIntegrationAgent {
 
     /** Custom event type for internal agent communication. */
     public static class ProcessedEvent extends Event {
+        public static final String EVENT_TYPE = "ProcessedEvent";
+
         private final MemoryRef itemRef;
 
         public ProcessedEvent(MemoryRef itemRef) {
+            super(EVENT_TYPE);
             this.itemRef = itemRef;
         }
 
@@ -86,9 +90,9 @@ public class FlinkIntegrationAgent {
          * @param event The input event to process
          * @param ctx The runner context for sending events
          */
-        @Action(listenEvents = {InputEvent.class})
+        @Action(EventType.InputEvent)
         public static void processInput(Event event, RunnerContext ctx) throws Exception {
-            InputEvent inputEvent = (InputEvent) event;
+            InputEvent inputEvent = InputEvent.fromEvent(event);
             ItemData item = (ItemData) inputEvent.getInput();
 
             // Get short-term memory and update the visit counter for the current key.
@@ -111,7 +115,7 @@ public class FlinkIntegrationAgent {
          * @param event The processed event
          * @param ctx The runner context for sending events
          */
-        @Action(listenEvents = {ProcessedEvent.class})
+        @Action(ProcessedEvent.EVENT_TYPE)
         public static void generateOutput(Event event, RunnerContext ctx) throws Exception {
             ProcessedEvent processedEvent = (ProcessedEvent) event;
             MemoryRef itemRef = processedEvent.getItemRef();
@@ -140,9 +144,9 @@ public class FlinkIntegrationAgent {
          * @param event The input event to process
          * @param ctx The runner context for sending events
          */
-        @Action(listenEvents = {InputEvent.class})
+        @Action(EventType.InputEvent)
         public static void processInput(Event event, RunnerContext ctx) throws Exception {
-            InputEvent inputEvent = (InputEvent) event;
+            InputEvent inputEvent = InputEvent.fromEvent(event);
             Object input = inputEvent.getInput();
 
             // Get short-term memory and update the visit counter for the current key.
@@ -165,7 +169,7 @@ public class FlinkIntegrationAgent {
          * @param event The processed event
          * @param ctx The runner context for sending events
          */
-        @Action(listenEvents = {ProcessedEvent.class})
+        @Action(ProcessedEvent.EVENT_TYPE)
         public static void generateOutput(Event event, RunnerContext ctx) throws Exception {
             ProcessedEvent processedEvent = (ProcessedEvent) event;
             MemoryRef inputRef = processedEvent.getItemRef();

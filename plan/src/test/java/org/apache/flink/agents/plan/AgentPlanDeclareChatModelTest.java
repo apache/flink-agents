@@ -22,7 +22,7 @@ package org.apache.flink.agents.plan;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
@@ -32,6 +32,7 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
@@ -43,7 +44,6 @@ import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -52,10 +52,13 @@ class AgentPlanDeclareChatModelTest {
     private AgentPlan agentPlan;
 
     public static class MockChatModel extends BaseChatModelSetup {
-        public MockChatModel(
-                ResourceDescriptor descriptor,
-                BiFunction<String, ResourceType, Resource> getResource) {
-            super(descriptor, getResource);
+        public MockChatModel(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        @Override
+        public void open() {
+            // do nothing
         }
 
         @Override
@@ -82,7 +85,7 @@ class AgentPlanDeclareChatModelTest {
                     .build();
         }
 
-        @Action(listenEvents = {InputEvent.class})
+        @Action(EventType.InputEvent)
         public void onInput(Event e, RunnerContext ctx) {
             // no-op for this test; validates action registration signature
         }
@@ -91,6 +94,20 @@ class AgentPlanDeclareChatModelTest {
     @BeforeEach
     void setup() throws Exception {
         agentPlan = new AgentPlan(new ChatAgent());
+    }
+
+    /** Resolves a resource directly from its provider. */
+    private Resource resolveResource(String name, ResourceType type) throws Exception {
+        return agentPlan
+                .getResourceProviders()
+                .get(type)
+                .get(name)
+                .provide(
+                        ResourceContext.fromGetResource(
+                                (n, t) -> {
+                                    throw new UnsupportedOperationException(
+                                            "No dependencies expected");
+                                }));
     }
 
     @Test
@@ -107,8 +124,7 @@ class AgentPlanDeclareChatModelTest {
     @DisplayName("Retrieve chat model and invoke chat(Prompt)")
     void retrieveAndChat() throws Exception {
         BaseChatModelSetup model =
-                (BaseChatModelSetup)
-                        agentPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                (BaseChatModelSetup) resolveResource("testChatModel", ResourceType.CHAT_MODEL);
         assertNotNull(model);
 
         Prompt prompt = Prompt.fromText("Hello world");
@@ -126,7 +142,16 @@ class AgentPlanDeclareChatModelTest {
         AgentPlan restored = mapper.readValue(json, AgentPlan.class);
 
         BaseChatModelSetup model =
-                (BaseChatModelSetup) restored.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                (BaseChatModelSetup)
+                        restored.getResourceProviders()
+                                .get(ResourceType.CHAT_MODEL)
+                                .get("testChatModel")
+                                .provide(
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
         ChatMessage reply =
                 model.chat(Prompt.fromText("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
         assertEquals("ok:Hi", reply.getContent());
@@ -148,14 +173,23 @@ class AgentPlanDeclareChatModelTest {
         AgentPlan actualPlan = new AgentPlan(agent);
         BaseChatModelSetup actualChatModel =
                 (BaseChatModelSetup)
-                        actualPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                        actualPlan
+                                .getResourceProviders()
+                                .get(ResourceType.CHAT_MODEL)
+                                .get("testChatModel")
+                                .provide(
+                                        ResourceContext.fromGetResource(
+                                                (n, t) -> {
+                                                    throw new UnsupportedOperationException(
+                                                            "No dependencies expected");
+                                                }));
         BaseChatModelSetup expectedChatModel =
-                (BaseChatModelSetup)
-                        agentPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
+                (BaseChatModelSetup) resolveResource("testChatModel", ResourceType.CHAT_MODEL);
         Assertions.assertEquals(expectedChatModel.getClass(), actualChatModel.getClass());
-        Assertions.assertEquals(expectedChatModel.getConnection(), actualChatModel.getConnection());
+        Assertions.assertEquals(
+                expectedChatModel.getConnectionName(), actualChatModel.getConnectionName());
         Assertions.assertEquals(expectedChatModel.getModel(), actualChatModel.getModel());
         Assertions.assertEquals(expectedChatModel.getPrompt(), actualChatModel.getPrompt());
-        Assertions.assertEquals(expectedChatModel.getTools(), actualChatModel.getTools());
+        Assertions.assertEquals(expectedChatModel.getToolNames(), actualChatModel.getToolNames());
     }
 }

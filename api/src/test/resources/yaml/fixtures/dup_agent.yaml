@@ -1,0 +1,13 @@
+agents:
+  - name: dup
+    actions:
+      - name: increment
+        function: org.apache.flink.agents.api.yaml.LoaderTargets:increment
+        type: java
+        trigger_conditions: [input]
+  - name: dup
+    actions:
+      - name: decrement
+        function: org.apache.flink.agents.api.yaml.LoaderTargets:decrement
+        type: java
+        trigger_conditions: [input]

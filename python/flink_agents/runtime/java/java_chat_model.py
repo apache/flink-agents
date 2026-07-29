@@ -15,10 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.java_chat_model import (
     JavaChatModelConnection,
@@ -26,6 +27,9 @@ from flink_agents.api.chat_models.java_chat_model import (
 )
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool import Tool
+from flink_agents.runtime.java.java_resource_wrapper import (
+    set_java_resource_metric_group,
+)
 
 
 class JavaChatModelConnectionImpl(JavaChatModelConnection):
@@ -35,7 +39,6 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
     This class serves as a bridge between Python and Java chat model environments, but
     unlike JavaChatModelSetup, it does not provide direct chat functionality in Python.
     """
-
 
     _j_resource: Any
     _j_resource_adapter: Any
@@ -49,28 +52,42 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
             **kwargs: Additional keyword arguments
         """
         super().__init__(**kwargs)
-        self._j_resource=j_resource
-        self._j_resource_adapter=j_resource_adapter
+        self._j_resource = j_resource
+        self._j_resource_adapter = j_resource_adapter
+
+    @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
 
     @override
     def chat(
-            self,
-            messages: Sequence[ChatMessage],
-            tools: List[Tool] | None = None,
-            **kwargs: Any,
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
+        **kwargs: Any,
     ) -> ChatMessage:
-        """Chat method that throws UnsupportedOperationException.
+        """Chat by forwarding the request to the wrapped Java connection.
 
         This connection serves as a Java resource wrapper only.
         Chat operations should be performed on the Java side using the underlying Java
         chat model object.
+
+        A non-``None`` ``output_schema`` is rejected: only messages, tools and kwargs
+        cross to the Java three-argument ``chat``, so a schema forwarded here would be
+        dropped on the way. Declaring the parameter keeps a caller-supplied schema out
+        of ``**kwargs``, which crosses to Java as ``modelParams`` — a provider-facing
+        map, not a channel for framework execution metadata.
         """
+        self._reject_unsupported_output_schema(output_schema)
         java_messages = [
             self._j_resource_adapter.fromPythonChatMessage(message)
             for message in messages
         ]
         java_tools = [
-            self._j_resource_adapter.getResource(tool.name, ResourceType.TOOL.value) for tool in tools
+            self._j_resource_adapter.getResource(tool.name, ResourceType.TOOL.value)
+            for tool in tools
         ]
         j_response_message = self._j_resource.chat(java_messages, java_tools, kwargs)
 
@@ -106,12 +123,18 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
             j_resource_adapter: The Java resource adapter for method invocation
             **kwargs: Additional keyword arguments
         """
-        # connection is a required parameter for BaseChatModelSetup
+        # connection and model are required parameters for BaseChatModelSetup
         connection = kwargs.pop("connection", "")
-        super().__init__(connection = connection, **kwargs)
+        model = kwargs.pop("model", "")
+        super().__init__(connection=connection, model=model, **kwargs)
 
-        self._j_resource=j_resource
-        self._j_resource_adapter=j_resource_adapter
+        self._j_resource = j_resource
+        self._j_resource_adapter = j_resource_adapter
+
+    @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
 
     @property
     @override
@@ -124,17 +147,29 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
         return {}
 
     @override
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    def open(self) -> None:
+        """Open the java resource."""
+        self._j_resource.open()
+
+    @override
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
         """Execute chat conversation by delegating to Java implementation.
 
         1. Convert Python messages to Java format
-        2. Call Java chat method
+        2. Call Java chat method with prompt-template arguments
         3. Convert Java response back to Python format
 
         Parameters
         ----------
         messages : Sequence[ChatMessage]
             Input message sequence
+        prompt_args : Mapping[str, Any] | None
+            Prompt-template variables forwarded to the Java setup.
         **kwargs : Any
             Additional parameters passed to the model service
 
@@ -144,11 +179,17 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
             Model response message
         """
         # Convert Python messages to Java format
-        java_messages = [self._j_resource_adapter.fromPythonChatMessage(message) for message in messages]
-        j_response_message = self._j_resource.chat(java_messages, kwargs)
+        java_messages = [
+            self._j_resource_adapter.fromPythonChatMessage(message)
+            for message in messages
+        ]
+        j_response_message = self._j_resource.chat(
+            java_messages, prompt_args or {}, kwargs
+        )
 
         # Convert Java response back to Python format
         from flink_agents.runtime.python_java_utils import (
             from_java_chat_message,
         )
+
         return from_java_chat_message(j_response_message)

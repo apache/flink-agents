@@ -20,64 +20,145 @@ package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.util.Preconditions;
+
+import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 public abstract class BaseChatModelSetup extends Resource {
-    protected final String connection;
+    protected final String connectionName;
     protected String model;
     protected Object prompt;
-    protected List<String> tools;
+    protected List<String> toolNames;
+    @Nullable protected List<String> skills;
+    @Nullable protected String skillDiscoveryPrompt;
+    protected List<String> allowedCommands;
+    protected List<String> allowedScriptDirs;
+    protected StructuredOutputStrategy structuredOutputStrategy;
 
-    public BaseChatModelSetup(
-            ResourceDescriptor descriptor, BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
-        this.connection = descriptor.getArgument("connection");
+    @Nullable protected BaseChatModelConnection connection;
+    protected final List<Tool> tools = new ArrayList<>();
+
+    public BaseChatModelSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
+        this.connectionName = descriptor.getArgument("connection");
         this.model = descriptor.getArgument("model");
         this.prompt = descriptor.getArgument("prompt");
-        this.tools = descriptor.getArgument("tools");
+        this.toolNames = descriptor.getArgument("tools");
+        this.skills = descriptor.getArgument("skills");
+        List<String> declaredCommands = descriptor.getArgument("allowed_commands");
+        this.allowedCommands =
+                declaredCommands == null ? new ArrayList<>() : new ArrayList<>(declaredCommands);
+        List<String> declaredScriptDirs = descriptor.getArgument("allowed_script_dirs");
+        this.allowedScriptDirs =
+                declaredScriptDirs == null
+                        ? new ArrayList<>()
+                        : new ArrayList<>(declaredScriptDirs);
+        this.structuredOutputStrategy =
+                StructuredOutputStrategy.fromArgument(
+                        descriptor.getArgument("structured_output_strategy"),
+                        StructuredOutputStrategy.AUTO);
+    }
+
+    /**
+     * Trigger construction for resource objects.
+     *
+     * <p>Currently, in cross-language invocation scenarios, constructing resource object within an
+     * async thread may encounter issues. We resolved this issue by moving the construction of the
+     * resources object out of the method to be async executed and invoking it in the main thread.
+     */
+    @Override
+    public void open() throws Exception {
+        this.connection =
+                (BaseChatModelConnection)
+                        this.resourceContext.getResource(
+                                this.connectionName, ResourceType.CHAT_MODEL_CONNECTION);
+        if (this.prompt != null && this.prompt instanceof String) {
+            this.prompt =
+                    this.resourceContext.getResource((String) this.prompt, ResourceType.PROMPT);
+        }
+        if (this.skills != null) {
+            this.skillDiscoveryPrompt =
+                    this.resourceContext.generateAvailableSkillsPrompt(this.skills);
+            List<String> mutable =
+                    this.toolNames == null ? new ArrayList<>() : new ArrayList<>(this.toolNames);
+            if (!mutable.contains(Skills.LOAD_SKILL_TOOL)) {
+                mutable.add(Skills.LOAD_SKILL_TOOL);
+            }
+            if (!mutable.contains(Skills.BASH_TOOL)) {
+                mutable.add(Skills.BASH_TOOL);
+            }
+            this.toolNames = mutable;
+        }
+        if (this.toolNames != null) {
+            for (String name : this.toolNames) {
+                this.tools.add((Tool) this.resourceContext.getResource(name, ResourceType.TOOL));
+            }
+        }
     }
 
     public abstract Map<String, Object> getParameters();
 
-    public ChatMessage chat(List<ChatMessage> messages) {
-        return this.chat(messages, Collections.emptyMap());
+    /**
+     * Record token usage metrics for the given model on this setup's bound metric group.
+     *
+     * @param modelName the name of the model used
+     * @param promptTokens the number of prompt tokens
+     * @param completionTokens the number of completion tokens
+     */
+    public void recordTokenMetrics(String modelName, long promptTokens, long completionTokens) {
+        FlinkAgentsMetricGroup metricGroup = getMetricGroup();
+        if (metricGroup == null) {
+            return;
+        }
+        FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", modelName);
+        modelGroup.getCounter("promptTokens").inc(promptTokens);
+        modelGroup.getCounter("completionTokens").inc(completionTokens);
     }
 
-    public ChatMessage chat(List<ChatMessage> messages, Map<String, Object> parameters) {
-        BaseChatModelConnection connection =
-                (BaseChatModelConnection)
-                        this.getResource.apply(this.connection, ResourceType.CHAT_MODEL_CONNECTION);
+    public ChatMessage chat(List<ChatMessage> messages) {
+        return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
+    }
 
-        // Pass metric group to connection for token usage tracking
-        connection.setMetricGroup(getMetricGroup());
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            Map<String, Object> modelParams) {
+        Preconditions.checkNotNull(
+                connection,
+                "Connection is not initialized. Ensure open() is called before chat().");
 
         // Format input messages if set prompt.
         if (this.prompt != null) {
-            if (this.prompt instanceof String) {
-                this.prompt = this.getResource.apply((String) this.prompt, ResourceType.PROMPT);
-            }
+            Preconditions.checkState(
+                    prompt instanceof Prompt,
+                    "Prompt is not initialized. Ensure open() is called before chat().");
             Prompt prompt = (Prompt) this.prompt;
-            Map<String, String> arguments = new HashMap<>();
-            for (ChatMessage message : messages) {
-                for (Map.Entry<String, Object> entry : message.getExtraArgs().entrySet()) {
-                    arguments.put(entry.getKey(), entry.getValue().toString());
+            Map<String, String> stringified = new HashMap<>();
+            if (promptArgs != null) {
+                for (Map.Entry<String, Object> entry : promptArgs.entrySet()) {
+                    stringified.put(
+                            entry.getKey(),
+                            entry.getValue() != null ? entry.getValue().toString() : "");
                 }
             }
 
             // append meaningful messages
-            List<ChatMessage> promptMessages = prompt.formatMessages(MessageRole.USER, arguments);
+            List<ChatMessage> promptMessages = prompt.formatMessages(MessageRole.USER, stringified);
             for (ChatMessage message : messages) {
                 if ((message.getContent() != null && !message.getContent().isEmpty())
                         || message.getRole() == MessageRole.ASSISTANT) {
@@ -87,16 +168,17 @@ public abstract class BaseChatModelSetup extends Resource {
             messages = promptMessages;
         }
 
-        // Get tools can be used.
-        List<Tool> tools = new ArrayList<>();
-        if (this.tools != null) {
-            for (String name : this.tools) {
-                tools.add((Tool) this.getResource.apply(name, ResourceType.TOOL));
-            }
+        if (this.skillDiscoveryPrompt != null && !this.skillDiscoveryPrompt.isEmpty()) {
+            int idx = ChatMessage.findFirstSystemMessage(messages);
+            List<ChatMessage> mutated = new ArrayList<>(messages);
+            mutated.add(idx + 1, new ChatMessage(MessageRole.SYSTEM, this.skillDiscoveryPrompt));
+            messages = mutated;
         }
 
         Map<String, Object> params = this.getParameters();
-        params.putAll(parameters);
+        if (modelParams != null) {
+            params.putAll(modelParams);
+        }
         return connection.chat(messages, tools, params);
     }
 
@@ -106,8 +188,8 @@ public abstract class BaseChatModelSetup extends Resource {
     }
 
     @VisibleForTesting
-    public String getConnection() {
-        return connection;
+    public String getConnectionName() {
+        return this.connectionName;
     }
 
     @VisibleForTesting
@@ -121,7 +203,36 @@ public abstract class BaseChatModelSetup extends Resource {
     }
 
     @VisibleForTesting
-    public List<String> getTools() {
-        return tools;
+    public List<String> getToolNames() {
+        return toolNames;
+    }
+
+    @Nullable
+    public List<String> getSkills() {
+        return skills;
+    }
+
+    @Nullable
+    public String getSkillDiscoveryPrompt() {
+        return skillDiscoveryPrompt;
+    }
+
+    public List<String> getAllowedCommands() {
+        return allowedCommands;
+    }
+
+    public List<String> getAllowedScriptDirs() {
+        return allowedScriptDirs;
+    }
+
+    /**
+     * The configured intent about how an output schema should be applied, defaulting to {@link
+     * StructuredOutputStrategy#AUTO}. Whether native structured output is actually applied combines
+     * this policy with the connection's model-dependent capability.
+     *
+     * @return the structured output strategy
+     */
+    public StructuredOutputStrategy getStructuredOutputStrategy() {
+        return structuredOutputStrategy;
     }
 }

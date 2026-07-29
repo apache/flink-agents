@@ -26,32 +26,52 @@ import org.apache.flink.agents.api.annotation.ToolParam;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public class SchemaUtils {
     /** Generate JSON schema from method signature for tool parameters. */
     public static String generateSchema(Method method) throws JsonProcessingException {
+        return generateSchema(method, Set.of());
+    }
+
+    /**
+     * Generate JSON schema from method signature for model-visible tool parameters.
+     *
+     * <p>Injected parameters may be declared either on the Java method via {@link ToolParam} or
+     * externally, for example by YAML/API descriptors. Both forms must be hidden from the
+     * model-facing schema.
+     */
+    public static String generateSchema(Method method, Collection<String> injectedParamNames)
+            throws JsonProcessingException {
         ObjectMapper mapper = new ObjectMapper();
         Map<String, Object> schema = new HashMap<>();
         schema.put("type", "object");
 
         Map<String, Object> properties = new HashMap<>();
         List<String> required = new java.util.ArrayList<>();
+        Set<String> injected =
+                injectedParamNames == null ? Set.of() : new HashSet<>(injectedParamNames);
 
         Parameter[] parameters = method.getParameters();
         for (Parameter param : parameters) {
+            ToolParam toolParam = param.getAnnotation(ToolParam.class);
             String paramName = param.getName();
             String paramDescription = null;
 
             // Check for custom parameter name from annotation
-            if (param.isAnnotationPresent(ToolParam.class)) {
-                ToolParam toolParam = param.getAnnotation(ToolParam.class);
-                if (!Objects.requireNonNull(toolParam).name().isEmpty()) {
-                    paramName = toolParam.name();
-                }
+            if (toolParam != null && !Objects.requireNonNull(toolParam).name().isEmpty()) {
+                paramName = toolParam.name();
+            }
+            if ((toolParam != null && toolParam.injected()) || injected.contains(paramName)) {
+                continue;
+            }
+            if (toolParam != null) {
                 if (toolParam.required()) {
                     required.add(paramName);
                 }

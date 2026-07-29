@@ -22,6 +22,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.lang3.ClassUtils;
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Action;
@@ -59,6 +61,7 @@ public class ReActAgent extends Agent {
     public ReActAgent(
             ResourceDescriptor descriptor, @Nullable Prompt prompt, @Nullable Object outputSchema) {
         this.addResource(DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL, descriptor);
+        Map<String, Object> actionConfig = new HashMap<>();
 
         if (outputSchema != null) {
             String jsonSchema;
@@ -81,27 +84,26 @@ public class ReActAgent extends Agent {
                                     "The final response should be json format, and match the schema %s",
                                     jsonSchema));
             this.addResource(DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT, schemaPrompt);
+            actionConfig.put("output_schema", outputSchema);
         }
 
         if (prompt != null) {
             this.addResource(DEFAULT_USER_PROMPT, ResourceType.PROMPT, prompt);
         }
 
-        Map<String, Object> actionConfig = new HashMap<>();
-        actionConfig.put("output_schema", outputSchema);
-
         try {
             Method method =
-                    this.getClass().getMethod("startAction", InputEvent.class, RunnerContext.class);
-            this.addAction(new Class[] {InputEvent.class}, method, actionConfig);
+                    this.getClass().getMethod("startAction", Event.class, RunnerContext.class);
+            this.addAction(new String[] {InputEvent.EVENT_TYPE}, method, actionConfig);
         } catch (NoSuchMethodException e) {
             throw new IllegalStateException(
                     "Can't find the method stopAction, this must be a bug.");
         }
     }
 
-    public static void startAction(InputEvent event, RunnerContext ctx) {
-        Object input = event.getInput();
+    public static void startAction(Event event, RunnerContext ctx) {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+        Object input = inputEvent.getInput();
 
         Prompt userPrompt;
         try {
@@ -158,7 +160,8 @@ public class ReActAgent extends Agent {
 
         if (schmaPrompt != null) {
             List<ChatMessage> instruct = schmaPrompt.formatMessages(MessageRole.SYSTEM, Map.of());
-            inputMessages.addAll(0, instruct);
+            int index = ChatMessage.findFirstSystemMessage(inputMessages);
+            inputMessages.addAll(index + 1, instruct);
         }
 
         Object outputSchema = ctx.getActionConfigValue("output_schema");
@@ -166,9 +169,10 @@ public class ReActAgent extends Agent {
         ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages, outputSchema));
     }
 
-    @Action(listenEvents = {ChatResponseEvent.class})
-    public static void stopAction(ChatResponseEvent event, RunnerContext ctx) {
-        ChatMessage response = event.getResponse();
+    @Action(EventType.ChatResponseEvent)
+    public static void stopAction(Event event, RunnerContext ctx) {
+        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        ChatMessage response = chatResponse.getResponse();
 
         Object output;
         if (response.getExtraArgs().containsKey(STRUCTURED_OUTPUT)) {

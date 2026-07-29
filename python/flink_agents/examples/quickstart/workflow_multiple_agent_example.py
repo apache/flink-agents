@@ -172,8 +172,8 @@ def main() -> None:
     # Print the final product improvement suggestions to stdout.
     product_suggestion_res_stream.print()
 
-    # Execute the pipeline.
-    agents_env.execute()
+    # Execute the Flink pipeline with the Flink job name.
+    agents_env.execute("Workflow Multiple Agent Example Job")
 
 
 if __name__ == "__main__":

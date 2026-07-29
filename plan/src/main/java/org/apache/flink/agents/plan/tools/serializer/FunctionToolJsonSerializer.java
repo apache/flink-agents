@@ -46,6 +46,7 @@ public class FunctionToolJsonSerializer extends StdSerializer<FunctionTool> {
         jsonGenerator.writeStartObject();
 
         jsonGenerator.writeObjectField("metadata", tool.getMetadata());
+        jsonGenerator.writeObjectField("injected_args", tool.getInjectedArgs());
 
         jsonGenerator.writeFieldName("function");
         if (tool.getFunction() instanceof JavaFunction) {

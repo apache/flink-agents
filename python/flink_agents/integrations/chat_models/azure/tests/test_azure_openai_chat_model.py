@@ -16,16 +16,21 @@
 # limitations under the License.
 #################################################################################
 import os
+from unittest.mock import MagicMock
 
 import pytest
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.azure.azure_openai_chat_model import (
     AzureOpenAIChatModelConnection,
     AzureOpenAIChatModelSetup,
 )
-from flink_agents.plan.tools.function_tool import from_callable
+from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.tools.function_tool import FunctionTool
+
+pytestmark = pytest.mark.integration
 
 test_deployment = os.environ.get("TEST_AZURE_DEPLOYMENT")
 api_key = os.environ.get("AZURE_OPENAI_API_KEY")
@@ -34,7 +39,7 @@ api_version = os.environ.get("AZURE_OPENAI_API_VERSION")
 
 
 @pytest.mark.skipif(api_key is None, reason="AZURE_OPENAI_API_KEY is not set")
-def test_azure_openai_chat_model() -> None:  # noqa: D103
+def test_azure_openai_chat_model() -> None:
     connection = AzureOpenAIChatModelConnection(
         name="azure_openai",
         api_key=api_key,
@@ -48,11 +53,14 @@ def test_azure_openai_chat_model() -> None:  # noqa: D103
         else:
             return get_resource(name, ResourceType.TOOL)
 
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
     chat_model = AzureOpenAIChatModelSetup(
         name="azure_openai",
         model=test_deployment,
         connection="azure_openai",
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
     response = chat_model.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
     assert response is not None
@@ -78,7 +86,7 @@ def add(a: int, b: int) -> int:
 
 
 @pytest.mark.skipif(api_key is None, reason="AZURE_OPENAI_API_KEY is not set")
-def test_azure_openai_chat_with_tools() -> None:  # noqa : D103
+def test_azure_openai_chat_with_tools() -> None:
     connection = AzureOpenAIChatModelConnection(
         name="azure_openai",
         api_key=api_key,
@@ -90,19 +98,73 @@ def test_azure_openai_chat_with_tools() -> None:  # noqa : D103
         if type == ResourceType.CHAT_MODEL_CONNECTION:
             return connection
         else:
-            return from_callable(func=add)
+            return FunctionTool(func=PythonFunction.from_callable(add))
+
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
 
     chat_model = AzureOpenAIChatModelSetup(
         name="azure_openai",
         model=test_deployment,
         connection="azure_openai",
         tools=["add"],
-        get_resource=get_resource,
+        resource_context=mock_ctx,
     )
     response = chat_model.chat(
-        [ChatMessage(role=MessageRole.USER, content="You MUST use the add tool to calculate: What is 377 + 688?")]
+        [
+            ChatMessage(
+                role=MessageRole.USER,
+                content="You MUST use the add tool to calculate: What is 377 + 688?",
+            )
+        ]
     )
     tool_calls = response.tool_calls
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
     assert add(**tool_call["function"]["arguments"]) == 1065
+
+
+def test_model_field_roundtrip() -> None:
+    """Verify `model` is preserved through pydantic dump/validate round-trip."""
+    setup = AzureOpenAIChatModelSetup(connection="conn", model="test-deployment")
+    restored = AzureOpenAIChatModelSetup.model_validate(setup.model_dump())
+    assert restored.model == "test-deployment"
+
+
+def test_model_kwargs_nests_additional_kwargs() -> None:
+    """`additional_kwargs` is nested under its own key, not flattened.
+
+    Flattening would allow a colliding key (e.g. `temperature`) in
+    `additional_kwargs` to silently overwrite the field-validated value.
+    """
+    setup = AzureOpenAIChatModelSetup(
+        connection="conn",
+        model="my-deployment",
+        additional_kwargs={"seed": 42, "user": "user-123"},
+    )
+    kwargs = setup.model_kwargs
+    assert kwargs["model"] == "my-deployment"
+    assert kwargs["additional_kwargs"] == {"seed": 42, "user": "user-123"}
+    assert "seed" not in kwargs
+    assert "user" not in kwargs
+
+
+def test_chat_rejects_reserved_key_in_additional_kwargs() -> None:
+    """`additional_kwargs` containing a reserved typed key must raise.
+
+    Without this check, `**kwargs, **additional_kwargs` would raise an opaque
+    TypeError, and (worse) leaves the door open for callers to bypass the
+    field-level validation on `temperature`, `max_tokens`, etc.
+    """
+    connection = AzureOpenAIChatModelConnection(
+        api_key="fake-key",
+        azure_endpoint="https://example.openai.azure.com",
+        api_version="2024-02-01",
+    )
+    with pytest.raises(ValueError, match="additional_kwargs"):
+        connection.chat(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            model="my-deployment",
+            temperature=0.3,
+            additional_kwargs={"temperature": 5.0},
+        )

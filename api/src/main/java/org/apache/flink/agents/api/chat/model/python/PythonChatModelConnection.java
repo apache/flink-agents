@@ -19,9 +19,9 @@ package org.apache.flink.agents.api.chat.model.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
@@ -31,7 +31,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 /**
  * Python-based implementation of ChatModelConnection that wraps a Python chat model object. This
@@ -56,8 +55,8 @@ public class PythonChatModelConnection extends BaseChatModelConnection
             PythonResourceAdapter adapter,
             PyObject chatModel,
             ResourceDescriptor descriptor,
-            BiFunction<String, ResourceType, Resource> getResource) {
-        super(descriptor, getResource);
+            ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.chatModel = chatModel;
         this.adapter = adapter;
     }
@@ -68,9 +67,20 @@ public class PythonChatModelConnection extends BaseChatModelConnection
     }
 
     @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
+    @Override
+    public void setMetricGroup(FlinkAgentsMetricGroup metricGroup) {
+        super.setMetricGroup(metricGroup);
+        setPythonResourceMetricGroup(metricGroup);
+    }
+
+    @Override
     public ChatMessage chat(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
-        Map<String, Object> kwargs = new HashMap<>(arguments);
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        Map<String, Object> kwargs = new HashMap<>(modelParams);
 
         List<Object> pythonMessages = new ArrayList<>();
         for (ChatMessage message : messages) {

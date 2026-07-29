@@ -18,13 +18,17 @@
 
 package org.apache.flink.agents.runtime.eventlog;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.EventFilter;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
+import org.apache.flink.metrics.Counter;
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;
@@ -32,6 +36,8 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Collections;
+import java.util.Map;
 
 /**
  * A file-based event logger that logs events to files with structured names in a flat directory.
@@ -75,7 +81,6 @@ import java.nio.file.Paths;
  * </pre>
  */
 public class FileEventLogger implements EventLogger {
-    public static final String BASE_LOG_DIR_PROPERTY_KEY = "baseLogDir";
     // The default base log directory if not specified in the configuration
     private static final String DEFAULT_BASE_LOG_DIR =
             Paths.get(System.getProperty("java.io.tmpdir"), "flink-agents").toString();
@@ -83,17 +88,32 @@ public class FileEventLogger implements EventLogger {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final EventLoggerConfig config;
-    private final EventFilter eventFilter;
+    private boolean prettyPrint;
     private PrintWriter writer;
+    private EventLogLevelResolver levelResolver;
+    private JsonTruncator truncator;
+    private Counter truncatedEventsCounter;
 
     public FileEventLogger(EventLoggerConfig config) {
         this.config = config;
-        this.eventFilter = config.getEventFilter();
     }
 
     @Override
     public void open(EventLoggerOpenParams params) throws Exception {
-        String logFilePath = generateSubTaskLogFilePath(params);
+        // The full agent config is the single source of truth for all logger settings.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> agentConfig =
+                (Map<String, Object>)
+                        config.getProperties()
+                                .getOrDefault(
+                                        EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY,
+                                        Collections.emptyMap());
+
+        String baseLogDir =
+                (String)
+                        agentConfig.getOrDefault(
+                                AgentConfigOptions.BASE_LOG_DIR.getKey(), DEFAULT_BASE_LOG_DIR);
+        String logFilePath = generateSubTaskLogFilePath(params, baseLogDir);
         // Create base directory if it doesn't exist
         Path logPath = Paths.get(logFilePath).getParent();
         if (!Files.exists(logPath)) {
@@ -101,14 +121,47 @@ public class FileEventLogger implements EventLogger {
         }
         // Create writer in append mode
         writer = new PrintWriter(new BufferedWriter(new FileWriter(logFilePath, true)));
+        prettyPrint =
+                (Boolean)
+                        agentConfig.getOrDefault(
+                                AgentConfigOptions.PRETTY_PRINT.getKey(),
+                                AgentConfigOptions.PRETTY_PRINT.getDefaultValue());
+
+        this.levelResolver = new EventLogLevelResolver(agentConfig);
+        int maxStringLength =
+                getIntFromConfig(
+                        agentConfig,
+                        AgentConfigOptions.EVENT_LOG_MAX_STRING_LENGTH.getKey(),
+                        AgentConfigOptions.EVENT_LOG_MAX_STRING_LENGTH.getDefaultValue());
+        int maxArrayElements =
+                getIntFromConfig(
+                        agentConfig,
+                        AgentConfigOptions.EVENT_LOG_MAX_ARRAY_ELEMENTS.getKey(),
+                        AgentConfigOptions.EVENT_LOG_MAX_ARRAY_ELEMENTS.getDefaultValue());
+        int maxDepth =
+                getIntFromConfig(
+                        agentConfig,
+                        AgentConfigOptions.EVENT_LOG_MAX_DEPTH.getKey(),
+                        AgentConfigOptions.EVENT_LOG_MAX_DEPTH.getDefaultValue());
+        this.truncator = new JsonTruncator(maxStringLength, maxArrayElements, maxDepth);
     }
 
-    private String generateSubTaskLogFilePath(EventLoggerOpenParams params) {
-        // Get base log directory from properties
-        String baseLogDir =
-                (String)
-                        config.getProperties()
-                                .getOrDefault(BASE_LOG_DIR_PROPERTY_KEY, DEFAULT_BASE_LOG_DIR);
+    private static int getIntFromConfig(Map<String, Object> config, String key, int defaultValue) {
+        Object value = config.get(key);
+        if (value == null) {
+            return defaultValue;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        try {
+            return Integer.parseInt(value.toString());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private String generateSubTaskLogFilePath(EventLoggerOpenParams params, String baseLogDir) {
         String jobId = params.getRuntimeContext().getJobInfo().getJobId().toString();
         String taskName =
                 params.getRuntimeContext()
@@ -126,15 +179,50 @@ public class FileEventLogger implements EventLogger {
             throw new IllegalStateException("FileEventLogger not initialized. Call open() first.");
         }
 
-        // Apply event filter
-        if (!eventFilter.accept(event, context)) {
-            return; // Skip this event
+        // Resolve log level and skip OFF events.
+        EventLogLevel level =
+                levelResolver != null
+                        ? levelResolver.resolve(event.getType())
+                        : EventLogLevel.VERBOSE;
+        if (level == EventLogLevel.OFF) {
+            return;
         }
 
+        // All events should be JSON serializable; we already check this when sending events
+        // to context (RunnerContextImpl.sendEvent).
         EventLogRecord record = new EventLogRecord(context, event);
-        // All events should be JSON serializable, since we check it when sending events to context:
-        // RunnerContextImpl.sendEvent
-        writer.println(MAPPER.writeValueAsString(record));
+        JsonNode tree = MAPPER.valueToTree(record);
+        if (!(tree instanceof ObjectNode)) {
+            throw new IllegalStateException(
+                    "EventLogRecord must serialize to a JSON object, but was: "
+                            + tree.getNodeType());
+        }
+        ObjectNode rootNode = (ObjectNode) tree;
+
+        // Truncate the event subtree at STANDARD level.
+        if (level == EventLogLevel.STANDARD && truncator != null) {
+            JsonNode eventNode = rootNode.get("event");
+            if (eventNode instanceof ObjectNode) {
+                boolean truncated = truncator.truncate((ObjectNode) eventNode);
+                if (truncated && truncatedEventsCounter != null) {
+                    truncatedEventsCounter.inc();
+                }
+            }
+        }
+
+        // Rebuild the top-level object so logLevel sits between timestamp and eventType,
+        // matching the documented JSON layout.
+        ObjectNode ordered = MAPPER.createObjectNode();
+        ordered.set("timestamp", rootNode.get("timestamp"));
+        ordered.put("logLevel", level.name());
+        ordered.set("eventType", rootNode.get("eventType"));
+        ordered.set("event", rootNode.get("event"));
+
+        String json =
+                prettyPrint
+                        ? MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(ordered)
+                        : MAPPER.writeValueAsString(ordered);
+        writer.println(json);
     }
 
     @Override
@@ -144,6 +232,16 @@ public class FileEventLogger implements EventLogger {
         }
         // Flush the writer to ensure all data is written to the file
         writer.flush();
+    }
+
+    /**
+     * Sets the counter for tracking truncated events. Called by the operator after metrics are
+     * initialized.
+     *
+     * @param counter the counter to increment when events are truncated
+     */
+    public void setTruncatedEventsCounter(Counter counter) {
+        this.truncatedEventsCounter = counter;
     }
 
     @Override

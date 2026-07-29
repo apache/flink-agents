@@ -16,7 +16,9 @@
 # limitations under the License.
 #################################################################################
 import os
+import sys
 import sysconfig
+import uuid
 from pathlib import Path
 
 import pytest
@@ -41,41 +43,52 @@ from flink_agents.e2e_tests.test_utils import pull_model
 current_dir = Path(__file__).parent
 
 OLLAMA_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest")
-os.environ["OLLAMA_EMBEDDING_MODEL"] = OLLAMA_MODEL
 
 ES_HOST = os.environ.get("ES_HOST")
+MILVUS_URI = os.environ.get("MILVUS_URI")
 
 client = pull_model(OLLAMA_MODEL)
+EMBEDDING_TYPES = ["JAVA", "PYTHON"]
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
-@pytest.mark.skipif(client is None or ES_HOST is None, reason="Ollama client or Elasticsearch host is missing.")
-@pytest.mark.parametrize("embedding_type", ["JAVA", "PYTHON"])
-def test_java_vector_store_integration(tmp_path: Path, embedding_type: str) -> None:  # noqa: D103
-    os.environ["EMBEDDING_TYPE"] = embedding_type
+
+def _run_vector_store_integration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    embedding_type: str,
+    backend: str,
+) -> None:
+    print(f"[TEST][{backend}] Vector store e2e embedding={embedding_type}")
+    monkeypatch.setenv("OLLAMA_EMBEDDING_MODEL", OLLAMA_MODEL)
+    monkeypatch.setenv("EMBEDDING_TYPE", embedding_type)
+    monkeypatch.setenv("VECTOR_STORE_BACKEND", backend)
+    suffix = uuid.uuid4().hex
+    monkeypatch.setenv("VECTOR_STORE_COLLECTION", f"my_documents_{suffix}")
+    monkeypatch.setenv("VECTOR_STORE_TEST_COLLECTION", f"test_collection_{suffix}")
 
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
+    env.set_python_executable(sys.executable)
 
     # currently, bounded source is not supported due to runtime implementation, so
     # we use continuous file source here.
     input_datastream = env.from_source(
         source=FileSource.for_record_stream_format(
-            StreamFormat.text_line_format(), f"file:///{current_dir}/../resources/java_chat_module_input"
+            StreamFormat.text_line_format(),
+            f"file:///{current_dir}/../resources/java_chat_module_input",
         ).build(),
         watermark_strategy=WatermarkStrategy.no_watermarks(),
         source_name="streaming_agent_example",
     )
 
-    deserialize_datastream = input_datastream.map(
-        lambda x: str(x)
-    )
+    deserialize_datastream = input_datastream.map(lambda x: str(x))
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
     output_datastream = (
         agents_env.from_datastream(
-            input=deserialize_datastream, key_selector= lambda x: "orderKey"
+            input=deserialize_datastream, key_selector=lambda x: "orderKey"
         )
         .apply(VectorStoreCrossLanguageAgent())
         .to_datastream()
@@ -84,13 +97,16 @@ def test_java_vector_store_integration(tmp_path: Path, embedding_type: str) -> N
     result_dir = tmp_path / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    (output_datastream.map(lambda x: str(x).replace('\n', '')
-                          .replace('\r', ''), Types.STRING()).add_sink(
-        StreamingFileSink.for_row_format(
-            base_path=str(result_dir.absolute()),
-            encoder=Encoder.simple_string_encoder(),
-        ).build()
-    ))
+    (
+        output_datastream.map(
+            lambda x: str(x).replace("\n", "").replace("\r", ""), Types.STRING()
+        ).add_sink(
+            StreamingFileSink.for_row_format(
+                base_path=str(result_dir.absolute()),
+                encoder=Encoder.simple_string_encoder(),
+            ).build()
+        )
+    )
 
     agents_env.execute()
 
@@ -104,5 +120,30 @@ def test_java_vector_store_integration(tmp_path: Path, embedding_type: str) -> N
             with file.open() as f:
                 actual_result.extend(f.readlines())
 
+    assert len(actual_result) >= 2
     assert "PASS" in actual_result[0]
     assert "PASS" in actual_result[1]
+
+
+@pytest.mark.skipif(
+    client is None or ES_HOST is None,
+    reason="Embedding model client or Elasticsearch host is missing.",
+)
+@pytest.mark.parametrize("embedding_type", EMBEDDING_TYPES)
+def test_elasticsearch_vector_store_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, embedding_type: str
+) -> None:
+    _run_vector_store_integration(
+        tmp_path, monkeypatch, embedding_type, "ELASTICSEARCH"
+    )
+
+
+@pytest.mark.skipif(
+    client is None or MILVUS_URI is None,
+    reason="Embedding model client or Milvus URI is missing.",
+)
+@pytest.mark.parametrize("embedding_type", EMBEDDING_TYPES)
+def test_milvus_vector_store_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, embedding_type: str
+) -> None:
+    _run_vector_store_integration(tmp_path, monkeypatch, embedding_type, "MILVUS")

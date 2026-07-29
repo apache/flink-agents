@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.plan;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.actions.Action;
@@ -27,7 +28,9 @@ import java.util.List;
 
 /** Test Action. */
 public class TestAction {
-    public static void legal(InputEvent event, RunnerContext context) {}
+    public static void legal(Event event, RunnerContext context) {
+        InputEvent inputEvent = InputEvent.fromEvent(event);
+    }
 
     public static void illegal(int a, int b) {}
 
@@ -37,9 +40,9 @@ public class TestAction {
                 new JavaFunction(
                         "org.apache.flink.agents.plan.TestAction",
                         "legal",
-                        new Class[] {InputEvent.class, RunnerContext.class});
+                        new Class[] {Event.class, RunnerContext.class});
 
-        new Action("legal", func, List.of(InputEvent.class.getName()));
+        new Action("legal", func, List.of(InputEvent.EVENT_TYPE));
     }
 
     @Test
@@ -52,6 +55,6 @@ public class TestAction {
 
         Assertions.assertThrows(
                 IllegalArgumentException.class,
-                () -> new Action("illegal", func, List.of(InputEvent.class.getName())));
+                () -> new Action("illegal", func, List.of(InputEvent.EVENT_TYPE)));
     }
 }

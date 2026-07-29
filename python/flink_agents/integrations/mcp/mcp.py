@@ -27,7 +27,6 @@ import cloudpickle
 import httpx
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.exceptions import McpError
 from mcp.types import PromptArgument, TextContent
 from pydantic import (
     ConfigDict,
@@ -134,6 +133,7 @@ class MCPPrompt(Prompt):
             finally:
                 self.mcp_server = None
 
+
 class MCPServer(Resource, ABC):
     """Resource representing an MCP server and exposing its tools/prompts.
 
@@ -146,7 +146,7 @@ class MCPServer(Resource, ABC):
     endpoint: str
     headers: Dict[str, Any] | None = None
     timeout: int = 30
-    sse_read_timeout: int = 60*5
+    sse_read_timeout: int = 60 * 5
     auth: httpx.Auth | None = None
 
     session: ClientSession = Field(default=None, exclude=True)
@@ -188,19 +188,18 @@ class MCPServer(Resource, ABC):
             msg = f"Invalid HTTP endpoint: {self.endpoint}"
             raise ValueError(msg)
 
-        async with streamablehttp_client(
+        async with (
+            streamablehttp_client(
                 url=self.endpoint,
                 headers=self.headers,
                 timeout=timedelta(seconds=self.timeout),
                 sse_read_timeout=timedelta(seconds=self.sse_read_timeout),
                 auth=self.auth,
-            ) as (read, write, _), ClientSession(
-            read,
-            write
-        ) as session:
+            ) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
             await session.initialize()
             yield session
-
 
     async def _cleanup_connection(self) -> None:
         """Clean up connection resources."""
@@ -215,11 +214,12 @@ class MCPServer(Resource, ABC):
     async def call_tool_async(self, tool_name: str, *args: Any, **kwargs: Any) -> Any:
         """Call a tool on the MCP server asynchronously."""
         async with self._get_session() as session:
-
             arguments = kwargs if kwargs else (args[0] if args else {})
 
             result = await session.call_tool(
-                tool_name, arguments, read_timeout_seconds=timedelta(seconds=self.timeout),
+                tool_name,
+                arguments,
+                read_timeout_seconds=timedelta(seconds=self.timeout),
             )
 
             content = [extract_mcp_content_item(item) for item in result.content]
@@ -272,16 +272,17 @@ class MCPServer(Resource, ABC):
 
     def list_prompts(self) -> List[MCPPrompt]:
         """List available prompts from the MCP server."""
-        try:
-            return asyncio.run(self._list_prompts_async())
-        except McpError as e:
-            if "prompts not supported" in str(e).lower():
-                return []
-            raise
+        return asyncio.run(self._list_prompts_async())
 
     async def _list_prompts_async(self) -> List[MCPPrompt]:
         """Async implementation of list_prompts."""
         async with self._get_session() as session:
+            # Check if the server supports prompts capability
+            capabilities = session.get_server_capabilities()
+            if capabilities is None or capabilities.prompts is None:
+                # Server does not support prompts
+                return []
+
             prompts_response = await session.list_prompts()
 
             prompts = []

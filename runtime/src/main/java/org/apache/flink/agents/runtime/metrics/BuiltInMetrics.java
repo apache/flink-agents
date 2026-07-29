@@ -37,6 +37,8 @@ public class BuiltInMetrics {
 
     private final Meter numOfActionsExecutedPerSec;
 
+    private final Counter eventLogTruncatedEvents;
+
     private final HashMap<String, BuiltInActionMetrics> actionMetricGroups;
 
     public BuiltInMetrics(FlinkAgentsMetricGroupImpl parentMetricGroup, AgentPlan agentPlan) {
@@ -48,11 +50,13 @@ public class BuiltInMetrics {
         this.numOfActionsExecutedPerSec =
                 parentMetricGroup.getMeter("numOfActionsExecutedPerSec", numOfActionsExecuted);
 
+        this.eventLogTruncatedEvents = parentMetricGroup.getCounter("eventLogTruncatedEvents");
+
         this.actionMetricGroups = new HashMap<>();
         for (String actionName : agentPlan.getActions().keySet()) {
             actionMetricGroups.put(
                     actionName,
-                    new BuiltInActionMetrics(parentMetricGroup.getSubGroup(actionName)));
+                    new BuiltInActionMetrics(parentMetricGroup.getSubGroup("action", actionName)));
         }
     }
 
@@ -68,5 +72,10 @@ public class BuiltInMetrics {
     public void markActionExecuted(String actionName) {
         numOfActionsExecutedPerSec.markEvent();
         actionMetricGroups.get(actionName).markActionExecuted();
+    }
+
+    /** Returns the counter tracking event log truncation occurrences. */
+    public Counter getEventLogTruncatedEventsCounter() {
+        return eventLogTruncatedEvents;
     }
 }

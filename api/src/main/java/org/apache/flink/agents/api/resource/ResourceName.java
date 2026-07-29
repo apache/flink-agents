@@ -34,7 +34,7 @@ package org.apache.flink.agents.api.resource;
  * <pre>{@code
  * // Java implementation
  * ResourceName.ChatModel.OLLAMA_CONNECTION
- * ResourceName.ChatModel.OPENAI_SETUP
+ * ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP
  *
  * // Python implementation
  * ResourceName.ChatModel.Python.OLLAMA_CONNECTION
@@ -55,9 +55,21 @@ public final class ResourceName {
 
         // Azure
         public static final String AZURE_CONNECTION =
-                "org.apache.flink.agents.integrations.chatmodels.anthropic.AzureAIChatModelConnection";
+                "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelConnection";
         public static final String AZURE_SETUP =
-                "org.apache.flink.agents.integrations.chatmodels.anthropic.AzureAIChatModelSetup";
+                "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup";
+
+        // Bedrock
+        public static final String BEDROCK_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelConnection";
+        public static final String BEDROCK_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup";
+
+        // Gemini
+        public static final String GEMINI_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.gemini.GeminiChatModelConnection";
+        public static final String GEMINI_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.gemini.GeminiChatModelSetup";
 
         // Ollama
         public static final String OLLAMA_CONNECTION =
@@ -66,10 +78,22 @@ public final class ResourceName {
                 "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup";
 
         // OpenAI
-        public static final String OPENAI_CONNECTION =
-                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelConnection";
-        public static final String OPENAI_SETUP =
-                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelSetup";
+        public static final String OPENAI_COMPLETIONS_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAICompletionsConnection";
+        public static final String OPENAI_COMPLETIONS_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAICompletionsSetup";
+
+        // OpenAI Responses API
+        public static final String OPENAI_RESPONSES_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIResponsesModelConnection";
+        public static final String OPENAI_RESPONSES_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIResponsesModelSetup";
+
+        // Azure OpenAI
+        public static final String AZURE_OPENAI_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.openai.AzureOpenAIChatModelConnection";
+        public static final String AZURE_OPENAI_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.openai.AzureOpenAIChatModelSetup";
 
         // Python Wrapper
         public static final String PYTHON_WRAPPER_CONNECTION =
@@ -99,9 +123,9 @@ public final class ResourceName {
                     "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup";
 
             // OpenAI
-            public static final String OPENAI_CONNECTION =
+            public static final String OPENAI_COMPLETIONS_CONNECTION =
                     "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelConnection";
-            public static final String OPENAI_SETUP =
+            public static final String OPENAI_COMPLETIONS_SETUP =
                     "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup";
 
             // Tongyi
@@ -125,6 +149,12 @@ public final class ResourceName {
         public static final String OLLAMA_SETUP =
                 "org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelSetup";
 
+        // Bedrock
+        public static final String BEDROCK_CONNECTION =
+                "org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelConnection";
+        public static final String BEDROCK_SETUP =
+                "org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelSetup";
+
         // Python Wrapper
         public static final String PYTHON_WRAPPER_CONNECTION =
                 "org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelConnection";
@@ -146,6 +176,12 @@ public final class ResourceName {
             public static final String OPENAI_SETUP =
                     "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup";
 
+            // Tongyi
+            public static final String TONGYI_CONNECTION =
+                    "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelConnection";
+            public static final String TONGYI_SETUP =
+                    "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelSetup";
+
             private Python() {}
         }
 
@@ -158,6 +194,18 @@ public final class ResourceName {
         // Elasticsearch
         public static final String ELASTICSEARCH_VECTOR_STORE =
                 "org.apache.flink.agents.integrations.vectorstores.elasticsearch.ElasticsearchVectorStore";
+
+        // Amazon OpenSearch (Serverless or Service domains)
+        public static final String OPENSEARCH_VECTOR_STORE =
+                "org.apache.flink.agents.integrations.vectorstores.opensearch.OpenSearchVectorStore";
+
+        // Amazon S3 Vectors
+        public static final String S3_VECTORS_VECTOR_STORE =
+                "org.apache.flink.agents.integrations.vectorstores.s3vectors.S3VectorsVectorStore";
+
+        // Milvus
+        public static final String MILVUS_VECTOR_STORE =
+                "org.apache.flink.agents.integrations.vectorstores.milvus.MilvusVectorStore";
 
         // Python Wrapper
         public static final String PYTHON_WRAPPER_VECTOR_STORE =
@@ -172,6 +220,10 @@ public final class ResourceName {
             // Chroma
             public static final String CHROMA_VECTOR_STORE =
                     "flink_agents.integrations.vector_stores.chroma.chroma_vector_store.ChromaVectorStore";
+
+            // Mem0 (gateway to Mem0's native vector stores: pgvector, milvus, qdrant, redis, ...)
+            public static final String MEM0_VECTOR_STORE =
+                    "flink_agents.integrations.vector_stores.mem0.mem0_vector_store.Mem0VectorStore";
 
             private Python() {}
         }

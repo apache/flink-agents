@@ -25,13 +25,19 @@ class MetricGroup(ABC):
     """
 
     @abstractmethod
-    def get_sub_group(self, name: str) -> "MetricGroup":
-        """Create or retrieve a sub-metric group with the given name.
+    def get_sub_group(self, name: str, value: str | None = None) -> "MetricGroup":
+        """Create or retrieve a sub-metric group.
+
+        When *value* is ``None`` a plain named sub-group is returned.
+        When *value* is given, *name* is treated as the key and a
+        key-value sub-group is returned.
 
         Parameters
         ----------
         name : str
-            The name of the sub metric group.
+            The name (or key) of the sub metric group.
+        value : str, optional
+            The value of the metric group variable.
         """
 
     @abstractmethod

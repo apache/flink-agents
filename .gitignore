@@ -5,6 +5,7 @@ python/.idea
 *.iml
 .qwen
 .qoder
+.claude
 
 # OS
 .DS_Store
@@ -19,4 +20,6 @@ python/build/
 python/dist
 python/flink_agents.egg-info/
 python/flink_agents/flink_agents.egg-info/
+python/flink_agents/lib/
 python/uv.lock
+**/superpowers/

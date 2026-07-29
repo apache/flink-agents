@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.annotation.ToolParam;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -46,6 +47,10 @@ class SchemaUtilsTest {
         public void methodWithCustomObject(
                 @ToolParam(name = "objectParam", description = "A custom object parameter")
                         Object customObject) {}
+
+        public void methodWithExternallyInjectedRequiredParam(
+                @ToolParam(name = "order_id", description = "The order id") String orderId,
+                @ToolParam(name = "tenant_id", description = "The tenant id") String tenantId) {}
     }
 
     private final ObjectMapper mapper = new ObjectMapper();
@@ -93,6 +98,36 @@ class SchemaUtilsTest {
         assertTrue(required.toString().contains("boolParam"));
         // intParam should not be required (explicitly set to false)
         assertFalse(required.toString().contains("intParam"));
+    }
+
+    @Test
+    void testGenerateSchemaHidesExternallyInjectedParameter() throws Exception {
+        Method method =
+                TestClass.class.getMethod(
+                        "methodWithBasicTypes", String.class, int.class, boolean.class);
+        String schema = SchemaUtils.generateSchema(method, Set.of("intParam"));
+        JsonNode jsonNode = mapper.readTree(schema);
+
+        JsonNode properties = jsonNode.get("properties");
+        assertTrue(properties.has("stringParam"));
+        assertFalse(properties.has("intParam"));
+        assertTrue(properties.has("boolParam"));
+        assertFalse(jsonNode.get("required").toString().contains("intParam"));
+    }
+
+    @Test
+    void testGenerateSchemaHidesExternallyInjectedRequiredParameter() throws Exception {
+        Method method =
+                TestClass.class.getMethod(
+                        "methodWithExternallyInjectedRequiredParam", String.class, String.class);
+        String schema = SchemaUtils.generateSchema(method, Set.of("tenant_id"));
+        JsonNode jsonNode = mapper.readTree(schema);
+
+        JsonNode properties = jsonNode.get("properties");
+        assertTrue(properties.has("order_id"));
+        assertFalse(properties.has("tenant_id"));
+        assertFalse(jsonNode.get("required").toString().contains("tenant_id"));
+        assertFalse(schema.contains("tenant_id"));
     }
 
     @Test

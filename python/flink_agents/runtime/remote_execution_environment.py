@@ -18,7 +18,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict
 
 import cloudpickle
 from pyflink.common import TypeInformation
@@ -46,6 +46,7 @@ from flink_agents.plan.configuration import AgentConfiguration
 _CONFIG_FILE_NAME = "config.yaml"
 _LEGACY_CONFIG_FILE_NAME = "flink-conf.yaml"
 
+
 class RemoteAgentBuilder(AgentBuilder):
     """RemoteAgentBuilder for integrating datastream/table and agent."""
 
@@ -55,6 +56,7 @@ class RemoteAgentBuilder(AgentBuilder):
     __t_env: StreamTableEnvironment
     __config: AgentConfiguration
     __resources: Dict[ResourceType, Dict[str, Any]] = None
+    __agents: Dict[str, Agent]
 
     def __init__(
         self,
@@ -62,12 +64,14 @@ class RemoteAgentBuilder(AgentBuilder):
         config: AgentConfiguration,
         t_env: StreamTableEnvironment | None = None,
         resources: Dict[ResourceType, Dict[str, Any]] | None = None,
+        agents: Dict[str, Agent] | None = None,
     ) -> None:
         """Init method of RemoteAgentBuilder."""
         self.__input = input
         self.__t_env = t_env
         self.__config = config
         self.__resources = resources
+        self.__agents = agents or {}
 
     @property
     def t_env(self) -> StreamTableEnvironment:
@@ -78,17 +82,26 @@ class RemoteAgentBuilder(AgentBuilder):
             )
         return self.__t_env
 
-    def apply(self, agent: Agent) -> "AgentBuilder":
+    def apply(self, agent: Agent | str) -> "AgentBuilder":
         """Set agent of execution environment.
 
         Parameters
         ----------
-        agent : Agent
-            The agent user defined to run in execution environment.
+        agent : Agent | str
+            Either an Agent instance, or the name of an agent registered
+            on the environment (e.g. by ``load_yaml``).
         """
         if self.__agent_plan is not None:
             err_msg = "RemoteAgentBuilder doesn't support apply multiple agents yet."
             raise RuntimeError(err_msg)
+        if isinstance(agent, str):
+            if agent not in self.__agents:
+                msg = (
+                    f"No agent named {agent!r} is registered on this "
+                    "environment. Did you call load_yaml first?"
+                )
+                raise ValueError(msg)
+            agent = self.__agents[agent]
 
         # inspect refer actions and resources from env to agent.
         for type, name_to_resource in self.__resources.items():
@@ -147,14 +160,6 @@ class RemoteAgentBuilder(AgentBuilder):
             Output Table of agent execution.
         """
         return self.t_env.from_data_stream(self.to_datastream(output_type), schema)
-
-    def to_list(self) -> List[Dict[str, Any]]:
-        """Get output list of agent execution.
-
-        This method is not supported for remote execution environments.
-        """
-        msg = "RemoteAgentBuilder does not support to_list."
-        raise NotImplementedError(msg)
 
 
 class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
@@ -228,6 +233,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
             config=self.__config,
             t_env=self.__t_env,
             resources=self.resources,
+            agents=self._agents,
         )
 
     def from_table(
@@ -254,20 +260,12 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
             config=self.__config,
             t_env=self.t_env,
             resources=self.resources,
+            agents=self._agents,
         )
 
-    def from_list(self, input: List[Dict[str, Any]]) -> "AgentsExecutionEnvironment":
-        """Set input list of agent execution.
-
-        This method is not supported for remote execution environments.
-        """
-        msg = "RemoteExecutionEnvironment does not support from_list."
-        raise NotImplementedError(msg)
-
-    def execute(self) -> None:
+    def execute(self, job_name: str | None = None) -> None:
         """Execute agent."""
-        self.__env.execute()
-
+        self.__env.execute(job_name=job_name)
 
     def __load_config_from_flink_conf_dir(self) -> None:
         """Load agent configuration from FLINK_CONF_DIR if available."""
@@ -299,9 +297,7 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         # Try legacy config file name first
         legacy_config_path = Path(flink_conf_dir).joinpath(_LEGACY_CONFIG_FILE_NAME)
         if legacy_config_path.exists():
-            logging.warning(
-                f"Using legacy config file {_LEGACY_CONFIG_FILE_NAME}"
-            )
+            logging.warning(f"Using legacy config file {_LEGACY_CONFIG_FILE_NAME}")
             return legacy_config_path
 
         # Try new config file name as fallback

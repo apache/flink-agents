@@ -87,8 +87,8 @@ public class WorkflowSingleAgentExample {
         // Print the analysis results to stdout.
         reviewAnalysisResStream.print();
 
-        // Execute the Flink pipeline.
-        agentsEnv.execute();
+        // Execute the Flink pipeline with the Flink job name.
+        agentsEnv.execute("Workflow Agent Example Job");
     }
 
     public static File copyResource(String resourcePath) throws Exception {

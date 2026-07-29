@@ -20,10 +20,13 @@ package org.apache.flink.agents.plan.compatibility;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
+import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.apache.flink.agents.plan.AgentPlan;
 
 import java.io.BufferedWriter;
@@ -37,19 +40,38 @@ import java.io.FileWriter;
  * correspond modification should be applied to it when modify this file.
  */
 public class GenerateAgentPlanJson {
-    private static class MyEvent extends Event {}
+    private static class MyEvent extends Event {
+        public static final String EVENT_TYPE = "MyEvent";
+
+        public MyEvent() {
+            super(EVENT_TYPE);
+        }
+    }
 
     /** Agent class for generating java agent plan json. */
     public static class JavaAgentPlanCompatibilityTestAgent extends Agent {
 
-        @Action(listenEvents = {InputEvent.class})
-        public void firstAction(InputEvent event, RunnerContext context) {
+        @Action(EventType.InputEvent)
+        public void firstAction(Event event, RunnerContext context) {
             // Test action implementation
         }
 
-        @Action(listenEvents = {InputEvent.class, MyEvent.class})
+        @Action({EventType.InputEvent, MyEvent.EVENT_TYPE})
         public void secondAction(Event event, RunnerContext context) {
             // Test action implementation
+        }
+
+        @Tool
+        public static int add(
+                @ToolParam(name = "a", description = "The first operand") int a,
+                @ToolParam(name = "b", description = "The second operand") int b,
+                @ToolParam(
+                                name = "tenant_id",
+                                injected = true,
+                                source = ToolParameterSource.CONFIG,
+                                key = "tenant.id")
+                        String tenantId) {
+            return a + b;
         }
     }
 

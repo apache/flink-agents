@@ -15,50 +15,220 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import List
-
 import pytest
 
-from flink_agents.api.decorators import action
+from flink_agents.api.decorators import action, tool
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.event_type import EventType
+from flink_agents.api.function import JavaFunction, PythonFunction
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.tools import InjectedArg
 
 
-def test_action_decorator() -> None:  # noqa D103
-    @action(InputEvent)
+def test_action_decorator() -> None:
+    @action(EventType.InputEvent)
     def forward_action(event: Event, ctx: RunnerContext) -> None:
-        input = event.input
+        input = InputEvent.from_event(event).input
         ctx.send_event(OutputEvent(output=input))
 
-    assert hasattr(forward_action, "_listen_events")
-    listen_events = forward_action._listen_events
-    assert listen_events == (InputEvent,)
+    assert hasattr(forward_action, "_trigger_conditions")
+    listen_events = forward_action._trigger_conditions
+    assert listen_events == (InputEvent.EVENT_TYPE,)
 
 
-def test_action_decorator_listen_multi_events() -> None:  # noqa D103
-    @action(InputEvent, OutputEvent)
+def test_action_decorator_listen_multi_events() -> None:
+    @action(EventType.InputEvent, EventType.OutputEvent)
     def forward_action(event: Event, ctx: RunnerContext) -> None:
-        input = event.input
+        input = InputEvent.from_event(event).input
         ctx.send_event(OutputEvent(output=input))
 
-    assert hasattr(forward_action, "_listen_events")
-    listen_events = forward_action._listen_events
-    assert listen_events == (InputEvent, OutputEvent)
+    assert hasattr(forward_action, "_trigger_conditions")
+    listen_events = forward_action._trigger_conditions
+    assert listen_events == (InputEvent.EVENT_TYPE, OutputEvent.EVENT_TYPE)
 
 
-def test_action_decorator_listen_no_event() -> None:  # noqa D103
+def test_action_decorator_listen_no_event() -> None:
     with pytest.raises(AssertionError):
 
         @action()
         def forward_action(event: Event, ctx: RunnerContext) -> None:
-            input = event.input
+            input = InputEvent.from_event(event).input
             ctx.send_event(OutputEvent(output=input))
 
 
-def test_action_decorator_listen_non_event_type() -> None:  # noqa D103
+def test_action_decorator_listen_non_string_type() -> None:
     with pytest.raises(AssertionError):
 
-        @action(List)
+        @action(InputEvent)  # type: ignore[arg-type]
         def forward_action(event: Event, ctx: RunnerContext) -> None:
-            input = event.input
+            input = InputEvent.from_event(event).input
             ctx.send_event(OutputEvent(output=input))
+
+
+def test_action_decorator_with_string_identifier() -> None:
+    """Test that @action accepts a string identifier."""
+
+    @action("MyCustomEvent")
+    def my_handler(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+    assert hasattr(my_handler, "_trigger_conditions")
+    assert my_handler._trigger_conditions == ("MyCustomEvent",)
+
+
+def test_action_decorator_multiple_strings() -> None:
+    """Test that @action accepts multiple string identifiers."""
+
+    @action("_input_event", "AnotherEvent")
+    def mixed_handler(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+    assert mixed_handler._trigger_conditions == ("_input_event", "AnotherEvent")
+
+
+def test_action_decorator_rejects_invalid_types() -> None:
+    """Test that @action rejects non-string arguments."""
+    with pytest.raises(AssertionError):
+
+        @action(42)  # type: ignore[arg-type]
+        def bad_handler(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def _java_target() -> JavaFunction:
+    return JavaFunction.for_action("com.example.Handlers", "handle")
+
+
+def test_action_decorator_with_cross_language_target() -> None:
+    target = _java_target()
+
+    @action(EventType.InputEvent, target=target)
+    def stub(event: Event, ctx: RunnerContext) -> None:
+        msg = "cross-language stub"
+        raise NotImplementedError(msg)
+
+    assert stub._trigger_conditions == (InputEvent.EVENT_TYPE,)
+    assert stub._target is target
+
+
+def test_action_decorator_rejects_non_function_target() -> None:
+    with pytest.raises(TypeError, match="api-layer Function descriptor"):
+
+        @action(EventType.InputEvent, target="not a function")  # type: ignore[arg-type]
+        def stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_action_decorator_without_target_does_not_set_attribute() -> None:
+    @action(EventType.InputEvent)
+    def regular(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+    assert not hasattr(regular, "_target")
+
+
+def test_action_decorator_rejects_java_target_with_empty_qualname() -> None:
+    bad = JavaFunction(qualname="", method_name="handle", parameter_types=[])
+    with pytest.raises(ValueError, match="qualname"):
+
+        @action(EventType.InputEvent, target=bad)
+        def stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_action_decorator_rejects_java_target_with_empty_method_name() -> None:
+    bad = JavaFunction(qualname="com.example.X", method_name="", parameter_types=[])
+    with pytest.raises(ValueError, match="method_name"):
+
+        @action(EventType.InputEvent, target=bad)
+        def stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_action_decorator_rejects_python_target_with_empty_module() -> None:
+    bad = PythonFunction(module="", qualname="handle")
+    with pytest.raises(ValueError, match="module"):
+
+        @action(EventType.InputEvent, target=bad)
+        def stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_action_decorator_rejects_python_target_with_empty_qualname() -> None:
+    bad = PythonFunction(module="pkg.mod", qualname="")
+    with pytest.raises(ValueError, match="qualname"):
+
+        @action(EventType.InputEvent, target=bad)
+        def stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_action_decorator_target_error_names_decorated_function() -> None:
+    bad = PythonFunction(module="pkg.mod", qualname="")
+    with pytest.raises(ValueError, match="my_named_stub"):
+
+        @action(EventType.InputEvent, target=bad)
+        def my_named_stub(event: Event, ctx: RunnerContext) -> None:
+            pass
+
+
+def test_tool_decorator_supports_injected_args() -> None:
+    @tool(injected_args={"tenant_id": InjectedArg.from_config("tenant_id")})
+    def query_order(order_id: str, tenant_id: str) -> str:
+        return f"{tenant_id}:{order_id}"
+
+    assert query_order._is_tool is True
+    assert query_order._injected_args == {"tenant_id": InjectedArg.from_config("tenant_id")}
+
+
+def test_tool_decorator_defaults_injected_arg_source_to_sensory_memory() -> None:
+    @tool(injected_args={"tenant_id": {"key": "request.tenant_id"}})
+    def query_order(order_id: str, tenant_id: str) -> str:
+        return f"{tenant_id}:{order_id}"
+
+    assert query_order._injected_args == {
+        "tenant_id": InjectedArg.from_sensory_memory("request.tenant_id")
+    }
+
+
+def test_tool_decorator_rejects_unknown_injected_arg_name() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Injected tool parameter\\(s\\) tenent_id do not match function",
+    ):
+
+        @tool(injected_args={"tenent_id": InjectedArg.from_config("tenant_id")})
+        def query_order(order_id: str, tenant_id: str) -> str:
+            return f"{tenant_id}:{order_id}"
+
+
+def test_tool_decorator_allows_injected_arg_with_kwargs() -> None:
+    @tool(injected_args={"tenant_id": InjectedArg.from_config("tenant_id")})
+    def query_order(order_id: str, **kwargs: str) -> str:
+        return f"{kwargs['tenant_id']}:{order_id}"
+
+    assert query_order._injected_args == {"tenant_id": InjectedArg.from_config("tenant_id")}
+
+
+def test_tool_decorator_rejects_list_injected_args() -> None:
+    with pytest.raises(TypeError, match="'injected_args' must be a dict"):
+
+        @tool(injected_args=["tenant_id"])
+        def query_order(order_id: str, tenant_id: str) -> str:
+            return f"{tenant_id}:{order_id}"
+
+
+def test_tool_decorator_rejects_string_injected_arg_spec() -> None:
+    with pytest.raises(TypeError, match="Unsupported injected arg spec"):
+
+        @tool(injected_args={"tenant_id": "tenant.id"})
+        def query_order(order_id: str, tenant_id: str) -> str:
+            return f"{tenant_id}:{order_id}"
+
+
+def test_tool_decorator_rejects_invalid_injected_arg_spec() -> None:
+    with pytest.raises(TypeError, match="Unsupported injected arg spec"):
+
+        @tool(injected_args={"tenant_id": 1})
+        def query_order(order_id: str, tenant_id: str) -> str:
+            return f"{tenant_id}:{order_id}"

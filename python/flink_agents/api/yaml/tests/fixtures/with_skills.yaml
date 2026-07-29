@@ -1,0 +1,12 @@
+agents:
+  - name: skills_agent
+    skills:
+      - name: agent_skills
+        paths:
+          - ./agent_skill_dir
+
+skills:
+  - name: shared_skills
+    paths:
+      - ./shared_skill_dir
+      - ./more

@@ -40,7 +40,7 @@ def test_load_configuration_from_file() -> None:
         }
     }
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         yaml.dump(test_data, f)
         config_file = f.name
 
@@ -50,13 +50,13 @@ def test_load_configuration_from_file() -> None:
         config.load_from_file(config_file)
 
         # Test that nested configuration is properly flattened
-        assert config.get_str('database.host') == 'localhost'
-        assert config.get_int('database.port') == 5432
-        assert config.get_str('database.credentials.username') == 'admin'
-        assert config.get_str('database.credentials.password') == 'secret'
-        assert config.get_str('api.endpoint') == '/api/v1'
-        assert config.get_float('api.timeout') == 30.0
-        assert config.get_bool('debug') is True
+        assert config.get_str("database.host") == "localhost"
+        assert config.get_int("database.port") == 5432
+        assert config.get_str("database.credentials.username") == "admin"
+        assert config.get_str("database.credentials.password") == "secret"
+        assert config.get_str("api.endpoint") == "/api/v1"
+        assert config.get_float("api.timeout") == 30.0
+        assert config.get_bool("debug") is True
     finally:
         config_file = Path(config_file)
         config_file.unlink()
@@ -76,13 +76,13 @@ def test_load_configuration_with_invalid_file() -> None:
     """Test loading configuration with a non-existent file."""
     config = AgentConfiguration()
     with pytest.raises(FileNotFoundError):
-        config.load_from_file('/path/to/nonexistent/file.yaml')
+        config.load_from_file("/path/to/nonexistent/file.yaml")
 
 
 def test_load_configuration_with_invalid_yaml() -> None:
     """Test loading configuration with invalid YAML content."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-        f.write('invalid: yaml: content: [')
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write("invalid: yaml: content: [")
         config_file = f.name
 
     try:
@@ -96,91 +96,103 @@ def test_load_configuration_with_invalid_yaml() -> None:
 
 def test_get_int() -> None:
     """Test get_int method with various inputs."""
-    config = AgentConfiguration({'int_key': 42, 'str_key': '123', 'invalid_key': 'not_an_int'})
+    config = AgentConfiguration(
+        {"int_key": 42, "str_key": "123", "invalid_key": "not_an_int"}
+    )
 
     # Test normal integer value
-    assert config.get_int('int_key') == 42
+    assert config.get_int("int_key") == 42
 
     # Test string that can be converted to int
-    assert config.get_int('str_key') == 123
+    assert config.get_int("str_key") == 123
 
     # Test default value when key is not found
-    assert config.get_int('missing_key', 999) == 999
+    assert config.get_int("missing_key", 999) == 999
 
     # Test default value when no default specified
-    assert config.get_int('missing_key') is None
+    assert config.get_int("missing_key") is None
 
     # Test invalid value that cannot be converted to int
     with pytest.raises(ValueError, match="Invalid value for invalid_key: not_an_int"):
-        config.get_int('invalid_key')
+        config.get_int("invalid_key")
 
 
 def test_get_float() -> None:
     """Test get_float method with various inputs."""
-    config = AgentConfiguration({'float_key': 3.14, 'int_key': 42, 'str_key': '2.5', 'invalid_key': 'not_a_float'})
+    config = AgentConfiguration(
+        {
+            "float_key": 3.14,
+            "int_key": 42,
+            "str_key": "2.5",
+            "invalid_key": "not_a_float",
+        }
+    )
 
     # Test normal float value
-    assert config.get_float('float_key') == 3.14
+    assert config.get_float("float_key") == 3.14
 
     # Test int value converted to float
-    assert config.get_float('int_key') == 42.0
+    assert config.get_float("int_key") == 42.0
 
     # Test string that can be converted to float
-    assert config.get_float('str_key') == 2.5
+    assert config.get_float("str_key") == 2.5
 
     # Test default value when key is not found
-    assert config.get_float('missing_key', 1.23) == 1.23
+    assert config.get_float("missing_key", 1.23) == 1.23
 
     # Test default value when no default specified
-    assert config.get_float('missing_key') is None
+    assert config.get_float("missing_key") is None
 
     # Test invalid value that cannot be converted to float
     with pytest.raises(ValueError, match="Invalid value for invalid_key: not_a_float"):
-        config.get_float('invalid_key')
+        config.get_float("invalid_key")
 
 
 def test_get_bool() -> None:
     """Test get_bool method with various inputs."""
-    config = AgentConfiguration({'bool_key': True, 'false_key': False, 'str_key': 'true'})
+    config = AgentConfiguration(
+        {"bool_key": True, "false_key": False, "str_key": "true"}
+    )
 
     # Test normal boolean values
-    assert config.get_bool('bool_key') is True
-    assert config.get_bool('false_key') is False
+    assert config.get_bool("bool_key") is True
+    assert config.get_bool("false_key") is False
 
     # Test default value when key is not found
-    assert config.get_bool('missing_key', True) is True
+    assert config.get_bool("missing_key", True) is True
 
     # Test default value when no default specified
-    assert config.get_bool('missing_key') is None
+    assert config.get_bool("missing_key") is None
 
     # Note: bool() in Python behaves differently than might be expected
     # bool('true') is True, but that's Python behavior, not a bug in our code
-    assert config.get_bool('str_key') is True
+    assert config.get_bool("str_key") is True
 
 
 def test_get_str() -> None:
     """Test get_str method with various inputs."""
-    config = AgentConfiguration({'str_key': 'hello', 'int_key': 42, 'float_key': 3.14})
+    config = AgentConfiguration({"str_key": "hello", "int_key": 42, "float_key": 3.14})
 
     # Test normal string value
-    assert config.get_str('str_key') == 'hello'
+    assert config.get_str("str_key") == "hello"
 
     # Test int value converted to string
-    assert config.get_str('int_key') == '42'
+    assert config.get_str("int_key") == "42"
 
     # Test float value converted to string
-    assert config.get_str('float_key') == '3.14'
+    assert config.get_str("float_key") == "3.14"
 
     # Test default value when key is not found
-    assert config.get_str('missing_key', 'default') == 'default'
+    assert config.get_str("missing_key", "default") == "default"
 
     # Test default value when no default specified
-    assert config.get_str('missing_key') is None
+    assert config.get_str("missing_key") is None
 
     # Test None value
-    assert config.get_str('none_key') is None
+    assert config.get_str("none_key") is None
 
-def test_get_with_config_option() -> None:  # noqa: D103
+
+def test_get_with_config_option() -> None:
     data = {
         "config.str": "config.value",
         "config.int": 6789,
@@ -207,7 +219,7 @@ def test_get_with_config_option() -> None:  # noqa: D103
     assert config.get(missing_key) is None
 
 
-def test_get_with_default_value() -> None:  # noqa: D103
+def test_get_with_default_value() -> None:
     default_str = ConfigOption("default.str", str, "default_value")
     default_int = ConfigOption("default.int", int, 100)
     default_double = ConfigOption("default.double", float, 2.5)
@@ -219,7 +231,7 @@ def test_get_with_default_value() -> None:  # noqa: D103
     assert config.get(default_double) == 2.5
 
 
-def test_get_with_null_and_default() -> None:  # noqa: D103
+def test_get_with_null_and_default() -> None:
     nullable_str = ConfigOption("nullable.str", str, "default")
 
     config = AgentConfiguration()

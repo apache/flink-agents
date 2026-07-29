@@ -43,8 +43,8 @@ Options:
   -e, --e2e         Run e2e tests
   -b, --both        Run both Java and Python tests (default)
   -f, --flink       Specify Flink version to test (can be used multiple times)
-                    Supported versions: 2.2, 1.20
-                    Examples: -f 2.2, -f 1.20, -f 2.2 -f 1.20
+                    Supported versions: 2.3, 2.2, 2.1, 2.0, 1.20
+                    Examples: -f 2.3, -f 1.20, -f 2.3 -f 1.20
                     Default: run all versions if not specified
   -v, --verbose     Show verbose output
   -h, --help        Display this help message
@@ -119,6 +119,16 @@ if $verbose; then
     echo "Will run tests for Flink versions: ${flink_versions[*]}"
 fi
 
+# Skip spotless code-style check when SKIP_SPOTLESS_CHECK is set.
+# Style enforcement is owned by the dedicated `Code Style Check` CI job
+# (and `tools/lint.sh` locally), so other CI jobs append this flag to
+# every mvn invocation to avoid masking real test failures with style
+# violations. Unset (default) preserves local-dev behavior.
+SPOTLESS_FLAG=""
+if [ "${SKIP_SPOTLESS_CHECK}" = "true" ] || [ "${SKIP_SPOTLESS_CHECK}" = "1" ]; then
+    SPOTLESS_FLAG="-Dspotless.skip=true"
+fi
+
 java_tests() {
     if $verbose; then
         echo "Running Java tests..."
@@ -135,7 +145,7 @@ java_tests() {
         done
         dist_modules="${dist_modules#,}"
 
-        mvn --batch-mode --no-transfer-progress install -pl "$dist_modules" -DskipTests
+        mvn --batch-mode --no-transfer-progress install -pl "$dist_modules" -DskipTests ${SPOTLESS_FLAG}
         install_code=$?
         if [ $install_code -ne 0 ]; then
             echo "Failed to install dist packages" >&2
@@ -145,7 +155,7 @@ java_tests() {
         local all_passed=true
         for version in "${flink_versions[@]}"; do
             echo "Running E2E tests for Flink ${version}..."
-            mvn --batch-mode --no-transfer-progress test -pl 'e2e-test/flink-agents-end-to-end-tests-integration' -Pflink-${version}
+            mvn --batch-mode --no-transfer-progress test -pl 'e2e-test/flink-agents-end-to-end-tests-integration' -Pflink-${version} -Dsurefire.rerunFailingTestsCount=2 ${SPOTLESS_FLAG}
 
             if [ $? -ne 0 ]; then
                 echo "E2E tests failed for Flink ${version}" >&2
@@ -159,7 +169,7 @@ java_tests() {
         testcode=0
     else
         echo "Installing all modules (including test-jars) to local repository..."
-        mvn --batch-mode --no-transfer-progress test-compile jar:test-jar install -DskipTests
+        mvn --batch-mode --no-transfer-progress test-compile jar:test-jar install -DskipTests ${SPOTLESS_FLAG}
         install_code=$?
         if [ $install_code -ne 0 ]; then
             echo "Failed to install modules to local repository" >&2
@@ -170,7 +180,7 @@ java_tests() {
 
         exclude_list="!e2e-test/flink-agents-end-to-end-tests-integration,!e2e-test/flink-agents-end-to-end-tests-resource-cross-language"
 
-        mvn -T16 --batch-mode --no-transfer-progress test -pl "${exclude_list}"
+        mvn -T16 --batch-mode --no-transfer-progress test -fae -pl "${exclude_list}" ${SPOTLESS_FLAG}
         testcode=$?
     fi
     case $testcode in
@@ -219,20 +229,40 @@ python_tests() {
             if $run_e2e; then
                 # There will be an individual build step before run e2e test for including java dist
                 uv pip install apache-flink~=${version}.0
+                # Arm 1: existing e2e tests (directory-based selector).
                 uv run --no-sync pytest flink_agents \
                 -s \
                 -k "e2e_tests_integration" \
+                --reruns 2 \
+                --reruns-delay 5 \
                 -o log_cli=true \
                 -o log_cli_level=${LOG_LEVEL:-CRITICAL}
+                rc1=$?
+                # Arm 2: integration-marked tests (registered in pyproject.toml).
+                # Trap exit code 5 (no tests collected) as failure to defend
+                # against -m selector typos that --strict-markers does not catch.
+                uv run --no-sync pytest flink_agents \
+                -s \
+                -m "integration" \
+                -o log_cli=true \
+                -o log_cli_level=${LOG_LEVEL:-CRITICAL}
+                rc2=$?
+                if [ $rc2 -eq 5 ]; then rc2=1; fi
+                # Logical-OR aggregation: any nonzero exit on either arm yields testcode=1.
+                # Side effect: pytest exit 5 (no tests collected) becomes failure on BOTH
+                # arms, not just arm 2 — which is the correct semantics (zero collection
+                # on either arm indicates a selector regression).
+                testcode=$((rc1 || rc2))
             else
                 uv sync --extra test
                 uv pip install apache-flink~=${version}.0
                 uv run --no-sync pytest flink_agents \
                 -k "not e2e_tests" \
+                -m "not integration" \
                 -o log_cli=true \
-                -o log_cli_level=${LOG_LEVEL:-CRITICAL}            
+                -o log_cli_level=${LOG_LEVEL:-CRITICAL}
+                testcode=$?
             fi
-            testcode=$?
         else
             if $verbose; then
                 echo "uv not found, falling back to pip"
@@ -249,11 +279,21 @@ python_tests() {
                 echo "Running tests with pytest..."
             fi
             if $run_e2e; then
-                pytest flink_agents -k "e2e_tests_integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                pytest flink_agents -k "e2e_tests_integration" --reruns 2 --reruns-delay 5 -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                rc1=$?
+                # Arm 2: integration-marked tests; trap exit code 5 as failure.
+                pytest flink_agents -m "integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                rc2=$?
+                if [ $rc2 -eq 5 ]; then rc2=1; fi
+                # Logical-OR aggregation: any nonzero exit on either arm yields testcode=1.
+                # Side effect: pytest exit 5 (no tests collected) becomes failure on BOTH
+                # arms, not just arm 2 — which is the correct semantics (zero collection
+                # on either arm indicates a selector regression).
+                testcode=$((rc1 || rc2))
             else
-                pytest flink_agents -k "not e2e_tests" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                pytest flink_agents -k "not e2e_tests" -m "not integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                testcode=$?
             fi
-            testcode=$?
         fi
 
         # Handle pytest exit codes

@@ -20,6 +20,8 @@
 
 package org.apache.flink.agents.api.annotation;
 
+import org.apache.flink.agents.api.tools.ToolParameterSource;
+
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -60,4 +62,30 @@ public @interface ToolParam {
      * @return a string representing the default value of the argument.
      */
     String defaultValue() default "";
+
+    /**
+     * Whether this argument is injected by the framework at tool execution time.
+     *
+     * <p>Injected arguments are hidden from the model-facing tool schema.
+     *
+     * @return true if the argument is injected by the framework
+     */
+    boolean injected() default false;
+
+    /**
+     * Source used to resolve an injected argument.
+     *
+     * <p>Defaults to sensory memory so omitted sources read from the current request context.
+     *
+     * <p>Ignored unless {@link #injected()} is true.
+     */
+    ToolParameterSource source() default ToolParameterSource.SENSORY_MEMORY;
+
+    /**
+     * Key or path used by {@link #source()} to resolve an injected argument. When empty, the tool
+     * parameter name is used.
+     *
+     * <p>Ignored unless {@link #injected()} is true.
+     */
+    String key() default "";
 }
