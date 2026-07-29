@@ -338,6 +338,123 @@ def test_reader_models_reused_event_as_dag_and_deduplicates_edges(
     assert text_result.stderr == ""
 
 
+def test_reader_prunes_multi_node_cycle_and_keeps_reachable_trace(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "events.log"
+    _write_log(
+        log_path,
+        [
+            _record("root", "_input_event"),
+            _record("event-a", "MiddleEvent", "root", "root_to_a"),
+            _record("event-b", "MiddleEvent", "event-a", "a_to_b"),
+            _record("event-c", "MiddleEvent", "event-b", "b_to_c"),
+            _record("event-a", "MiddleEvent", "event-c", "c_to_a"),
+        ],
+    )
+
+    json_result = _run_reader(log_path, "json")
+    trace_forest = json.loads(json_result.stdout)
+
+    assert trace_forest["roots"] == ["root"]
+    assert trace_forest["nodes"]["root"]["actions"] == [
+        {"name": "root_to_a", "children": ["event-a"]}
+    ]
+    assert trace_forest["nodes"]["event-a"]["actions"] == [
+        {"name": "a_to_b", "children": ["event-b"]}
+    ]
+    assert trace_forest["nodes"]["event-b"]["actions"] == [
+        {"name": "b_to_c", "children": ["event-c"]}
+    ]
+    assert trace_forest["nodes"]["event-c"]["actions"] == []
+    assert trace_forest["nodes"]["event-a"]["upstreamEdges"] == [
+        {
+            "upstreamEventId": "root",
+            "upstreamActionName": "root_to_a",
+        }
+    ]
+    assert trace_forest["warnings"] == [
+        {
+            "code": "CYCLE_DETECTED",
+            "eventId": "event-a",
+            "message": (
+                "Lineage edge from event-c to event-a through Action c_to_a "
+                "creates a cycle."
+            ),
+            "upstreamEventId": "event-c",
+            "upstreamActionName": "c_to_a",
+        }
+    ]
+
+    text_result = _run_reader(log_path, "text")
+
+    assert text_result.stdout.count("MiddleEvent (event-a)") == 1
+    assert text_result.stdout.count("MiddleEvent (event-b)") == 1
+    assert text_result.stdout.count("MiddleEvent (event-c)") == 1
+    assert "[CYCLE_DETECTED]" in text_result.stderr
+
+
+def test_reader_prunes_same_cycle_edge_independent_of_log_order(
+    tmp_path: Path,
+) -> None:
+    root_1 = _record("root-1", "_input_event")
+    root_2 = _record("root-2", "_input_event")
+    root_1_to_a = _record("event-a", "MiddleEvent", "root-1", "root_1_to_a")
+    b_to_a = _record("event-a", "MiddleEvent", "event-b", "b_to_a")
+    a_to_b = _record("event-b", "MiddleEvent", "event-a", "a_to_b")
+    root_2_to_b = _record("event-b", "MiddleEvent", "root-2", "root_2_to_b")
+    record_orders = [
+        [root_1, root_1_to_a, a_to_b, root_2, root_2_to_b, b_to_a],
+        [root_2, root_2_to_b, b_to_a, root_1, root_1_to_a, a_to_b],
+    ]
+
+    results = []
+    for index, records in enumerate(record_orders):
+        log_path = tmp_path / f"events-{index}.log"
+        _write_log(log_path, records)
+        reader_result = _run_reader(log_path, "json")
+        trace_forest = json.loads(reader_result.stdout)
+        results.append(
+            {
+                "roots": trace_forest["roots"],
+                "event-a-actions": trace_forest["nodes"]["event-a"]["actions"],
+                "event-b-actions": trace_forest["nodes"]["event-b"]["actions"],
+                "cycle-warning": [
+                    (item["eventId"], item["message"])
+                    for item in trace_forest["warnings"]
+                    if item["code"] == "CYCLE_DETECTED"
+                ],
+            }
+        )
+
+    assert results == [
+        {
+            "roots": ["root-1", "root-2"],
+            "event-a-actions": [{"name": "a_to_b", "children": ["event-b"]}],
+            "event-b-actions": [],
+            "cycle-warning": [
+                (
+                    "event-a",
+                    "Lineage edge from event-b to event-a through Action b_to_a "
+                    "creates a cycle.",
+                )
+            ],
+        },
+        {
+            "roots": ["root-2", "root-1"],
+            "event-a-actions": [{"name": "a_to_b", "children": ["event-b"]}],
+            "event-b-actions": [],
+            "cycle-warning": [
+                (
+                    "event-a",
+                    "Lineage edge from event-b to event-a through Action b_to_a "
+                    "creates a cycle.",
+                )
+            ],
+        },
+    ]
+
+
 def test_text_reader_handles_trace_deeper_than_recursion_limit(tmp_path: Path) -> None:
     log_path = tmp_path / "events.log"
     depth = sys.getrecursionlimit() + 10
@@ -357,6 +474,91 @@ def test_text_reader_handles_trace_deeper_than_recursion_limit(tmp_path: Path) -
 
     assert f"MiddleEvent (event-{depth})" in result.stdout
     assert result.stderr == ""
+
+
+def test_reader_keeps_matching_observations_and_descendants_on_event_id_conflict(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "events.log"
+    _write_log(
+        log_path,
+        [
+            _record("root", "_input_event"),
+            _record(
+                "conflicting",
+                "ConflictingEvent",
+                "root",
+                "root_to_conflicting",
+                {"value": "first"},
+            ),
+            _record("other-root", "_input_event"),
+            _record(
+                "conflicting",
+                "ConflictingEvent",
+                "other-root",
+                "other_to_conflicting",
+                {"value": "second"},
+            ),
+            _record("replay-root", "_input_event"),
+            _record(
+                "conflicting",
+                "ConflictingEvent",
+                "replay-root",
+                "replay_to_conflicting",
+                {"value": "first"},
+            ),
+            _record("child", "ChildEvent", "conflicting", "conflicting_to_child"),
+            _record("grandchild", "ChildEvent", "child", "child_to_grandchild"),
+            _record(
+                "great-grandchild",
+                "ChildEvent",
+                "grandchild",
+                "grandchild_to_great_grandchild",
+            ),
+        ],
+    )
+
+    json_result = _run_reader(log_path, "json")
+    trace_forest = json.loads(json_result.stdout)
+
+    assert trace_forest["roots"] == ["root", "other-root", "replay-root"]
+    assert trace_forest["nodes"]["root"]["actions"] == [
+        {"name": "root_to_conflicting", "children": ["conflicting"]}
+    ]
+    assert trace_forest["nodes"]["conflicting"]["observationCount"] == 3
+    assert trace_forest["nodes"]["conflicting"]["upstreamEdges"] == [
+        {
+            "upstreamEventId": "root",
+            "upstreamActionName": "root_to_conflicting",
+        },
+        {
+            "upstreamEventId": "replay-root",
+            "upstreamActionName": "replay_to_conflicting",
+        },
+    ]
+    assert trace_forest["nodes"]["other-root"]["actions"] == []
+    assert trace_forest["nodes"]["replay-root"]["actions"] == [
+        {"name": "replay_to_conflicting", "children": ["conflicting"]}
+    ]
+    assert trace_forest["nodes"]["conflicting"]["actions"] == [
+        {"name": "conflicting_to_child", "children": ["child"]}
+    ]
+    assert trace_forest["nodes"]["child"]["actions"] == [
+        {"name": "child_to_grandchild", "children": ["grandchild"]}
+    ]
+    assert trace_forest["nodes"]["grandchild"]["actions"] == [
+        {
+            "name": "grandchild_to_great_grandchild",
+            "children": ["great-grandchild"],
+        }
+    ]
+    assert [item["code"] for item in trace_forest["warnings"]] == ["EVENT_ID_CONFLICT"]
+
+    text_result = _run_reader(log_path, "text")
+
+    for event_id in ("conflicting", "child", "grandchild", "great-grandchild"):
+        assert text_result.stdout.count(f"({event_id})") == 2
+    assert "[EVENT_ID_CONFLICT]" in text_result.stderr
 
 
 def test_reader_compares_event_content_by_json_type(tmp_path: Path) -> None:
@@ -399,7 +601,8 @@ def test_reader_compares_event_content_by_json_type(tmp_path: Path) -> None:
     result = _run_reader(log_path, "json")
     trace_forest = json.loads(result.stdout)
 
-    assert "type-sensitive" not in trace_forest["nodes"]
+    assert trace_forest["nodes"]["type-sensitive"]["eventType"] == "ChildEvent"
+    assert trace_forest["nodes"]["type-sensitive"]["observationCount"] == 2
     assert trace_forest["nodes"]["equivalent"]["observationCount"] == 2
     assert [item["code"] for item in trace_forest["warnings"]] == ["EVENT_ID_CONFLICT"]
 
@@ -450,12 +653,16 @@ def test_reader_warns_and_keeps_valid_input_tree(tmp_path: Path) -> None:
 
     assert trace_forest["roots"] == ["root"]
     assert trace_forest["nodes"]["root"]["actions"] == [
-        {"name": "valid_action", "children": ["valid-child"]}
+        {"name": "valid_action", "children": ["valid-child"]},
+        {
+            "name": "conflicting_action",
+            "children": ["type-conflict", "content-conflict"],
+        },
     ]
     assert "unlinked" in trace_forest["nodes"]
     assert "missing" in trace_forest["nodes"]
-    assert "type-conflict" not in trace_forest["nodes"]
-    assert "content-conflict" not in trace_forest["nodes"]
+    assert trace_forest["nodes"]["type-conflict"]["eventType"] == "FirstType"
+    assert trace_forest["nodes"]["content-conflict"]["eventType"] == "ConflictingEvent"
     assert warning_codes == {
         "EVENT_ID_CONFLICT",
         "MISSING_PARENT",
