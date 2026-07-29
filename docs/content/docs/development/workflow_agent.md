@@ -704,7 +704,12 @@ public class MyEvent extends Event {
 
 {{< /tabs >}}
 
-{{< hint info >}}
+{{< hint warning >}}
+Python Event IDs are immutable. Custom `from_event` implementations written against earlier
+versions may assign `result.id = event.id`; that assignment now raises a Pydantic
+`ValidationError`. Replace `result.id = event.id` followed by `return result` with
+`return result.reconstruct_from(event)`.
+
 Typed reconstruction represents the same Event occurrence, so it must preserve the base Event's
 identity and framework-managed metadata:
 
