@@ -25,10 +25,13 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Tests registering sub-agents as AGENT resources. */
+/** Tests registering sub-agents as AGENT resources and the failure-capturing callable base. */
 class SubagentRegisterTest {
 
     @Test
@@ -64,5 +67,22 @@ class SubagentRegisterTest {
         assertEquals(2, agentResources.size());
         assertSame(reviewer, agentResources.get("reviewer"));
         assertSame(coder, agentResources.get("coder"));
+    }
+
+    @Test
+    void baseCallableCapturesExceptionIntoErrorResult() {
+        BaseSubagentCallable failing =
+                new BaseSubagentCallable("sid-1", "c-1") {
+                    @Override
+                    protected Object callInternal() throws Exception {
+                        throw new IllegalStateException("boom");
+                    }
+                };
+
+        Result result = failing.call();
+        assertFalse(result.isSuccess());
+        // errorMessage is the full stack trace, which contains the original message.
+        assertTrue(result.getErrorMessage().contains("boom"));
+        assertNotNull(result.getException());
     }
 }

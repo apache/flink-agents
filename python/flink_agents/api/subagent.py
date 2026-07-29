@@ -176,9 +176,9 @@ class SubagentSetup(SerializableResource, Subagent, ABC):
         failover recovery.
         """
         if session_id is None:
-            session_id = ""
+            session_id = ctx.next_session_id()
         if call_id is None:
-            call_id = ""
+            call_id = ctx.next_call_id(session_id)
         callable_ = self.as_async_callable(ctx, prompt, session_id, call_id)
         return ctx.durable_execute(
             callable_.call, reconciler=callable_.reconciler

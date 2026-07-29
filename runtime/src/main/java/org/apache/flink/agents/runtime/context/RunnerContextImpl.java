@@ -19,7 +19,10 @@ package org.apache.flink.agents.runtime.context;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
@@ -47,10 +50,12 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 
 /**
@@ -108,6 +113,13 @@ public class RunnerContextImpl implements RunnerContext {
     /** Context for fine-grained durable execution, may be null if not enabled. */
     @Nullable protected DurableExecutionContext durableExecutionContext;
 
+    /**
+     * Per-task context that deterministically assigns sub-agent session/call ids. Attached
+     * alongside the rest of the per-task state by {@link #switchActionContext} before {@link
+     * #nextSessionId()} or {@link #nextCallId(String)} are invoked.
+     */
+    @Nullable private SubagentIdentityContext subagentIdentityContext;
+
     public RunnerContextImpl(
             FlinkAgentsMetricGroupImpl agentMetricGroup,
             Runnable mailboxThreadChecker,
@@ -124,9 +136,14 @@ public class RunnerContextImpl implements RunnerContext {
         this.ltm = ltm;
     }
 
-    public void switchActionContext(String actionName, MemoryContext memoryContext, String key) {
+    public void switchActionContext(
+            String actionName,
+            MemoryContext memoryContext,
+            SubagentIdentityContext subagentIdentityContext,
+            String key) {
         this.actionName = actionName;
         this.memoryContext = memoryContext;
+        this.subagentIdentityContext = subagentIdentityContext;
         if (ltm != null) {
             ltm.switchContext(key);
         }
@@ -265,6 +282,22 @@ public class RunnerContextImpl implements RunnerContext {
         return durableExecute(callable);
     }
 
+    @Override
+    public String nextSessionId() {
+        Preconditions.checkState(
+                subagentIdentityContext != null,
+                "Subagent identity context is not attached to the current action task.");
+        return subagentIdentityContext.nextSessionId();
+    }
+
+    @Override
+    public String nextCallId(String sessionId) {
+        Preconditions.checkState(
+                subagentIdentityContext != null,
+                "Subagent identity context is not attached to the current action task.");
+        return subagentIdentityContext.nextCallId(sessionId);
+    }
+
     /**
      * Executes a durable call using the completion-only state machine.
      *
@@ -369,6 +402,11 @@ public class RunnerContextImpl implements RunnerContext {
 
     public void clearDurableExecutionContext() {
         this.durableExecutionContext = null;
+    }
+
+    @Nullable
+    public SubagentIdentityContext getSubagentIdentityContext() {
+        return subagentIdentityContext;
     }
 
     /**
@@ -579,6 +617,103 @@ public class RunnerContextImpl implements RunnerContext {
     protected static class DurableExecutionRuntimeException extends RuntimeException {
         DurableExecutionRuntimeException(Throwable cause) {
             super(cause);
+        }
+    }
+
+    /**
+     * Caller-side facts identifying one action execution, used as the namespace for deterministic
+     * sub-agent id assignment: record key, sequence number, caller action name, and the triggering
+     * event (represented by its type and attributes, so two replays of the same logical event map
+     * to the same namespace regardless of the event instance id).
+     */
+    public static final class SubagentIdentityNamespace {
+
+        @JsonProperty("key")
+        private final String key;
+
+        @JsonProperty("sequenceNumber")
+        private final long sequenceNumber;
+
+        @JsonProperty("actionName")
+        private final String actionName;
+
+        @JsonProperty("eventType")
+        private final String eventType;
+
+        @JsonProperty("eventAttributes")
+        private final Map<String, Object> eventAttributes;
+
+        public SubagentIdentityNamespace(
+                Object key, long sequenceNumber, String actionName, Event event) {
+            this.key = key.toString();
+            this.sequenceNumber = sequenceNumber;
+            this.actionName = actionName;
+            this.eventType = event.getType();
+            this.eventAttributes = event.getAttributes();
+        }
+    }
+
+    /**
+     * Per-{@code ActionTask} context that deterministically assigns sub-agent session and call ids.
+     *
+     * <p>The namespace is derived purely from caller-side facts, so a failover replay reproduces
+     * the same digest and therefore the same id sequence. The context is transient per-task heap
+     * state: continuation resume carries it forward (ordinals continue), failover rebuilds it
+     * (ordinals restart). The digest is computed lazily on the first allocation.
+     */
+    public static final class SubagentIdentityContext {
+
+        /**
+         * Sorts map entries and bean properties so the namespace bytes do not depend on map
+         * iteration order, which is not guaranteed across JVMs.
+         */
+        private static final ObjectMapper DIGEST_MAPPER =
+                JsonMapper.builder()
+                        .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
+                        .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
+                        .build();
+
+        private final SubagentIdentityNamespace namespace;
+
+        /** Computed lazily on the first allocation; mailbox-confined, no synchronization. */
+        @Nullable private String namespaceDigest;
+
+        private int sessionOrdinal;
+        private final Map<String, Integer> perSessionCallOrdinals = new HashMap<>();
+
+        public SubagentIdentityContext(
+                Object key, long sequenceNumber, String actionName, Event event) {
+            this.namespace = new SubagentIdentityNamespace(key, sequenceNumber, actionName, event);
+        }
+
+        /** Creates a new, ordinal-increasing session id scoped to this task's namespace. */
+        public String nextSessionId() {
+            return namespaceDigest() + "-" + (sessionOrdinal++);
+        }
+
+        /**
+         * Creates a new call id by appending the per-session ordinal (starting at 1) to the session
+         * id. Cross-task uniqueness relies on session ids not being shared between action
+         * executions (see the {@code RunnerContext#nextCallId(String)} contract).
+         */
+        public String nextCallId(String sessionId) {
+            int ordinal = perSessionCallOrdinals.merge(sessionId, 1, Integer::sum);
+            return sessionId + "-" + ordinal;
+        }
+
+        private String namespaceDigest() {
+            if (namespaceDigest == null) {
+                try {
+                    namespaceDigest =
+                            String.valueOf(
+                                    UUID.nameUUIDFromBytes(
+                                            DIGEST_MAPPER.writeValueAsBytes(namespace)));
+                } catch (JsonProcessingException e) {
+                    throw new IllegalStateException(
+                            "Failed to digest the sub-agent identity namespace", e);
+                }
+            }
+            return namespaceDigest;
         }
     }
 

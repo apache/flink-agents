@@ -42,12 +42,12 @@ public abstract class SubagentSetup extends SerializableResource implements Suba
 
     @Override
     public Result call(RunnerContext ctx, Object prompt) throws Exception {
-        return call(ctx, prompt, "");
+        return call(ctx, prompt, ctx.nextSessionId());
     }
 
     @Override
     public Result call(RunnerContext ctx, Object prompt, String sessionId) throws Exception {
-        return call(ctx, prompt, sessionId, "");
+        return call(ctx, prompt, sessionId, ctx.nextCallId(sessionId));
     }
 
     /**
@@ -62,13 +62,13 @@ public abstract class SubagentSetup extends SerializableResource implements Suba
 
     @Override
     public DurableCallable<Result> asAsyncCallable(RunnerContext ctx, Object prompt) {
-        return asAsyncCallable(ctx, prompt, "");
+        return asAsyncCallable(ctx, prompt, ctx.nextSessionId());
     }
 
     @Override
     public DurableCallable<Result> asAsyncCallable(
             RunnerContext ctx, Object prompt, String sessionId) {
-        return asAsyncCallable(ctx, prompt, sessionId, "");
+        return asAsyncCallable(ctx, prompt, sessionId, ctx.nextCallId(sessionId));
     }
 
     /**

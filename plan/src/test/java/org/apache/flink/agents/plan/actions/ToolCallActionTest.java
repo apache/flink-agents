@@ -165,6 +165,16 @@ public class ToolCallActionTest {
         }
 
         @Override
+        public String nextSessionId() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String nextCallId(String sessionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void close() {}
     }
 
