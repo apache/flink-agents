@@ -159,11 +159,18 @@ def build_trace_forest(
     for event_id, matching_records in records_by_id.items():
         first_record = matching_records[0]
         first_content_fingerprint = _json_fingerprint(first_record["eventContent"])
-        if any(
-            record["eventType"] != first_record["eventType"]
-            or _json_fingerprint(record["eventContent"]) != first_content_fingerprint
-            for record in matching_records[1:]
-        ):
+        lineage_records = [first_record]
+        has_conflicting_observations = False
+        for record in matching_records[1:]:
+            if (
+                record["eventType"] != first_record["eventType"]
+                or _json_fingerprint(record["eventContent"])
+                != first_content_fingerprint
+            ):
+                has_conflicting_observations = True
+            else:
+                lineage_records.append(record)
+        if has_conflicting_observations:
             warnings.append(
                 warning(
                     "EVENT_ID_CONFLICT",
@@ -172,11 +179,10 @@ def build_trace_forest(
                     f"across {len(matching_records)} records.",
                 )
             )
-            continue
 
         lineage_edges: list[tuple[str | None, str | None]] = []
         seen_edges: set[tuple[str | None, str | None]] = set()
-        for record in matching_records:
+        for record in lineage_records:
             edge = (record["upstreamEventId"], record["upstreamActionName"])
             if edge not in seen_edges:
                 seen_edges.add(edge)
@@ -255,7 +261,92 @@ def build_trace_forest(
                 nodes[upstream_event_id]["actions"].append(action)
             action["children"].append(event_id)
 
+    _prune_cycles(nodes, roots, warnings)
     return {"roots": roots, "nodes": nodes, "warnings": warnings}
+
+
+def _prune_cycles(
+    nodes: dict[str, dict[str, Any]],
+    roots: list[str],
+    warnings: list[dict[str, Any]],
+) -> None:
+    """Remove DFS back edges while preserving shared DAG descendants."""
+
+    def child_edges(event_id: str) -> Iterator[tuple[str, str]]:
+        return iter(
+            sorted(
+                (action["name"], child_id)
+                for action in nodes[event_id]["actions"]
+                for child_id in action["children"]
+            )
+        )
+
+    visited_event_ids: set[str] = set()
+    active_event_ids: set[str] = set()
+    rejected_edges: set[tuple[str, str, str]] = set()
+    root_ids = set(roots)
+    traversal_order = sorted(root_ids) + sorted(
+        event_id for event_id in nodes if event_id not in root_ids
+    )
+
+    for start_event_id in traversal_order:
+        if start_event_id in visited_event_ids:
+            continue
+
+        active_event_ids.add(start_event_id)
+        stack = [(start_event_id, child_edges(start_event_id))]
+        while stack:
+            parent_event_id, remaining_child_edges = stack[-1]
+            try:
+                action_name, child_event_id = next(remaining_child_edges)
+            except StopIteration:
+                active_event_ids.remove(parent_event_id)
+                visited_event_ids.add(parent_event_id)
+                stack.pop()
+                continue
+
+            if child_event_id in active_event_ids:
+                rejected_edges.add((parent_event_id, action_name, child_event_id))
+                warnings.append(
+                    warning(
+                        "CYCLE_DETECTED",
+                        child_event_id,
+                        f"Lineage edge from {parent_event_id} to {child_event_id} "
+                        f"through Action {action_name} creates a cycle.",
+                        upstream_event_id=parent_event_id,
+                        upstream_action_name=action_name,
+                    )
+                )
+                continue
+            if child_event_id in visited_event_ids:
+                continue
+
+            active_event_ids.add(child_event_id)
+            stack.append((child_event_id, child_edges(child_event_id)))
+
+    for parent_event_id, action_name, child_event_id in rejected_edges:
+        nodes[child_event_id]["upstreamEdges"] = [
+            edge
+            for edge in nodes[child_event_id]["upstreamEdges"]
+            if (
+                edge["upstreamEventId"],
+                edge["upstreamActionName"],
+            )
+            != (parent_event_id, action_name)
+        ]
+
+    for parent_event_id, node in nodes.items():
+        retained_actions = []
+        for action in node["actions"]:
+            action["children"] = [
+                child_event_id
+                for child_event_id in action["children"]
+                if (parent_event_id, action["name"], child_event_id)
+                not in rejected_edges
+            ]
+            if action["children"]:
+                retained_actions.append(action)
+        node["actions"] = retained_actions
 
 
 def warning(
@@ -266,6 +357,8 @@ def warning(
     file_path: Path | None = None,
     line_number: int | None = None,
     column_number: int | None = None,
+    upstream_event_id: str | None = None,
+    upstream_action_name: str | None = None,
 ) -> dict[str, Any]:
     """Create one machine-readable reconstruction warning."""
     item: dict[str, Any] = {"code": code}
@@ -278,6 +371,10 @@ def warning(
         item["lineNumber"] = line_number
     if column_number is not None:
         item["columnNumber"] = column_number
+    if upstream_event_id is not None:
+        item["upstreamEventId"] = upstream_event_id
+    if upstream_action_name is not None:
+        item["upstreamActionName"] = upstream_action_name
     return item
 
 
@@ -287,21 +384,28 @@ def render_text(trace_forest: dict[str, Any]) -> str:
 
     def render_event(event_id: str, indent: str) -> None:
         stack: list[tuple[str, Any, str]] = [("event", event_id, indent)]
+        active_event_ids: set[str] = set()
         while stack:
             item_type, item, item_indent = stack.pop()
             if item_type == "event":
+                if item in active_event_ids:
+                    continue
+                active_event_ids.add(item)
                 node = trace_forest["nodes"][item]
                 lines.append(f"{item_indent}{node['eventType']} ({item})")
+                stack.append(("exit", item, item_indent))
                 stack.extend(
                     ("action", action, item_indent)
                     for action in reversed(node["actions"])
                 )
-            else:
+            elif item_type == "action":
                 lines.append(f"{item_indent}  [Action: {item['name']}]")
                 stack.extend(
                     ("event", child_id, item_indent + "    ")
                     for child_id in reversed(item["children"])
                 )
+            else:
+                active_event_ids.remove(item)
 
     for root_number, root_id in enumerate(trace_forest["roots"], start=1):
         if lines:

@@ -227,9 +227,11 @@ In JSON output:
   - `timestamp`: the `timestamp` of the first Event Log record observed for this Event ID.
   - `observationCount`: Number of times this Event was recorded in the Event Log. Values greater
     than 1 usually mean the Event was reused during replay.
-  - `upstreamEdges`: the distinct causal edges observed for this Event, each with an
+  - `upstreamEdges`: the distinct recorded causal edges retained on this Event, each with an
     `upstreamEventId` and an `upstreamActionName`. Repeated observations of the same
-    `(Event ID, upstream Event ID, upstream Action name)` edge are deduplicated.
+    `(Event ID, upstream Event ID, upstream Action name)` edge are deduplicated. An edge that would
+    close a cycle is omitted. An invalid edge may remain for diagnosis even when a reconstruction
+    warning prevents it from being added to the parent Event's `actions`.
   - `actions`: the virtual Action nodes triggered by this Event, each with the Action `name` and
     the `children` Event IDs it emitted.
 - `warnings` contains the reconstruction warnings described below.
@@ -286,12 +288,28 @@ records with distinct upstream edges, as in the example above. Reusing an Event 
 Event type and content is valid.
 {{< /hint >}}
 
+If records carrying the same Event ID disagree on the Event type or content, the reader reports
+`EVENT_ID_CONFLICT` and uses the first observation's Event type and content as canonical for the
+node. Observations matching the canonical Event contribute their distinct upstream edges.
+Conflicting observations still contribute to `observationCount`, but not to `upstreamEdges`.
+Keeping the canonical node preserves descendants that refer to the conflicting Event ID.
+
 The reader derives virtual Action nodes from `upstreamActionName`; they are not separate Event Log
-records. Log order controls display order only and does not add execution-order semantics.
+records. Log order does not add execution-order semantics, but it controls display order and
+first-observation fields such as `timestamp`. For a fixed set of reconstructed nodes and edges,
+cycle detection uses Event IDs and Action names in a stable order, so reordering non-conflicting
+records does not change which cycle-closing edge is omitted. For `EVENT_ID_CONFLICT`, the first
+observation determines the canonical Event type and content, so the order of conflicting
+observations remains significant.
 
 Reconstruction warnings are written to standard error and included in JSON output while valid
 InputEvent-rooted branches are retained. The reader keeps valid records from the same input and
 continues with other Event Log files.
+
+A `CYCLE_DETECTED` warning identifies an omitted edge with `eventId` for the child,
+`upstreamEventId` for the parent, and `upstreamActionName` for the Action. The edge is omitted from
+both the parent's `actions` and the child's `upstreamEdges`, so cycle pruning is represented
+consistently in both directions.
 
 | Warning Code           | Trigger Condition                                                          |
 |------------------------|----------------------------------------------------------------------------|
@@ -300,6 +318,7 @@ continues with other Event Log files.
 | `UNLINKED_EVENT`       | A non-InputEvent has no upstream Event.                                    |
 | `MISSING_ACTION_NAME`  | An Event has an upstream Event but no upstream Action name.                |
 | `MISSING_PARENT`       | An Event references an upstream Event with no valid node in the Event Log. |
+| `CYCLE_DETECTED`       | A lineage edge closes a cycle and is omitted from the reconstructed DAG.   |
 | `MALFORMED_RECORD`     | An Event Log record is invalid or partially written.                       |
 | `UNREADABLE_FILE`      | An Event Log file could not be read.                                       |
 
