@@ -48,7 +48,6 @@ class Action(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str
-    # TODO: Raise a warning when the action has a return value, as it will be ignored.
     exec: PythonFunction | JavaFunction
     trigger_conditions: List[str]
     config: Dict[str, Any] | None = None
@@ -116,3 +115,4 @@ class Action(BaseModel):
         )
         # TODO: Update expected signature after import State and Context.
         self.exec.check_signature(Event, RunnerContext)
+        self.exec.warn_if_returns_value(self.name)

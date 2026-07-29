@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,10 @@ def illegal_signature(value: int, ctx: RunnerContext) -> None:
     pass
 
 
+def returns_value(event: Event, ctx: RunnerContext) -> str:
+    return "ignored by the framework"
+
+
 def test_action_signature_legal() -> None:
     Action(
         name="legal",
@@ -51,6 +56,37 @@ def test_action_signature_illegal() -> None:
             exec=PythonFunction.from_callable(illegal_signature),
             trigger_conditions=[InputEvent.EVENT_TYPE],
         )
+
+
+def test_action_warns_when_returns_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        Action(
+            name="returns_value",
+            exec=PythonFunction.from_callable(returns_value),
+            trigger_conditions=[InputEvent.EVENT_TYPE],
+        )
+    assert any(
+        "returns_value" in record.getMessage()
+        and "ignored" in record.getMessage().lower()
+        for record in caplog.records
+    )
+
+
+def test_action_no_warning_when_returns_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        Action(
+            name="legal",
+            exec=PythonFunction.from_callable(legal_signature),
+            trigger_conditions=[InputEvent.EVENT_TYPE],
+        )
+    assert not any(
+        "ignored by the framework" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 @pytest.fixture(scope="module")

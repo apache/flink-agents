@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import json
+import logging
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Sequence
 
@@ -563,6 +564,31 @@ def test_add_action_and_resource_to_agent() -> None:
     actual = json.loads(json_value)
     expected = json.loads(expected_json)
     assert actual == expected
+
+
+def _returns_value_action(event: Event, ctx: RunnerContext) -> str:
+    return "ignored by the framework"
+
+
+def test_warns_for_returning_action_added_via_add_action(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Actions registered imperatively via add_action are also checked, since
+    the warning now lives in Action.__init__ rather than a single collection path.
+    """
+    agent = Agent()
+    agent.add_action(
+        name="returns_value",
+        trigger_conditions=[InputEvent.EVENT_TYPE],
+        func=_returns_value_action,
+    )
+    with caplog.at_level(logging.WARNING):
+        AgentPlan.from_agent(agent, AgentConfiguration())
+    assert any(
+        "returns_value" in record.getMessage()
+        and "ignored" in record.getMessage().lower()
+        for record in caplog.records
+    )
 
 
 # ── String identifier tests ──────────────────────────────────────────────
