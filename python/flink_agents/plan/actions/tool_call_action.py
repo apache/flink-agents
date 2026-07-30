@@ -32,6 +32,8 @@ from flink_agents.plan.actions.action import Action
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
+from flink_agents.runtime.durable_execution import durable_identity_for_call
+
 _logger = logging.getLogger(__name__)
 
 
@@ -126,12 +128,13 @@ def _build_tool_call_executions(
             error[call_id] = str(e)
             continue
 
+        function_id, _ = durable_identity_for_call(tool.call, (), call_kwargs)
         executions.append(
             _ToolCallExecution(
                 id=call_id,
                 name=name,
                 durable_call=DurableCall(
-                    id=f"tool-call-{call_id}",
+                    id=function_id,
                     func=tool.call,
                     kwargs=call_kwargs,
                 ),
@@ -147,15 +150,11 @@ async def _execute_parallel(
     success: dict,
     error: dict,
 ) -> None:
-    try:
-        outcomes = await ctx.durable_execute_all_async(
-            [execution.durable_call for execution in executions]
-        )
-        for execution, outcome in zip(executions, outcomes, strict=True):
-            _record_outcome(execution, outcome, responses, success, error)
-    except Exception as e:
-        for execution in executions:
-            _record_execution_exception(execution, e, responses, success, error)
+    outcomes = await ctx.durable_execute_all_async(
+        [execution.durable_call for execution in executions]
+    )
+    for execution, outcome in zip(executions, outcomes, strict=True):
+        _record_outcome(execution, outcome, responses, success, error)
 
 
 async def _execute_sequentially(

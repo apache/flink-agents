@@ -118,8 +118,8 @@ def test_agent_execution_options_include_parallel_tool_call_options() -> None:
     assert options["TOOL_CALL_PARALLEL"].get_default_value() is True
     assert options["TOOL_CALL_NUM_ASYNC_THREADS"].get_key() == "tool-call.num-async-threads"
     assert options["TOOL_CALL_NUM_ASYNC_THREADS"].get_default_value() == os.cpu_count() * 2
-    assert options["TOOL_CALL_BATCH_TIMEOUT"].get_key() == "tool-call.batch.timeout"
-    assert options["TOOL_CALL_BATCH_TIMEOUT"].get_default_value() == -1
+    assert options["TOOL_CALL_BATCH_TIMEOUT_MS"].get_key() == "tool-call.batch.timeout.ms"
+    assert options["TOOL_CALL_BATCH_TIMEOUT_MS"].get_default_value() == -1
 
 
 def test_unknown_agent_config_option_raises_attribute_error() -> None:

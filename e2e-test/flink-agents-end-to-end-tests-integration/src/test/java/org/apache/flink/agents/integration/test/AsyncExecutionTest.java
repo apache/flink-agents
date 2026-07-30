@@ -391,6 +391,63 @@ public class AsyncExecutionTest {
         }
     }
 
+    @Test
+    public void testToolCallBatchTimeoutKeepsCompletedOutcomes() throws Exception {
+        boolean continuationSupported = ContinuationActionExecutor.isContinuationSupported();
+        int javaVersion = Runtime.version().feature();
+        if (!continuationSupported || javaVersion < 21) {
+            System.out.println(
+                    "Skipping batch timeout e2e: requires JDK 21+ Continuation execution");
+            return;
+        }
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        DataStream<AsyncExecutionAgent.AsyncRequest> inputStream =
+                env.fromElements(new AsyncExecutionAgent.AsyncRequest(1, "tool-batch-timeout"));
+
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLEL, true);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_NUM_ASYNC_THREADS, 2);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 200L);
+
+        DataStream<Object> outputStream =
+                agentsEnv
+                        .fromDataStream(
+                                inputStream, new AsyncExecutionAgent.AsyncRequestKeySelector())
+                        .apply(new AsyncExecutionAgent.ToolBatchTimeoutAgent())
+                        .toDataStream();
+
+        CloseableIterator<Object> results = outputStream.collectAsync();
+        agentsEnv.execute();
+
+        List<String> outputList = new ArrayList<>();
+        while (results.hasNext()) {
+            outputList.add(results.next().toString());
+        }
+        results.close();
+
+        Assertions.assertEquals(1, outputList.size());
+        String output = outputList.get(0);
+
+        Pattern fastToolPattern =
+                Pattern.compile("call=1.*sleep_ms=0.*start=\\d+,end=\\d+", Pattern.DOTALL);
+        Assertions.assertTrue(
+                fastToolPattern.matcher(output).find(),
+                "Fast tool should complete before the batch deadline: " + output);
+        Assertions.assertTrue(
+                output.contains("execute failed") || output.toLowerCase().contains("timed out"),
+                "Slow tool should fail when the batch deadline elapses: " + output);
+        Assertions.assertFalse(
+                Pattern.compile("call=2.*sleep_ms=800.*start=\\d+,end=\\d+", Pattern.DOTALL)
+                        .matcher(output)
+                        .find(),
+                "Slow tool should not report a successful timed result: " + output);
+    }
+
     /**
      * Tests that durableExecute (sync) works correctly.
      *

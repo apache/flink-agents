@@ -42,6 +42,8 @@ import java.util.Map;
 
 /** Built-in action for processing tool call. */
 public class ToolCallAction {
+    static final String TOOL_CALL_DURABLE_ID = "tool-call";
+
     public static Action getToolCallAction() throws Exception {
         return new Action(
                 "tool_call_action",
@@ -135,7 +137,7 @@ public class ToolCallAction {
                     new DurableCallable<>() {
                         @Override
                         public String getId() {
-                            return "tool-call-" + id;
+                            return TOOL_CALL_DURABLE_ID;
                         }
 
                         @Override

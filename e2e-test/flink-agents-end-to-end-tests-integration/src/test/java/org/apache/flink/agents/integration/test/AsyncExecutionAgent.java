@@ -129,7 +129,25 @@ public class AsyncExecutionAgent {
         }
     }
 
+    /** Chat model setup for batch timeout e2e tests. */
+    public static class ToolBatchTimeoutChatModel extends BaseChatModelSetup {
+        public ToolBatchTimeoutChatModel(
+                ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return new HashMap<>();
+        }
+    }
+
     private static Map<String, Object> toolCall(String id, String requestId, int index) {
+        return toolCallWithSleep(id, requestId, index, 500);
+    }
+
+    private static Map<String, Object> toolCallWithSleep(
+            String id, String requestId, int index, int sleepMs) {
         return Map.of(
                 "id",
                 id,
@@ -140,7 +158,129 @@ public class AsyncExecutionAgent {
                         "name",
                         "timed_tool",
                         "arguments",
-                        Map.of("request_id", requestId, "call_index", index)));
+                        Map.of(
+                                "request_id",
+                                requestId,
+                                "call_index",
+                                String.valueOf(index),
+                                "sleep_ms",
+                                sleepMs)));
+    }
+
+    private static Map<String, Object> timeoutToolCallWithSleep(
+            String id, String requestId, int index, int sleepMs) {
+        return Map.of(
+                "id",
+                id,
+                "type",
+                "function",
+                "function",
+                Map.of(
+                        "name",
+                        "timed_tool_with_sleep",
+                        "arguments",
+                        Map.of(
+                                "request_id",
+                                requestId,
+                                "call_index",
+                                String.valueOf(index),
+                                "sleep_ms",
+                                sleepMs)));
+    }
+
+    /**
+     * Chat connection that issues one fast and one slow tool call, then aggregates all tool
+     * responses into the assistant reply so timeout e2e tests can observe partial batch outcomes.
+     */
+    public static class ToolBatchTimeoutChatConnection extends BaseChatModelConnection {
+        public ToolBatchTimeoutChatConnection(
+                ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        @Override
+        public ChatMessage chat(
+                List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+            ChatMessage lastMessage = messages.get(messages.size() - 1);
+            if (lastMessage.getRole() == MessageRole.TOOL) {
+                StringBuilder aggregated = new StringBuilder();
+                for (ChatMessage message : messages) {
+                    if (message.getRole() == MessageRole.TOOL) {
+                        if (aggregated.length() > 0) {
+                            aggregated.append('|');
+                        }
+                        aggregated.append(message.getContent());
+                    }
+                }
+                return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
+            }
+
+            String requestId = lastMessage.getContent();
+            return new ChatMessage(
+                    MessageRole.ASSISTANT,
+                    "",
+                    List.of(
+                            timeoutToolCallWithSleep("call-1", requestId, 1, 0),
+                            timeoutToolCallWithSleep("call-2", requestId, 2, 800)));
+        }
+    }
+
+    /** Agent that drives a two-tool batch used to exercise batch timeout behavior. */
+    public static class ToolBatchTimeoutAgent extends Agent {
+        @ChatModelConnection
+        public static ResourceDescriptor toolBatchTimeoutChatConnection() {
+            return ResourceDescriptor.Builder.newBuilder(
+                            ToolBatchTimeoutChatConnection.class.getName())
+                    .build();
+        }
+
+        @ChatModelSetup
+        public static ResourceDescriptor toolBatchTimeoutChatModel() {
+            return ResourceDescriptor.Builder.newBuilder(ToolBatchTimeoutChatModel.class.getName())
+                    .addInitialArgument("connection", "toolBatchTimeoutChatConnection")
+                    .addInitialArgument("model", "test-model")
+                    .addInitialArgument("tools", List.of("timed_tool_with_sleep"))
+                    .build();
+        }
+
+        @org.apache.flink.agents.api.annotation.Tool(
+                description = "Records timing for a tool call with configurable sleep.")
+        public static String timed_tool_with_sleep(
+                @ToolParam(name = "request_id") String requestId,
+                @ToolParam(name = "call_index") String callIndex,
+                @ToolParam(name = "sleep_ms") Integer sleepMs) {
+            long start = System.currentTimeMillis();
+            int sleepMillis = sleepMs != null ? sleepMs : 0;
+            if (sleepMillis > 0) {
+                try {
+                    Thread.sleep(sleepMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            long end = System.currentTimeMillis();
+            return String.format(
+                    "request=%s,call=%s,sleep_ms=%d,start=%d,end=%d",
+                    requestId, callIndex, sleepMillis, start, end);
+        }
+
+        @Action(EventType.InputEvent)
+        public static void requestTools(Event event, RunnerContext ctx) {
+            InputEvent inputEvent = InputEvent.fromEvent(event);
+            AsyncRequest request = (AsyncRequest) inputEvent.getInput();
+            ctx.sendEvent(
+                    new ChatRequestEvent(
+                            "toolBatchTimeoutChatModel",
+                            List.of(
+                                    new ChatMessage(
+                                            MessageRole.USER, String.valueOf(request.id)))));
+        }
+
+        @Action(EventType.ChatResponseEvent)
+        public static void emitToolTimings(Event event, RunnerContext ctx) {
+            ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(event);
+            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getContent()));
+        }
     }
 
     /** Agent that requests one chat turn that produces multiple slow tool calls. */

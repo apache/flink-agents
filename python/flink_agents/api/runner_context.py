@@ -241,6 +241,7 @@ class RunnerContext(ABC):
         func: Callable[[Any], Any],
         *args: Any,
         reconciler: Callable[[], Any] | None = None,
+        durable_id: str | None = None,
         **kwargs: Any,
     ) -> Any:
         """Synchronously execute the provided function with durable execution support.
@@ -283,6 +284,10 @@ class RunnerContext(ABC):
             Optional zero-argument reconciler callable used only during recovery.
             This is a reserved keyword-only parameter and is not forwarded to
             `func`.
+        durable_id : str | None
+            Optional durable journal identity. When provided, the runtime keys
+            recovery on this id with an empty args digest instead of deriving
+            the identity from the callable and arguments.
         **kwargs : Any
             Keyword arguments to pass to the function.
 
@@ -298,6 +303,7 @@ class RunnerContext(ABC):
         func: Callable[[Any], Any],
         *args: Any,
         reconciler: Callable[[], Any] | None = None,
+        durable_id: str | None = None,
         **kwargs: Any,
     ) -> "AsyncExecutionResult":
         """Asynchronously execute the provided function with durable execution support.
@@ -341,6 +347,10 @@ class RunnerContext(ABC):
             Optional zero-argument reconciler callable used only during recovery.
             This is a reserved keyword-only parameter and is not forwarded to
             `func`.
+        durable_id : str | None
+            Optional durable journal identity. When provided, the runtime keys
+            recovery on this id with an empty args digest instead of deriving
+            the identity from the callable and arguments.
         **kwargs : Any
             Keyword arguments to pass to the function.
 

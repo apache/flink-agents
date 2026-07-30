@@ -152,7 +152,10 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             } else {
                 plan.outcomes.add(
                         readTerminalOutcomeAt(
-                                base + i, callable.getId(), argsDigest, callable.getResultClass()));
+                                base + i,
+                                callable.getId(),
+                                argsDigest,
+                                callable.getResultClass()));
             }
         }
         return plan;
@@ -186,11 +189,13 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             return;
         }
         List<String> ids = new ArrayList<>();
+        List<String> argsDigests = new ArrayList<>();
         for (DurableCallable<T> callable :
                 callables.subList(plan.executionStart, callables.size())) {
             ids.add(callable.getId());
+            argsDigests.add(argsDigest);
         }
-        reservePendingBatch(ids, argsDigest);
+        reservePendingBatch(ids, argsDigests);
     }
 
     private <T> void finalizeExecutedOutcomes(
@@ -250,7 +255,9 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
                             })
                     .collect(Collectors.toList());
         }
-        Duration timeout = getConfig().get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT);
+        Long timeoutMs = getConfig().get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS);
+        Duration timeout =
+                timeoutMs == null || timeoutMs <= 0 ? null : Duration.ofMillis(timeoutMs);
         return toolCallContinuationExecutor.executeAllAsync(
                 continuationContext, suppliers, timeout);
     }

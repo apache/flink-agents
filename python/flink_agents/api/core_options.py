@@ -266,8 +266,9 @@ class AgentExecutionOptions:
         default=os.cpu_count() * 2,
     )
 
-    TOOL_CALL_BATCH_TIMEOUT = ConfigOption(
-        key="tool-call.batch.timeout",
+    # Non-positive disables the batch timeout; positive values are milliseconds.
+    TOOL_CALL_BATCH_TIMEOUT_MS = ConfigOption(
+        key="tool-call.batch.timeout.ms",
         config_type=int,
         default=-1,
     )

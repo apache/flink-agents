@@ -20,8 +20,6 @@ package org.apache.flink.agents.api.agents;
 
 import org.apache.flink.agents.api.configuration.ConfigOption;
 
-import java.time.Duration;
-
 public class AgentExecutionOptions {
     public static final ConfigOption<Agent.ErrorHandlingStrategy> ERROR_HANDLING_STRATEGY =
             new ConfigOption<>(
@@ -73,13 +71,13 @@ public class AgentExecutionOptions {
                     Runtime.getRuntime().availableProcessors() * 2);
 
     /**
-     * Overall timeout for one parallel tool-call batch.
+     * Overall timeout for one parallel tool-call batch, in milliseconds.
      *
      * <p>Non-positive values disable the timeout. When the deadline elapses, unfinished slots are
      * failed; slots that already completed keep their success or failure outcome.
      */
-    public static final ConfigOption<Duration> TOOL_CALL_BATCH_TIMEOUT =
-            new ConfigOption<>("tool-call.batch.timeout", Duration.class, Duration.ofMillis(-1));
+    public static final ConfigOption<Long> TOOL_CALL_BATCH_TIMEOUT_MS =
+            new ConfigOption<>("tool-call.batch.timeout.ms", Long.class, -1L);
 
     public static final ConfigOption<Boolean> RAG_ASYNC =
             new ConfigOption<>("rag.async", Boolean.class, true);
