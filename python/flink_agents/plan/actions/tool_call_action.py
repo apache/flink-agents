@@ -31,7 +31,6 @@ from flink_agents.api.tools.tool_parameter_injection import (
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
-
 from flink_agents.runtime.durable_execution import durable_identity_for_call
 
 _logger = logging.getLogger(__name__)

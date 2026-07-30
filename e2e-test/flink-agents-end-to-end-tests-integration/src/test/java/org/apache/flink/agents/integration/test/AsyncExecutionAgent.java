@@ -103,7 +103,16 @@ public class AsyncExecutionAgent {
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             ChatMessage lastMessage = messages.get(messages.size() - 1);
             if (lastMessage.getRole() == MessageRole.TOOL) {
-                return new ChatMessage(MessageRole.ASSISTANT, lastMessage.getContent());
+                StringBuilder aggregated = new StringBuilder();
+                for (ChatMessage message : messages) {
+                    if (message.getRole() == MessageRole.TOOL) {
+                        if (aggregated.length() > 0) {
+                            aggregated.append('|');
+                        }
+                        aggregated.append(message.getContent());
+                    }
+                }
+                return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
             }
 
             String requestId = lastMessage.getContent();
