@@ -133,40 +133,19 @@ class JsonTruncatorTest {
     }
 
     @Test
-    void testProtectedFields() {
-        JsonTruncator truncator = new JsonTruncator(5, 2, 2);
+    void testFormerEnvelopeFieldNamesAreTruncatedAsPayload() {
+        JsonTruncator truncator = new JsonTruncator(5, 0, 0);
         ObjectNode node = MAPPER.createObjectNode();
-        // Protected fields should never be truncated
-        node.put("eventType", "org.apache.flink.agents.api.event.ChatRequestEvent");
-        node.put("type", "org.apache.flink.agents.api.event.ChatRequestEvent");
-        node.put("id", "a-very-long-identifier-that-exceeds-the-limit");
-        node.put("upstreamEventId", "a-very-long-upstream-event-identifier");
-        node.put("upstreamActionName", "a-very-long-action-name");
-        ObjectNode attributes = MAPPER.createObjectNode();
-        attributes.put("key", "business payload should be truncated");
-        attributes.set("nested", MAPPER.createObjectNode().put("deep", "data"));
-        node.set("attributes", attributes);
-        // Non-protected field should be truncated
-        node.put("content", "This should be truncated");
+        node.put("eventType", "a-long-event-type");
+        node.put("id", "a-long-identifier");
+        node.put("attributes", "a-long-attribute-value");
 
         boolean result = truncator.truncate(node);
 
         assertThat(result).isTrue();
-        // Protected fields remain untouched
-        assertThat(node.get("eventType").asText())
-                .isEqualTo("org.apache.flink.agents.api.event.ChatRequestEvent");
-        assertThat(node.get("type").asText())
-                .isEqualTo("org.apache.flink.agents.api.event.ChatRequestEvent");
-        assertThat(node.get("id").asText())
-                .isEqualTo("a-very-long-identifier-that-exceeds-the-limit");
-        assertThat(node.get("upstreamEventId").asText())
-                .isEqualTo("a-very-long-upstream-event-identifier");
-        assertThat(node.get("upstreamActionName").asText()).isEqualTo("a-very-long-action-name");
-        assertThat(node.get("attributes").isObject()).isTrue();
-        assertThat(node.get("attributes").get("key").get("truncatedString").asText())
-                .isEqualTo("busin...");
-        // Non-protected field is truncated
-        assertThat(node.get("content").get("truncatedString")).isNotNull();
+        assertThat(node.get("eventType").get("truncatedString").asText()).isEqualTo("a-lon...");
+        assertThat(node.get("id").get("truncatedString").asText()).isEqualTo("a-lon...");
+        assertThat(node.get("attributes").get("truncatedString").asText()).isEqualTo("a-lon...");
     }
 
     @Test

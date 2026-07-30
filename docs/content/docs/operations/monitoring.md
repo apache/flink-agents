@@ -182,6 +182,8 @@ Each record is a flat JSON object. Framework-owned field names use camelCase, co
 
 Agent Trace persistence is disabled by default. Set `event-log.trace.enabled: true` to add trace context to business Event records and persist Action, LLM, Parser, and Tool lifecycle Events. When Trace persistence is disabled, business Events continue to be logged without the trace fields shown below.
 
+After fine-grained recovery, a cached durable LLM or Tool result is currently recorded as a new successful execution because cache reuse is not exposed to execution reporting. Distinguishing reused child executions is follow-up work.
+
 Example Trace record:
 
 ```json
