@@ -28,10 +28,31 @@ from flink_agents.plan.actions.tool_call_action import process_tool_request
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
+from flink_agents.runtime.durable_execution import durable_identity_for_call
 
 
 def query_order(order_id: str, tenant_id: str) -> str:
     return f"{tenant_id}:{order_id}"
+
+
+def _query_order_tool(injected_args: dict[str, InjectedArg] | None = None) -> FunctionTool:
+    return FunctionTool(
+        func=PythonFunction.from_callable(query_order),
+        injected_args=injected_args or {"tenant_id": InjectedArg.from_config("tenant_id")},
+    )
+
+
+def _expected_durable_function_id(
+    order_id: str,
+    tenant_id: str = "tenant-1",
+) -> str:
+    tool = _query_order_tool()
+    function_id, _ = durable_identity_for_call(
+        tool.call,
+        (),
+        {"order_id": order_id, "tenant_id": tenant_id},
+    )
+    return function_id
 
 
 class _Context:
@@ -70,11 +91,15 @@ class _Context:
 
     def durable_execute(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         self.durable_execute_calls.append((func, args, kwargs))
-        return func(*args, **kwargs)
+        call_kwargs = dict(kwargs)
+        call_kwargs.pop("durable_id", None)
+        return func(*args, **call_kwargs)
 
     async def durable_execute_async(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         self.durable_execute_async_calls.append((func, args, kwargs))
-        return func(*args, **kwargs)
+        call_kwargs = dict(kwargs)
+        call_kwargs.pop("durable_id", None)
+        return func(*args, **call_kwargs)
 
     async def durable_execute_all_async(self, callables: list[Any]) -> list[Outcome]:
         self.durable_execute_all_async_calls.append(callables)
@@ -315,9 +340,10 @@ def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
     }
     assert response.success == {"call-1": True, "call-2": True}
     assert len(ctx.durable_execute_all_async_calls) == 1
+    expected_id = _expected_durable_function_id("order-call-1")
     assert [call.id for call in ctx.durable_execute_all_async_calls[0]] == [
-        "tool-call-call-1",
-        "tool-call-call-2",
+        expected_id,
+        expected_id,
     ]
     assert ctx.durable_execute_async_calls == []
 
@@ -332,6 +358,7 @@ def test_tool_call_action_uses_serial_async_when_parallel_disabled() -> None:
 
     assert ctx.durable_execute_all_async_calls == []
     assert len(ctx.durable_execute_async_calls) == 2
+    assert all("durable_id" not in call_kwargs for _, _, call_kwargs in ctx.durable_execute_async_calls)
 
 
 def test_tool_call_action_does_not_batch_single_tool() -> None:

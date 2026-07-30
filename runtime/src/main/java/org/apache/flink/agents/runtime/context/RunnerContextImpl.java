@@ -561,6 +561,11 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         // argsDigest is empty because DurableCallable encapsulates all arguments internally
         String argsDigest = "";
 
+        CallResult current = getCurrentCallResult();
+        if (current != null && current.matches(functionId, argsDigest) && current.isPending()) {
+            return executeAndFinalizeCurrentCall(functionId, argsDigest, executionCallable);
+        }
+
         Optional<T> cachedResult =
                 tryGetCachedResult(functionId, argsDigest, durableCallable.getResultClass());
         if (cachedResult.isPresent()) {
@@ -699,10 +704,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         }
     }
 
-    public void reservePendingBatch(List<String> functionIds, String argsDigest) {
+    public void reservePendingBatch(List<String> functionIds, List<String> argsDigests) {
         mailboxThreadChecker.run();
         if (durableExecutionContext != null && !functionIds.isEmpty()) {
-            durableExecutionContext.reservePendingBatch(functionIds, argsDigest);
+            durableExecutionContext.reservePendingBatch(functionIds, argsDigests);
         }
     }
 
@@ -1022,6 +1027,15 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 CallResult result = recoveryCallResults.get(currentCallIndex);
 
                 if (result.matches(functionId, argsDigest)) {
+                    if (result.isPending()) {
+                        LOG.debug(
+                                "Pending CallResult at index {} treated as cache miss: "
+                                        + "functionId={}, argsDigest={}",
+                                currentCallIndex,
+                                functionId,
+                                argsDigest);
+                        return null;
+                    }
                     LOG.debug(
                             "CallResult hit at index {}: functionId={}, argsDigest={}",
                             currentCallIndex,
@@ -1104,9 +1118,16 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                     argsDigest);
         }
 
-        public void reservePendingBatch(List<String> functionIds, String argsDigest) {
-            for (String functionId : functionIds) {
-                CallResult pending = CallResult.pending(functionId, argsDigest);
+        public void reservePendingBatch(List<String> functionIds, List<String> argsDigests) {
+            if (functionIds.size() != argsDigests.size()) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "functionIds size (%s) must match argsDigests size (%s)",
+                                functionIds.size(), argsDigests.size()));
+            }
+            for (int i = 0; i < functionIds.size(); i++) {
+                CallResult pending =
+                        CallResult.pending(functionIds.get(i), argsDigests.get(i));
                 actionState.addCallResult(pending);
                 recoveryCallResults.add(pending);
             }

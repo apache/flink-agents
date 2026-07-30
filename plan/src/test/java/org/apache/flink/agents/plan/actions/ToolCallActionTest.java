@@ -452,7 +452,7 @@ public class ToolCallActionTest {
         ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
 
         assertThat(ctx.durableExecuteAllAsyncIds)
-                .containsExactly(List.of("tool-call-call-1", "tool-call-call-2"));
+                .containsExactly(List.of("tool-call", "tool-call"));
         assertThat(ctx.durableExecuteAsyncIds).isEmpty();
         assertThat(ctx.durableExecuteIds).isEmpty();
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
@@ -468,7 +468,7 @@ public class ToolCallActionTest {
 
         assertThat(ctx.durableExecuteAllAsyncIds).isEmpty();
         assertThat(ctx.durableExecuteAsyncIds)
-                .containsExactly("tool-call-call-1", "tool-call-call-2");
+                .containsExactly("tool-call", "tool-call");
         assertThat(ctx.durableExecuteIds).isEmpty();
     }
 
@@ -480,7 +480,7 @@ public class ToolCallActionTest {
 
         assertThat(ctx.durableExecuteAllAsyncIds).isEmpty();
         assertThat(ctx.durableExecuteAsyncIds).isEmpty();
-        assertThat(ctx.durableExecuteIds).containsExactly("tool-call-call-1", "tool-call-call-2");
+        assertThat(ctx.durableExecuteIds).containsExactly("tool-call", "tool-call");
     }
 
     @Test
@@ -490,7 +490,7 @@ public class ToolCallActionTest {
         ToolCallAction.processToolRequest(toolRequest("queryOrder"), ctx);
 
         assertThat(ctx.durableExecuteAllAsyncIds).isEmpty();
-        assertThat(ctx.durableExecuteAsyncIds).containsExactly("tool-call-call-1");
+        assertThat(ctx.durableExecuteAsyncIds).containsExactly("tool-call");
         assertThat(ctx.durableExecuteIds).isEmpty();
     }
 
@@ -517,7 +517,7 @@ public class ToolCallActionTest {
                 ctx);
 
         assertThat(ctx.durableExecuteAllAsyncIds)
-                .containsExactly(List.of("tool-call-call-1", "tool-call-call-2"));
+                .containsExactly(List.of("tool-call", "tool-call"));
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("missing-call", false);
         assertThat(response.getError()).containsEntry("missing-call", "missing resource");

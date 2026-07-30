@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.context;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
@@ -34,9 +35,11 @@ import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -202,6 +205,27 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
+    void testDurableExecuteAsyncCompletionOnlyReExecutesPendingSlot() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        ActionState actionState = new ActionState(null);
+        actionState.addCallResult(CallResult.pending("tool-call", ""));
+        JavaRunnerContextImpl context = createContext(actionState, executor);
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>("tool-call", String.class, () -> "recovered");
+
+        String result = context.durableExecuteAsync(callable);
+
+        assertEquals("recovered", result);
+        assertEquals(1, callable.getCallCount());
+        assertEquals(1, executor.getExecuteAsyncCallCount());
+        assertEquals(1, persistCallCount.get());
+        assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
+        CallResult persisted =
+                context.getDurableExecutionContext().getActionState().getCallResults().get(0);
+        assertTrue(persisted.isSuccess());
+    }
+
+    @Test
     void testDurableExecuteAllAsyncInitialBatchPersistsOutcomes() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
@@ -322,9 +346,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         executor.setUseTimeoutCollection(true);
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
         ((Configuration) context.getConfig())
-                .set(
-                        AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT,
-                        java.time.Duration.ofMillis(10));
+                .set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 10L);
         TestDurableCallable<String> first =
                 new TestDurableCallable<>("batch-1", String.class, () -> "fast");
         TestDurableCallable<String> second =
@@ -341,12 +363,58 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals("fast", outcomes.get(0).getValue());
         assertTrue(outcomes.get(1).isFailure());
         assertInstanceOf(TimeoutException.class, outcomes.get(1).getError());
+        assertEquals(Duration.ofMillis(10), executor.getLastExecuteAllAsyncTimeout());
+        assertEquals(1, first.getCallCount());
+        assertEquals(1, second.getCallCount());
         List<CallResult> persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults();
         assertTrue(persisted.get(0).isSuccess());
         assertTrue(persisted.get(1).isFailure());
         assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
         executor.close();
+    }
+
+    @Test
+    void testDurableExecuteAllAsyncFinalizeFailureAbortsBatch() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        FailingSerializeOnValueContext context =
+                new FailingSerializeOnValueContext(
+                        metricGroup,
+                        () -> {},
+                        new AgentPlan(new HashMap<>(), new HashMap<>()),
+                        null,
+                        "test-job",
+                        executor,
+                        "two");
+        context.setContinuationContext(new ContinuationContext());
+        ActionStatePersister persister =
+                (key, sequenceNumber, action, event, state) -> {
+                    persistCallCount.incrementAndGet();
+                    lastPersistedState = state;
+                };
+        context.setDurableExecutionContext(
+                new RunnerContextImpl.DurableExecutionContext(
+                        "test-key",
+                        1L,
+                        mock(Action.class),
+                        mock(Event.class),
+                        new ActionState(null),
+                        persister));
+        TestDurableCallable<String> first =
+                new TestDurableCallable<>("batch-1", String.class, () -> "one");
+        TestDurableCallable<String> second =
+                new TestDurableCallable<>("batch-2", String.class, () -> "two");
+
+        JsonProcessingException thrown =
+                assertThrows(
+                        JsonProcessingException.class,
+                        () -> context.durableExecuteAllAsync(List.of(first, second)));
+
+        assertTrue(thrown.getMessage().contains("serialize failed"));
+        List<CallResult> persisted =
+                context.getDurableExecutionContext().getActionState().getCallResults();
+        assertTrue(persisted.get(0).isSuccess());
+        assertEquals(0, context.getDurableExecutionContext().getCurrentCallIndex());
     }
 
     private JavaRunnerContextImpl createContext(
@@ -380,6 +448,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
             extends ContinuationActionExecutor {
         private Runnable beforeExecute;
         private boolean useTimeoutCollection;
+        private Duration lastExecuteAllAsyncTimeout;
         private int executeAsyncCallCount;
         private int executeAllAsyncCallCount;
         private final List<Integer> executeAllAsyncBatchSizes = new java.util.ArrayList<>();
@@ -401,11 +470,12 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         public <T> List<Outcome<T>> executeAllAsync(
                 ContinuationContext context,
                 List<Callable<T>> suppliers,
-                java.time.Duration timeout) {
+                Duration timeout) {
             executeAllAsyncCallCount++;
             executeAllAsyncBatchSizes.add(suppliers.size());
+            lastExecuteAllAsyncTimeout = timeout;
             if (useTimeoutCollection) {
-                return collectTimedOutOutcomes(suppliers);
+                return executeAllAsyncWithDeadline(suppliers, timeout);
             }
             List<Outcome<T>> outcomes = new java.util.ArrayList<>(suppliers.size());
             for (Callable<T> supplier : suppliers) {
@@ -418,20 +488,74 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
             return outcomes;
         }
 
-        private <T> List<Outcome<T>> collectTimedOutOutcomes(List<Callable<T>> suppliers) {
-            List<Outcome<T>> outcomes = new java.util.ArrayList<>(suppliers.size());
-            for (int i = 0; i < suppliers.size(); i++) {
-                if (i == 0) {
-                    try {
-                        outcomes.add(Outcome.success(suppliers.get(i).call()));
-                    } catch (Exception e) {
-                        outcomes.add(Outcome.failure(e));
-                    }
-                } else {
-                    outcomes.add(Outcome.failure(new TimeoutException("batch timeout")));
+        private <T> List<Outcome<T>> executeAllAsyncWithDeadline(
+                List<Callable<T>> suppliers, Duration timeout) {
+            List<CompletableFuture<Outcome<T>>> futures = new java.util.ArrayList<>(suppliers.size());
+            for (Callable<T> supplier : suppliers) {
+                futures.add(
+                        CompletableFuture.supplyAsync(
+                                () -> {
+                                    try {
+                                        return Outcome.success(supplier.call());
+                                    } catch (Exception e) {
+                                        return Outcome.<T>failure(e);
+                                    }
+                                }));
+            }
+
+            CompletableFuture<Void> barrier =
+                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+            long deadlineNanos = getDeadlineNanos(timeout);
+            while (!barrier.isDone()) {
+                if (System.nanoTime() >= deadlineNanos) {
+                    TimeoutException exception =
+                            new TimeoutException(
+                                    "Async durable batch execution timed out after " + timeout);
+                    barrier.cancel(true);
+                    return collectBatchOutcomesOnTimeout(futures, exception);
+                }
+                try {
+                    Thread.sleep(1);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    TimeoutException exception =
+                            new TimeoutException("Async durable batch execution interrupted");
+                    return collectBatchOutcomesOnTimeout(futures, exception);
                 }
             }
-            return outcomes;
+            return collectBatchOutcomes(futures);
+        }
+
+        private static long getDeadlineNanos(Duration timeout) {
+            return timeout == null || timeout.isZero() || timeout.isNegative()
+                    ? Long.MAX_VALUE
+                    : System.nanoTime() + timeout.toNanos();
+        }
+
+        private static <T> List<Outcome<T>> collectBatchOutcomes(
+                List<CompletableFuture<Outcome<T>>> futures) {
+            List<Outcome<T>> results = new java.util.ArrayList<>(futures.size());
+            for (CompletableFuture<Outcome<T>> future : futures) {
+                results.add(future.join());
+            }
+            return results;
+        }
+
+        private static <T> List<Outcome<T>> collectBatchOutcomesOnTimeout(
+                List<CompletableFuture<Outcome<T>>> futures,
+                TimeoutException timeoutException) {
+            List<Outcome<T>> results = new java.util.ArrayList<>(futures.size());
+            for (CompletableFuture<Outcome<T>> future : futures) {
+                if (!future.isDone()) {
+                    future.cancel(true);
+                }
+                if (future.isDone() && !future.isCancelled()) {
+                    results.add(future.join());
+                } else {
+                    results.add(Outcome.failure(timeoutException));
+                }
+            }
+            return results;
         }
 
         private void setBeforeExecute(Runnable beforeExecute) {
@@ -452,6 +576,40 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         private List<Integer> getExecuteAllAsyncBatchSizes() {
             return executeAllAsyncBatchSizes;
+        }
+
+        private Duration getLastExecuteAllAsyncTimeout() {
+            return lastExecuteAllAsyncTimeout;
+        }
+    }
+
+    private static final class FailingSerializeOnValueContext extends JavaRunnerContextImpl {
+        private final String failOnResult;
+
+        private FailingSerializeOnValueContext(
+                FlinkAgentsMetricGroupImpl agentMetricGroup,
+                Runnable mailboxThreadChecker,
+                AgentPlan agentPlan,
+                org.apache.flink.agents.runtime.ResourceCache resourceCache,
+                String jobIdentifier,
+                ContinuationActionExecutor continuationExecutor,
+                String failOnResult) {
+            super(
+                    agentMetricGroup,
+                    mailboxThreadChecker,
+                    agentPlan,
+                    resourceCache,
+                    jobIdentifier,
+                    continuationExecutor);
+            this.failOnResult = failOnResult;
+        }
+
+        @Override
+        protected byte[] serializeDurableResult(Object result) throws JsonProcessingException {
+            if (failOnResult != null && failOnResult.equals(result)) {
+                throw new JsonProcessingException("serialize failed") {};
+            }
+            return super.serializeDurableResult(result);
         }
     }
 }

@@ -106,6 +106,19 @@ class DurableExecutionContextTest {
     }
 
     @Test
+    void testMatchNextOrClearSubsequentCallResultPendingTreatedAsMiss() {
+        actionState.addCallResult(CallResult.pending("funcA", "digestA"));
+
+        RunnerContextImpl.DurableExecutionContext context = createContext();
+
+        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA", "digestA");
+
+        assertNull(result);
+        assertEquals(0, context.getCurrentCallIndex());
+        assertTrue(actionState.getCallResults().get(0).isPending());
+    }
+
+    @Test
     void testMatchNextOrClearSubsequentCallResultMismatch() {
         actionState.addCallResult(new CallResult("funcA", "digestA", "result".getBytes()));
         actionState.addCallResult(new CallResult("funcB", "digestB", "result".getBytes()));
