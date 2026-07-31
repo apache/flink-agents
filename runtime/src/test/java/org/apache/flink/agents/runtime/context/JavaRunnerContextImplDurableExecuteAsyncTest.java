@@ -468,9 +468,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         @Override
         public <T> List<Outcome<T>> executeAllAsync(
-                ContinuationContext context,
-                List<Callable<T>> suppliers,
-                Duration timeout) {
+                ContinuationContext context, List<Callable<T>> suppliers, Duration timeout) {
             executeAllAsyncCallCount++;
             executeAllAsyncBatchSizes.add(suppliers.size());
             lastExecuteAllAsyncTimeout = timeout;
@@ -490,7 +488,8 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         private <T> List<Outcome<T>> executeAllAsyncWithDeadline(
                 List<Callable<T>> suppliers, Duration timeout) {
-            List<CompletableFuture<Outcome<T>>> futures = new java.util.ArrayList<>(suppliers.size());
+            List<CompletableFuture<Outcome<T>>> futures =
+                    new java.util.ArrayList<>(suppliers.size());
             for (Callable<T> supplier : suppliers) {
                 futures.add(
                         CompletableFuture.supplyAsync(
@@ -542,8 +541,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         }
 
         private static <T> List<Outcome<T>> collectBatchOutcomesOnTimeout(
-                List<CompletableFuture<Outcome<T>>> futures,
-                TimeoutException timeoutException) {
+                List<CompletableFuture<Outcome<T>>> futures, TimeoutException timeoutException) {
             List<Outcome<T>> results = new java.util.ArrayList<>(futures.size());
             for (CompletableFuture<Outcome<T>> future : futures) {
                 if (!future.isDone()) {
