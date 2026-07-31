@@ -451,8 +451,7 @@ public class ToolCallActionTest {
         ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
 
         assertThat(ctx.durableExecuteAllAsyncIds).isEmpty();
-        assertThat(ctx.durableExecuteAsyncIds)
-                .containsExactly("tool-call", "tool-call");
+        assertThat(ctx.durableExecuteAsyncIds).containsExactly("tool-call", "tool-call");
         assertThat(ctx.durableExecuteIds).isEmpty();
     }
 
