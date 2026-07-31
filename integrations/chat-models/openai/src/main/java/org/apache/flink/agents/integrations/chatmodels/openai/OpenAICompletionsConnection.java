@@ -240,6 +240,12 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         // Native structured output applies only for a POJO Class schema on a model the provider
         // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
         // the prompt-engineering fallback.
+        //
+        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
+        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
+        // for NATIVE on a model this predicate rejects therefore gets an unconstrained response
+        // instead of an error. Once strategy resolution is wired up, NATIVE must either bypass
+        // this capability re-check or fail explicitly.
         if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
             builder.responseFormat(toNativeResponseFormat((Class<?>) outputSchema));
         }

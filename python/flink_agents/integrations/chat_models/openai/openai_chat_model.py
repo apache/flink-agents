@@ -257,6 +257,12 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
                     tool_spec["function"]["strict"] = strict
                     tool_spec["function"]["parameters"]["additionalProperties"] = False
 
+        # TODO(#912): the requested strategy is not visible here, so this check
+        # cannot tell an explicit NATIVE request apart from one that merely
+        # resolved to native. A caller asking for NATIVE on a model this
+        # predicate rejects therefore gets an unconstrained response instead of
+        # an error. Once strategy resolution is wired up, NATIVE must either
+        # bypass this capability check or fail explicitly.
         if output_schema is not None and self.supports_native_structured_output(
             kwargs.get("model")
         ):
