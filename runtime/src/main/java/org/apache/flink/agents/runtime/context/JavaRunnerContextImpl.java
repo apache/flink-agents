@@ -152,10 +152,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             } else {
                 plan.outcomes.add(
                         readTerminalOutcomeAt(
-                                base + i,
-                                callable.getId(),
-                                argsDigest,
-                                callable.getResultClass()));
+                                base + i, callable.getId(), argsDigest, callable.getResultClass()));
             }
         }
         return plan;

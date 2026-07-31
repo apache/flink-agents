@@ -859,8 +859,7 @@ public class RunnerContextImpl implements RunnerContext {
                                 functionIds.size(), argsDigests.size()));
             }
             for (int i = 0; i < functionIds.size(); i++) {
-                CallResult pending =
-                        CallResult.pending(functionIds.get(i), argsDigests.get(i));
+                CallResult pending = CallResult.pending(functionIds.get(i), argsDigests.get(i));
                 actionState.addCallResult(pending);
                 recoveryCallResults.add(pending);
             }
