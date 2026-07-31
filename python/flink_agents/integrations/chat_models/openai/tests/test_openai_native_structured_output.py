@@ -161,6 +161,19 @@ def test_native_applied_even_when_tools_bound() -> None:
         "gpt-4o-2024-11-20",
         "gpt-4o-mini",
         "gpt-4o-mini-2024-07-18",
+        "gpt-4o-search-preview",
+        "gpt-4o-search-preview-2025-03-11",
+        "gpt-4o-mini-search-preview",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-chat-latest",
+        "o1",
+        "o1-2024-12-17",
+        "o3",
+        "o3-mini",
+        "o4-mini",
     ],
 )
 def test_capability_predicate_accepts_capable_models(model: str) -> None:
@@ -172,12 +185,20 @@ def test_capability_predicate_accepts_capable_models(model: str) -> None:
     "model",
     [
         "gpt-3.5-turbo",
+        "gpt-4",
         "gpt-4-turbo",
         "gpt-4o-2024-05-13",
+        "gpt-4o-audio-preview",
+        "gpt-4o-mini-audio-preview",
+        "gpt-4o-mini-realtime-preview",
+        "gpt-4o-mini-tts",
+        "gpt-4o-mini-transcribe",
+        "o1-mini",
         "some-unknown-model",
+        "",
         None,
     ],
 )
 def test_capability_predicate_rejects_incapable_models(model: str | None) -> None:
-    """The capability predicate rejects incapable, pre-cutoff, unknown, and None models."""
+    """The predicate rejects modality variants, incapable, unknown, and empty models."""
     assert _connection().supports_native_structured_output(model) is False

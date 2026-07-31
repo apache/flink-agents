@@ -158,17 +158,44 @@ class OpenAICompletionsConnectionTest {
         assertThat(connection.supportsNativeStructuredOutput("gpt-4o-2024-11-20")).isTrue();
         assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini")).isTrue();
         assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-2024-07-18")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-search-preview")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-search-preview-2025-03-11"))
+                .isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-search-preview"))
+                .isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4.1")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4.1-mini")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-5")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-5-mini")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-5-chat-latest")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("o1")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("o1-2024-12-17")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("o3")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("o3-mini")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("o4-mini")).isTrue();
     }
 
     @Test
-    @DisplayName("Capability predicate rejects incapable, pre-cutoff, unknown, and null models")
+    @DisplayName(
+            "Capability predicate rejects non-text modality, incapable, pre-cutoff, unknown, empty,"
+                    + " and null models")
     void testCapabilityPredicateRejectsIncapableModels() {
         OpenAICompletionsConnection connection = connection();
 
         assertThat(connection.supportsNativeStructuredOutput("gpt-3.5-turbo")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4")).isFalse();
         assertThat(connection.supportsNativeStructuredOutput("gpt-4-turbo")).isFalse();
         assertThat(connection.supportsNativeStructuredOutput("gpt-4o-2024-05-13")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-audio-preview")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-audio-preview"))
+                .isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-realtime-preview"))
+                .isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-tts")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-transcribe")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("o1-mini")).isFalse();
         assertThat(connection.supportsNativeStructuredOutput("some-unknown-model")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("")).isFalse();
         assertThat(connection.supportsNativeStructuredOutput(null)).isFalse();
     }
 

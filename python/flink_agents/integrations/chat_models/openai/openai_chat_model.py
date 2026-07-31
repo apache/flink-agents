@@ -47,18 +47,36 @@ DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 # Models with documented json_schema strict Structured Outputs support. Source of
 # truth: https://platform.openai.com/docs/guides/structured-outputs
 #
-# json_schema is supported on the gpt-4o-mini and gpt-4o-2024-08-06 snapshots "and
-# later"; gpt-4-turbo, earlier models, and gpt-3.5-turbo get JSON mode only.
+# A name carrying a non-text modality marker is rejected before anything else. Audio,
+# realtime, speech and transcription variants expose no json_schema response format
+# even though they share the name prefix of a capable text family, so the marker check
+# has to win over a prefix match rather than merely coexist with it.
 #
-# "and later" is temporal, not a name prefix: gpt-4o-2024-05-13 predates the cutoff
-# and does NOT support Structured Outputs, so a bare "gpt-4o" prefix would misclassify
-# it as capable and fail silently. Prefix matching is therefore used only for the
-# gpt-4o-mini family, whose entire lifetime post-dates the cutoff; every other capable
-# model is matched exactly. An unrecognized model reports not-capable and degrades to
-# the prompt fallback rather than failing at the provider.
-_NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIX = "gpt-4o-mini"
+# A text family whose entire lifetime post-dates the Structured Outputs cutoff is
+# matched by name prefix, so its dated snapshots and size variants resolve without
+# enumerating each one.
+#
+# Two cases cannot use a prefix and are matched exactly instead. The gpt-4o family
+# straddles the cutoff -- gpt-4o-2024-05-13 predates it and is not capable -- so the
+# boundary there is temporal rather than nominal. The o1 family is not uniform: o1 is
+# capable while o1-mini is not, so an "o1" prefix would admit an incapable sibling.
+#
+# A name outside every listed family reports not-capable and degrades to the prompt
+# fallback rather than failing at the provider. Within a listed family the prefix
+# assumes capability, so a family variant that ships without json_schema support has
+# to be excluded explicitly, either by a marker that appears in no capable name or by
+# replacing the family prefix with exact names.
+_NON_TEXT_MODALITY_MARKERS = ("-audio", "-realtime", "-tts", "-transcribe")
+_NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES = (
+    "gpt-4o-mini",
+    "gpt-4o-search-preview",
+    "gpt-4.1",
+    "gpt-5",
+    "o3",
+    "o4-mini",
+)
 _NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
-    {"gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20"}
+    {"gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "o1", "o1-2024-12-17"}
 )
 
 
@@ -187,14 +205,17 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         """Whether OpenAI documents json_schema strict support for ``effective_model``.
 
         See the module-level allowlist for the source of truth and the rationale for
-        matching the gpt-4o-mini family by prefix while matching other capable models
-        exactly. An unrecognized model reports ``False`` so it degrades to the
-        prompt-engineering fallback rather than failing at the provider.
+        rejecting non-text modality variants, matching capable text families by prefix,
+        and matching the gpt-4o snapshots and the o1 names exactly. A name outside
+        every listed family reports ``False`` so it degrades to the prompt-engineering
+        fallback rather than failing at the provider.
         """
         if not effective_model:
             return False
+        if any(marker in effective_model for marker in _NON_TEXT_MODALITY_MARKERS):
+            return False
         return (
-            effective_model.startswith(_NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIX)
+            effective_model.startswith(_NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES)
             or effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
         )
 

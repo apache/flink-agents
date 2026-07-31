@@ -123,26 +123,43 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
     }
 
     // Models for which OpenAI documents json_schema strict Structured Outputs support.
-    // Source of truth: https://platform.openai.com/docs/guides/structured-outputs — json_schema is
-    // supported on the gpt-4o-mini and gpt-4o-2024-08-06 snapshots "and later"; gpt-4-turbo,
-    // earlier models, and gpt-3.5-turbo get JSON mode only.
+    // Source of truth: https://platform.openai.com/docs/guides/structured-outputs
     //
-    // "and later" is temporal, not a name prefix: gpt-4o-2024-05-13 predates the cutoff and does
-    // NOT support Structured Outputs, so matching a bare "gpt-4o" prefix would misclassify it as
-    // capable and fail silently at the provider. Prefix matching is therefore used only for the
-    // gpt-4o-mini family, whose entire lifetime post-dates the cutoff; every other capable model is
-    // matched exactly. An unrecognized model reports not-capable and degrades to the prompt
-    // fallback rather than failing at the provider.
-    private static final String NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIX = "gpt-4o-mini";
+    // A name carrying a non-text modality marker is rejected before anything else. Audio, realtime,
+    // speech and transcription variants expose no json_schema response format even though they
+    // share the name prefix of a capable text family, so the marker check has to win over a prefix
+    // match rather than merely coexist with it.
+    //
+    // A text family whose entire lifetime post-dates the Structured Outputs cutoff is matched by
+    // name prefix, so its dated snapshots and size variants resolve without enumerating each one.
+    //
+    // Two cases cannot use a prefix and are matched exactly instead. The gpt-4o family straddles
+    // the cutoff — gpt-4o-2024-05-13 predates it and is not capable — so the boundary there is
+    // temporal rather than nominal. The o1 family is not uniform: o1 is capable while o1-mini is
+    // not, so an "o1" prefix would admit an incapable sibling.
+    //
+    // A name outside every listed family reports not-capable and degrades to the prompt fallback
+    // rather than failing at the provider. Within a listed family the prefix assumes capability,
+    // so a family variant that ships without json_schema support has to be excluded explicitly,
+    // either by a marker that appears in no capable name or by replacing the family prefix with
+    // exact names.
+    private static final Set<String> NON_TEXT_MODALITY_MARKERS =
+            Set.of("-audio", "-realtime", "-tts", "-transcribe");
+    private static final Set<String> NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES =
+            Set.of("gpt-4o-mini", "gpt-4o-search-preview", "gpt-4.1", "gpt-5", "o3", "o4-mini");
     private static final Set<String> NATIVE_STRUCTURED_OUTPUT_MODELS =
-            Set.of("gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20");
+            Set.of("gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "o1", "o1-2024-12-17");
 
     @Override
     protected boolean supportsNativeStructuredOutput(String effectiveModel) {
         if (effectiveModel == null) {
             return false;
         }
-        return effectiveModel.startsWith(NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIX)
+        if (NON_TEXT_MODALITY_MARKERS.stream().anyMatch(effectiveModel::contains)) {
+            return false;
+        }
+        return NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES.stream()
+                        .anyMatch(effectiveModel::startsWith)
                 || NATIVE_STRUCTURED_OUTPUT_MODELS.contains(effectiveModel);
     }
 
