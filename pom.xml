@@ -47,7 +47,7 @@ under the License.
         <junit5.version>5.10.1</junit5.version>
         <jackson.version>2.18.2</jackson.version>
         <pemja.version>0.5.7</pemja.version>
-        <log4j2.version>2.23.1</log4j2.version>
+        <log4j2.version>2.24.3</log4j2.version>
         <slf4j.version>1.7.36</slf4j.version>
         <assertj.version>3.27.7</assertj.version>
         <mockito.version>5.14.2</mockito.version>

@@ -79,15 +79,6 @@ under the License.
                             <shadeTestJar>false</shadeTestJar>
                             <shadedArtifactAttached>false</shadedArtifactAttached>
                             <filters>
-                                <!-- Exclude signature files -->
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>META-INF/*.SF</exclude>
-                                        <exclude>META-INF/*.DSA</exclude>
-                                        <exclude>META-INF/*.RSA</exclude>
-                                    </excludes>
-                                </filter>
                                 <!-- Exclude flink-agents own code from common JAR -->
                                 <filter>
                                     <artifact>org.apache.flink:flink-agents-*</artifact>
