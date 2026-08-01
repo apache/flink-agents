@@ -48,6 +48,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -430,7 +431,9 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
 
         FunctionCall.Builder fcBuilder = FunctionCall.builder().name(functionName).args(argsMap);
         Object originalId = call.get("original_id");
-        if (originalId != null) {
+        // A synthetic id exists only for runtime correlation (the API omitted the native id);
+        // echoing a fabricated id back to Gemini would claim the model produced it.
+        if (originalId != null && !Boolean.TRUE.equals(call.get("synthetic_id"))) {
             fcBuilder.id(originalId.toString());
         }
 
@@ -504,6 +507,17 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         if (id != null) {
             toolCall.put("id", id);
             toolCall.put("original_id", id);
+        } else {
+            // The Gemini Developer API frequently omits functionCall.id. Downstream correlation
+            // still needs one: ToolCallAction keys its result maps on `id` (two id-less parallel
+            // calls would otherwise collide on the literal "null") and only propagates
+            // `original_id` as the TOOL message's externalId, which is how the follow-up turn
+            // recovers the function name for Gemini's functionResponse part. Synthesize an id for
+            // the runtime round-trip and mark it so it is never echoed back to the API.
+            String syntheticId = UUID.randomUUID().toString();
+            toolCall.put("id", syntheticId);
+            toolCall.put("original_id", syntheticId);
+            toolCall.put("synthetic_id", Boolean.TRUE);
         }
         toolCall.put("type", "function");
         toolCall.put("function", functionMap);
