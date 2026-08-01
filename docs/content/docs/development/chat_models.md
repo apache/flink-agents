@@ -1207,6 +1207,113 @@ Some popular options include:
 Model availability and specifications may change. Always check the official DashScope documentation for the latest information before implementing in production.
 {{< /hint >}}
 
+### vLLM
+
+[vLLM](https://docs.vllm.ai) serves open-weight models behind an OpenAI-compatible API and is a popular choice for self-hosted production deployments. Flink Agents provides a dedicated connection that reuses the OpenAI integration with vLLM-friendly defaults, in both Java and Python.
+
+#### Prerequisites
+
+1. Install vLLM and start a server: `vllm serve Qwen/Qwen2.5-7B-Instruct`
+2. By default the server listens on `http://localhost:8000` and requires no API key. If the server is started with `--api-key`, pass the same key in the connection.
+
+#### VLLMChatModelConnection Parameters
+
+{{< tabs "VLLMChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_base_url` | str | `"http://localhost:8000/v1"` | vLLM server URL |
+| `api_key` | str | `"EMPTY"` | Only needed when the server is started with `--api-key`; the placeholder default works for unauthenticated servers |
+| `timeout` | float | `60.0` | HTTP request timeout in seconds |
+| `max_retries` | int | `3` | Maximum number of API retries |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_base_url` | String | `"http://localhost:8000/v1"` | vLLM server URL |
+| `api_key` | String | `"EMPTY"` | Only needed when the server is started with `--api-key`; the placeholder default works for unauthenticated servers |
+| `timeout` | Number | SDK default | Seconds before an API call times out |
+| `max_retries` | Number | SDK default | Retry attempts on failure |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### VLLMChatModelSetup Parameters
+
+Same as the [OpenAI Completions setup](#openaicompletionssetup-parameters), with one difference: `model` is **required** and has no default — it must match the model name served by the vLLM server (see `vllm serve <model>`, or query `GET /v1/models`).
+
+#### Usage Example
+
+{{< tabs "vLLM Usage Example" >}}
+
+{{< tab "Python" >}}
+
+```python
+class MyAgent(Agent):
+
+    @chat_model_connection
+    @staticmethod
+    def vllm_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.VLLM_CONNECTION,
+            api_base_url="http://localhost:8000/v1",
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def vllm_chat_model() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.VLLM_SETUP,
+            connection="vllm_connection",
+            model="Qwen/Qwen2.5-7B-Instruct",
+            temperature=0.3,
+        )
+
+    ...
+```
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+```java
+public class MyAgent extends Agent {
+
+    @ChatModelConnection
+    public static ResourceDescriptor vllmConnection() {
+        return ResourceDescriptor.Builder.newBuilder(
+                        ResourceName.ChatModel.VLLM_CONNECTION)
+                .addInitialArgument("api_base_url", "http://localhost:8000/v1")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor vllmChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.VLLM_SETUP)
+                .addInitialArgument("connection", "vllmConnection")
+                .addInitialArgument("model", "Qwen/Qwen2.5-7B-Instruct")
+                .addInitialArgument("temperature", 0.3d)
+                .build();
+    }
+
+    // ...
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+A vLLM server serves the model(s) it was started with. Query `GET /v1/models` on the server to list them; the `model` value in the setup must match one of the returned names.
+
 ## Using Cross-Language Providers
 
 Flink Agents supports cross-language chat model integration, allowing you to use chat models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a chat model provider is only available in one language (e.g., Tongyi is currently Python-only).
