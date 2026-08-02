@@ -49,6 +49,11 @@ RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 RESERVED_ADDITIONAL_KWARGS = frozenset(
     {
         "model",
+        "model_id",
+        "messages",
+        "tools",
+        "project_id",
+        "space_id",
         "temperature",
         "max_tokens",
         "extract_reasoning",
