@@ -1262,7 +1262,7 @@ IBM watsonx.ai provides cloud-based chat models, including the IBM Granite serie
 |-----------|------|---------|-------------|
 | `url` | str | `$WATSONX_URL` | watsonx.ai service endpoint of your region |
 | `api_key` | str | `$WATSONX_API_KEY` | IBM Cloud API key; configure exactly one of `api_key` and `token` |
-| `token` | str | `$WATSONX_TOKEN` | Bearer token; configure exactly one of `api_key` and `token` |
+| `token` | str | `$WATSONX_TOKEN` | Caller-provided bearer token; it is not refreshed automatically and must remain valid for the job lifetime; configure exactly one of `api_key` and `token` |
 | `project_id` | str | `$WATSONX_PROJECT_ID` | watsonx.ai project id (or use `space_id`) |
 | `space_id` | str | `$WATSONX_SPACE_ID` | Deployment space id, as an alternative to `project_id` |
 | `request_timeout` | float | `120.0` | HTTP request timeout in seconds |
@@ -1276,7 +1276,7 @@ IBM watsonx.ai provides cloud-based chat models, including the IBM Granite serie
 |-----------|------|---------|-------------|
 | `url` | String | `$WATSONX_URL` | watsonx.ai service endpoint of your region |
 | `api_key` | String | `$WATSONX_API_KEY` | IBM Cloud API key; configure exactly one of `api_key` and `token` |
-| `token` | String | `$WATSONX_TOKEN` | Bearer token; configure exactly one of `api_key` and `token` |
+| `token` | String | `$WATSONX_TOKEN` | Caller-provided bearer token; it is not refreshed automatically and must remain valid for the job lifetime; configure exactly one of `api_key` and `token` |
 | `project_id` | String | `$WATSONX_PROJECT_ID` | watsonx.ai project id (or use `space_id`) |
 | `space_id` | String | `$WATSONX_SPACE_ID` | Deployment space id, as an alternative to `project_id` |
 | `api_version` | String | `"2025-04-23"` | watsonx.ai REST API version date |

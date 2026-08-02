@@ -248,19 +248,20 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                 payload.put("space_id", spaceId);
             }
 
-            final HttpRequest request =
-                    HttpRequest.newBuilder()
-                            .uri(URI.create(url + "/ml/v1/text/chat?version=" + apiVersion))
-                            .timeout(requestTimeout)
-                            .header("Authorization", "Bearer " + getBearerToken())
-                            .header("Content-Type", "application/json")
-                            .header("Accept", "application/json")
-                            .POST(
-                                    HttpRequest.BodyPublishers.ofString(
-                                            MAPPER.writeValueAsString(payload)))
-                            .build();
-
-            final HttpResponse<String> response = sendWithRetry(request);
+            final String requestBody = MAPPER.writeValueAsString(payload);
+            String bearerToken = getBearerToken();
+            HttpResponse<String> response =
+                    sendWithRetry(buildChatRequest(requestBody, bearerToken));
+            if ((response.statusCode() == 401 || response.statusCode() == 403)
+                    && apiKey != null) {
+                LOG.warn(
+                        "watsonx.ai returned status {}; refreshing the cached IAM token and"
+                                + " retrying once",
+                        response.statusCode());
+                invalidateCachedIamToken(bearerToken);
+                bearerToken = getBearerToken();
+                response = sendWithRetry(buildChatRequest(requestBody, bearerToken));
+            }
             if (response.statusCode() / 100 != 2) {
                 throw new RuntimeException(
                         String.format(
@@ -286,6 +287,17 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private HttpRequest buildChatRequest(String requestBody, String bearerToken) {
+        return HttpRequest.newBuilder()
+                .uri(URI.create(url + "/ml/v1/text/chat?version=" + apiVersion))
+                .timeout(requestTimeout)
+                .header("Authorization", "Bearer " + bearerToken)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .build();
     }
 
     /**
@@ -678,6 +690,13 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
             throw e;
         } catch (Exception e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private synchronized void invalidateCachedIamToken(String rejectedToken) {
+        if (rejectedToken.equals(cachedIamToken)) {
+            cachedIamToken = null;
+            iamTokenExpirationEpochSec = 0;
         }
     }
 }
