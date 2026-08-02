@@ -26,7 +26,6 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -157,21 +156,6 @@ public class SkillManager implements AutoCloseable {
     public Path getSkillDir(String skillName) {
         SkillRepository repo = repos.get(skillName);
         return repo == null ? null : repo.getSkillDir(skillName);
-    }
-
-    /** Resolve a skill resource's relative path to an absolute path, or {@code null} if missing. */
-    @Nullable
-    public Path resolveResourcePath(String skillName, String resourcePath) {
-        SkillRepository repo = repos.get(skillName);
-        if (repo == null) {
-            return null;
-        }
-        Path dir = repo.getSkillDir(skillName);
-        if (dir == null) {
-            return null;
-        }
-        Path resolved = dir.resolve(resourcePath);
-        return Files.isRegularFile(resolved) ? resolved : null;
     }
 
     private void loadAll() {

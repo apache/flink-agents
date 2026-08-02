@@ -106,14 +106,6 @@ class SkillManagerTest {
         assertTrue(ex.getMessage().contains("github"));
     }
 
-    @Test
-    void resolveResourcePathLocatesBundledFile() {
-        SkillManager manager = new SkillManager(configFromResources());
-        Path resolved = manager.resolveResourcePath("nano-banana-pro", "scripts/generate_image.py");
-        assertNotNull(resolved);
-        assertTrue(Files.isRegularFile(resolved));
-    }
-
     private static void zipDir(Path src, Path dstZip) throws IOException {
         try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(dstZip));
                 Stream<Path> walk = Files.walk(src)) {
