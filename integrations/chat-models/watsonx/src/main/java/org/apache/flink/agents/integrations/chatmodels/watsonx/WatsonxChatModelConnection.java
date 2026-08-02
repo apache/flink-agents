@@ -72,6 +72,11 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
     private static final Set<String> RESERVED_ADDITIONAL_KWARGS =
             Set.of(
                     "model",
+                    "model_id",
+                    "messages",
+                    "tools",
+                    "project_id",
+                    "space_id",
                     "temperature",
                     "max_tokens",
                     "extract_reasoning",
