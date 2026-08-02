@@ -552,7 +552,20 @@ def test_reader_keeps_matching_observations_and_descendants_on_event_id_conflict
             "children": ["great-grandchild"],
         }
     ]
-    assert [item["code"] for item in trace_forest["warnings"]] == ["EVENT_ID_CONFLICT"]
+    assert trace_forest["warnings"] == [
+        {
+            "code": "EVENT_ID_CONFLICT",
+            "eventId": "conflicting",
+            "message": (
+                "Event ID conflicting has inconsistent Event type or content across "
+                "3 records. Conflicting observation records lineage from other-root "
+                "to conflicting through Action other_to_conflicting; that observation "
+                "does not contribute lineage to the canonical Event node."
+            ),
+            "upstreamEventId": "other-root",
+            "upstreamActionName": "other_to_conflicting",
+        }
+    ]
 
     text_result = _run_reader(log_path, "text")
 
@@ -603,8 +616,81 @@ def test_reader_compares_event_content_by_json_type(tmp_path: Path) -> None:
 
     assert trace_forest["nodes"]["type-sensitive"]["eventType"] == "ChildEvent"
     assert trace_forest["nodes"]["type-sensitive"]["observationCount"] == 2
+    assert trace_forest["nodes"]["type-sensitive"]["upstreamEdges"] == [
+        {
+            "upstreamEventId": "root",
+            "upstreamActionName": "child_action",
+        }
+    ]
     assert trace_forest["nodes"]["equivalent"]["observationCount"] == 2
-    assert [item["code"] for item in trace_forest["warnings"]] == ["EVENT_ID_CONFLICT"]
+    assert trace_forest["warnings"] == [
+        {
+            "code": "EVENT_ID_CONFLICT",
+            "eventId": "type-sensitive",
+            "message": (
+                "Event ID type-sensitive has inconsistent Event type or content "
+                "across 2 records. Conflicting observation records lineage from root "
+                "to type-sensitive through Action child_action; that observation does "
+                "not contribute lineage to the canonical Event node."
+            ),
+            "upstreamEventId": "root",
+            "upstreamActionName": "child_action",
+        }
+    ]
+
+
+def test_reader_deduplicates_conflict_warnings_by_recorded_lineage(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "events.log"
+    root_b_conflict = _record(
+        "conflicting",
+        "ConflictingEvent",
+        "root-b",
+        "action-b",
+        {"value": "conflict-b"},
+    )
+    root_c_conflict = _record(
+        "conflicting",
+        "ConflictingEvent",
+        "root-c",
+        "action-c",
+        {"value": "conflict-c"},
+    )
+    _write_log(
+        log_path,
+        [
+            _record("root-a", "_input_event"),
+            _record(
+                "conflicting",
+                "ConflictingEvent",
+                "root-a",
+                "action-a",
+                {"value": "canonical"},
+            ),
+            _record("root-b", "_input_event"),
+            root_b_conflict,
+            root_b_conflict,
+            _record("root-c", "_input_event"),
+            root_c_conflict,
+            root_c_conflict,
+        ],
+    )
+
+    result = _run_reader(log_path, "json")
+    trace_forest = json.loads(result.stdout)
+
+    assert trace_forest["nodes"]["conflicting"]["observationCount"] == 5
+    assert trace_forest["nodes"]["conflicting"]["upstreamEdges"] == [
+        {"upstreamEventId": "root-a", "upstreamActionName": "action-a"}
+    ]
+    assert trace_forest["nodes"]["root-b"]["actions"] == []
+    assert trace_forest["nodes"]["root-c"]["actions"] == []
+    assert [
+        (warning["upstreamEventId"], warning["upstreamActionName"])
+        for warning in trace_forest["warnings"]
+    ] == [("root-b", "action-b"), ("root-c", "action-c")]
+    assert result.stderr.count("EVENT_ID_CONFLICT") == 2
 
 
 def test_reader_warns_and_keeps_valid_input_tree(tmp_path: Path) -> None:

@@ -160,25 +160,50 @@ def build_trace_forest(
         first_record = matching_records[0]
         first_content_fingerprint = _json_fingerprint(first_record["eventContent"])
         lineage_records = [first_record]
-        has_conflicting_observations = False
+        warned_conflicting_edges: set[tuple[str | None, str | None]] = set()
         for record in matching_records[1:]:
             if (
                 record["eventType"] != first_record["eventType"]
                 or _json_fingerprint(record["eventContent"])
                 != first_content_fingerprint
             ):
-                has_conflicting_observations = True
+                conflicting_edge = (
+                    record["upstreamEventId"],
+                    record["upstreamActionName"],
+                )
+                if conflicting_edge in warned_conflicting_edges:
+                    continue
+                warned_conflicting_edges.add(conflicting_edge)
+                message = (
+                    f"Event ID {event_id} has inconsistent Event type or content "
+                    f"across {len(matching_records)} records."
+                )
+                if (
+                    record["upstreamEventId"] is not None
+                    and record["upstreamActionName"] is not None
+                ):
+                    message += (
+                        f" Conflicting observation records lineage from "
+                        f"{record['upstreamEventId']} to {event_id} through Action "
+                        f"{record['upstreamActionName']}; that observation does not "
+                        "contribute lineage to the canonical Event node."
+                    )
+                else:
+                    message += (
+                        " The conflicting observation does not contribute lineage "
+                        "to the canonical Event node."
+                    )
+                warnings.append(
+                    warning(
+                        "EVENT_ID_CONFLICT",
+                        event_id,
+                        message,
+                        upstream_event_id=record["upstreamEventId"],
+                        upstream_action_name=record["upstreamActionName"],
+                    )
+                )
             else:
                 lineage_records.append(record)
-        if has_conflicting_observations:
-            warnings.append(
-                warning(
-                    "EVENT_ID_CONFLICT",
-                    event_id,
-                    f"Event ID {event_id} has inconsistent Event type or content "
-                    f"across {len(matching_records)} records.",
-                )
-            )
 
         lineage_edges: list[tuple[str | None, str | None]] = []
         seen_edges: set[tuple[str | None, str | None]] = set()

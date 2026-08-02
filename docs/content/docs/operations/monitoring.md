@@ -288,11 +288,11 @@ records with distinct upstream edges, as in the example above. Reusing an Event 
 Event type and content is valid.
 {{< /hint >}}
 
-If records carrying the same Event ID disagree on the Event type or content, the reader reports
-`EVENT_ID_CONFLICT` and uses the first observation's Event type and content as canonical for the
-node. Observations matching the canonical Event contribute their distinct upstream edges.
-Conflicting observations still contribute to `observationCount`, but not to `upstreamEdges`.
-Keeping the canonical node preserves descendants that refer to the conflicting Event ID.
+When observations with the same Event ID disagree on Event type or content, only observations
+matching the first add distinct entries to `upstreamEdges`, while all observations count toward
+`observationCount`. For conflicting observations, the reader emits one `EVENT_ID_CONFLICT`
+warning per distinct (`upstreamEventId`, `upstreamActionName`) pair and includes each field when
+present. The resulting canonical node and its descendants remain in the reconstructed trace.
 
 The reader derives virtual Action nodes from `upstreamActionName`; they are not separate Event Log
 records. Log order does not add execution-order semantics, but it controls display order and
