@@ -78,8 +78,7 @@ class WatsonxChatModelConnectionTest {
     private static ResourceDescriptor stubDescriptor(
             String baseUrl, boolean useApiKey, int maxRetries) {
         ResourceDescriptor.Builder builder =
-                ResourceDescriptor.Builder.newBuilder(
-                                WatsonxChatModelConnection.class.getName())
+                ResourceDescriptor.Builder.newBuilder(WatsonxChatModelConnection.class.getName())
                         .addInitialArgument("url", baseUrl)
                         .addInitialArgument("project_id", "test-project")
                         .addInitialArgument("max_retries", maxRetries);
@@ -375,10 +374,7 @@ class WatsonxChatModelConnectionTest {
                 "/identity/token",
                 exchange -> {
                     iamRequests.incrementAndGet();
-                    sendJson(
-                            exchange,
-                            200,
-                            "{\"access_token\":\"token-1\",\"expires_in\":3600}");
+                    sendJson(exchange, 200, "{\"access_token\":\"token-1\",\"expires_in\":3600}");
                 });
         server.createContext(
                 "/ml/v1/text/chat",
@@ -412,9 +408,7 @@ class WatsonxChatModelConnectionTest {
                     sendJson(
                             exchange,
                             200,
-                            "{\"access_token\":\"token-"
-                                    + tokenNumber
-                                    + "\",\"expires_in\":60}");
+                            "{\"access_token\":\"token-" + tokenNumber + "\",\"expires_in\":60}");
                 });
         server.createContext(
                 "/ml/v1/text/chat", exchange -> sendJson(exchange, 200, CHAT_RESPONSE));
@@ -445,9 +439,7 @@ class WatsonxChatModelConnectionTest {
                     sendJson(
                             exchange,
                             200,
-                            "{\"access_token\":\"token-"
-                                    + tokenNumber
-                                    + "\",\"expires_in\":3600}");
+                            "{\"access_token\":\"token-" + tokenNumber + "\",\"expires_in\":3600}");
                 });
         server.createContext(
                 "/ml/v1/text/chat",
