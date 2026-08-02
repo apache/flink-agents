@@ -21,9 +21,11 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
 import org.apache.kafka.clients.producer.MockProducer;
+import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
@@ -38,6 +40,9 @@ import java.util.Map;
 import static org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy.EARLIEST;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /** Unit tests for {@link KafkaActionStateStore}. */
 public class KafkaActionStateStoreTest {
@@ -253,5 +258,26 @@ public class KafkaActionStateStoreTest {
                         actionStates.get(
                                 ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent)))
                 .isEqualTo(thirdState);
+    }
+
+    /** Contract: the consumer is closed even when closing the producer throws. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void testCloseClosesConsumerWhenProducerCloseFails() {
+        Producer<String, ActionState> failingProducer = mock(Producer.class);
+        Consumer<String, ActionState> consumer = mock(Consumer.class);
+        doThrow(new RuntimeException("producer close failed")).when(failingProducer).close();
+
+        KafkaActionStateStore store =
+                new KafkaActionStateStore(
+                        actionStates,
+                        new AgentConfiguration(),
+                        failingProducer,
+                        consumer,
+                        TEST_TOPIC);
+
+        assertThrows(RuntimeException.class, store::close);
+
+        verify(consumer).close();
     }
 }

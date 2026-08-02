@@ -331,11 +331,14 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     @Override
     public void close() throws Exception {
-        if (producer != null) {
-            producer.close();
-        }
-        if (consumer != null) {
-            consumer.close();
+        try {
+            if (producer != null) {
+                producer.close();
+            }
+        } finally {
+            if (consumer != null) {
+                consumer.close();
+            }
         }
     }
 
