@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.context.MemoryRef;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -37,6 +38,7 @@ public class Event {
     private final UUID id;
     private final String type;
     private final Map<String, Object> attributes;
+    private final Map<String, Object> attachments;
 
     /**
      * Runtime-internal timestamp from the source record. Not part of the cross-language event
@@ -46,7 +48,7 @@ public class Event {
 
     /** Unified event with user-defined type and attributes. */
     public Event(String type, Map<String, Object> attributes) {
-        this(UUID.randomUUID(), type, attributes);
+        this(UUID.randomUUID(), type, attributes, new HashMap<>());
     }
 
     /** Unified event with user-defined type and empty attributes. */
@@ -54,17 +56,26 @@ public class Event {
         this(type, new HashMap<>());
     }
 
-    @JsonCreator
     public Event(
             @JsonProperty("id") UUID id,
             @JsonProperty("type") String type,
             @JsonProperty("attributes") Map<String, Object> attributes) {
+        this(id, type, attributes, new HashMap<>());
+    }
+
+    @JsonCreator
+    public Event(
+            @JsonProperty("id") UUID id,
+            @JsonProperty("type") String type,
+            @JsonProperty("attributes") Map<String, Object> attributes,
+            @JsonProperty("attachments") Map<String, Object> attachments) {
         if (type == null || type.isEmpty()) {
             throw new IllegalArgumentException("Event 'type' must not be null or empty.");
         }
         this.id = id;
         this.type = type;
         this.attributes = attributes != null ? attributes : new HashMap<>();
+        this.attachments = attachments != null ? attachments : new HashMap<>();
     }
 
     public UUID getId() {
@@ -81,8 +92,16 @@ public class Event {
         return attributes;
     }
 
+    public Map<String, Object> getAttachments() {
+        return attachments;
+    }
+
     public Object getAttr(String name) {
         return attributes.get(name);
+    }
+
+    public Object getAttachment(String name) {
+        return attachments.get(name);
     }
 
     public void setAttr(String name, Object value) {
@@ -105,12 +124,17 @@ public class Event {
     }
 
     /**
-     * Creates a base Event from another Event, copying id, type, and attributes. Subclasses
-     * override this to reconstruct typed event objects with proper field deserialization.
+     * Creates a base Event from another Event, copying id, type, attributes, and attachments.
+     * Subclasses override this to reconstruct typed event objects with proper field
+     * deserialization.
      */
     public static Event fromEvent(Event event) {
         Event copy =
-                new Event(event.getId(), event.getType(), new HashMap<>(event.getAttributes()));
+                new Event(
+                        event.getId(),
+                        event.getType(),
+                        new HashMap<>(event.getAttributes()),
+                        new HashMap<>(event.attachments));
         if (event.hasSourceTimestamp()) {
             copy.setSourceTimestamp(event.getSourceTimestamp());
         }
@@ -125,7 +149,19 @@ public class Event {
      * @throws IOException if JSON parsing fails or the 'type' field is missing or empty
      */
     public static Event fromJson(String json) throws IOException {
-        return MAPPER.readValue(json, Event.class);
+        Event event = MAPPER.readValue(json, Event.class);
+        for (Map.Entry<String, Object> entry : event.getAttachments().entrySet()) {
+            Object attachment = entry.getValue();
+            if (attachment instanceof Map) {
+                Map<?, ?> map = (Map<?, ?>) attachment;
+                if (map.size() == 2
+                        && map.containsKey(MemoryRef.MEMORY_TYPE_FIELD)
+                        && map.containsKey(MemoryRef.PATH_FIELD)) {
+                    entry.setValue(MAPPER.convertValue(attachment, MemoryRef.class));
+                }
+            }
+        }
+        return event;
     }
 
     @Override
@@ -135,11 +171,12 @@ public class Event {
         Event other = (Event) o;
         return Objects.equals(this.id, other.id)
                 && Objects.equals(this.getType(), other.getType())
-                && Objects.equals(this.attributes, other.attributes);
+                && Objects.equals(this.attributes, other.attributes)
+                && Objects.equals(this.attachments, other.attachments);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, getType(), attributes);
+        return Objects.hash(id, getType(), attributes, attachments);
     }
 }

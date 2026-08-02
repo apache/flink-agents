@@ -29,6 +29,8 @@ from pydantic import BaseModel, Field, model_validator
 from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
+from flink_agents.api.memory_reference import MemoryRef
+
 
 def _reconstruct_row_if_needed(data: Any) -> Any:
     """Recursively reconstruct pyflink Row objects from their JSON-serialized dicts.
@@ -72,11 +74,14 @@ class Event(BaseModel, extra="allow"):
         Event type string used for routing. Required for all events.
     attributes : Dict[str, Any]
         Key-value properties for the event data.
+    attachments : Dict[str, Any]
+        Key-value data passed between actions through sensory memory.
     """
 
     id: UUID = Field(default=None)
     type: str
     attributes: Dict[str, Any] = Field(default_factory=dict)
+    attachments: Dict[str, Any] = Field(default_factory=dict)
 
     @staticmethod
     def __serialize_unknown(field: Any) -> Dict[str, Any]:
@@ -138,6 +143,14 @@ class Event(BaseModel, extra="allow"):
         """Set an attribute value in the attributes map."""
         self.attributes[name] = value
 
+    def get_attachment(self, name: str) -> Any:
+        """Get an attachment value from the attachments map."""
+        return self.attachments.get(name)
+
+    def set_attachment(self, name: str, value: Any) -> None:
+        """Set an attachment value in the attachments map."""
+        self.attachments = {**self.attachments, name: value}
+
     @classmethod
     def from_event(cls, event: "Event") -> "Event":
         """Reconstruct a typed event from a base Event.
@@ -173,6 +186,10 @@ class Event(BaseModel, extra="allow"):
         event = cls.model_validate(data)
         for key in list(event.attributes):
             event.attributes[key] = _reconstruct_row_if_needed(event.attributes[key])
+        for key in list(event.attachments):
+            value = event.attachments[key]
+            if isinstance(value, dict) and set(value) == {"memory_type", "path"}:
+                event.attachments[key] = MemoryRef.model_validate(value)
         return event
 
 
@@ -200,6 +217,7 @@ class InputEvent(Event):
     def from_event(cls, event: Event) -> "InputEvent":
         assert "input" in event.attributes
         result = InputEvent(input=event.attributes["input"])
+        result.attachments = dict(event.attachments)
         result.id = event.id
         return result
 
@@ -233,6 +251,7 @@ class OutputEvent(Event):
     def from_event(cls, event: Event) -> "OutputEvent":
         assert "output" in event.attributes
         result = OutputEvent(output=event.attributes["output"])
+        result.attachments = dict(event.attachments)
         result.id = event.id
         return result
 

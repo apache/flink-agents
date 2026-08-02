@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
+import org.apache.flink.agents.runtime.memory.EventAttachmentUtils;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 
 import java.util.Collections;
@@ -56,6 +57,7 @@ public class JavaActionTask extends ActionTask {
 
         if (!executionStarted) {
             runnerContext.checkNoPendingEvents();
+            EventAttachmentUtils.loadEventAttachments(event, runnerContext);
             executionStarted = true;
         }
 

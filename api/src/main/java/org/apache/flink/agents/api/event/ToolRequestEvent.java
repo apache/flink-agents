@@ -56,6 +56,7 @@ public class ToolRequestEvent extends Event {
     public static ToolRequestEvent fromEvent(Event event) {
         ToolRequestEvent result =
                 new ToolRequestEvent(event.getId(), new HashMap<>(event.getAttributes()));
+        result.getAttachments().putAll(event.getAttachments());
         if (event.hasSourceTimestamp()) {
             result.setSourceTimestamp(event.getSourceTimestamp());
         }

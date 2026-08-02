@@ -58,6 +58,7 @@ class ToolRequestEvent(Event):
             model=event.attributes["model"],
             tool_calls=event.attributes["tool_calls"],
         )
+        result.attachments = dict(event.attachments)
         result.id = event.id
         return result
 
@@ -125,6 +126,7 @@ class ToolResponseEvent(Event):
             ),
             error=event.attributes.get("error", {}),
         )
+        result.attachments = dict(event.attachments)
         result.id = event.id
         return result
 
