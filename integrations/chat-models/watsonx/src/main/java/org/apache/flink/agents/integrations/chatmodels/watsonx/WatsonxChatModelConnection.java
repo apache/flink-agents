@@ -252,8 +252,7 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
             String bearerToken = getBearerToken();
             HttpResponse<String> response =
                     sendWithRetry(buildChatRequest(requestBody, bearerToken));
-            if ((response.statusCode() == 401 || response.statusCode() == 403)
-                    && apiKey != null) {
+            if ((response.statusCode() == 401 || response.statusCode() == 403) && apiKey != null) {
                 LOG.warn(
                         "watsonx.ai returned status {}; refreshing the cached IAM token and"
                                 + " retrying once",
