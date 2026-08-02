@@ -21,6 +21,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
@@ -31,9 +33,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -41,14 +48,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Unit tests for {@link WatsonxChatModelConnection}. These exercise the protocol-conversion logic
- * with no network access, so they run in CI without any API key.
+ * Unit tests for {@link WatsonxChatModelConnection}. Request-level tests use a local stub server,
+ * so the suite runs in CI without external network access or an API key.
  */
 class WatsonxChatModelConnectionTest {
 
     private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
     private static final Function<String, String> NO_ENVIRONMENT = ignored -> null;
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String CHAT_RESPONSE =
+            "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+                    + "\"content\":\"Hello!\"},\"finish_reason\":\"stop\"}]}";
 
     private static ResourceDescriptor descriptor(String url, String apiKey, String projectId) {
         ResourceDescriptor.Builder b =
@@ -63,6 +73,50 @@ class WatsonxChatModelConnectionTest {
             b.addInitialArgument("project_id", projectId);
         }
         return b.build();
+    }
+
+    private static ResourceDescriptor stubDescriptor(
+            String baseUrl, boolean useApiKey, int maxRetries) {
+        ResourceDescriptor.Builder builder =
+                ResourceDescriptor.Builder.newBuilder(
+                                WatsonxChatModelConnection.class.getName())
+                        .addInitialArgument("url", baseUrl)
+                        .addInitialArgument("project_id", "test-project")
+                        .addInitialArgument("max_retries", maxRetries);
+        if (useApiKey) {
+            builder.addInitialArgument("api_key", "test-key");
+            builder.addInitialArgument("iam_url", baseUrl);
+        } else {
+            builder.addInitialArgument("token", "test-token");
+        }
+        return builder.build();
+    }
+
+    private static HttpServer startServer() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(null);
+        server.start();
+        return server;
+    }
+
+    private static String baseUrl(HttpServer server) {
+        return "http://127.0.0.1:" + server.getAddress().getPort();
+    }
+
+    private static void sendJson(HttpExchange exchange, int status, String body)
+            throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
+    }
+
+    private static ChatMessage chat(WatsonxChatModelConnection connection) {
+        return connection.chat(
+                List.of(new ChatMessage(MessageRole.USER, "Hello!")),
+                List.of(),
+                Map.of("model", "ibm/granite-3-3-8b-instruct"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -309,6 +363,163 @@ class WatsonxChatModelConnectionTest {
                 .isEqualTo("ibm/granite-3-3-8b-instruct");
         assertThat(message.getExtraArgs().get("promptTokens")).isEqualTo(100L);
         assertThat(message.getExtraArgs().get("completionTokens")).isEqualTo(50L);
+    }
+
+    @Test
+    @DisplayName("IAM token is cached and reused between chat requests")
+    void testIamTokenIsCached() throws Exception {
+        HttpServer server = startServer();
+        AtomicInteger iamRequests = new AtomicInteger();
+        AtomicInteger chatRequests = new AtomicInteger();
+        server.createContext(
+                "/identity/token",
+                exchange -> {
+                    iamRequests.incrementAndGet();
+                    sendJson(
+                            exchange,
+                            200,
+                            "{\"access_token\":\"token-1\",\"expires_in\":3600}");
+                });
+        server.createContext(
+                "/ml/v1/text/chat",
+                exchange -> {
+                    chatRequests.incrementAndGet();
+                    sendJson(exchange, 200, CHAT_RESPONSE);
+                });
+
+        try {
+            WatsonxChatModelConnection connection =
+                    new WatsonxChatModelConnection(
+                            stubDescriptor(baseUrl(server), true, 0), NOOP, NO_ENVIRONMENT);
+            assertThat(chat(connection).getContent()).isEqualTo("Hello!");
+            assertThat(chat(connection).getContent()).isEqualTo("Hello!");
+            assertThat(iamRequests).hasValue(1);
+            assertThat(chatRequests).hasValue(2);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("IAM token is refreshed inside the 60-second expiry margin")
+    void testIamTokenRefreshMargin() throws Exception {
+        HttpServer server = startServer();
+        AtomicInteger iamRequests = new AtomicInteger();
+        server.createContext(
+                "/identity/token",
+                exchange -> {
+                    int tokenNumber = iamRequests.incrementAndGet();
+                    sendJson(
+                            exchange,
+                            200,
+                            "{\"access_token\":\"token-"
+                                    + tokenNumber
+                                    + "\",\"expires_in\":60}");
+                });
+        server.createContext(
+                "/ml/v1/text/chat", exchange -> sendJson(exchange, 200, CHAT_RESPONSE));
+
+        try {
+            WatsonxChatModelConnection connection =
+                    new WatsonxChatModelConnection(
+                            stubDescriptor(baseUrl(server), true, 0), NOOP, NO_ENVIRONMENT);
+            chat(connection);
+            chat(connection);
+            assertThat(iamRequests).hasValue(2);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {401, 403})
+    @DisplayName("Rejected IAM token is refreshed and retried once")
+    void testRejectedIamTokenIsRefreshed(int rejectedStatus) throws Exception {
+        HttpServer server = startServer();
+        AtomicInteger iamRequests = new AtomicInteger();
+        AtomicInteger chatRequests = new AtomicInteger();
+        server.createContext(
+                "/identity/token",
+                exchange -> {
+                    int tokenNumber = iamRequests.incrementAndGet();
+                    sendJson(
+                            exchange,
+                            200,
+                            "{\"access_token\":\"token-"
+                                    + tokenNumber
+                                    + "\",\"expires_in\":3600}");
+                });
+        server.createContext(
+                "/ml/v1/text/chat",
+                exchange -> {
+                    int requestNumber = chatRequests.incrementAndGet();
+                    sendJson(
+                            exchange,
+                            requestNumber == 1 ? rejectedStatus : 200,
+                            requestNumber == 1 ? "{}" : CHAT_RESPONSE);
+                });
+
+        try {
+            WatsonxChatModelConnection connection =
+                    new WatsonxChatModelConnection(
+                            stubDescriptor(baseUrl(server), true, 0), NOOP, NO_ENVIRONMENT);
+            assertThat(chat(connection).getContent()).isEqualTo("Hello!");
+            assertThat(iamRequests).hasValue(2);
+            assertThat(chatRequests).hasValue(2);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Retryable response is retried while a client error is not")
+    void testRetryLoop() throws Exception {
+        HttpServer server = startServer();
+        AtomicInteger chatRequests = new AtomicInteger();
+        server.createContext(
+                "/ml/v1/text/chat",
+                exchange -> {
+                    int requestNumber = chatRequests.incrementAndGet();
+                    sendJson(
+                            exchange,
+                            requestNumber == 1 ? 503 : 200,
+                            requestNumber == 1 ? "{}" : CHAT_RESPONSE);
+                });
+
+        try {
+            WatsonxChatModelConnection retryingConnection =
+                    new WatsonxChatModelConnection(
+                            stubDescriptor(baseUrl(server), false, 1), NOOP, NO_ENVIRONMENT);
+            assertThat(chat(retryingConnection).getContent()).isEqualTo("Hello!");
+            assertThat(chatRequests).hasValue(2);
+
+            server.removeContext("/ml/v1/text/chat");
+            chatRequests.set(0);
+            server.createContext(
+                    "/ml/v1/text/chat",
+                    exchange -> {
+                        chatRequests.incrementAndGet();
+                        sendJson(exchange, 400, "{\"error\":\"bad request\"}");
+                    });
+            WatsonxChatModelConnection nonRetryingConnection =
+                    new WatsonxChatModelConnection(
+                            stubDescriptor(baseUrl(server), false, 3), NOOP, NO_ENVIRONMENT);
+            assertThatThrownBy(() -> chat(nonRetryingConnection))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("status 400");
+            assertThat(chatRequests).hasValue(1);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Reasoning blocks are extracted without changing plain content")
+    void testExtractReasoning() {
+        assertThat(WatsonxChatModelConnection.extractReasoning("<think>Plan</think>\nAnswer"))
+                .containsExactly("Answer", "Plan");
+        assertThat(WatsonxChatModelConnection.extractReasoning("Plain answer"))
+                .containsExactly("Plain answer", null);
     }
 
     @Test
