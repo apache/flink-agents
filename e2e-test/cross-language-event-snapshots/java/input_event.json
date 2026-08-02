@@ -3,5 +3,11 @@
   "attributes" : {
     "input" : "hello"
   },
+  "attachments" : {
+    "payload" : {
+      "memory_type" : "sensory",
+      "path" : "memory.path"
+    }
+  },
   "type" : "_input_event"
 }

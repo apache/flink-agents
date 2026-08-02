@@ -3,5 +3,11 @@
   "attributes" : {
     "output" : "world"
   },
+  "attachments" : {
+    "payload" : {
+      "memory_type" : "sensory",
+      "path" : "memory.path"
+    }
+  },
   "type" : "_output_event"
 }

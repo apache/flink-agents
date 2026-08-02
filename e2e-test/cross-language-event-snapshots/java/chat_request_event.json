@@ -9,5 +9,11 @@
       "extra_args" : { }
     } ]
   },
+  "attachments" : {
+    "payload" : {
+      "memory_type" : "sensory",
+      "path" : "memory.path"
+    }
+  },
   "type" : "_chat_request_event"
 }

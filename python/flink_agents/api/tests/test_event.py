@@ -52,7 +52,11 @@ def test_input_event_ignore_row_unserializable() -> None:
 
 def test_event_row_with_non_serializable_fails() -> None:
     with pytest.raises(ValidationError):
-        Event(type="test", row_field=Row({"a": 1}), non_serializable_field=Type[InputEvent])
+        Event(
+            type="test",
+            row_field=Row({"a": 1}),
+            non_serializable_field=Type[InputEvent],
+        )
 
 
 def test_event_multiple_rows_serializable() -> None:
@@ -157,9 +161,14 @@ def test_output_event_from_event() -> None:
 
 def test_unified_event_creation() -> None:
     """Test creating a unified event with type and attributes."""
-    event = Event(type="MyEvent", attributes={"field1": "test", "field2": 42})
+    event = Event(
+        type="MyEvent",
+        attributes={"field1": "test", "field2": 42},
+        attachments={"field3": "0105", "field4": 2004},
+    )
     assert event.type == "MyEvent"
     assert event.attributes == {"field1": "test", "field2": 42}
+    assert event.attachments == {"field3": "0105", "field4": 2004}
     assert event.get_type() == "MyEvent"
 
 
@@ -175,6 +184,14 @@ def test_unified_event_get_attr_set_attr() -> None:
     event.set_attr("key", "value")
     assert event.get_attr("key") == "value"
     assert event.get_attr("missing") is None
+
+
+def test_unified_event_get_attachment_set_attachment() -> None:
+    """Test get_attachment and set_attachment convenience methods."""
+    event = Event(type="TestEvent")
+    event.set_attachment("key", "value")
+    assert event.get_attachment("key") == "value"
+    assert event.get_attachment("missing") is None
 
 
 def test_unified_event_from_json() -> None:
