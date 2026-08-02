@@ -294,6 +294,7 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
                 api_client=self.client,
                 project_id=self.project_id,
                 space_id=self.space_id,
+                max_retries=0,
             )
         return self._models[model]
 
