@@ -33,6 +33,7 @@ from flink_agents.integrations.chat_models import ollama_chat_model, tongyi_chat
 from flink_agents.integrations.chat_models.anthropic import anthropic_chat_model
 from flink_agents.integrations.chat_models.azure import azure_openai_chat_model
 from flink_agents.integrations.chat_models.openai import openai_chat_model
+from flink_agents.integrations.chat_models.watsonx import watsonx_chat_model
 from flink_agents.runtime.java import java_chat_model as runtime_java_chat_model
 
 # A class is only discoverable through __subclasses__() once it has been imported.
@@ -48,6 +49,7 @@ _MODULES_DEFINING_CONNECTIONS = (
     runtime_java_chat_model,
     tongyi_chat_model,
     tool_parameter_injection_agent,
+    watsonx_chat_model,
 )
 
 

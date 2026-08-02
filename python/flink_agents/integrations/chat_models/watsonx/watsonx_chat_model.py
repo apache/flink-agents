@@ -31,6 +31,7 @@ from ibm_watsonx_ai.wml_client_error import ApiRequestFailure
 from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -331,9 +332,17 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
-        """Process a sequence of messages, and return a response."""
+        """Process a sequence of messages, and return a response.
+
+        A non-``None`` ``output_schema`` is rejected: this connection has no native
+        structured-output translation, so callers stay on the prompt-engineering
+        fallback. Declaring the parameter keeps a caller-supplied schema out of
+        ``**kwargs``, which is forwarded to the provider SDK.
+        """
+        self._reject_unsupported_output_schema(output_schema)
         model_name = kwargs.pop("model", DEFAULT_MODEL)
         extract_reasoning = bool(kwargs.pop("extract_reasoning", False))
         tool_choice = kwargs.pop("tool_choice", None)
