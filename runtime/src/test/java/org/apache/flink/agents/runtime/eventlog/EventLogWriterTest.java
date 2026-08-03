@@ -23,40 +23,49 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
+import org.apache.flink.metrics.SimpleCounter;
+import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 /** Contract tests for {@link EventLogWriter}. */
 class EventLogWriterTest {
 
     @Test
-    void appendAndFlushIgnoresAppendFailure() throws Exception {
+    void appendAndFlushAttemptsBothOperationsAndCountsOneFailure() throws Exception {
         EventLogger mockLogger = mock(EventLogger.class);
         EventLogWriter writer = EventLogWriter.forEventLogger(mockLogger);
+        SimpleCounter writeFailures = openWithWriteFailureCounter(writer);
         InputEvent inputEvent = new InputEvent(1L);
         EventContext eventContext = new EventContext(inputEvent);
         doThrow(new RuntimeException("append failed"))
                 .when(mockLogger)
                 .append(any(EventContext.class), eq(inputEvent), isNull());
+        doThrow(new RuntimeException("flush failed")).when(mockLogger).flush();
 
         assertThatCode(() -> writer.appendBusinessEventAndFlush(eventContext, inputEvent, null))
                 .doesNotThrowAnyException();
-        verify(mockLogger, never()).flush();
+        verify(mockLogger).flush();
+        assertThat(writeFailures.getCount()).isEqualTo(1);
     }
 
     @Test
     void appendAndFlushIgnoresFlushFailure() throws Exception {
         EventLogger mockLogger = mock(EventLogger.class);
         EventLogWriter writer = EventLogWriter.forEventLogger(mockLogger);
+        SimpleCounter writeFailures = openWithWriteFailureCounter(writer);
         InputEvent inputEvent = new InputEvent(1L);
         EventContext eventContext = new EventContext(inputEvent);
         doThrow(new RuntimeException("flush failed")).when(mockLogger).flush();
@@ -65,6 +74,25 @@ class EventLogWriterTest {
                 .doesNotThrowAnyException();
         verify(mockLogger).append(any(EventContext.class), eq(inputEvent), isNull());
         verify(mockLogger).flush();
+        assertThat(writeFailures.getCount()).isEqualTo(1);
+    }
+
+    @Test
+    void appendAndFlushCountsEveryFailedWriteAttempt() throws Exception {
+        EventLogger mockLogger = mock(EventLogger.class);
+        EventLogWriter writer = EventLogWriter.forEventLogger(mockLogger);
+        SimpleCounter writeFailures = openWithWriteFailureCounter(writer);
+        InputEvent inputEvent = new InputEvent(1L);
+        EventContext eventContext = new EventContext(inputEvent);
+        doThrow(new RuntimeException("append failed"))
+                .when(mockLogger)
+                .append(any(EventContext.class), eq(inputEvent), isNull());
+
+        writer.appendBusinessEventAndFlush(eventContext, inputEvent, null);
+        writer.appendBusinessEventAndFlush(eventContext, inputEvent, null);
+
+        verify(mockLogger, times(2)).flush();
+        assertThat(writeFailures.getCount()).isEqualTo(2);
     }
 
     @Test
@@ -108,5 +136,14 @@ class EventLogWriterTest {
 
         verify(mockLogger).append(any(EventContext.class), eq(executionEvent), eq(traceContext));
         verify(mockLogger).flush();
+    }
+
+    private static SimpleCounter openWithWriteFailureCounter(EventLogWriter writer)
+            throws Exception {
+        SimpleCounter writeFailures = new SimpleCounter();
+        BuiltInMetrics builtInMetrics = mock(BuiltInMetrics.class);
+        when(builtInMetrics.getEventLogWriteFailuresCounter()).thenReturn(writeFailures);
+        writer.open(mock(StreamingRuntimeContext.class), builtInMetrics);
+        return writeFailures;
     }
 }
