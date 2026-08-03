@@ -82,6 +82,8 @@ An LLM metric represents one framework invocation of `ChatModel`. A framework re
 
 Tool outcomes follow the existing language-specific Tool contracts. In both Java and Python, resource preparation or invocation exceptions are failures and a normal return is successful. Java additionally treats an unsuccessful `ToolResponse` as a failed Tool execution. Python Tools return arbitrary values and currently have no equivalent explicit error-result type, so the runtime does not infer failure from a normally returned Python value.
 
+Consequently, Tool and MCP outcome metrics use the same names and scopes in both runtimes, but explicit error-result semantics are not yet identical. This alignment is tracked in [Issue #956](https://github.com/apache/flink-agents/issues/956) and is planned after the parallel Tool-call work in [PR #926](https://github.com/apache/flink-agents/pull/926).
+
 Execution latency tracking is process-local. A latency sample is recorded only when the execution start and terminal events are observed in the same task attempt; LLM and Tool terminal counters are still updated when a restored execution has no local start timestamp.
 
 #### Token Usage Metrics
