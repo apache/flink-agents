@@ -47,6 +47,7 @@ def _connection() -> OpenAIChatModelConnection:
     mock_message.role = "assistant"
     mock_message.content = "ok"
     mock_message.tool_calls = None
+    mock_message.refusal = None
     mock_client.chat.completions.create.return_value.choices = [
         MagicMock(message=mock_message)
     ]

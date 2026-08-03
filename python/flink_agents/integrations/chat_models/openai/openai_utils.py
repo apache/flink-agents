@@ -196,7 +196,11 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
 def convert_from_openai_message(
     message: ChatCompletionMessage, extra_args: Dict[str, Any]
 ) -> ChatMessage:
-    """Convert an OpenAI message to a chat message."""
+    """Convert an OpenAI message to a chat message.
+
+    A provider refusal is surfaced under extra_args["refusal"], including when
+    the refusal reason is an empty string.
+    """
     tool_calls = []
     if message.tool_calls:
         # Generate internal UUID for each tool call while preserving
@@ -214,6 +218,8 @@ def convert_from_openai_message(
             }
             for tool_call in message.tool_calls
         ]
+    if message.refusal is not None:
+        extra_args = {**extra_args, "refusal": message.refusal}
     return ChatMessage(
         role=MessageRole(message.role),
         content=message.content or "",
