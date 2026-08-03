@@ -33,6 +33,7 @@ import org.apache.flink.metrics.Counter;
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -246,8 +247,10 @@ public class FileEventLogger implements EventLogger {
         if (writer == null) {
             throw new IllegalStateException("FileEventLogger not initialized. Call open() first.");
         }
-        // Flush the writer to ensure all data is written to the file
-        writer.flush();
+        // checkError flushes first and exposes I/O failures otherwise swallowed by PrintWriter.
+        if (writer.checkError()) {
+            throw new IOException("Failed to flush the Event Log file.");
+        }
     }
 
     /**
@@ -263,7 +266,7 @@ public class FileEventLogger implements EventLogger {
     @Override
     public void close() throws Exception {
         if (writer != null) {
-            flush();
+            // PrintWriter.close() flushes before releasing the underlying writer.
             writer.close();
         }
     }
