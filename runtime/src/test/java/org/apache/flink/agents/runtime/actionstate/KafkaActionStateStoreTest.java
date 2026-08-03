@@ -194,7 +194,6 @@ public class KafkaActionStateStoreTest {
     @Test
     void testPruneState() throws Exception {
         // Arrange
-        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
         actionStates.put(
                 ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
         actionStates.put(
@@ -216,15 +215,6 @@ public class KafkaActionStateStoreTest {
         assertNull(
                 actionStates.get(ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent)));
         assertNotNull(actionStateStore.get(TEST_KEY, 3L, testAction, testEvent));
-
-        // Assert - tombstones should have been sent to Kafka
-        var history = mockProducer.history();
-        assertThat(history).hasSize(2);
-        for (ProducerRecord<String, ActionState> record : history) {
-            assertThat(record.topic()).isEqualTo(TEST_TOPIC);
-            assertThat(record.key()).startsWith(TEST_KEY + "_");
-            assertThat(record.value()).isNull();
-        }
     }
 
     @Test
@@ -243,6 +233,7 @@ public class KafkaActionStateStoreTest {
 
         // Assert - exactly keys for seqNum 1 and 2 appear as tombstones
         var history = mockProducer.history();
+        assertThat(history).extracting(ProducerRecord::topic).containsOnly(TEST_TOPIC);
         assertThat(history).extracting(ProducerRecord::key).containsExactlyInAnyOrder(key1, key2);
         assertThat(history).extracting(ProducerRecord::value).containsOnlyNulls();
     }
