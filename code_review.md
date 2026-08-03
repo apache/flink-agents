@@ -40,7 +40,7 @@ Guides load on demand, so the general passes here stay short.
 | Change type | Focus | Guide |
 |---|---|---|
 | `runtime/` state and recovery | serde and replay type fidelity, real failure-path tests | [review-guides/runtime-state-recovery.md](review-guides/runtime-state-recovery.md) |
-| Python-Java bridge | cross-language parity, type mapping across Pemja | planned |
+| Python-Java bridge | cross-language parity, type mapping across Pemja | [review-guides/python-java-bridge.md](review-guides/python-java-bridge.md) |
 | `api/` contract | API shape, compatibility policy, deprecation | planned |
 | `dist` and dependency | shading, LICENSE and NOTICE, dist registration | planned |
 | docs-only | facts match their source of truth | planned |
