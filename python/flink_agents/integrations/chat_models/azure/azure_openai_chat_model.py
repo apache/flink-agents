@@ -283,6 +283,14 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
 
         # Capability belongs to the model backing the deployment, so it is the input to
         # the check. The deployment name is chosen by the user and carries none.
+        #
+        # TODO(#912): the requested strategy is not visible here, so this check cannot
+        # tell an explicit NATIVE request apart from one that merely resolved to native.
+        # A caller asking for NATIVE therefore gets an unconstrained response instead of
+        # an error whenever this branch is skipped, which on Azure also happens when the
+        # api-version is below the floor or when model_of_azure_deployment is unset and
+        # capability cannot be resolved at all. Once strategy resolution is wired up,
+        # NATIVE must either bypass this check or fail explicitly.
         if (
             output_schema is not None
             and self.supports_native_structured_output(model_of_azure_deployment)
