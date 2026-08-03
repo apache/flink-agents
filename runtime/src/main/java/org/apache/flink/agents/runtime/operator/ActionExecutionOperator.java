@@ -432,7 +432,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
-        boolean notifyFinished = false;
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt = Optional.empty();
         ActionState actionState =
@@ -511,7 +510,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 isFinished = actionTaskResult.isFinished();
                 outputEvents = actionTaskResult.getOutputEvents();
                 generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
-                notifyFinished = isFinished;
+                if (isFinished) {
+                    notifyActionFinished(actionTask);
+                }
             } catch (Throwable t) {
                 try {
                     notifyActionFailed(actionTask, t);
@@ -519,6 +520,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     contextManager.completeActionExecution(actionTask);
                 }
                 ExceptionUtils.rethrowException(t);
+                // Unreachable; required for Java definite-assignment analysis.
                 return;
             }
         }
@@ -526,9 +528,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         try {
             for (Event actionOutputEvent : outputEvents) {
                 processEvent(key, contextKey, actionOutputEvent, actionTask.getTraceContext());
-            }
-            if (notifyFinished) {
-                notifyActionFinished(actionTask);
             }
         } finally {
             if (isFinished) {
