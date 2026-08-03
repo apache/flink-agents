@@ -382,7 +382,7 @@ Example record at `STANDARD` with a long string and a large array truncated:
 
 You can override the level for individual event types using the `event-log.type.<EVENT_TYPE>.level` config key, where `<EVENT_TYPE>` is the event's routing type string (the same string that appears as `eventType` in the JSON log). Although the field name uses camelCase, built-in Event type values remain snake-cased:
 
-| Event class              | `<EVENT_TYPE>` value             |
+| Event                    | `<EVENT_TYPE>` value             |
 |--------------------------|----------------------------------|
 | `InputEvent`             | `_input_event`                   |
 | `OutputEvent`            | `_output_event`                  |
@@ -392,8 +392,14 @@ You can override the level for individual event types using the `event-log.type.
 | `ToolResponseEvent`      | `_tool_response_event`           |
 | `ContextRetrievalRequestEvent`  | `_context_retrieval_request_event`  |
 | `ContextRetrievalResponseEvent` | `_context_retrieval_response_event` |
+| Execution lifecycle: started    | `_execution_started_event`          |
+| Execution lifecycle: finished   | `_execution_finished_event`         |
+| Execution lifecycle: failed     | `_execution_failed_event`           |
+| Execution lifecycle: reused     | `_execution_reused_event`           |
 
 Each event type has its own independently overridable key, so a job-level override does not clobber other entries from `config.yaml`.
+
+`event-log.trace.enabled` controls whether execution lifecycle Events are produced. When Trace recording is enabled, these Events still use the per-event-type level resolution above. Setting any `_execution_*` type to `OFF` suppresses that lifecycle Event and may make the recorded Trace incomplete.
 
 Resolution is hierarchical — the resolver walks up dot-separated segments of the event type, mirroring Log4j's logger hierarchy. For a user-defined event type `com.example.myapp.OrderEvent`, the lookup order is:
 
@@ -432,6 +438,7 @@ Other per-type levels from `config.yaml` are preserved — the `-D` flag only ov
 
 - **Default behavior changed.** Before this feature, every event was logged in full. The new default is `STANDARD`, which truncates large payloads. To restore the previous behavior either globally or per type, set the level to `VERBOSE`.
 - **Old log records still parse.** Records written in the previous nested format (`eventType` plus `event`) continue to deserialize. They do not contain run or execution context and therefore cannot reconstruct a complete Agent Trace.
-- **External consumers must migrate to the flat field names.** New records expose fields such as `eventType` and `eventAttributes` at the top level. Compatibility in the framework deserializer does not automatically update existing `jq` expressions, log-shipper mappings, or downstream queries that read the previous nested JSON shape directly.
+- **External consumers must migrate to the flat record shape.** The nested `event` object is removed: `event.id` becomes the top-level `eventId`, and `event.attributes` becomes the top-level `eventAttributes`. `eventType` was already available at the top level and remains there. Compatibility in the framework deserializer does not automatically update existing `jq` expressions, log-shipper mappings, or downstream queries that read the previous nested JSON shape directly.
+- **Python Event IDs now identify occurrences.** Python previously generated a deterministic UUID from Event content and regenerated it when the content changed. It now assigns a UUID4 to each Event occurrence, matching the identity semantics used by Agent Trace. Consumers must not rely on equal Event payloads producing equal IDs for deduplication.
 - **Existing pending ActionTask state is not compatible with the new schema.** Agent Trace adds execution identity and Action lifecycle state to pending `ActionTask` state. Restoring savepoints containing that state from before this change would require a versioned `ActionTask` state serializer, which is not included in this feature.
 - **Event Log write failures are now best-effort.** Earlier versions propagated `append` or `flush` failures into Event processing. Write failures now leave the job running and are reported through the `eventLogWriteFailures` metric and a first-failure `WARN` log.
