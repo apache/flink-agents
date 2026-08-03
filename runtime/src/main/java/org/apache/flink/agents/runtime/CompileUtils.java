@@ -29,11 +29,14 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.typeinfo.python.PickledByteArrayTypeInfo;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.StringUtils;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 
 /** A utility class that bridges Flink DataStream/SQL with the Flink Agents agent. */
 public class CompileUtils {
+
+    private static final String DEFAULT_OPERATOR_NAME = "action-execute-operator";
 
     // ============================ invoke by python ====================================
     public static DataStream<byte[]> connectToAgent(
@@ -85,10 +88,13 @@ public class CompileUtils {
             TypeInformation<OUT> outTypeInformation,
             boolean inputIsJava,
             boolean pythonKeyIsPickled) {
+        String agentName = agentPlan.getAgentName();
+        String operatorName =
+                StringUtils.isNullOrWhitespaceOnly(agentName) ? DEFAULT_OPERATOR_NAME : agentName;
         return (DataStream<OUT>)
                 keyedInputStream
                         .transform(
-                                "action-execute-operator",
+                                operatorName,
                                 outTypeInformation,
                                 new ActionExecutionOperatorFactory(
                                         agentPlan, inputIsJava, pythonKeyIsPickled))

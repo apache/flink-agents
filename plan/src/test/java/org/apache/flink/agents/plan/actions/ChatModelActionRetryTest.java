@@ -292,8 +292,8 @@ class ChatModelActionRetryTest {
         assertThat(responseEvent.getTotalRetryWaitSec()).isEqualTo(1);
         assertThat(elapsed).isGreaterThanOrEqualTo(1000L);
 
-        // Verify metrics recorded under connection name
-        verify(mockActionMetricGroup).getSubGroup("model", mockChatModel.getConnectionName());
+        // Retry health belongs to the ChatModel resource, not the provider connection or model.
+        verify(mockActionMetricGroup).getSubGroup("model_resource", "test-model");
         verify(mockRetryCountCounter).inc(1);
         verify(mockRetryWaitSecCounter).inc(1);
     }
@@ -320,6 +320,9 @@ class ChatModelActionRetryTest {
                 .hasMessage("persistent error");
 
         assertThat(sentEvents).isEmpty();
+        verify(mockActionMetricGroup).getSubGroup("model_resource", "test-model");
+        verify(mockRetryCountCounter).inc(2);
+        verify(mockRetryWaitSecCounter).inc(0);
     }
 
     @Test
