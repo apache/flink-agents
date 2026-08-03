@@ -29,11 +29,14 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.metrics.Counter;
 import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LOGGER_TYPE;
@@ -47,6 +50,9 @@ public final class EventLogWriter implements AutoCloseable {
 
     @Nullable private final EventLogger eventLogger;
     private final boolean traceEnabled;
+    private final AtomicBoolean writeFailureWarned = new AtomicBoolean();
+
+    @Nullable private Counter writeFailuresCounter;
 
     public static EventLogWriter create(AgentPlan agentPlan) {
         return new EventLogWriter(
@@ -75,6 +81,7 @@ public final class EventLogWriter implements AutoCloseable {
             return;
         }
         eventLogger.open(new EventLoggerOpenParams(runtimeContext));
+        writeFailuresCounter = builtInMetrics.getEventLogWriteFailuresCounter();
         if (eventLogger instanceof FileEventLogger) {
             ((FileEventLogger) eventLogger)
                     .setTruncatedEventsCounter(builtInMetrics.getEventLogTruncatedEventsCounter());
@@ -103,11 +110,36 @@ public final class EventLogWriter implements AutoCloseable {
         if (eventLogger == null) {
             return;
         }
+        Exception writeError = null;
         try {
             eventLogger.append(eventContext, event, traceContext);
+        } catch (Exception appendError) {
+            writeError = appendError;
+        }
+        try {
             eventLogger.flush();
-        } catch (Exception logError) {
-            LOG.debug("Event Log write failed and was ignored.", logError);
+        } catch (Exception flushError) {
+            if (writeError == null) {
+                writeError = flushError;
+            } else if (writeError != flushError) {
+                writeError.addSuppressed(flushError);
+            }
+        }
+        if (writeError != null) {
+            recordWriteFailure(writeError);
+        }
+    }
+
+    private void recordWriteFailure(Exception writeError) {
+        if (writeFailuresCounter != null) {
+            writeFailuresCounter.inc();
+        }
+        if (writeFailureWarned.compareAndSet(false, true)) {
+            LOG.warn(
+                    "Event Log write failed and was ignored. Subsequent failures will be logged at DEBUG.",
+                    writeError);
+        } else {
+            LOG.debug("Event Log write failed and was ignored.", writeError);
         }
     }
 

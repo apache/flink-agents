@@ -39,6 +39,7 @@ We offer data monitoring for built-in metrics, which includes events, actions, a
 | **Action**  | action.\<action_name\>.numOfActionsExecuted | The total number of actions this operator has executed for a specific action name. | Count |
 | **Action**  | action.\<action_name\>.numOfActionsExecutedPerSec | The number of actions this operator has executed per second for a specific action name. | Meter |
 | **Agent**   | eventLogTruncatedEvents                          | Number of event log records whose payload was truncated at `STANDARD` level. Increments once per event, regardless of how many fields inside it were truncated. Use this to decide whether to raise truncation thresholds or move specific event types to `VERBOSE`. | Count |
+| **Agent**   | eventLogWriteFailures                           | Number of Event Log write attempts for which `append`, `flush`, or both failed. Event Log writes are best-effort and do not fail the job. | Count |
 
 #### Token Usage Metrics
 
@@ -148,6 +149,8 @@ We can check the log result in the WebUI of Flink Job:
 The system supports two types of event loggers: **SLF4J Event Log** (default) and **File Event Log**.
 
 By default, the SLF4J Event Log is used. If `baseLogDir` is configured, the system automatically switches to the File Event Log.
+
+Event Log is an observability output. An `append` or `flush` failure does not fail Event processing or the Flink job. The first failure is logged at `WARN`, subsequent failures are logged at `DEBUG`, and every failed write attempt increments `eventLogWriteFailures`.
 
 ### SLF4J Event Log (Default)
 
@@ -305,3 +308,4 @@ Other per-type levels from `config.yaml` are preserved — the `-D` flag only ov
 - **Old log records still parse.** Records written in the previous nested format (`eventType` plus `event`) continue to deserialize. They do not contain run or execution context and therefore cannot reconstruct a complete Agent Trace.
 - **External consumers must migrate to the flat field names.** New records expose fields such as `eventType` and `eventAttributes` at the top level. Compatibility in the framework deserializer does not automatically update existing `jq` expressions, log-shipper mappings, or downstream queries that read the previous nested JSON shape directly.
 - **Existing pending ActionTask state is not compatible with the new schema.** Agent Trace adds execution identity and Action lifecycle state to pending `ActionTask` state. Restoring savepoints containing that state from before this change would require a versioned `ActionTask` state serializer, which is not included in this feature.
+- **Event Log write failures are now best-effort.** Earlier versions propagated `append` or `flush` failures into Event processing. Write failures now leave the job running and are reported through the `eventLogWriteFailures` metric and a first-failure `WARN` log.
