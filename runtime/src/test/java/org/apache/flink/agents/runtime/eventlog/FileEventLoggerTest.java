@@ -371,6 +371,10 @@ class FileEventLoggerTest {
 
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
         assertEquals("STANDARD", jsonNode.get("logLevel").asText());
+        assertEquals(
+                event.getId().toString(),
+                jsonNode.get("eventId").textValue(),
+                "Top-level Event identity should not be truncated");
 
         // The customData field (inside attributes) should be truncated
         JsonNode attrsNode = jsonNode.get("eventAttributes");
