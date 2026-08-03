@@ -194,13 +194,13 @@ def test_native_not_applied_for_bare_gpt_4o() -> None:
     assert "response_format" not in _create_call_kwargs(conn)
 
 
-@pytest.mark.parametrize("api_version", ["2024-10-21", "v1"])
-def test_native_applied_for_other_api_versions_above_floor(api_version: str) -> None:
-    """Native applied for a later GA date and for the GA `v1` literal.
+@pytest.mark.parametrize("api_version", ["2024-08-01", "2024-10-21"])
+def test_native_applied_for_ga_date_at_or_above_floor(api_version: str) -> None:
+    """Native applied for a bare GA date at or above the floor.
 
-    `v1` pins the non-date half of the comparison: it is admitted because it sorts
-    above the floor, not because it parses as a later date. Rewriting the gate to
-    parse dates would drop it while every date case still passed.
+    The documented floor is the preview form `2024-08-01-preview`, so these pin that a
+    bare GA date carrying no `-preview` suffix is admitted, and that `2024-08-01` is the
+    inclusive boundary.
     """
     conn = _connection(api_version=api_version)
     conn.chat(
@@ -210,6 +210,25 @@ def test_native_applied_for_other_api_versions_above_floor(api_version: str) -> 
         output_schema=OutputSchema(output_schema=Person),
     )
     assert "response_format" in _create_call_kwargs(conn)
+
+
+@pytest.mark.parametrize("api_version", ["v1", "latest"])
+def test_native_not_applied_for_non_date_api_version(api_version: str) -> None:
+    """Native NOT applied for an api-version outside the documented dated form.
+
+    Every one of these sorts above the floor as a string, so only classifying the
+    dated form keeps them out. The `v1` literal in particular does not reach Azure's
+    v1 endpoint from here: `AzureOpenAI` sends it as a query parameter on the
+    deployment-scoped chat/completions path.
+    """
+    conn = _connection(api_version=api_version)
+    conn.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        model=DEPLOYMENT,
+        model_of_azure_deployment="gpt-4o-mini",
+        output_schema=OutputSchema(output_schema=Person),
+    )
+    assert "response_format" not in _create_call_kwargs(conn)
 
 
 def test_native_not_applied_when_api_version_below_floor() -> None:
@@ -347,17 +366,11 @@ def test_caller_response_format_survives_when_native_is_skipped(
 @pytest.mark.parametrize(
     "model",
     [
-        "gpt-5.1-codex",
-        "gpt-5.1-codex-mini",
         "gpt-5.1",
         "gpt-5.1-chat",
-        "gpt-5-pro",
-        "gpt-5-codex",
         "gpt-5",
         "gpt-5-mini",
         "gpt-5-nano",
-        "codex-mini",
-        "o3-pro",
         "o3-mini",
         "o1",
         "gpt-4o-mini",
@@ -385,15 +398,24 @@ def test_capability_predicate_accepts_capable_models(model: str) -> None:
         "gpt-4",
         "gpt-4o-2024-08-06",
         "some-unknown-model",
+        "gpt-5.1-codex",
+        "gpt-5.1-codex-mini",
+        "gpt-5-pro",
+        "gpt-5-codex",
+        "codex-mini",
+        "o3-pro",
         None,
         "",
     ],
 )
 def test_capability_predicate_rejects_incapable_models(model: str | None) -> None:
-    """The capability predicate rejects incapable, version-suffixed, and empty names.
+    """The capability predicate rejects incapable, Responses-only, and empty names.
 
     A version-suffixed value such as `gpt-4o-2024-08-06` is an OpenAI snapshot name,
-    not a name Azure reports as the model behind a deployment.
+    not a name Azure reports as the model behind a deployment. The codex, `gpt-5-pro`
+    and `o3-pro` names do support structured outputs but are served only on the
+    Responses API, so they are incapable on the chat completions API this connection
+    calls.
     """
     assert _connection().supports_native_structured_output(model) is False
 

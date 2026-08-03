@@ -267,18 +267,34 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"2024-10-21", "v1"})
-    @DisplayName("Native applied for a later GA date and for the GA v1 literal")
-    void testNativeAppliedForOtherApiVersionsAboveFloor(String apiVersion) {
-        // v1 pins the non-date half of the comparison: it is admitted because it sorts above the
-        // floor, not because it parses as a later date. Rewriting the gate to parse dates would
-        // drop it while every date case still passed.
+    @ValueSource(strings = {"2024-08-01", "2024-10-21"})
+    @DisplayName("Native applied for a bare GA date at or above the floor")
+    void testNativeAppliedForGaDateAtOrAboveFloor(String apiVersion) {
+        // The documented floor is the preview form 2024-08-01-preview, so these pin that a bare GA
+        // date carrying no -preview suffix is admitted, and that 2024-08-01 is the inclusive
+        // boundary.
         ChatCompletionCreateParams request =
                 connection(apiVersion)
                         .buildRequest(
                                 userMessage(), List.of(), params("gpt-4o-mini"), Person.class);
 
         assertThat(request.responseFormat()).isPresent();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"v1", "latest"})
+    @DisplayName("Native NOT applied for an api-version outside the documented dated form")
+    void testNativeNotAppliedForNonDateApiVersion(String apiVersion) {
+        // Every one of these sorts above the floor as a string, so only classifying the dated form
+        // keeps them out. The v1 literal in particular does not select Azure's v1 endpoint on the
+        // default path mode: it is sent as a query parameter on the deployment-scoped
+        // chat/completions path.
+        ChatCompletionCreateParams request =
+                connection(apiVersion)
+                        .buildRequest(
+                                userMessage(), List.of(), params("gpt-4o-mini"), Person.class);
+
+        assertThat(request.responseFormat()).isEmpty();
     }
 
     @Test
@@ -340,17 +356,11 @@ class AzureOpenAIChatModelConnectionTest {
     @ParameterizedTest
     @ValueSource(
             strings = {
-                "gpt-5.1-codex",
-                "gpt-5.1-codex-mini",
                 "gpt-5.1",
                 "gpt-5.1-chat",
-                "gpt-5-pro",
-                "gpt-5-codex",
                 "gpt-5",
                 "gpt-5-mini",
                 "gpt-5-nano",
-                "codex-mini",
-                "o3-pro",
                 "o3-mini",
                 "o1",
                 "gpt-4o-mini",
@@ -375,12 +385,20 @@ class AzureOpenAIChatModelConnectionTest {
                 "gpt-35-turbo",
                 "gpt-4",
                 "gpt-4o-2024-08-06",
-                "some-unknown-model"
+                "some-unknown-model",
+                "gpt-5.1-codex",
+                "gpt-5.1-codex-mini",
+                "gpt-5-pro",
+                "gpt-5-codex",
+                "codex-mini",
+                "o3-pro"
             })
-    @DisplayName("Capability predicate rejects incapable, version-suffixed, and empty names")
+    @DisplayName("Capability predicate rejects incapable, Responses-only, and empty names")
     void testCapabilityPredicateRejectsIncapableModels(String model) {
         // A version-suffixed value such as gpt-4o-2024-08-06 is an OpenAI snapshot name, not a name
-        // Azure reports as the model behind a deployment.
+        // Azure reports as the model behind a deployment. The codex, gpt-5-pro and o3-pro names do
+        // support structured outputs but are served only on the Responses API, so they are
+        // incapable on the chat completions API this connection calls.
         assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
     }
 

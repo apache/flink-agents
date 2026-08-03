@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import logging
+import re
 from typing import Any, Dict, List, Sequence
 
 from openai import NOT_GIVEN, AzureOpenAI
@@ -47,8 +48,14 @@ _RESERVED_KWARG_KEYS = frozenset(
     {"model", "model_of_azure_deployment", "temperature", "max_tokens", "logprobs"}
 )
 
-# Models with documented json_schema strict Structured Outputs support. Source of truth:
+# Models that both have documented json_schema strict Structured Outputs support and are
+# served on the Chat Completions API, which is the API this connection calls. The set is
+# that intersection, taken from two sources:
 # https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/structured-outputs
+# lists the models supporting Structured Outputs on any API, and
+# https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/reasoning carries the
+# per-model feature table whose "Chat Completions API" row excludes the models Azure
+# serves only on the Responses API.
 #
 # Matching is exact, never by prefix: Azure exposes a deployment's model name and model
 # version as separate properties, so a name carries no version to discriminate on. The
@@ -56,22 +63,13 @@ _RESERVED_KWARG_KEYS = frozenset(
 # version 2024-05-13 is unsupported, so a bare "gpt-4o" is ambiguous and is deliberately
 # absent from the set below. An unrecognized name reports not-capable and degrades to
 # the prompt fallback rather than failing at the provider.
-#
-# The source list prints "gpt-5.1-codex mini" with a space; it is transcribed hyphenated
-# here because Azure model identifiers do not contain spaces.
 _NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
     {
-        "gpt-5.1-codex",
-        "gpt-5.1-codex-mini",
         "gpt-5.1",
         "gpt-5.1-chat",
-        "gpt-5-pro",
-        "gpt-5-codex",
         "gpt-5",
         "gpt-5-mini",
         "gpt-5-nano",
-        "codex-mini",
-        "o3-pro",
         "o3-mini",
         "o1",
         "gpt-4o-mini",
@@ -86,6 +84,11 @@ _NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
 # Date prefix of 2024-08-01-preview, the earliest api-version Azure documents as
 # supporting structured outputs.
 _MIN_STRUCTURED_OUTPUT_API_VERSION = "2024-08-01"
+
+# Leading zero-padded YYYY-MM-DD date of the api-version form Azure documents, which
+# is a date optionally carrying a suffix such as -preview. The ASCII flag restricts \d
+# to 0-9, so a value written with other Unicode decimal digits is not read as a date.
+_API_VERSION_DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}", re.ASCII)
 
 
 def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
@@ -209,14 +212,19 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         silently ignores it is not documented. The request therefore never carries
         ``response_format`` below the floor, which is safe under either behavior.
 
-        The comparison assumes the documented api-version form, a zero-padded
+        Only the documented api-version form is classified, a zero-padded
         ``YYYY-MM-DD`` date optionally suffixed ``-preview``; over that form comparing
-        the leading date lexicographically is exact. The GA ``v1`` literal sorts above
-        the floor, which matches Azure documenting ``v1`` as supporting structured
-        outputs. This is not a validator: a value of any other shape is not classified
-        reliably, and the service rejects an api-version it does not recognize.
+        the leading date lexicographically is exact. A value of any other shape,
+        including the GA ``v1`` literal, reports ``False`` and keeps the prompt
+        fallback. That is the accurate answer for ``v1``: ``AzureOpenAI`` reaches the
+        service through the deployment-scoped path
+        ``/openai/deployments/{deployment}/chat/completions`` with the api-version
+        carried as a query parameter, so the ``v1`` literal is sent as
+        ``?api-version=v1`` rather than selecting Azure's ``/openai/v1`` endpoint.
         """
         if not self.api_version:
+            return False
+        if not _API_VERSION_DATE_PREFIX.match(self.api_version):
             return False
         return self.api_version[:10] >= _MIN_STRUCTURED_OUTPUT_API_VERSION
 
