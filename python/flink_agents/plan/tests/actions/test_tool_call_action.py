@@ -91,15 +91,11 @@ class _Context:
 
     def durable_execute(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         self.durable_execute_calls.append((func, args, kwargs))
-        call_kwargs = dict(kwargs)
-        call_kwargs.pop("durable_id", None)
-        return func(*args, **call_kwargs)
+        return func(*args, **kwargs)
 
     async def durable_execute_async(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         self.durable_execute_async_calls.append((func, args, kwargs))
-        call_kwargs = dict(kwargs)
-        call_kwargs.pop("durable_id", None)
-        return func(*args, **call_kwargs)
+        return func(*args, **kwargs)
 
     async def durable_execute_all_async(self, callables: list[Any]) -> list[Outcome]:
         self.durable_execute_all_async_calls.append(callables)
@@ -341,7 +337,10 @@ def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
     assert response.success == {"call-1": True, "call-2": True}
     assert len(ctx.durable_execute_all_async_calls) == 1
     expected_id = _expected_durable_function_id("order-call-1")
-    assert [call.id for call in ctx.durable_execute_all_async_calls[0]] == [
+    assert [
+        durable_identity_for_call(call.func, call.args, call.kwargs)[0]
+        for call in ctx.durable_execute_all_async_calls[0]
+    ] == [
         expected_id,
         expected_id,
     ]
@@ -358,7 +357,6 @@ def test_tool_call_action_uses_serial_async_when_parallel_disabled() -> None:
 
     assert ctx.durable_execute_all_async_calls == []
     assert len(ctx.durable_execute_async_calls) == 2
-    assert all("durable_id" not in call_kwargs for _, _, call_kwargs in ctx.durable_execute_async_calls)
 
 
 def test_tool_call_action_does_not_batch_single_tool() -> None:

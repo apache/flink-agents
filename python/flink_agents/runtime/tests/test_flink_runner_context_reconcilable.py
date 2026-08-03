@@ -47,8 +47,7 @@ def _durable_call(
     *args: Any,
     **kwargs: Any,
 ) -> DurableCall:
-    function_id, _ = durable_identity_for_call(func, args, kwargs or None)
-    return DurableCall(id=function_id, func=func, args=args, kwargs=kwargs or None)
+    return DurableCall(func=func, args=args, kwargs=kwargs or None)
 
 
 def _stored_call(
@@ -110,6 +109,8 @@ class _FakeJavaRunnerContext:
                 current.function_id == function_id
                 and current.args_digest == args_digest
             ):
+                if current.status == "PENDING":
+                    return None
                 self.current_call_index += 1
                 return [True, current.result_payload, current.exception_payload]
             self.call_results = self.call_results[: self.current_call_index]
@@ -399,6 +400,92 @@ def test_flink_runner_context_sync_reconciler_mismatch_clears_and_executes() -> 
     assert j_runner_context.call_results[0].status == "SUCCEEDED"
 
 
+def test_flink_runner_context_durable_execute_reexecutes_pending_after_batch_reservation() -> (
+    None
+):
+    """Finalize matching pending slots in place during serial recovery."""
+    j_runner_context = _FakeJavaRunnerContext()
+    first_call_count = 0
+    second_call_count = 0
+
+    def first_call() -> str:
+        nonlocal first_call_count
+        first_call_count += 1
+        return "one"
+
+    def second_call() -> str:
+        nonlocal second_call_count
+        second_call_count += 1
+        return "two"
+
+    first_id, first_digest = durable_identity_for_call(first_call, (), None)
+    second_id, second_digest = durable_identity_for_call(second_call, (), None)
+    j_runner_context.call_results = [
+        _StoredCallResult(
+            function_id=first_id,
+            args_digest=first_digest,
+            status="PENDING",
+        ),
+        _StoredCallResult(
+            function_id=second_id,
+            args_digest=second_digest,
+            status="PENDING",
+        ),
+    ]
+    ctx = _create_runner_context(j_runner_context)
+
+    try:
+        assert ctx.durable_execute(first_call) == "one"
+        assert ctx.durable_execute(second_call) == "two"
+    finally:
+        _close_runner_context(ctx)
+
+    assert first_call_count == 1
+    assert second_call_count == 1
+    assert j_runner_context.current_call_index == 2
+    assert len(j_runner_context.call_results) == 2
+    assert j_runner_context.call_results[0].status == "SUCCEEDED"
+    assert j_runner_context.call_results[1].status == "SUCCEEDED"
+    assert j_runner_context.operations.count("finalize") == 2
+    assert "record" not in j_runner_context.operations
+
+
+def test_flink_runner_context_durable_execute_async_reexecutes_pending_after_batch_reservation() -> (
+    None
+):
+    """Finalize matching pending slots in place during async serial recovery."""
+    j_runner_context = _FakeJavaRunnerContext()
+    call_count = 0
+
+    def tracked_call(value: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        return f"call:{value}"
+
+    function_id, args_digest = durable_identity_for_call(tracked_call, ("order-1",), None)
+    j_runner_context.call_results = [
+        _StoredCallResult(
+            function_id=function_id,
+            args_digest=args_digest,
+            status="PENDING",
+        ),
+    ]
+    ctx = _create_runner_context(j_runner_context)
+
+    try:
+        async_result = ctx.durable_execute_async(tracked_call, "order-1")
+        result = _run_async(async_result)
+    finally:
+        _close_runner_context(ctx)
+
+    assert result == "call:order-1"
+    assert call_count == 1
+    assert j_runner_context.current_call_index == 1
+    assert len(j_runner_context.call_results) == 1
+    assert j_runner_context.call_results[0].status == "SUCCEEDED"
+    assert j_runner_context.operations == ["peek", "finalize"]
+
+
 def test_flink_runner_context_async_writes_pending_on_await() -> None:
     """Defer pending-state writes for async execution until await time."""
     j_runner_context = _FakeJavaRunnerContext()
@@ -619,13 +706,13 @@ def test_flink_runner_context_durable_execute_all_async_recovers_partial_batch()
         return _call_value(value)
 
     cached_call = _durable_call(tracked_call, "one")
-    _, cached_digest = durable_identity_for_call(
+    cached_function_id, cached_digest = durable_identity_for_call(
         cached_call.func, cached_call.args, cached_call.kwargs
     )
     j_runner_context.call_results.extend(
         [
             _StoredCallResult(
-                function_id=cached_call.id,
+                function_id=cached_function_id,
                 args_digest=cached_digest,
                 status="SUCCEEDED",
                 result_payload=cloudpickle.dumps("cached-one"),
@@ -656,12 +743,12 @@ def test_flink_runner_context_durable_execute_all_async_recovers_partial_batch()
 def test_flink_runner_context_durable_execute_all_async_returns_cached_failure() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     cached_call = _durable_call(_call_value, "one")
-    _, cached_digest = durable_identity_for_call(
+    cached_function_id, cached_digest = durable_identity_for_call(
         cached_call.func, cached_call.args, cached_call.kwargs
     )
     j_runner_context.call_results.append(
         _StoredCallResult(
-            function_id=cached_call.id,
+            function_id=cached_function_id,
             args_digest=cached_digest,
             status="FAILED",
             exception_payload=cloudpickle.dumps(ValueError("cached failure")),
