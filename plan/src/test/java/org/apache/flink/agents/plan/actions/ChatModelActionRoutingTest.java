@@ -46,6 +46,8 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.Histogram;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayDeque;
@@ -60,6 +62,9 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** Integration tests for model routing inside {@link ChatModelAction}. */
 public class ChatModelActionRoutingTest {
@@ -117,6 +122,7 @@ public class ChatModelActionRoutingTest {
         private final ModelRouter router;
         private final MemoryObject sensoryMemory = new FakeMemoryObject(new HashMap<>());
         private final AgentConfiguration config = new AgentConfiguration(Map.of());
+        private FlinkAgentsMetricGroup actionMetricGroup;
 
         FakeRunnerContext(ModelRouter router) {
             this.router = router;
@@ -141,6 +147,11 @@ public class ChatModelActionRoutingTest {
         FakeRunnerContext withRetryBudget(int maxRetries, int waitIntervalSec) {
             config.set(AgentExecutionOptions.MAX_RETRIES, maxRetries);
             config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, waitIntervalSec);
+            return this;
+        }
+
+        FakeRunnerContext withActionMetricGroup(FlinkAgentsMetricGroup actionMetricGroup) {
+            this.actionMetricGroup = actionMetricGroup;
             return this;
         }
 
@@ -191,7 +202,7 @@ public class ChatModelActionRoutingTest {
 
         @Override
         public FlinkAgentsMetricGroup getActionMetricGroup() {
-            return null;
+            return actionMetricGroup;
         }
 
         @Override
@@ -394,6 +405,17 @@ public class ChatModelActionRoutingTest {
 
     @Test
     void retryBudgetRunsBeforeFallback() throws Exception {
+        FlinkAgentsMetricGroup actionMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        FlinkAgentsMetricGroup modelResourceMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        Counter retryCount = mock(Counter.class);
+        Counter retryWaitSec = mock(Counter.class);
+        when(actionMetricGroup.getHistogram("routingDecisionLatencyMs"))
+                .thenReturn(mock(Histogram.class));
+        when(actionMetricGroup.getSubGroup("model_resource", "big"))
+                .thenReturn(modelResourceMetricGroup);
+        when(modelResourceMetricGroup.getCounter("retryCount")).thenReturn(retryCount);
+        when(modelResourceMetricGroup.getCounter("retryWaitSec")).thenReturn(retryWaitSec);
+
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -406,6 +428,7 @@ public class ChatModelActionRoutingTest {
                 new FakeRunnerContext(router)
                         .withErrorHandling(Agent.ErrorHandlingStrategy.RETRY)
                         .withRetryBudget(1, 0)
+                        .withActionMetricGroup(actionMetricGroup)
                         .register(
                                 "big",
                                 new FakeChatModel(
@@ -422,6 +445,9 @@ public class ChatModelActionRoutingTest {
         assertThat(ctx.chatResponse().getResponse().getContent()).isEqualTo("recovered on retry");
         assertThat(ctx.resolvedChatModels).containsExactly("big");
         assertThat(ctx.routingEventCount()).isEqualTo(1L);
+        verify(actionMetricGroup).getSubGroup("model_resource", "big");
+        verify(retryCount).inc(1);
+        verify(retryWaitSec).inc(0);
     }
 
     @Test

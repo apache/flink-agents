@@ -29,6 +29,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.typeinfo.python.PickledByteArrayTypeInfo;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.StringUtils;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 
@@ -37,6 +38,7 @@ public class CompileUtils {
 
     private static final int PYTHON_KEY_FIELD_INDEX = 0;
     private static final int PYTHON_VALUE_FIELD_INDEX = 1;
+    private static final String DEFAULT_OPERATOR_NAME = "action-execute-operator";
 
     // ============================ invoke by python ====================================
     public static DataStream<byte[]> connectToAgent(
@@ -97,10 +99,13 @@ public class CompileUtils {
             TypeInformation<OUT> outTypeInformation,
             boolean inputIsJava,
             boolean pythonKeyIsPickled) {
+        String agentName = agentPlan.getAgentName();
+        String operatorName =
+                StringUtils.isNullOrWhitespaceOnly(agentName) ? DEFAULT_OPERATOR_NAME : agentName;
         return (DataStream<OUT>)
                 keyedInputStream
                         .transform(
-                                "action-execute-operator",
+                                operatorName,
                                 outTypeInformation,
                                 new ActionExecutionOperatorFactory(
                                         agentPlan, inputIsJava, pythonKeyIsPickled))

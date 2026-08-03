@@ -174,6 +174,23 @@ public class CompileUtilsTest {
                 .hasMessageContaining("contain 2 fields");
     }
 
+    @Test
+    void testAgentNameUsedAsOperatorName() {
+        AgentPlan namedAgentPlan =
+                new AgentPlan(
+                        TEST_AGENT_PLAN.getActions(),
+                        TEST_AGENT_PLAN.getResourceProviders(),
+                        TEST_AGENT_PLAN.getConfig(),
+                        "test-agent");
+
+        assertThat(compileOperatorName(namedAgentPlan)).isEqualTo("test-agent");
+    }
+
+    @Test
+    void testMissingAgentNameUsesDefaultOperatorName() {
+        assertThat(compileOperatorName(TEST_AGENT_PLAN)).isEqualTo("action-execute-operator");
+    }
+
     private static KeyedStream<Row, Row> createPythonInputStream(TypeInformation<?> valueType) {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         TypeInformation<Row> inputType =
@@ -191,6 +208,14 @@ public class CompileUtilsTest {
             }
         }
         return testSequence;
+    }
+
+    private static String compileOperatorName(AgentPlan agentPlan) {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        KeyedStream<Long, Long> keyedInputStream = env.fromData(1L).keyBy(value -> value);
+        return CompileUtils.connectToAgent(keyedInputStream, agentPlan)
+                .getTransformation()
+                .getName();
     }
 
     private static void checkResult(List<Long> resultList) {

@@ -245,10 +245,12 @@ class TestChatModelActionRetry:
         assert event.total_retry_wait_sec == 1
         assert elapsed >= 1.0
 
-        # Verify metrics recorded under connection name
-        model_group = metric_group.get_sub_group("model", chat_model.connection)
-        assert model_group.get_counter("retryCount").get_count() == 1
-        assert model_group.get_counter("retryWaitSec").get_count() == 1
+        # Retry health belongs to the ChatModel resource.
+        model_resource_group = metric_group.get_sub_group(
+            "model_resource", "test-model"
+        )
+        assert model_resource_group.get_counter("retryCount").get_count() == 1
+        assert model_resource_group.get_counter("retryWaitSec").get_count() == 1
         assert ctx.report_execution_started.call_count == 2
         ctx.report_execution_failed.assert_called_once()
         failed_args = ctx.report_execution_failed.call_args.args
@@ -266,7 +268,7 @@ class TestChatModelActionRetry:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(side_effect=RuntimeError("persistent error"))
 
-        ctx, sent_events, _, _ = _create_mock_runner_context(
+        ctx, sent_events, metric_group, _ = _create_mock_runner_context(
             chat_model, max_retries=2, retry_wait_interval_sec=0
         )
         request_id = uuid4()
@@ -291,6 +293,11 @@ class TestChatModelActionRetry:
             assert failed_call.args[2] == _LLM_METADATA
             assert failed_call.args[-1] == ExecutionProblemCategories.MODEL_CALL_FAILED
         ctx.report_execution_succeeded.assert_not_called()
+        model_resource_group = metric_group.get_sub_group(
+            "model_resource", "test-model"
+        )
+        assert model_resource_group.get_counter("retryCount").get_count() == 2
+        assert model_resource_group.get_counter("retryWaitSec").get_count() == 0
 
     def test_structured_output_parse_error_retries_without_failing_llm(
         self,
