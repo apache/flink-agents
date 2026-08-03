@@ -327,9 +327,10 @@ public class KafkaActionStateStore implements ActionStateStore {
                                 }
                             });
                 }
-                producer.flush();
                 LOG.debug(
-                        "Sent {} tombstone records to Kafka for key: {}", keysToPrune.size(), key);
+                        "Queued {} tombstone records to Kafka for key: {}",
+                        keysToPrune.size(),
+                        key);
             } catch (Exception e) {
                 LOG.warn(
                         "Failed to send tombstone records to Kafka for key: {}. "
