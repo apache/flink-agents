@@ -352,7 +352,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
-        boolean notifyFinished = false;
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt = Optional.empty();
         ActionState actionState =
@@ -418,23 +417,24 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 isFinished = actionTaskResult.isFinished();
                 outputEvents = actionTaskResult.getOutputEvents();
                 generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
-                notifyFinished = isFinished;
-            } catch (Exception e) {
+                if (isFinished) {
+                    notifyActionFinished(actionTask);
+                }
+            } catch (Throwable t) {
                 try {
-                    notifyActionFailed(actionTask, e);
+                    notifyActionFailed(actionTask, t);
                 } finally {
                     contextManager.completeActionExecution(actionTask);
                 }
-                throw e;
+                ExceptionUtils.rethrowException(t);
+                // Unreachable; required for Java definite-assignment analysis.
+                return;
             }
         }
 
         try {
             for (Event actionOutputEvent : outputEvents) {
                 processEvent(key, actionOutputEvent, actionTask.getTraceContext());
-            }
-            if (notifyFinished) {
-                notifyActionFinished(actionTask);
             }
         } finally {
             if (isFinished) {
@@ -604,7 +604,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 actionTask.getTraceContext(), ExecutionLifecycleEvents.executionReused());
     }
 
-    private void notifyActionFailed(ActionTask actionTask, Exception error) {
+    private void notifyActionFailed(ActionTask actionTask, Throwable error) {
         notifyExecutionLifecycleEvent(
                 actionTask.getTraceContext(),
                 ExecutionLifecycleEvents.executionFailed(

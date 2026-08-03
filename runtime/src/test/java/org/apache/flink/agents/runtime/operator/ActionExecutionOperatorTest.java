@@ -307,11 +307,18 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
-    void testMailboxSubmittedActionTaskPropagatesError() throws Exception {
+    void testMailboxSubmittedActionTaskPropagatesErrorAndClosesActionLifecycle() throws Exception {
+        AgentPlan basePlan = TestAgent.getLinkageErrorAgentPlan();
+        AgentPlan agentPlan =
+                new AgentPlan(
+                        basePlan.getActions(),
+                        basePlan.getActionsByEvent(),
+                        basePlan.getResourceProviders(),
+                        traceEnabledConfig());
+
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory(
-                                TestAgent.getLinkageErrorAgentPlan(), true),
+                        new ActionExecutionOperatorFactory(agentPlan, true),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
@@ -325,6 +332,21 @@ public class ActionExecutionOperatorTest {
                     .isInstanceOf(NoClassDefFoundError.class)
                     .hasMessageContaining("synthetic missing runtime dependency");
         }
+
+        RecordedEvent started =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
+                        "linkageErrorAction",
+                        ExecutionLifecycleEvents.STATUS_STARTED);
+        RecordedEvent failed =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
+                        "linkageErrorAction",
+                        ExecutionLifecycleEvents.STATUS_FAILED);
+        assertThat(failed.traceContext().getExecutionId())
+                .isEqualTo(started.traceContext().getExecutionId());
+        assertThat(failed.event.getAttr("errorType"))
+                .isEqualTo(NoClassDefFoundError.class.getName());
     }
 
     @Test
@@ -392,6 +414,16 @@ public class ActionExecutionOperatorTest {
         public void onEventProcessed(EventContext context, Event event) {
             this.called = true;
             this.eventTypes.add(event.getType());
+        }
+    }
+
+    /** Fails while processing an Action's output Event. */
+    public static class FailingMiddleEventListener implements EventListener {
+        @Override
+        public void onEventProcessed(EventContext context, Event event) {
+            if (TestAgent.MiddleEvent.EVENT_TYPE.equals(event.getType())) {
+                throw new IllegalStateException("Failed to process Action output Event");
+            }
         }
     }
 
@@ -679,6 +711,50 @@ public class ActionExecutionOperatorTest {
                 .isEqualTo(IllegalStateException.class.getName());
         assertThat(String.valueOf(failed.event.getAttr("errorMessage")))
                 .contains("Simulated LLM failure");
+    }
+
+    @Test
+    void testActionFinishesBeforeItsOutputEventIsProcessed() throws Exception {
+        AgentConfiguration config = traceEnabledConfig();
+        config.set(
+                AgentConfigOptions.EVENT_LISTENERS,
+                List.of(FailingMiddleEventListener.class.getName()));
+        AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(1L));
+            assertThatThrownBy(operator::waitInFlightEventsFinished)
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
+                    .rootCause()
+                    .hasMessage("Failed to process Action output Event");
+        }
+
+        RecordedEvent started =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
+                        "action1",
+                        ExecutionLifecycleEvents.STATUS_STARTED);
+        RecordedEvent finished =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE,
+                        "action1",
+                        ExecutionLifecycleEvents.STATUS_SUCCESS);
+        assertThat(finished.traceContext().getExecutionId())
+                .isEqualTo(started.traceContext().getExecutionId());
+        assertThat(RecordingEventLogger.events())
+                .noneMatch(
+                        record ->
+                                ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE.equals(
+                                                record.event.getType())
+                                        && "action1".equals(record.traceContext().getEntityName()));
     }
 
     @Test
