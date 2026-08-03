@@ -305,17 +305,19 @@ public class KafkaActionStateStoreTest {
 
     @Test
     void testPruneStateSkipsUnparseableKeys() throws Exception {
-        // Arrange - a state key with the right prefix but the wrong number of parts, which
-        // ActionStateUtil.parseKey cannot split into exactly 4 parts
+        // Arrange - an agent key that itself contains the "_" separator (e.g. "user_123")
+        // produces a state key with 5 "_"-separated parts once seqNum and the two UUIDs are
+        // appended, which ActionStateUtil.parseKey cannot split into exactly 4 parts
         actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
-        String malformedKey = TEST_KEY + "_1_onlythreeparts";
-        actionStates.put(malformedKey, testActionState);
+        String agentKey = "user_123";
+        String stateKey = ActionStateUtil.generateKey(agentKey, 1L, testAction, testEvent);
+        actionStates.put(stateKey, testActionState);
 
         // Act - should not throw despite the unparseable key
-        actionStateStore.pruneState(TEST_KEY, 10L);
+        actionStateStore.pruneState(agentKey, 10L);
 
         // Assert - the unparseable entry is retained, and no tombstone was sent for it
-        assertThat(actionStates).containsKey(malformedKey);
+        assertThat(actionStates).containsKey(stateKey);
         assertThat(mockProducer.history()).isEmpty();
     }
 

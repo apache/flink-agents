@@ -90,6 +90,11 @@ public class AgentConfigOptions {
      * after that restore point, erasing action state the replay still needs and causing already
      * completed actions to re-execute. Enable only if the job never restores from non-latest
      * checkpoints or savepoints, or if re-executing actions is acceptable.
+     *
+     * <p>Also note: an agent key that itself contains the {@code _} character (e.g. {@code
+     * user_123}) is never pruned or tombstoned regardless of this setting. Durable action state
+     * stores join key parts with an unescaped {@code _}, so such a key fails to parse back into its
+     * parts and its state is retained in memory and in backend storage instead.
      */
     public static final ConfigOption<Boolean> KAFKA_ACTION_STATE_TOMBSTONE_ENABLED =
             new ConfigOption<>("kafkaActionStateTombstoneEnabled", Boolean.class, false);

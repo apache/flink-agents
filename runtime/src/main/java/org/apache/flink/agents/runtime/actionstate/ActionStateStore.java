@@ -84,6 +84,10 @@ public interface ActionStateStore extends AutoCloseable {
      * the restored checkpoint's recovery marker, so a durable deletion issued after that marker
      * erases state the replay still needs and causes already completed actions to re-execute.
      *
+     * <p>The current durable stores encode raw agent keys using an unescaped {@code _} separator.
+     * Agent keys containing {@code _} therefore cannot be parsed safely during pruning and are
+     * retained in both the in-memory cache and backend storage.
+     *
      * @param key the key whose state should be pruned
      * @param seqNum the sequence number up to which the state should be pruned
      */
