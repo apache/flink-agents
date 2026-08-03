@@ -25,9 +25,11 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
+import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.MockProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -37,6 +39,8 @@ import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy.EARLIEST;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -261,16 +265,41 @@ public class KafkaActionStateStoreTest {
 
     @Test
     void testPruneStateEvictsCacheEvenWhenTombstoneSendFails() throws Exception {
-        // Arrange - the next send() will fail asynchronously (e.g. broker unavailable)
-        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
+        // Arrange - a producer whose send() completes its callback with an exception, exercising
+        // the async failure path (mockProducer's autoComplete=true completes sends successfully
+        // before errorNext() can take effect, so a dedicated producer is needed here)
+        AtomicBoolean failureCallbackInvoked = new AtomicBoolean();
+        MockProducer<String, ActionState> failingProducer =
+                new MockProducer<>(
+                        false,
+                        new ActionStateKeyPartitioner(),
+                        new StringSerializer(),
+                        new ActionStateKafkaSeder()) {
+                    @Override
+                    public synchronized Future<RecordMetadata> send(
+                            ProducerRecord<String, ActionState> record, Callback callback) {
+                        assertThat(callback).isNotNull();
+                        Future<RecordMetadata> future =
+                                super.send(
+                                        record,
+                                        (metadata, exception) -> {
+                                            failureCallbackInvoked.set(exception != null);
+                                            callback.onCompletion(metadata, exception);
+                                        });
+                        assertThat(errorNext(new RuntimeException("simulated broker failure")))
+                                .isTrue();
+                        return future;
+                    }
+                };
+        actionStateStore = tombstoneEnabledStore(actionStates, failingProducer);
         String stateKey = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
         actionStates.put(stateKey, testActionState);
-        mockProducer.errorNext(new RuntimeException("simulated broker failure"));
 
         // Act - should not throw despite the async send failure
         actionStateStore.pruneState(TEST_KEY, 1L);
 
         // Assert - in-memory entry is still evicted regardless of tombstone delivery
+        assertThat(failureCallbackInvoked).isTrue();
         assertThat(actionStates).doesNotContainKey(stateKey);
     }
 
