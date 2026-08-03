@@ -69,8 +69,6 @@ def _root_cause(error: BaseException) -> BaseException:
     while id(current) not in visited:
         visited.add(id(current))
         cause = current.__cause__
-        if cause is None and not current.__suppress_context__:
-            cause = current.__context__
         if cause is None:
             break
         current = cause
