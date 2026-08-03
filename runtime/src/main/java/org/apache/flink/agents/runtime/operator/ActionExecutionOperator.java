@@ -59,6 +59,8 @@ import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
+
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -232,30 +234,41 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (record.hasTimestamp()) {
             inputEvent.setSourceTimestamp(record.getTimestamp());
         }
+        builtInMetrics.markInputEventReceived(inputEvent);
 
-        eventRouter.getKeySegmentQueue().addKeyToLastSegment(getCurrentKey());
+        Object key = getCurrentKey();
+        try {
+            eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
 
-        if (stateManager.hasMoreActionTasks()) {
-            // If there are already actions being processed for the current key, the newly incoming
-            // event should be queued and processed later. Therefore, we add it to
-            // pendingInputEventsState.
-            stateManager.addPendingInputEvent(inputEvent);
-        } else {
-            // Otherwise, the new event is processed immediately.
-            processEvent(getCurrentKey(), inputEvent);
+            if (stateManager.hasMoreActionTasks()) {
+                // If there are already actions being processed for the current key, the newly
+                // incoming event should be queued and processed later. Therefore, we add it to
+                // pendingInputEventsState.
+                enqueuePendingInputEvent(inputEvent);
+                return;
+            }
+        } catch (Exception e) {
+            builtInMetrics.markInputEventFailed(inputEvent);
+            throw e;
         }
+
+        // Otherwise, the new event is processed immediately. Its failures are attributed to the
+        // input run created by processInputEvent.
+        processInputEvent(key, inputEvent);
     }
 
-    /**
-     * Processes an incoming event for the given key and may submit a new mail
-     * `tryProcessActionTaskForKey` to continue processing.
-     */
-    private void processEvent(Object key, Event event) throws Exception {
-        processEvent(
-                key,
-                event,
+    /** Starts an input run and dispatches its input event for processing. */
+    private void processInputEvent(Object key, Event inputEvent) throws Exception {
+        ExecutionTraceContext traceContext =
                 ExecutionTraceContext.forInputRun(
-                        businessKeyFromKey(key), agentPlan.getAgentName()));
+                        businessKeyFromKey(key), agentPlan.getAgentName());
+        builtInMetrics.markInputRunStarted(inputEvent, traceContext);
+        try {
+            processEvent(key, inputEvent, traceContext);
+        } catch (Exception e) {
+            builtInMetrics.markInputRunFailed(traceContext.getInputRunId());
+            throw e;
+        }
     }
 
     private void processEvent(Object key, Event event, ExecutionTraceContext traceContext)
@@ -288,21 +301,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             List<Action> triggerActions = eventRouter.getActionsTriggeredBy(event, agentPlan);
             if (triggerActions != null && !triggerActions.isEmpty()) {
                 for (Action triggerAction : triggerActions) {
-                    stateManager.addActionTask(
-                            createActionTask(key, triggerAction, event, traceContext));
+                    enqueueActionTask(createActionTask(key, triggerAction, event, traceContext));
                 }
             }
         }
 
         if (isInputEvent) {
             // If the event is an InputEvent, we submit a new mail to try processing the actions.
-            mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
+            mailboxExecutor.submit(
+                    () -> tryProcessActionTaskForKey(key, traceContext.getInputRunId()),
+                    "process action task");
         }
     }
 
-    private void tryProcessActionTaskForKey(Object key) {
+    private void tryProcessActionTaskForKey(Object key, @Nullable String inputRunId) {
         try {
-            processActionTaskForKey(key);
+            processActionTaskForKey(key, inputRunId);
         } catch (Throwable t) {
             // MailboxExecutor.submit() stores task failures in its Future. Catch Throwable and
             // rethrow via execute() so Errors fail the task instead of leaving the key in-flight.
@@ -315,26 +329,37 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
-    private void processActionTaskForKey(Object key) throws Exception {
-        // 1. Get an action task for the key.
-        setCurrentKey(key);
+    private void processActionTaskForKey(Object key, @Nullable String inputRunId) throws Exception {
+        String currentInputRunId = inputRunId;
+        try {
+            // 1. Get an action task for the key.
+            setCurrentKey(key);
 
-        ActionTask actionTask = stateManager.pollNextActionTask();
-        if (actionTask == null) {
-            int removedCount = stateManager.removeProcessingKey(key);
-            checkState(
-                    removedCount == 1,
-                    "Current processing key count for key "
-                            + key
-                            + " should be 1, but got "
-                            + removedCount);
-            checkState(
-                    eventRouter.getKeySegmentQueue().removeKey(key),
-                    "Current key" + key + " is missing from the segmentedQueue.");
-            eventRouter.processEligibleWatermarks(super::processWatermark);
-            return;
+            ActionTask actionTask = pollNextActionTask();
+            if (actionTask == null) {
+                int removedCount = stateManager.removeProcessingKey(key);
+                checkState(
+                        removedCount == 1,
+                        "Current processing key count for key "
+                                + key
+                                + " should be 1, but got "
+                                + removedCount);
+                checkState(
+                        eventRouter.getKeySegmentQueue().removeKey(key),
+                        "Current key" + key + " is missing from the segmentedQueue.");
+                eventRouter.processEligibleWatermarks(super::processWatermark);
+                builtInMetrics.markInputRunCompleted(currentInputRunId);
+                return;
+            }
+            currentInputRunId = actionTask.getTraceContext().getInputRunId();
+            processActionTask(key, actionTask);
+        } catch (Exception e) {
+            builtInMetrics.markInputRunFailed(currentInputRunId);
+            throw e;
         }
+    }
 
+    private void processActionTask(Object key, ActionTask actionTask) throws Exception {
         // 2. Invoke the action task.
         contextManager.createAndSetRunnerContext(
                 actionTask,
@@ -348,7 +373,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 stateManager.getShortTermMemState(),
                 pythonBridge.getPythonRunnerContext(),
                 ltm,
-                executionEventLogger);
+                (event, traceContext) ->
+                        notifyExecutionLifecycleEvent(
+                                actionTask.action.getName(), traceContext, event));
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
@@ -462,7 +489,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // next generated ActionTask to be invoked.
             contextManager.transferContexts(actionTask, generatedActionTask, durableExecManager);
 
-            stateManager.addActionTask(generatedActionTask);
+            enqueueActionTask(generatedActionTask);
         }
 
         // 3. Process the next InputEvent or next action task
@@ -484,14 +511,19 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     eventRouter.getKeySegmentQueue().removeKey(key),
                     "Current key" + key + " is missing from the segmentedQueue.");
             eventRouter.processEligibleWatermarks(super::processWatermark);
-            Event pendingInputEvent = stateManager.pollNextPendingInputEvent();
+            builtInMetrics.markInputRunCompleted(actionTask.getTraceContext().getInputRunId());
+            Event pendingInputEvent = pollNextPendingInputEvent();
             if (pendingInputEvent != null) {
-                processEvent(key, pendingInputEvent);
+                processInputEvent(key, pendingInputEvent);
             }
         } else if (stateManager.hasMoreActionTasks()) {
             // If the current key has additional action tasks remaining, we should submit a new mail
             // to continue processing them.
-            mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
+            mailboxExecutor.submit(
+                    () ->
+                            tryProcessActionTaskForKey(
+                                    key, actionTask.getTraceContext().getInputRunId()),
+                    "process action task");
         }
     }
 
@@ -590,28 +622,37 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             return;
         }
         notifyExecutionLifecycleEvent(
-                actionTask.getTraceContext(), ExecutionLifecycleEvents.executionStarted());
+                actionTask.action.getName(),
+                actionTask.getTraceContext(),
+                ExecutionLifecycleEvents.executionStarted());
         actionTask.markExecutionStartedEventEmitted();
     }
 
     private void notifyActionFinished(ActionTask actionTask) {
         notifyExecutionLifecycleEvent(
-                actionTask.getTraceContext(), ExecutionLifecycleEvents.executionFinished());
+                actionTask.action.getName(),
+                actionTask.getTraceContext(),
+                ExecutionLifecycleEvents.executionFinished());
     }
 
     private void notifyActionReused(ActionTask actionTask) {
         notifyExecutionLifecycleEvent(
-                actionTask.getTraceContext(), ExecutionLifecycleEvents.executionReused());
+                actionTask.action.getName(),
+                actionTask.getTraceContext(),
+                ExecutionLifecycleEvents.executionReused());
     }
 
     private void notifyActionFailed(ActionTask actionTask, Throwable error) {
         notifyExecutionLifecycleEvent(
+                actionTask.action.getName(),
                 actionTask.getTraceContext(),
                 ExecutionLifecycleEvents.executionFailed(
                         error, ExecutionReporter.ProblemCategories.ACTION_EXECUTION_FAILED));
     }
 
-    private void notifyExecutionLifecycleEvent(ExecutionTraceContext traceContext, Event event) {
+    private void notifyExecutionLifecycleEvent(
+            String actionName, ExecutionTraceContext traceContext, Event event) {
+        builtInMetrics.markExecutionEvent(actionName, event, traceContext);
         executionEventLogger.emit(event, traceContext);
     }
 
@@ -633,8 +674,39 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         return key == null ? null : String.valueOf(key);
     }
 
+    private void enqueuePendingInputEvent(Event event) throws Exception {
+        stateManager.addPendingInputEvent(event);
+        builtInMetrics.markPendingInputEventEnqueued();
+    }
+
+    @Nullable
+    private Event pollNextPendingInputEvent() throws Exception {
+        Event event = stateManager.pollNextPendingInputEvent();
+        if (event != null) {
+            builtInMetrics.markPendingInputEventDequeued();
+        }
+        return event;
+    }
+
+    private void enqueueActionTask(ActionTask actionTask) throws Exception {
+        stateManager.addActionTask(actionTask);
+        builtInMetrics.markActionTaskEnqueued(
+                actionTask.getTraceContext(), actionTask.hasExecutionStartedEventEmitted());
+    }
+
+    @Nullable
+    private ActionTask pollNextActionTask() throws Exception {
+        ActionTask actionTask = stateManager.pollNextActionTask();
+        if (actionTask != null) {
+            builtInMetrics.markActionTaskDequeued(
+                    actionTask.getTraceContext(), actionTask.hasExecutionStartedEventEmitted());
+        }
+        return actionTask;
+    }
+
     private void tryResumeProcessActionTasks() throws Exception {
         Iterable<Object> keys = stateManager.getProcessingKeys();
+        long activeInputRuns = 0L;
         if (keys != null) {
             int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
             KeyGroupRange currentSubtaskKeyGroupRange =
@@ -651,20 +723,33 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 }
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
                 mailboxExecutor.submit(
-                        () -> tryProcessActionTaskForKey(key), "process action task");
+                        () -> tryProcessActionTaskForKey(key, null), "process action task");
             }
             stateManager.replaceProcessingKeys(new ArrayList<>(ownedKeys));
+            activeInputRuns = ownedKeys.size();
         }
+        builtInMetrics.restoreActiveInputRuns(activeInputRuns);
 
+        stateManager.forEachActionTaskKey(
+                getKeyedStateBackend(),
+                (key, state) -> {
+                    for (ActionTask actionTask : state.get()) {
+                        builtInMetrics.restoreActionTask(
+                                actionTask.getTraceContext(),
+                                actionTask.hasExecutionStartedEventEmitted());
+                    }
+                });
+
+        long[] pendingInputEvents = {0L};
         stateManager.forEachPendingInputEventKey(
                 getKeyedStateBackend(),
-                (key, state) ->
-                        state.get()
-                                .forEach(
-                                        event ->
-                                                eventRouter
-                                                        .getKeySegmentQueue()
-                                                        .addKeyToLastSegment(key)));
+                (key, state) -> {
+                    for (Event ignored : state.get()) {
+                        eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
+                        pendingInputEvents[0]++;
+                    }
+                });
+        builtInMetrics.restorePendingInputEvents(pendingInputEvents[0]);
     }
 
     @VisibleForTesting

@@ -172,15 +172,16 @@ public class ChatModelAction {
     }
 
     private static void recordRetryMetrics(
-            RunnerContext ctx, String model, int retryCount, int totalRetryWaitSec) {
+            RunnerContext ctx, String modelResource, int retryCount, int totalRetryWaitSec) {
         if (retryCount <= 0) {
             return;
         }
         FlinkAgentsMetricGroup metricGroup = ctx.getActionMetricGroup();
         if (metricGroup != null) {
-            FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", model);
-            modelGroup.getCounter("retryCount").inc(retryCount);
-            modelGroup.getCounter("retryWaitSec").inc(totalRetryWaitSec);
+            FlinkAgentsMetricGroup modelResourceGroup =
+                    metricGroup.getSubGroup("model_resource", modelResource);
+            modelResourceGroup.getCounter("retryCount").inc(retryCount);
+            modelResourceGroup.getCounter("retryWaitSec").inc(totalRetryWaitSec);
         }
     }
 
@@ -368,61 +369,67 @@ public class ChatModelAction {
                     }
                 };
 
-        for (int attempt = 0; attempt < numRetries + 1; attempt++) {
-            try {
-                ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.LLM, model);
+        try {
+            for (int attempt = 0; attempt < numRetries + 1; attempt++) {
                 try {
-                    response =
-                            chatAsync
-                                    ? ctx.durableExecuteAsync(callable)
-                                    : ctx.durableExecute(callable);
-                    Objects.requireNonNull(response, "ChatModel returned a null response.");
-                } catch (Exception modelError) {
-                    ExecutionReporters.failed(
-                            ctx,
-                            ExecutionReporter.EntityTypes.LLM,
-                            model,
-                            modelError,
-                            ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
-                    throw modelError;
-                }
-                ExecutionReporters.succeeded(ctx, ExecutionReporter.EntityTypes.LLM, model);
-                recordChatTokenMetrics(chatModel, response);
-                if (outputSchema != null && response.getToolCalls().isEmpty()) {
-                    response = generateStructuredOutputWithReport(ctx, response, outputSchema);
-                }
-            } catch (Exception e) {
-                if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
-                    LOG.warn(
-                            "Chat request {} failed with error: {}, ignored.", initialRequestId, e);
-                    return;
-                } else if (strategy == Agent.ErrorHandlingStrategy.RETRY) {
-                    if (attempt == numRetries) {
+                    ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.LLM, model);
+                    try {
+                        response =
+                                chatAsync
+                                        ? ctx.durableExecuteAsync(callable)
+                                        : ctx.durableExecute(callable);
+                        Objects.requireNonNull(response, "ChatModel returned a null response.");
+                    } catch (Exception modelError) {
+                        ExecutionReporters.failed(
+                                ctx,
+                                ExecutionReporter.EntityTypes.LLM,
+                                model,
+                                modelError,
+                                ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
+                        throw modelError;
+                    }
+                    ExecutionReporters.succeeded(ctx, ExecutionReporter.EntityTypes.LLM, model);
+                    recordChatTokenMetrics(chatModel, response);
+                    if (outputSchema != null && response.getToolCalls().isEmpty()) {
+                        response = generateStructuredOutputWithReport(ctx, response, outputSchema);
+                    }
+                } catch (Exception e) {
+                    if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
+                        LOG.warn(
+                                "Chat request {} failed with error: {}, ignored.",
+                                initialRequestId,
+                                e);
+                        return;
+                    } else if (strategy == Agent.ErrorHandlingStrategy.RETRY) {
+                        if (attempt == numRetries) {
+                            throw e;
+                        }
+                        actualRetryCount = attempt + 1;
+                        int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
+                        LOG.warn(
+                                "Chat request {} failed with error: {}, retrying {} / {}, waiting {} s.",
+                                initialRequestId,
+                                e,
+                                actualRetryCount,
+                                numRetries,
+                                currentWaitSec);
+                        if (currentWaitSec > 0) {
+                            Thread.sleep(currentWaitSec * 1000L);
+                            totalWaitTimeSec += currentWaitSec;
+                        }
+                        continue;
+                    } else {
+                        LOG.debug(
+                                "Chat request {} failed, the input chat messages are {}.",
+                                initialRequestId,
+                                messages);
                         throw e;
                     }
-                    actualRetryCount = attempt + 1;
-                    int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
-                    LOG.warn(
-                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {} s.",
-                            initialRequestId,
-                            e,
-                            actualRetryCount,
-                            numRetries,
-                            currentWaitSec);
-                    if (currentWaitSec > 0) {
-                        Thread.sleep(currentWaitSec * 1000L);
-                        totalWaitTimeSec += currentWaitSec;
-                    }
-                    continue;
-                } else {
-                    LOG.debug(
-                            "Chat request {} failed, the input chat messages are {}.",
-                            initialRequestId,
-                            messages);
-                    throw e;
                 }
+                break;
             }
-            break;
+        } finally {
+            recordRetryMetrics(ctx, model, actualRetryCount, totalWaitTimeSec);
         }
 
         if (actualRetryCount > 0) {
@@ -444,9 +451,6 @@ public class ChatModelAction {
             Map<String, Long> retryStats = getRetryStats(ctx.getSensoryMemory(), initialRequestId);
             int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
             int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
-
-            recordRetryMetrics(
-                    ctx, chatModel.getConnectionName(), totalRetryCount, totalRetryWaitSec);
 
             ctx.sendEvent(
                     new ChatResponseEvent(
