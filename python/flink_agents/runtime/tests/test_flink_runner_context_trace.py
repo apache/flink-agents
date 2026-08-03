@@ -30,7 +30,7 @@ def test_flink_runner_context_is_execution_reporter() -> None:
     assert issubclass(FlinkRunnerContext, ExecutionReporter)
 
 
-def test_failed_execution_reports_deepest_cause() -> None:
+def test_failed_execution_reports_deepest_explicit_cause() -> None:
     java_context = MagicMock()
     ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
     ctx._j_runner_context = java_context
@@ -52,5 +52,32 @@ def test_failed_execution_reports_deepest_cause() -> None:
         "{}",
         "builtins.ValueError",
         "invalid model response",
+        ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR,
+    )
+
+
+def test_failed_execution_does_not_follow_implicit_context() -> None:
+    java_context = MagicMock()
+    ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
+    ctx._j_runner_context = java_context
+    context_error = ValueError("invalid model response")
+    reported_error = RuntimeError("structured output failed")
+    reported_error.__context__ = context_error
+    assert reported_error.__cause__ is None
+
+    ctx.report_execution_failed(
+        ExecutionEntityTypes.PARSER,
+        "structured_output",
+        {},
+        reported_error,
+        ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR,
+    )
+
+    java_context.reportExecutionFailedJson.assert_called_once_with(
+        ExecutionEntityTypes.PARSER,
+        "structured_output",
+        "{}",
+        "builtins.RuntimeError",
+        "structured output failed",
         ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR,
     )
