@@ -12,5 +12,11 @@
         }
       }
     ]
+  },
+  "attachments": {
+    "payload": {
+      "memory_type": "sensory",
+      "path": "memory.path"
+    }
   }
 }

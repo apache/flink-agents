@@ -98,6 +98,7 @@ public class ChatRequestEvent extends Event {
     public static ChatRequestEvent fromEvent(Event event) {
         ChatRequestEvent result =
                 new ChatRequestEvent(event.getId(), new HashMap<>(event.getAttributes()));
+        result.getAttachments().putAll(event.getAttachments());
         if (event.hasSourceTimestamp()) {
             result.setSourceTimestamp(event.getSourceTimestamp());
         }

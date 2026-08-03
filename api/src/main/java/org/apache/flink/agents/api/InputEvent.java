@@ -51,6 +51,7 @@ public class InputEvent extends Event {
      */
     public static InputEvent fromEvent(Event event) {
         InputEvent result = new InputEvent(event.getId(), new HashMap<>(event.getAttributes()));
+        result.getAttachments().putAll(event.getAttachments());
         if (event.hasSourceTimestamp()) {
             result.setSourceTimestamp(event.getSourceTimestamp());
         }

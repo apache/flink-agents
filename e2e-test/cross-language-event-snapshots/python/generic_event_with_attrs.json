@@ -15,5 +15,11 @@
     "k_dict": {
       "nested": "value"
     }
+  },
+  "attachments": {
+    "payload": {
+      "memory_type": "sensory",
+      "path": "memory.path"
+    }
   }
 }

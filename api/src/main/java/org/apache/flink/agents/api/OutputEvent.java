@@ -54,6 +54,7 @@ public class OutputEvent extends Event {
      */
     public static OutputEvent fromEvent(Event event) {
         OutputEvent result = new OutputEvent(event.getId(), new HashMap<>(event.getAttributes()));
+        result.getAttachments().putAll(event.getAttachments());
         if (event.hasSourceTimestamp()) {
             result.setSourceTimestamp(event.getSourceTimestamp());
         }

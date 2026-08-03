@@ -45,6 +45,7 @@ from flink_agents.runtime.durable_execution import (
 )
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
+from flink_agents.runtime.memory.event_attachment_utils import store_event_attachments
 from flink_agents.runtime.memory.internal_base_long_term_memory import (
     InternalBaseLongTermMemory,
 )
@@ -297,6 +298,7 @@ class FlinkRunnerContext(RunnerContext):
         event : Event
             The event to be processed by the agent system.
         """
+        store_event_attachments(event, self)
         event_json = event.model_dump_json()
         try:
             self._j_runner_context.sendEventJson(event_json)

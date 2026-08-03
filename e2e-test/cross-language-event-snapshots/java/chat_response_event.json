@@ -11,5 +11,11 @@
     "retry_count" : 0,
     "total_retry_wait_sec" : 0
   },
+  "attachments" : {
+    "payload" : {
+      "memory_type" : "sensory",
+      "path" : "memory.path"
+    }
+  },
   "type" : "_chat_response_event"
 }

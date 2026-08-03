@@ -77,6 +77,7 @@ public class ChatResponseEvent extends Event {
     public static ChatResponseEvent fromEvent(Event event) {
         ChatResponseEvent result =
                 new ChatResponseEvent(event.getId(), new HashMap<>(event.getAttributes()));
+        result.getAttachments().putAll(event.getAttachments());
         if (event.hasSourceTimestamp()) {
             result.setSourceTimestamp(event.getSourceTimestamp());
         }

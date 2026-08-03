@@ -19,5 +19,11 @@
       "call_bbbb": null,
       "call_cccc": null
     }
+  },
+  "attachments": {
+    "payload": {
+      "memory_type": "sensory",
+      "path": "memory.path"
+    }
   }
 }

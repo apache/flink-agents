@@ -33,6 +33,8 @@ from flink_agents.api.events.context_retrieval_event import (
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
+from flink_agents.api.memory_object import MemoryType
+from flink_agents.api.memory_reference import MemoryRef
 from flink_agents.api.vector_stores.vector_store import Document
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -43,6 +45,8 @@ _FIXED_REQUEST_ID = UUID("00000000-0000-0000-0000-000000000002")
 _FIXED_TOOL_CALL_ID = "call_aaaa"
 _FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb"
 _FIXED_TOOL_CALL_ID_BOOL = "call_cccc"
+_ATTACHMENT_KEY = "payload"
+_ATTACHMENT_PATH = "memory.path"
 
 
 def _regenerate_enabled() -> bool:
@@ -50,8 +54,18 @@ def _regenerate_enabled() -> bool:
 
 
 def _force_id(event: Event, fixed_id: UUID) -> Event:
+    event.set_attachment(
+        _ATTACHMENT_KEY, MemoryRef.create(MemoryType.SENSORY, _ATTACHMENT_PATH)
+    )
     object.__setattr__(event, "id", fixed_id)
     return event
+
+
+def _assert_memory_ref_attachment(event: Event) -> None:
+    attachment = event.get_attachment(_ATTACHMENT_KEY)
+    assert isinstance(attachment, MemoryRef)
+    assert attachment.memory_type == MemoryType.SENSORY
+    assert attachment.path == _ATTACHMENT_PATH
 
 
 def _write_python_snapshot(name: str, event: Event) -> None:
@@ -103,9 +117,11 @@ def test_input_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_input_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("input_event.json")
+    _assert_memory_ref_attachment(base)
     typed = InputEvent.from_event(base)
     assert typed.input == "hello", "InputEvent.input mismatch."
     assert typed.type == InputEvent.EVENT_TYPE
+    _assert_memory_ref_attachment(typed)
 
 
 # ── OutputEvent ─────────────────────────────────────────────────────────
@@ -127,9 +143,11 @@ def test_output_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_output_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("output_event.json")
+    _assert_memory_ref_attachment(base)
     typed = OutputEvent.from_event(base)
     assert typed.output == "world", "OutputEvent.output mismatch."
     assert typed.type == OutputEvent.EVENT_TYPE
+    _assert_memory_ref_attachment(typed)
 
 
 # ── ChatRequestEvent ────────────────────────────────────────────────────
@@ -157,12 +175,14 @@ def test_chat_request_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_chat_request_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("chat_request_event.json")
+    _assert_memory_ref_attachment(base)
     typed = ChatRequestEvent.from_event(base)
     assert typed.model == "test-model"
     assert len(typed.messages) == 1
     msg = typed.messages[0]
     assert msg.role == MessageRole.USER, f"Role mismatch: got {msg.role!r}"
     assert msg.content == "hello world"
+    _assert_memory_ref_attachment(typed)
 
 
 def test_chat_request_row_type_info_output_schema_is_not_portable_across_languages_known_gap() -> None:
@@ -220,6 +240,7 @@ def test_chat_response_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("chat_response_event.json")
+    _assert_memory_ref_attachment(base)
     typed = ChatResponseEvent.from_event(base)
     expected_request_id = str(_FIXED_REQUEST_ID)
     actual_request_id = (
@@ -231,6 +252,7 @@ def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None
         f"Response role mismatch: got {typed.response.role!r}"
     )
     assert typed.response.content == "hi there"
+    _assert_memory_ref_attachment(typed)
 
 
 # ── ToolRequestEvent ────────────────────────────────────────────────────
@@ -256,10 +278,12 @@ def test_tool_request_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_tool_request_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("tool_request_event.json")
+    _assert_memory_ref_attachment(base)
     typed = ToolRequestEvent.from_event(base)
     assert typed.model == "test-model"
     assert len(typed.tool_calls) == 1
     assert typed.tool_calls[0]["id"] == _FIXED_TOOL_CALL_ID
+    _assert_memory_ref_attachment(typed)
 
 
 # ── ToolResponseEvent ───────────────────────────────────────────────────
@@ -299,6 +323,7 @@ def test_tool_response_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_java_tool_response_event_status_fields() -> None:
     base = _read_java_snapshot("tool_response_event.json")
+    _assert_memory_ref_attachment(base)
     typed = ToolResponseEvent.from_event(base)
 
     assert typed.request_id == _FIXED_REQUEST_ID
@@ -310,6 +335,7 @@ def test_python_can_deserialize_java_tool_response_event_status_fields() -> None
     assert "result" in response_value
 
     assert "timestamp" not in typed.attributes
+    _assert_memory_ref_attachment(typed)
 
 
 # ── ContextRetrievalRequestEvent ────────────────────────────────────────
@@ -342,10 +368,12 @@ def test_context_retrieval_request_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_context_retrieval_request_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("context_retrieval_request_event.json")
+    _assert_memory_ref_attachment(base)
     typed = ContextRetrievalRequestEvent.from_event(base)
     assert typed.query == "what is flink"
     assert typed.vector_store == "test-store"
     assert typed.max_results == 5
+    _assert_memory_ref_attachment(typed)
 
 
 # ── ContextRetrievalResponseEvent ───────────────────────────────────────
@@ -379,6 +407,7 @@ def test_context_retrieval_response_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_context_retrieval_response_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("context_retrieval_response_event.json")
+    _assert_memory_ref_attachment(base)
     typed = ContextRetrievalResponseEvent.from_event(base)
     expected_request_id = str(_FIXED_REQUEST_ID)
     actual_request_id = (
@@ -389,6 +418,7 @@ def test_python_can_deserialize_context_retrieval_response_event_from_java_snaps
     assert len(typed.documents) == 1
     assert typed.documents[0].content == "doc content"
     assert typed.documents[0].id == "doc-1"
+    _assert_memory_ref_attachment(typed)
 
 
 # ── Generic Event with primitive attributes (user-authored axis) ───────
@@ -429,6 +459,7 @@ def test_python_can_deserialize_generic_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("generic_event_with_attrs.json")
 
     assert base.type == _GENERIC_EVENT_TYPE
+    _assert_memory_ref_attachment(base)
     assert base.attributes["k_int"] == 42
     assert isinstance(base.attributes["k_int"], int)
     assert base.attributes["k_float"] == 1.5

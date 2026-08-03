@@ -18,5 +18,11 @@
     "external_ids" : { },
     "timestamp" : 1700000000000
   },
+  "attachments" : {
+    "payload" : {
+      "memory_type" : "sensory",
+      "path" : "memory.path"
+    }
+  },
   "type" : "_tool_response_event"
 }

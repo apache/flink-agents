@@ -91,7 +91,7 @@ def _validate(value: Any, where: str) -> None:
 class MemoryType(Enum):
     """Memory types based on MemoryObject."""
 
-    SENSORY = ("sensory",)
+    SENSORY = "sensory"
     SHORT_TERM = "short_term"
 
 

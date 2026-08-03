@@ -23,6 +23,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
@@ -65,6 +67,8 @@ class CrossLanguageEventSnapshotTest {
     private static final String FIXED_TOOL_CALL_ID = "call_aaaa";
     private static final String FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb";
     private static final String FIXED_TOOL_CALL_ID_BOOL = "call_cccc";
+    private static final String ATTACHMENT_KEY = "payload";
+    private static final String ATTACHMENT_PATH = "memory.path";
     private static final long FIXED_TIMESTAMP = 1_700_000_000_000L;
 
     private static Path snapshotDir;
@@ -122,12 +126,28 @@ class CrossLanguageEventSnapshotTest {
         return Event.fromJson(Files.readString(pythonSnapshot));
     }
 
+    private static <T extends Event> T withMemoryRefAttachment(T event) {
+        event.getAttachments()
+                .put(
+                        ATTACHMENT_KEY,
+                        MemoryRef.create(MemoryObject.MemoryType.SENSORY, ATTACHMENT_PATH));
+        return event;
+    }
+
+    private static void assertMemoryRefAttachment(Event event) {
+        Object attachment = event.getAttachment(ATTACHMENT_KEY);
+        assertTrue(attachment instanceof MemoryRef);
+        MemoryRef reference = (MemoryRef) attachment;
+        assertEquals(MemoryObject.MemoryType.SENSORY, reference.getType());
+        assertEquals(ATTACHMENT_PATH, reference.getPath());
+    }
+
     // ── InputEvent ─────────────────────────────────────────────────────────
 
     private static InputEvent buildInputEvent() {
         Map<String, Object> attrs = new HashMap<>();
         attrs.put("input", "hello");
-        return new InputEvent(FIXED_EVENT_ID, attrs);
+        return withMemoryRefAttachment(new InputEvent(FIXED_EVENT_ID, attrs));
     }
 
     @Test
@@ -144,12 +164,14 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeInputEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("input_event.json");
+        assertMemoryRefAttachment(base);
         InputEvent typed = InputEvent.fromEvent(base);
 
         assertEquals(
                 FIXED_EVENT_ID, typed.getId(), "ID lost when deserializing Python InputEvent.");
         assertEquals(InputEvent.EVENT_TYPE, typed.getType());
         assertEquals("hello", typed.getInput(), "InputEvent.input mismatch.");
+        assertMemoryRefAttachment(typed);
     }
 
     // ── OutputEvent ────────────────────────────────────────────────────────
@@ -157,7 +179,7 @@ class CrossLanguageEventSnapshotTest {
     private static OutputEvent buildOutputEvent() {
         Map<String, Object> attrs = new HashMap<>();
         attrs.put("output", "world");
-        return new OutputEvent(FIXED_EVENT_ID, attrs);
+        return withMemoryRefAttachment(new OutputEvent(FIXED_EVENT_ID, attrs));
     }
 
     @Test
@@ -174,12 +196,14 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeOutputEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("output_event.json");
+        assertMemoryRefAttachment(base);
         OutputEvent typed = OutputEvent.fromEvent(base);
 
         assertEquals(
                 FIXED_EVENT_ID, typed.getId(), "ID lost when deserializing Python OutputEvent.");
         assertEquals(OutputEvent.EVENT_TYPE, typed.getType());
         assertEquals("world", typed.getOutput(), "OutputEvent.output mismatch.");
+        assertMemoryRefAttachment(typed);
     }
 
     // ── ChatRequestEvent ───────────────────────────────────────────────────
@@ -188,7 +212,7 @@ class CrossLanguageEventSnapshotTest {
         Map<String, Object> attrs = new LinkedHashMap<>();
         attrs.put("model", "test-model");
         attrs.put("messages", List.of(new ChatMessage(MessageRole.USER, "hello world")));
-        return new ChatRequestEvent(FIXED_EVENT_ID, attrs);
+        return withMemoryRefAttachment(new ChatRequestEvent(FIXED_EVENT_ID, attrs));
     }
 
     @Test
@@ -205,6 +229,7 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeChatRequestEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("chat_request_event.json");
+        assertMemoryRefAttachment(base);
         ChatRequestEvent typed = ChatRequestEvent.fromEvent(base);
 
         assertEquals(FIXED_EVENT_ID, typed.getId());
@@ -215,6 +240,7 @@ class CrossLanguageEventSnapshotTest {
         ChatMessage msg = typed.getMessages().get(0);
         assertEquals(MessageRole.USER, msg.getRole(), "Role mismatch on Python-produced message.");
         assertEquals("hello world", msg.getContent());
+        assertMemoryRefAttachment(typed);
     }
 
     /**
@@ -253,7 +279,7 @@ class CrossLanguageEventSnapshotTest {
         attrs.put("response", new ChatMessage(MessageRole.ASSISTANT, "hi there"));
         attrs.put("retry_count", 0);
         attrs.put("total_retry_wait_sec", 0);
-        return new ChatResponseEvent(FIXED_EVENT_ID, attrs);
+        return withMemoryRefAttachment(new ChatResponseEvent(FIXED_EVENT_ID, attrs));
     }
 
     @Test
@@ -270,6 +296,7 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeChatResponseEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("chat_response_event.json");
+        assertMemoryRefAttachment(base);
         ChatResponseEvent typed = ChatResponseEvent.fromEvent(base);
 
         assertEquals(FIXED_EVENT_ID, typed.getId());
@@ -279,6 +306,7 @@ class CrossLanguageEventSnapshotTest {
         assertNotNull(response, "response field is null.");
         assertEquals(MessageRole.ASSISTANT, response.getRole(), "Role mismatch on response.");
         assertEquals("hi there", response.getContent());
+        assertMemoryRefAttachment(typed);
     }
 
     // ── ToolRequestEvent ───────────────────────────────────────────────────
@@ -292,7 +320,7 @@ class CrossLanguageEventSnapshotTest {
         Map<String, Object> attrs = new LinkedHashMap<>();
         attrs.put("model", "test-model");
         attrs.put("tool_calls", List.of(toolCall));
-        return new ToolRequestEvent(FIXED_EVENT_ID, attrs);
+        return withMemoryRefAttachment(new ToolRequestEvent(FIXED_EVENT_ID, attrs));
     }
 
     @Test
@@ -309,6 +337,7 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeToolRequestEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("tool_request_event.json");
+        assertMemoryRefAttachment(base);
         ToolRequestEvent typed = ToolRequestEvent.fromEvent(base);
 
         assertEquals(FIXED_EVENT_ID, typed.getId());
@@ -318,6 +347,7 @@ class CrossLanguageEventSnapshotTest {
         assertNotNull(toolCalls);
         assertEquals(1, toolCalls.size());
         assertEquals(FIXED_TOOL_CALL_ID, toolCalls.get(0).get("id"));
+        assertMemoryRefAttachment(typed);
     }
 
     // ── ToolResponseEvent ──────────────────────────────────────────────────
@@ -330,7 +360,7 @@ class CrossLanguageEventSnapshotTest {
         attrs.put("error", new HashMap<String, String>());
         attrs.put("external_ids", new HashMap<String, String>());
         attrs.put("timestamp", FIXED_TIMESTAMP);
-        return new ToolResponseEvent(FIXED_EVENT_ID, attrs);
+        return withMemoryRefAttachment(new ToolResponseEvent(FIXED_EVENT_ID, attrs));
     }
 
     @Test
@@ -347,6 +377,7 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void pythonToolResponseEventRoundTripsScalarResponses() throws Exception {
         Event base = readPythonSnapshot("tool_response_event.json");
+        assertMemoryRefAttachment(base);
         ToolResponseEvent typed = ToolResponseEvent.fromEvent(base);
 
         assertEquals(FIXED_REQUEST_ID, typed.getRequestId());
@@ -370,6 +401,7 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(Boolean.TRUE, typed.getSuccess().get(FIXED_TOOL_CALL_ID));
         assertTrue(typed.getError().isEmpty());
         assertFalse(attrs.containsKey("timestamp"));
+        assertMemoryRefAttachment(typed);
     }
 
     // ── ContextRetrievalRequestEvent ───────────────────────────────────────
@@ -379,7 +411,7 @@ class CrossLanguageEventSnapshotTest {
         attrs.put("query", "what is flink");
         attrs.put("vector_store", "test-store");
         attrs.put("max_results", 5);
-        return new ContextRetrievalRequestEvent(FIXED_EVENT_ID, attrs);
+        return withMemoryRefAttachment(new ContextRetrievalRequestEvent(FIXED_EVENT_ID, attrs));
     }
 
     @Test
@@ -398,6 +430,7 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeContextRetrievalRequestEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("context_retrieval_request_event.json");
+        assertMemoryRefAttachment(base);
         ContextRetrievalRequestEvent typed = ContextRetrievalRequestEvent.fromEvent(base);
 
         assertEquals(FIXED_EVENT_ID, typed.getId());
@@ -405,6 +438,7 @@ class CrossLanguageEventSnapshotTest {
         assertEquals("what is flink", typed.getQuery());
         assertEquals("test-store", typed.getVectorStore());
         assertEquals(5, typed.getMaxResults());
+        assertMemoryRefAttachment(typed);
     }
 
     // ── ContextRetrievalResponseEvent ──────────────────────────────────────
@@ -415,7 +449,7 @@ class CrossLanguageEventSnapshotTest {
         attrs.put("request_id", FIXED_REQUEST_ID);
         attrs.put("query", "what is flink");
         attrs.put("documents", new ArrayList<>(List.of(doc)));
-        return new ContextRetrievalResponseEvent(FIXED_EVENT_ID, attrs);
+        return withMemoryRefAttachment(new ContextRetrievalResponseEvent(FIXED_EVENT_ID, attrs));
     }
 
     @Test
@@ -434,6 +468,7 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeContextRetrievalResponseEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("context_retrieval_response_event.json");
+        assertMemoryRefAttachment(base);
         ContextRetrievalResponseEvent typed = ContextRetrievalResponseEvent.fromEvent(base);
 
         assertEquals(FIXED_EVENT_ID, typed.getId());
@@ -445,6 +480,7 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(1, docs.size());
         assertEquals("doc content", docs.get(0).getContent());
         assertEquals("doc-1", docs.get(0).getId());
+        assertMemoryRefAttachment(typed);
     }
 
     // ── Generic Event with primitive attributes (user-authored axis) ───────
@@ -460,7 +496,7 @@ class CrossLanguageEventSnapshotTest {
         attrs.put("k_null", null);
         attrs.put("k_list", List.of(1, 2, 3));
         attrs.put("k_dict", Map.of("nested", "value"));
-        return new Event(FIXED_EVENT_ID, GENERIC_EVENT_TYPE, attrs);
+        return withMemoryRefAttachment(new Event(FIXED_EVENT_ID, GENERIC_EVENT_TYPE, attrs));
     }
 
     @Test
@@ -479,6 +515,7 @@ class CrossLanguageEventSnapshotTest {
         Event base = readPythonSnapshot("generic_event_with_attrs.json");
 
         assertEquals(GENERIC_EVENT_TYPE, base.getType());
+        assertMemoryRefAttachment(base);
         Map<String, Object> attrs = base.getAttributes();
         assertEquals(42, attrs.get("k_int"));
         assertTrue(attrs.get("k_int") instanceof Integer);
@@ -501,6 +538,7 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(Event.class, base.getClass());
         assertEquals("_my_python_only_event", base.getType());
         assertEquals(FIXED_EVENT_ID, base.getId());
+        assertMemoryRefAttachment(base);
 
         Map<String, Object> attrs = base.getAttributes();
         assertEquals("ping", attrs.get("value"));

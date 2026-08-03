@@ -37,6 +37,7 @@ import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
+import org.apache.flink.agents.runtime.memory.EventAttachmentUtils;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
@@ -149,6 +150,11 @@ public class RunnerContextImpl implements RunnerContext {
     @Override
     public void sendEvent(Event event) {
         mailboxThreadChecker.run();
+        try {
+            EventAttachmentUtils.storeEventAttachments(event, this);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Failed to store event attachments.", e);
+        }
         try {
             JsonUtils.checkSerializable(event);
         } catch (JsonProcessingException e) {
