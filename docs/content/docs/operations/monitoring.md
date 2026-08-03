@@ -26,7 +26,7 @@ under the License.
 
 ### Built-in Metrics
 
-We offer data monitoring for built-in metrics, which includes events, actions, and token usage.
+We offer data monitoring for built-in metrics, including input runs, events, actions, execution health, and token usage.
 
 #### Event and Action Metrics
 
@@ -36,10 +36,53 @@ We offer data monitoring for built-in metrics, which includes events, actions, a
 | **Agent** | numOfEventProcessedPerSec                        | The number of Events this operator has processed per second.                     | Meter |
 | **Agent** | numOfActionsExecuted                             | The total number of actions this operator has executed.                          | Count |
 | **Agent** | numOfActionsExecutedPerSec                       | The number of actions this operator has executed per second.                     | Meter |
+| **Agent** | numOfInputRunsSucceeded                          | The number of input runs that reached the run-completion boundary.                | Count |
+| **Agent** | numOfInputRunsFailed                             | The number of input runs terminated by an unhandled exception.                    | Count |
+| **Agent** | inputRunLatencyMs                                | End-to-end input-run latency from entering the agent operator to completion or failure, including time queued behind another input with the same key. | Histogram |
+| **Agent** | inputRunQueueLatencyMs                           | Time from entering the agent operator until the input run starts processing. | Histogram |
+| **Agent** | inputRunProcessingLatencyMs                      | Time from the input-run start boundary until completion or failure. | Histogram |
+| **Agent** | numOfPendingInputEvents                          | Current number of input Events buffered behind an active run with the same key. | Gauge |
+| **Agent** | numOfActiveInputRuns                             | Current number of logical input runs that are processing or waiting for asynchronous work. | Gauge |
 | **Action**  | action.\<action_name\>.numOfActionsExecuted | The total number of actions this operator has executed for a specific action name. | Count |
 | **Action**  | action.\<action_name\>.numOfActionsExecutedPerSec | The number of actions this operator has executed per second for a specific action name. | Meter |
+| **Action** | action.\<action_name\>.actionSchedulingLatencyMs | Time from enqueuing the initial Action task until it is selected for execution. | Histogram |
+| **Action** | action.\<action_name\>.actionExecutionLatencyMs | End-to-end latency of one logical Action execution, including asynchronous waits and continuations. | Histogram |
+| **Action** | action.\<action_name\>.numOfPendingActionTasks | Current number of physical Action task segments waiting to run, including continuations. | Gauge |
+| **Action** | action.\<action_name\>.numOfActiveActionExecutions | Current number of logical Action executions that have started but have not reached a terminal state. | Gauge |
 | **Agent**   | eventLogTruncatedEvents                          | Number of event log records whose payload was truncated at `STANDARD` level. Increments once per event, regardless of how many fields inside it were truncated. Use this to decide whether to raise truncation thresholds or move specific event types to `VERBOSE`. | Count |
 | **Agent**   | eventLogWriteFailures                           | Number of Event Log write attempts for which `append`, `flush`, or both failed. Event Log writes are best-effort and do not fail the job. | Count |
+
+For a locally observed input run, `inputRunLatencyMs` is split into queueing and processing time at the input-run start boundary. `numOfPendingInputEvents` counts buffered inputs, while `numOfActiveInputRuns` counts logical runs; an asynchronous run remains active while it is waiting for its continuation.
+
+An Action execution can be active while one of its continuation tasks is pending, so `numOfActiveActionExecutions` and `numOfPendingActionTasks` are independent. Action scheduling latency is recorded only for the initial task; continuation queueing does not create another scheduling sample.
+
+Input-run outcomes and all latency samples are process-local. Runs or Action executions already in flight when a task is restored do not produce latency samples because their original timestamps are unavailable. An input Event restored from the pending queue can still produce an outcome and processing-latency sample after it starts in the new task attempt, but it does not produce queue or end-to-end latency. Current-count gauges are rebuilt from Flink state after restore.
+
+#### Execution Metrics
+
+Execution metrics are derived from LLM and Tool execution lifecycle events. The `model_resource`, `tool`, `skill`, and `mcp_server` scopes are independent key-value scopes directly under an Action; none is nested under another. The existing `model` scope remains dedicated to model usage metrics.
+
+| Scope | Metrics | Description | Type |
+|-------|---------|-------------|------|
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsSucceeded | The number of framework-observed model invocations that returned successfully. | Count |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsFailed | The number of framework-observed model invocations that failed. | Count |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.llmCallLatencyMs | Latency of each framework-observed model invocation, excluding structured-output parsing and retry wait time. | Histogram |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | The number of additional model invocations initiated by framework retry logic. Only recorded when at least one retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#core-options" >}}). | Count |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | The total backoff time, in seconds, accumulated by framework-level retries. | Count |
+| **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsSucceeded | The number of successful calls to the Tool. | Count |
+| **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsFailed | The number of failed calls to the Tool. | Count |
+| **Tool** | action.\<action_name\>.tool.\<tool_name\>.toolCallLatencyMs | Tool call latency. | Histogram |
+| **Skill** | action.\<action_name\>.skill.\<skill_name\>.numOfSkillLoads | The number of completed explicit `load_skill` calls for the Skill. | Count |
+| **Skill** | action.\<action_name\>.skill.\<skill_name\>.skillLoadLatencyMs | Latency of explicit `load_skill` calls. | Histogram |
+| **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.numOfMcpToolCallsSucceeded | The number of successful Tool calls served by the MCP Server. | Count |
+| **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.numOfMcpToolCallsFailed | The number of failed Tool calls served by the MCP Server. | Count |
+| **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.mcpToolCallLatencyMs | Tool call latency aggregated across the MCP Server. | Histogram |
+
+An LLM metric represents one framework invocation of `ChatModel`. A framework retry that calls the model again produces another LLM outcome and latency sample; retries hidden inside a provider or connection are not observed. Every named Tool execution emits Tool metrics. Skill metrics are emitted only for explicit `load_skill` calls; subsequent Tool calls are not inferred to belong to a Skill. MCP metrics aggregate only Tool executions carrying an explicit MCP Server resource name. A `load_skill` or MCP Tool execution therefore contributes to both its Tool scope and the corresponding Skill or MCP Server scope.
+
+Tool outcomes follow the existing language-specific Tool contracts. In both Java and Python, resource preparation or invocation exceptions are failures and a normal return is successful. Java additionally treats an unsuccessful `ToolResponse` as a failed Tool execution. Python Tools return arbitrary values and currently have no equivalent explicit error-result type, so the runtime does not infer failure from a normally returned Python value.
+
+Execution latency tracking is process-local. A latency sample is recorded only when the execution start and terminal events are observed in the same task attempt; LLM and Tool terminal counters are still updated when a restored execution has no local start timestamp.
 
 #### Token Usage Metrics
 
@@ -49,8 +92,6 @@ Token usage metrics are automatically recorded when chat models are invoked thro
 |-----------|--------------------------------------------------------------|--------------------------------------------------------------------------------|-------|
 | **Model** | action.\<action_name\>.model.\<model_name\>.promptTokens     | The total number of prompt tokens consumed by the model within an action.      | Count |
 | **Model** | action.\<action_name\>.model.\<model_name\>.completionTokens | The total number of completion tokens generated by the model within an action. | Count |
-| **Model** | action.\<action_name\>.model.\<connection_name\>.retryCount  | The total number of retries performed for model requests when using `ErrorHandlingStrategy.RETRY`. Only recorded when at least one retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#core-options" >}}). | Count |
-| **Model** | action.\<action_name\>.model.\<connection_name\>.retryWaitSec | The total wait time (in seconds) spent across retries for model requests when using `ErrorHandlingStrategy.RETRY`. | Count |
 
 ### How to add custom metrics
 
@@ -116,7 +157,7 @@ public class MyAgent extends Agent {
 
 ### How to check the metrics with Flink executor
 
-Flink agents enable the reporting of metrics to external systems by creating a metric identifier prefix in the format `<host>.taskmanager.<tm_id>.<job_name>.<operator_name>.<subtask_index>`. Agent-specific metrics use key-value metric groups (e.g., `action.<action_name>`, `model.<model_name>`) which are exposed as dimensions/labels in reporters that support them (such as Prometheus). Please refer to [Flink Metric Reporters](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/) for more details.
+Flink agents enable the reporting of metrics to external systems by creating a metric identifier prefix in the format `<host>.taskmanager.<tm_id>.<job_name>.<operator_name>.<subtask_index>`. For an agent operator, `<operator_name>` is the agent name. Agent-specific metrics use key-value metric groups (e.g., `action.<action_name>`, `model.<model_name>`) which are exposed as dimensions/labels in reporters that support them (such as Prometheus). Please refer to [Flink Metric Reporters](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/) for more details.
 
 Additionally, we can check the metric results in the Flink Job WebUI using the metric identifier prefix `<subtask_index>.<operator_name>`.
 

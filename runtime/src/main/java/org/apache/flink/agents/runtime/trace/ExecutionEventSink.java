@@ -21,7 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.annotation.Internal;
 
-/** Runtime bridge for emitting execution lifecycle events to the event log pipeline. */
+/** Runtime bridge for emitting execution lifecycle events to runtime observability consumers. */
 @Internal
 @FunctionalInterface
 public interface ExecutionEventSink {

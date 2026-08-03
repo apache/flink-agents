@@ -76,6 +76,7 @@ import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 class OperatorStateManager {
 
     static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
+    static final String ACTION_TASK_STATE_NAME = "actionTasks";
     static final String PENDING_INPUT_EVENT_STATE_NAME = "pendingInputEvents";
 
     private ListState<ActionTask> actionTasksKState;
@@ -126,7 +127,7 @@ class OperatorStateManager {
         actionTasksKState =
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
-                                "actionTasks", TypeInformation.of(ActionTask.class)));
+                                ACTION_TASK_STATE_NAME, TypeInformation.of(ActionTask.class)));
         pendingInputEventsKState =
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
@@ -325,6 +326,21 @@ class OperatorStateManager {
                         VoidNamespaceSerializer.INSTANCE,
                         new ListStateDescriptor<>(
                                 PENDING_INPUT_EVENT_STATE_NAME, TypeInformation.of(Event.class)),
+                        function);
+    }
+
+    /** Applies a function to the pending-action-task list state for every key in the backend. */
+    @SuppressWarnings("unchecked")
+    void forEachActionTaskKey(
+            KeyedStateBackend<?> keyedStateBackend,
+            KeyedStateFunction<Object, ListState<ActionTask>> function)
+            throws Exception {
+        ((KeyedStateBackend<Object>) keyedStateBackend)
+                .applyToAllKeys(
+                        VoidNamespace.INSTANCE,
+                        VoidNamespaceSerializer.INSTANCE,
+                        new ListStateDescriptor<>(
+                                ACTION_TASK_STATE_NAME, TypeInformation.of(ActionTask.class)),
                         function);
     }
 }
