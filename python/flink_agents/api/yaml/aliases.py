@@ -72,6 +72,8 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "openai_completions": ResourceName.ChatModel.Java.OPENAI_COMPLETIONS_CONNECTION,
             "openai_responses": ResourceName.ChatModel.Java.OPENAI_RESPONSES_CONNECTION,
             "anthropic": ResourceName.ChatModel.Java.ANTHROPIC_CONNECTION,
+            "gemini": ResourceName.ChatModel.Java.GEMINI_CONNECTION,
+            "azure_openai": ResourceName.ChatModel.Java.AZURE_OPENAI_CONNECTION,
             "azure": ResourceName.ChatModel.Java.AZURE_CONNECTION,
             "bedrock": ResourceName.ChatModel.Java.BEDROCK_CONNECTION,
         },
@@ -89,6 +91,8 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "openai_completions": ResourceName.ChatModel.Java.OPENAI_COMPLETIONS_SETUP,
             "openai_responses": ResourceName.ChatModel.Java.OPENAI_RESPONSES_SETUP,
             "anthropic": ResourceName.ChatModel.Java.ANTHROPIC_SETUP,
+            "gemini": ResourceName.ChatModel.Java.GEMINI_SETUP,
+            "azure_openai": ResourceName.ChatModel.Java.AZURE_OPENAI_SETUP,
             "azure": ResourceName.ChatModel.Java.AZURE_SETUP,
             "bedrock": ResourceName.ChatModel.Java.BEDROCK_SETUP,
         },
@@ -118,9 +122,13 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
     ResourceType.VECTOR_STORE: {
         "python": {
             "chroma": ResourceName.VectorStore.CHROMA_VECTOR_STORE,
+            "mem0": ResourceName.VectorStore.MEM0_VECTOR_STORE,
         },
         "java": {
             "elasticsearch": ResourceName.VectorStore.Java.ELASTICSEARCH_VECTOR_STORE,
+            "opensearch": ResourceName.VectorStore.Java.OPENSEARCH_VECTOR_STORE,
+            "s3_vectors": ResourceName.VectorStore.Java.S3_VECTORS_VECTOR_STORE,
+            "milvus": ResourceName.VectorStore.Java.MILVUS_VECTOR_STORE,
         },
     },
 }

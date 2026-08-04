@@ -528,7 +528,8 @@ Common chat-model aliases:
 | `openai_completions` | —                           | OpenAI Completions (Java)   |
 | `openai_responses`   | —                           | OpenAI Responses (Java)     |
 | `anthropic`          | Anthropic                   | Anthropic                   |
-| `azure_openai`       | Azure OpenAI (Python)       | —                           |
+| `gemini`             | —                           | Gemini (Java)               |
+| `azure_openai`       | Azure OpenAI (Python)       | Azure OpenAI (Java)         |
 | `azure`              | —                           | Azure AI (Java)             |
 | `bedrock`            | —                           | Bedrock (Java)              |
 | `tongyi`             | Tongyi (Python)             | —                           |
@@ -544,10 +545,14 @@ Embedding-model aliases (apply to both `embedding_model_connections` and `embedd
 
 Vector-store aliases:
 
-| Alias           | `type: python` | `type: java`   |
-| --------------- | -------------- | -------------- |
-| `chroma`        | Chroma         | —              |
-| `elasticsearch` | —              | Elasticsearch  |
+| Alias           | `type: python` | `type: java`    |
+| --------------- | -------------- | --------------- |
+| `chroma`        | Chroma         | —               |
+| `mem0`          | Mem0           | —               |
+| `elasticsearch` | —              | Elasticsearch   |
+| `opensearch`    | —              | OpenSearch      |
+| `s3_vectors`    | —              | S3 Vectors      |
+| `milvus`        | —              | Milvus          |
 
 The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
 

@@ -127,6 +127,36 @@ def test_resolve_clazz_default_language_is_python() -> None:
     assert default == explicit
 
 
+def test_resolve_clazz_covers_chat_model_java_gemini_and_azure_openai() -> None:
+    assert resolve_clazz("gemini", ResourceType.CHAT_MODEL_CONNECTION, "java").endswith(
+        "GeminiChatModelConnection"
+    )
+    assert resolve_clazz("gemini", ResourceType.CHAT_MODEL, "java").endswith(
+        "GeminiChatModelSetup"
+    )
+    assert resolve_clazz(
+        "azure_openai", ResourceType.CHAT_MODEL_CONNECTION, "java"
+    ).endswith("AzureOpenAIChatModelConnection")
+    assert resolve_clazz("azure_openai", ResourceType.CHAT_MODEL, "java").endswith(
+        "AzureOpenAIChatModelSetup"
+    )
+
+
+def test_resolve_clazz_covers_vector_store_java_and_python() -> None:
+    assert resolve_clazz("opensearch", ResourceType.VECTOR_STORE, "java").endswith(
+        "OpenSearchVectorStore"
+    )
+    assert resolve_clazz("s3_vectors", ResourceType.VECTOR_STORE, "java").endswith(
+        "S3VectorsVectorStore"
+    )
+    assert resolve_clazz("milvus", ResourceType.VECTOR_STORE, "java").endswith(
+        "MilvusVectorStore"
+    )
+    assert resolve_clazz("mem0", ResourceType.VECTOR_STORE, "python").endswith(
+        "Mem0VectorStore"
+    )
+
+
 def test_java_wrapper_clazz_table_covers_supported_types() -> None:
     # The Python-side wrappers must exist for every cross-language type
     expected = {
