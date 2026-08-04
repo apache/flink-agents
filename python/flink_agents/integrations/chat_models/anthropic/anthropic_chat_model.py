@@ -18,10 +18,10 @@
 import uuid
 from typing import Any, Dict, List, Sequence
 
-from anthropic import Anthropic
+from anthropic import Anthropic, transform_schema
 from anthropic._types import NOT_GIVEN
 from anthropic.types import MessageParam, TextBlockParam, ToolParam
-from pydantic import Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
@@ -111,6 +111,64 @@ def convert_to_anthropic_system_prompts(
     ]
 
 
+# Models Anthropic documents native structured-output support for. Source of truth:
+# https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+#
+# The documented rule is generational rather than a per-snapshot list: structured
+# outputs are generally available for Claude 4.5 and later models, and for Claude Mythos
+# Preview. Names from the 4.6 generation onward carry no date and are pinned, so the
+# name is itself the snapshot and is matched exactly.
+#
+# The three 4.5-generation names are aliases that front a dated snapshot, so a request
+# may carry either the alias or the snapshot behind it and both have to match. Those are
+# matched by prefix instead, and the prefix has to retain the minor version:
+# "claude-opus-4" would also capture claude-opus-4-1-20250805, which predates the cutoff
+# and is not capable.
+#
+# A name outside both sets reports not-capable and degrades to the prompt-engineering
+# fallback rather than failing at the provider.
+_NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
+    {
+        "claude-opus-4-6",
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+        "claude-opus-5",
+        "claude-sonnet-4-6",
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-mythos-preview",
+    }
+)
+
+_NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES = (
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+)
+
+
+def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
+    """Build the Anthropic ``output_config`` for a native structured-output request.
+
+    Returns ``None`` (leaving the request unchanged) unless the schema is a
+    ``BaseModel`` subclass. A ``RowTypeInfo`` schema is skipped so it keeps the
+    prompt-engineering fallback.
+
+    Anthropic's format object carries only the schema and its type, so it shares no
+    shape with the providers that nest the schema under a named, strict
+    ``json_schema`` object and is built here rather than in a shared helper.
+    """
+    if output_schema is None:
+        return None
+    model = (
+        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    )
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return {"format": {"type": "json_schema", "schema": transform_schema(model)}}
+
+
 class AnthropicChatModelConnection(BaseChatModelConnection):
     """Manages the connection to the Anthropic AI models for chat interactions.
 
@@ -165,6 +223,24 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             )
         return self._client
 
+    @override
+    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+        """Whether Anthropic documents structured output for ``effective_model``.
+
+        See the module-level allowlists for the source of truth and for why the
+        4.5-generation aliases are matched by prefix while every other name is matched
+        exactly. A name outside both reports ``False`` so it degrades to the
+        prompt-engineering fallback rather than failing at the provider.
+
+        Reads no instance state, so capability stays answerable independently of how
+        the connection was configured.
+        """
+        if not effective_model:
+            return False
+        return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS or (
+            effective_model.startswith(_NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES)
+        )
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -174,12 +250,27 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
     ) -> ChatMessage:
         """Direct communication with Anthropic model service for chat conversation.
 
-        A non-``None`` ``output_schema`` is rejected: this connection has no native
-        structured-output translation, so callers stay on the prompt-engineering
-        fallback. Declaring the parameter keeps a caller-supplied schema out of
-        ``**kwargs``, which is forwarded to the provider SDK.
+        Parameters
+        ----------
+        messages : Sequence[ChatMessage]
+            Input message sequence
+        tools : Optional[List]
+            List of tools that can be called by the model
+        output_schema : OutputSchema | None
+            The schema the response should conform to, or ``None`` for an unconstrained
+            response. Native structured output is applied only for a ``BaseModel``
+            schema on a model the provider documents as capable, and only when the
+            caller has not already supplied ``output_config``. Any other combination
+            sends no derived schema and keeps the prompt-engineering fallback.
+        **kwargs : Any
+            Additional parameters passed to the model service (e.g., temperature,
+            max_tokens, etc.)
+
+        Returns:
+        -------
+        ChatMessage
+            Model response message
         """
-        self._reject_unsupported_output_schema(output_schema)
         anthropic_tools = None
         if tools is not None:
             anthropic_tools = [
@@ -188,6 +279,23 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
 
         anthropic_system = convert_to_anthropic_system_prompts(messages)
         anthropic_messages = convert_to_anthropic_messages(messages)
+
+        # TODO(#912): the requested strategy is not visible here, so this check
+        # cannot tell an explicit NATIVE request apart from one that merely
+        # resolved to native. A caller asking for NATIVE on a model this
+        # predicate rejects therefore degrades silently to the prompt-engineering
+        # fallback instead of getting an error. Once strategy resolution is wired
+        # up, NATIVE must either bypass this capability check or fail explicitly.
+        if output_schema is not None and self.supports_native_structured_output(
+            kwargs.get("model")
+        ):
+            output_config = _native_output_config(output_schema)
+            # An output_config already in kwargs is the caller being explicit about the
+            # exact parameter this branch writes, so it is left alone and the schema
+            # keeps the prompt-engineering fallback. Writing over it would drop the
+            # caller's value with no error and no other trace.
+            if output_config is not None and "output_config" not in kwargs:
+                kwargs["output_config"] = output_config
 
         message = self.client.messages.create(
             messages=anthropic_messages,
