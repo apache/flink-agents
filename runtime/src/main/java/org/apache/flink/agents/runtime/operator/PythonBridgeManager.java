@@ -293,7 +293,7 @@ class PythonBridgeManager implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        OperatorUtils.closeAllResources(
+        CloseableUtils.closeAll(
                 longTermMemory,
                 pythonActionExecutor,
                 pythonResourceAdapter,
