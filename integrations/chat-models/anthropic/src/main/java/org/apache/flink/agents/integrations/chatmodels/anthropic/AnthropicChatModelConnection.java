@@ -120,18 +120,9 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams) {
         try {
-            // Check if JSON prefill is requested before building request (modelParams may be
-            // modified).
-            boolean jsonPrefillRequested =
-                    modelParams != null && Boolean.TRUE.equals(modelParams.get("json_prefill"));
-            // JSON prefill is automatically disabled when tools are passed in the request,
-            // because it interferes with native tool calling.
-            boolean hasToolsInRequest = tools != null && !tools.isEmpty();
-            boolean jsonPrefillApplied = jsonPrefillRequested && !hasToolsInRequest;
-
-            MessageCreateParams params = buildRequest(messages, tools, modelParams);
-            Message response = client.messages().create(params);
-            ChatMessage result = convertResponse(response, jsonPrefillApplied);
+            BuiltRequest built = buildRequest(messages, tools, modelParams);
+            Message response = client.messages().create(built.params);
+            ChatMessage result = convertResponse(built, response);
 
             // Stash token usage
             String modelName = null;
@@ -153,7 +144,15 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         }
     }
 
-    private MessageCreateParams buildRequest(
+    /**
+     * Builds the request and reports the JSON prefill decision it made.
+     *
+     * <p>Whether the prefilled assistant {@code "{"} message was appended cannot be recomputed from
+     * the request alone, and {@link #convertResponse} must know it to reconstruct the full JSON
+     * document. Deciding once here and carrying the answer out keeps the request and the response
+     * conversion from disagreeing.
+     */
+    BuiltRequest buildRequest(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> rawModelParams) {
@@ -222,13 +221,27 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         // json_prefill when tools are actually passed in the request.
         Object jsonPrefill = modelParams.remove("json_prefill");
         boolean hasToolsInRequest = tools != null && !tools.isEmpty();
-        if (Boolean.TRUE.equals(jsonPrefill) && !hasToolsInRequest) {
+        boolean jsonPrefillApplied = Boolean.TRUE.equals(jsonPrefill) && !hasToolsInRequest;
+        if (jsonPrefillApplied) {
             anthropicMessages.add(
                     MessageParam.builder().role(MessageParam.Role.ASSISTANT).content("{").build());
+            // The builder copies the list it is given, so appending to the local list after the
+            // earlier messages(...) call is not enough - the list has to be handed over again.
             builder.messages(anthropicMessages);
         }
 
-        return builder.build();
+        return new BuiltRequest(builder.build(), jsonPrefillApplied);
+    }
+
+    /** A built request together with the JSON prefill decision applied while building it. */
+    static final class BuiltRequest {
+        final MessageCreateParams params;
+        final boolean jsonPrefillApplied;
+
+        BuiltRequest(MessageCreateParams params, boolean jsonPrefillApplied) {
+            this.params = params;
+            this.jsonPrefillApplied = jsonPrefillApplied;
+        }
     }
 
     private List<TextBlockParam> extractSystemMessages(List<ChatMessage> messages) {
@@ -362,7 +375,17 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         }
     }
 
-    private ChatMessage convertResponse(Message response, boolean jsonPrefillApplied) {
+    /**
+     * Converts a response into a {@link ChatMessage}, reconstructing the leading {@code "{"} when
+     * the request carried the JSON prefill.
+     *
+     * <p>Takes the whole {@link BuiltRequest} rather than the prefill flag on its own so the flag
+     * travels with the request it was derived from, instead of being computed separately at the call
+     * site where the two can drift apart. A flag that disagrees with the request either prepends a
+     * stray {@code "{"} or drops a required one, and the resulting JSON is malformed in a way the
+     * response itself gives no sign of.
+     */
+    ChatMessage convertResponse(BuiltRequest built, Message response) {
         List<ContentBlock> contentBlocks = response.content();
         if (contentBlocks.isEmpty()) {
             throw new IllegalStateException("Anthropic response did not contain any content.");
@@ -370,7 +393,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
 
         StringBuilder textContent = new StringBuilder();
         // If JSON prefill was used, prepend "{" since the response only contains the continuation
-        if (jsonPrefillApplied) {
+        if (built.jsonPrefillApplied) {
             textContent.append("{");
         }
         List<Map<String, Object>> toolCalls = new ArrayList<>();
