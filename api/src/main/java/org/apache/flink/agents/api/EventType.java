@@ -41,6 +41,8 @@ public final class EventType {
             org.apache.flink.agents.api.event.ContextRetrievalRequestEvent.EVENT_TYPE;
     public static final String ContextRetrievalResponseEvent =
             org.apache.flink.agents.api.event.ContextRetrievalResponseEvent.EVENT_TYPE;
+    public static final String ModelRoutingEvent =
+            org.apache.flink.agents.api.event.ModelRoutingEvent.EVENT_TYPE;
 
     public static final String ShortTermWriteEvent =
             org.apache.flink.agents.api.event.ShortTermWriteEvent.EVENT_TYPE;
