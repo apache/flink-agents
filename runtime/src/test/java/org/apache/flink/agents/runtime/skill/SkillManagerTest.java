@@ -291,23 +291,35 @@ class SkillManagerTest {
 
     /**
      * Minimal {@link SkillRepository} for lifecycle tests: each instance owns one fake skill and
-     * records whether {@code close()} was invoked. May be configured to throw a {@link
-     * RuntimeException} on close ({@link SkillRepository#close()} declares no checked exceptions;
-     * {@link SkillManager#close()} catches {@code Exception} so this still exercises the cascade
-     * logic).
+     * records whether {@code close()} was invoked. May be configured to fail on close, exercising
+     * the cascade logic in {@link SkillManager#close()}, and/or to fail from {@link #getSkills()},
+     * which fails the repo's registration after its {@code open()} has already succeeded.
+     *
+     * <p>{@link SkillRepository} declares no checked exceptions, so a configured failure is either
+     * a {@link RuntimeException} or an {@link Error}. Both kinds are needed: they take different
+     * paths through the handlers in {@link SkillManager}.
      */
     private static final class FakeRepo implements SkillRepository {
         private final AgentSkill skill;
         final AtomicBoolean closed = new AtomicBoolean();
-        @javax.annotation.Nullable private final RuntimeException closeException;
+        @javax.annotation.Nullable private final Throwable closeException;
+        @javax.annotation.Nullable private final Throwable getSkillsException;
 
         FakeRepo(String skillName) {
             this(skillName, null);
         }
 
-        FakeRepo(String skillName, @javax.annotation.Nullable RuntimeException closeException) {
+        FakeRepo(String skillName, @javax.annotation.Nullable Throwable closeException) {
+            this(skillName, closeException, null);
+        }
+
+        FakeRepo(
+                String skillName,
+                @javax.annotation.Nullable Throwable closeException,
+                @javax.annotation.Nullable Throwable getSkillsException) {
             this.skill = new AgentSkill(skillName, "fake", "body", null, null, null);
             this.closeException = closeException;
+            this.getSkillsException = getSkillsException;
         }
 
         @Override
@@ -317,6 +329,9 @@ class SkillManagerTest {
 
         @Override
         public List<AgentSkill> getSkills() {
+            if (getSkillsException != null) {
+                throwUnchecked(getSkillsException);
+            }
             return List.of(skill);
         }
 
@@ -329,8 +344,24 @@ class SkillManagerTest {
         public void close() {
             closed.set(true);
             if (closeException != null) {
-                throw closeException;
+                throwUnchecked(closeException);
             }
+        }
+
+        /**
+         * Throw a configured failure. Declaring the fields as {@link Throwable} lets one field
+         * carry either kind of unchecked failure; the interface permits nothing else, so a checked
+         * exception is a test-setup mistake and fails loudly rather than being smuggled past the
+         * compiler.
+         */
+        private static void throwUnchecked(Throwable failure) {
+            if (failure instanceof Error) {
+                throw (Error) failure;
+            }
+            if (failure instanceof RuntimeException) {
+                throw (RuntimeException) failure;
+            }
+            throw new AssertionError("FakeRepo failures must be unchecked", failure);
         }
     }
 
@@ -384,6 +415,60 @@ class SkillManagerTest {
         assertEquals("primary-boom", ex.getCause().getMessage());
         assertEquals(1, ex.getSuppressed().length);
         assertSame(cleanupBoom, ex.getSuppressed()[0]);
+    }
+
+    @Test
+    void registrationFailureOfUnwrappedTypeClosesReposAndPropagates() {
+        // A failure whose type is neither IOException nor IllegalArgumentException reaches the
+        // caller unchanged rather than being wrapped, so only a guard spanning every failure path
+        // can release the repos. Two repos are owned by the time registration fails: the earlier
+        // source's, and the one whose registration failed (it is recorded before registration
+        // runs). Both must be released, and a failure during that release must ride along as
+        // suppressed instead of replacing the original.
+        IllegalStateException registrationBoom = new IllegalStateException("registration-boom");
+        RuntimeException cleanupBoom = new RuntimeException("cleanup-boom");
+        FakeRepo first = new FakeRepo("alpha", cleanupBoom);
+        FakeRepo failing = new FakeRepo("beta", null, registrationBoom);
+        SkillSourceRegistry.register("test-register-boom-ok", (params, cl) -> first);
+        SkillSourceRegistry.register("test-register-boom-fail", (params, cl) -> failing);
+
+        Skills config =
+                new Skills(
+                        List.of(
+                                new SkillSourceSpec("test-register-boom-ok", Map.of()),
+                                new SkillSourceSpec("test-register-boom-fail", Map.of())));
+
+        IllegalStateException ex =
+                assertThrows(IllegalStateException.class, () -> new SkillManager(config));
+        // Identity, not just type: IllegalStateException is also what the wrapping catch builds.
+        assertSame(registrationBoom, ex);
+        assertTrue(first.closed.get(), "repo opened before the failure must be closed");
+        assertTrue(failing.closed.get(), "repo whose registration failed must be closed");
+        assertEquals(1, ex.getSuppressed().length);
+        assertSame(cleanupBoom, ex.getSuppressed()[0]);
+    }
+
+    @Test
+    void errorDuringRegistrationStillClosesRepoAndSuppressesCloseError() {
+        // An Error is not an Exception, so it survives a load failure only if both the guard around
+        // the source loop and the guard around that guard's cleanup accept Throwable. This repo
+        // fails its registration with one Error and then its close() with another: a load guard
+        // narrowed to Exception would skip the cleanup entirely, and a cleanup guard narrowed to
+        // Exception would let the close() Error escape and replace the registration failure.
+        // One source keeps the assertions deterministic — closeRepos() catches only Exception per
+        // repo, so an Error from any repo's close() ends the iteration over the remaining ones.
+        Error registrationBoom = new Error("registration-error");
+        Error closeBoom = new Error("close-error");
+        FakeRepo repo = new FakeRepo("alpha", closeBoom, registrationBoom);
+        SkillSourceRegistry.register("test-error-fail", (params, cl) -> repo);
+
+        Skills config = new Skills(List.of(new SkillSourceSpec("test-error-fail", Map.of())));
+
+        Error ex = assertThrows(Error.class, () -> new SkillManager(config));
+        assertSame(registrationBoom, ex);
+        assertTrue(repo.closed.get(), "the repo owned when registration failed must be closed");
+        assertEquals(1, ex.getSuppressed().length);
+        assertSame(closeBoom, ex.getSuppressed()[0]);
     }
 
     @Test
