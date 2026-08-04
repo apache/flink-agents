@@ -57,7 +57,9 @@ def ensure_python_dependency_generation(job_id: str, generation: str) -> bool:
         if previous_generation == current_generation:
             # Pemja inserts configured paths for every interpreter sharing this
             # generation.
-            _prepend_current_paths(_paths_for_generation(sys.path, current_generation))
+            _deduplicate_and_prepend_paths(
+                _paths_for_generation(sys.path, current_generation)
+            )
             return False
 
         if previous_generation is not None:
@@ -83,7 +85,7 @@ def _deactivate_generation(generation: str) -> None:
 
 
 def _activate_generation(generation: str) -> None:
-    _prepend_current_paths(_paths_for_generation(sys.path, generation))
+    _deduplicate_and_prepend_paths(_paths_for_generation(sys.path, generation))
     _clear_importer_cache(generation)
     importlib.invalidate_caches()
 
@@ -153,7 +155,7 @@ def _remove_paths_from_generation(paths: list[str], generation: str) -> None:
     ]
 
 
-def _prepend_current_paths(current_paths: list[str]) -> None:
+def _deduplicate_and_prepend_paths(current_paths: list[str]) -> None:
     normalized_current_paths = set(current_paths)
     sys.path[:] = [
         path
