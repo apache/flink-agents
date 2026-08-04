@@ -299,14 +299,7 @@ class PythonBridgeManager implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        if (pythonActionExecutor != null) {
-            pythonActionExecutor.close();
-        }
-        if (pythonInterpreter != null) {
-            pythonInterpreter.close();
-        }
-        if (pythonEnvironmentManager != null) {
-            pythonEnvironmentManager.close();
-        }
+        OperatorUtils.closeAllResources(
+                pythonActionExecutor, pythonInterpreter, pythonEnvironmentManager);
     }
 }

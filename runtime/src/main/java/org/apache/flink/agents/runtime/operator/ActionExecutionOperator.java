@@ -554,23 +554,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void close() throws Exception {
         // Must close before pythonInterpreter since cached resources may hold Python references.
-        if (resourceCache != null) {
-            resourceCache.close();
-        }
-        if (contextManager != null) {
-            contextManager.close();
-        }
-        if (pythonBridge != null) {
-            pythonBridge.close();
-        }
-        if (eventRouter != null) {
-            eventRouter.close();
-        }
-        if (durableExecManager != null) {
-            durableExecManager.close();
-        }
-
-        super.close();
+        OperatorUtils.closeAllResources(
+                resourceCache,
+                contextManager,
+                pythonBridge,
+                eventRouter,
+                durableExecManager,
+                super::close);
     }
 
     @Override
