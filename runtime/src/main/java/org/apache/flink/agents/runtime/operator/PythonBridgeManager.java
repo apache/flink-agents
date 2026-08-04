@@ -153,6 +153,16 @@ class PythonBridgeManager implements AutoCloseable {
             pythonEnvironmentManager.open();
             EmbeddedPythonEnvironment env = pythonEnvironmentManager.createEnvironment();
             pythonInterpreter = env.getInterpreter();
+            String dependencyGeneration = pythonEnvironmentManager.getBaseDirectory();
+            boolean dependencyGenerationChanged =
+                    PythonDependencyGenerationManager.ensurePythonDependencyGeneration(
+                            pythonInterpreter, jobId, dependencyGeneration);
+            if (dependencyGenerationChanged) {
+                LOG.info(
+                        "Activated Python dependency generation {} for job {}.",
+                        dependencyGeneration,
+                        jobId);
+            }
             pythonRunnerContext =
                     new PythonRunnerContextImpl(
                             metricGroup,
