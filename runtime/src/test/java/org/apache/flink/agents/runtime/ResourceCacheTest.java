@@ -219,6 +219,29 @@ public class ResourceCacheTest {
     }
 
     @Test
+    public void testHasResourceCoversProvidersAndCachedOnlyEntries() throws Exception {
+        TestAgentWithResources agent = new TestAgentWithResources();
+        AgentPlan agentPlan = new AgentPlan(agent);
+        ResourceCache cache = new ResourceCache(agentPlan.getResourceProviders());
+
+        // registered provider, resource not yet created
+        assertThat(cache.hasResource("myTool", ResourceType.TOOL)).isTrue();
+        assertThat(cache.hasResource("non-existent", ResourceType.TOOL)).isFalse();
+
+        // a resource inserted directly into the cache has no provider but must still be visible
+        Resource cachedOnly =
+                new Resource(new ResourceDescriptor("cachedOnly", Map.of()), null) {
+                    @Override
+                    public ResourceType getResourceType() {
+                        return ResourceType.CHAT_MODEL;
+                    }
+                };
+        assertThat(cache.hasResource("cachedOnly", ResourceType.CHAT_MODEL)).isFalse();
+        cache.put("cachedOnly", ResourceType.CHAT_MODEL, cachedOnly);
+        assertThat(cache.hasResource("cachedOnly", ResourceType.CHAT_MODEL)).isTrue();
+    }
+
+    @Test
     public void testGetResourceFromResourceProvider() throws Exception {
         TestAgentWithResources agent = new TestAgentWithResources();
         AgentPlan agentPlan = new AgentPlan(agent);

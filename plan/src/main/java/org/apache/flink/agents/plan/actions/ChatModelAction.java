@@ -27,11 +27,15 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
+import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
+import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
@@ -51,7 +55,35 @@ import java.util.*;
 import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
 import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
 
-/** Built-in action for processing chat request and tool call result. */
+/**
+ * Built-in action for processing chat request and tool call result.
+ *
+ * <h2>Model routing overview</h2>
+ *
+ * <p>When a {@link ChatRequestEvent} names a {@code MODEL_ROUTER} instead of a chat model, this
+ * action layers five jobs on top of the normal chat path; each is localized to one place:
+ *
+ * <ol>
+ *   <li><b>Decide</b> — {@code resolveRouter} runs the router's strategy and normalizes the result
+ *       (abstain → default model; non-candidate → fail).
+ *   <li><b>Durably</b> — the strategy runs inside a durable call ({@code "route:<requestId>:
+ *       <router>"}), so recovery replays the persisted decision instead of re-running a possibly
+ *       non-deterministic strategy.
+ *   <li><b>Once per reasoning loop</b> — the selected concrete model and its routing metadata are
+ *       saved in the tool-request context; tool rounds re-enter {@code chat} via {@code
+ *       RoutingSelection.carried} with no re-routing.
+ *   <li><b>Fallback over retries</b> — {@code candidateAttemptOrder} tries the selected model first
+ *       (with its full retry budget, durable id {@code "chat:<router>:<candidate>"}), then
+ *       remaining candidates in declaration order if fallback is enabled.
+ *   <li><b>Observably</b> — a {@link ModelRoutingEvent} records the decision (and a second one any
+ *       fallback outcome); {@code attachRoutingMetadata} stamps {@code model_routing} extra args on
+ *       the response; decision latency feeds {@code decision_ms} and the {@code
+ *       routingDecisionLatencyMs} histogram.
+ * </ol>
+ *
+ * <p>A request naming a plain chat model takes the pre-routing path unchanged, including the legacy
+ * durable call id {@code "chat"}.
+ */
 public class ChatModelAction {
     private static final Logger LOG = LoggerFactory.getLogger(ChatModelAction.class);
 
@@ -59,6 +91,7 @@ public class ChatModelAction {
     private static final String TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT";
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
     private static final String MODEL = "model";
+    private static final String ROUTING = "routing";
     private static final String OUTPUT_SCHEMA = "outputSchema";
     private static final String PROMPT_ARGS = "prompt_args";
     private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
@@ -66,6 +99,121 @@ public class ChatModelAction {
     private static final String TOTAL_RETRY_WAIT_SEC = "totalRetryWaitSec";
 
     private static final ObjectMapper mapper = new ObjectMapper();
+
+    private static final class RoutingSelection {
+        private final String requestedModel;
+        private final String selectedModel;
+        private final List<String> candidates;
+        private final boolean isRouter;
+        private final boolean fallbackEnabled;
+        private final String decisionSource;
+        @Nullable private final String reason;
+        @Nullable private final Double score;
+        private final Map<String, Object> metadata;
+
+        /**
+         * Routing metadata inherited from the initial routed request, stamped unchanged onto
+         * responses produced by tool-call rounds (which reuse the already-selected model).
+         */
+        @Nullable private final Map<String, Object> carriedRouting;
+
+        private RoutingSelection(
+                String requestedModel,
+                String selectedModel,
+                List<String> candidates,
+                boolean isRouter,
+                boolean fallbackEnabled,
+                String decisionSource,
+                @Nullable String reason,
+                @Nullable Double score,
+                @Nullable Map<String, Object> metadata,
+                @Nullable Map<String, Object> carriedRouting) {
+            this.requestedModel = requestedModel;
+            this.selectedModel = selectedModel;
+            this.candidates = Collections.unmodifiableList(new ArrayList<>(candidates));
+            this.isRouter = isRouter;
+            this.fallbackEnabled = fallbackEnabled;
+            this.decisionSource = decisionSource;
+            this.reason = reason;
+            this.score = score;
+            this.metadata =
+                    metadata == null
+                            ? Collections.emptyMap()
+                            : Collections.unmodifiableMap(new HashMap<>(metadata));
+            this.carriedRouting = carriedRouting;
+        }
+
+        private static RoutingSelection direct(String model) {
+            return new RoutingSelection(
+                    model,
+                    model,
+                    Collections.singletonList(model),
+                    false,
+                    false,
+                    "direct",
+                    null,
+                    null,
+                    null,
+                    null);
+        }
+
+        private static RoutingSelection carried(String model, Map<String, Object> routing) {
+            return new RoutingSelection(
+                    model,
+                    model,
+                    Collections.singletonList(model),
+                    false,
+                    false,
+                    "carried",
+                    null,
+                    null,
+                    null,
+                    routing);
+        }
+    }
+
+    private static final class ChatAttemptResult {
+        private final String model;
+        private final BaseChatModelSetup chatModel;
+        private final ChatMessage response;
+        private final int retryCount;
+        private final int totalRetryWaitSec;
+
+        private ChatAttemptResult(
+                String model,
+                BaseChatModelSetup chatModel,
+                ChatMessage response,
+                int retryCount,
+                int totalRetryWaitSec) {
+            this.model = model;
+            this.chatModel = chatModel;
+            this.response = response;
+            this.retryCount = retryCount;
+            this.totalRetryWaitSec = totalRetryWaitSec;
+        }
+    }
+
+    private static final class ChatAttemptFailed extends Exception {
+        private final String model;
+        private final BaseChatModelSetup chatModel;
+        private final Exception error;
+        private final int retryCount;
+        private final int totalRetryWaitSec;
+
+        private ChatAttemptFailed(
+                String model,
+                BaseChatModelSetup chatModel,
+                Exception error,
+                int retryCount,
+                int totalRetryWaitSec) {
+            super(error);
+            this.model = model;
+            this.chatModel = chatModel;
+            this.error = error;
+            this.retryCount = retryCount;
+            this.totalRetryWaitSec = totalRetryWaitSec;
+        }
+    }
 
     public static Action getChatModelAction() throws Exception {
         return new Action(
@@ -110,7 +258,8 @@ public class ChatModelAction {
             UUID initialRequestId,
             String model,
             Map<String, Object> promptArgs,
-            Object outputSchema)
+            Object outputSchema,
+            @Nullable Object routingMetadata)
             throws Exception {
         Map<UUID, Object> toolRequestEventContext;
         if (sensoryMem.isExist(TOOL_REQUEST_EVENT_CONTEXT)) {
@@ -125,6 +274,9 @@ public class ChatModelAction {
         context.put(PROMPT_ARGS, promptArgs != null ? promptArgs : Collections.emptyMap());
         if (outputSchema != null) {
             context.put(OUTPUT_SCHEMA, outputSchema);
+        }
+        if (routingMetadata != null) {
+            context.put(ROUTING, routingMetadata);
         }
         toolRequestEventContext.put(toolRequestEventId, context);
         sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
@@ -225,7 +377,8 @@ public class ChatModelAction {
                 initialRequestId,
                 model,
                 promptArgs,
-                outputSchema);
+                outputSchema,
+                response.getExtraArgs().get("model_routing"));
 
         ctx.sendEvent(toolRequestEvent);
     }
@@ -320,15 +473,23 @@ public class ChatModelAction {
             @Nullable Object outputSchema,
             RunnerContext ctx)
             throws Exception {
-        BaseChatModelSetup chatModel =
-                (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
+        chat(
+                initialRequestId,
+                RoutingSelection.direct(model),
+                messages,
+                promptArgs,
+                outputSchema,
+                ctx);
+    }
 
-        boolean chatAsync = ctx.getConfig().get(AgentExecutionOptions.CHAT_ASYNC);
-
-        if ((chatModel instanceof PythonChatModelSetup) && !supportAsync()) {
-            chatAsync = false;
-        }
-
+    private static void chat(
+            UUID initialRequestId,
+            RoutingSelection selection,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            @Nullable Object outputSchema,
+            RunnerContext ctx)
+            throws Exception {
         Agent.ErrorHandlingStrategy strategy =
                 ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
         int numRetries = 0;
@@ -344,15 +505,129 @@ public class ChatModelAction {
                             : 0;
         }
 
-        ChatMessage response = null;
+        List<String> triedModels = new ArrayList<>();
+        Exception lastError = null;
+        for (String candidate : candidateAttemptOrder(selection)) {
+            triedModels.add(candidate);
+            try {
+                ChatAttemptResult result =
+                        chatWithRetries(
+                                initialRequestId,
+                                candidate,
+                                durableChatCallId(selection, candidate),
+                                messages,
+                                promptArgs,
+                                outputSchema,
+                                ctx,
+                                strategy,
+                                numRetries,
+                                retryWaitIntervalSec);
+                recordAttemptRetryStats(
+                        ctx,
+                        initialRequestId,
+                        result.chatModel,
+                        result.retryCount,
+                        result.totalRetryWaitSec);
+                if (selection.isRouter) {
+                    attachRoutingMetadata(result.response, selection, result.model, triedModels);
+                    if (!result.model.equals(selection.selectedModel)) {
+                        // The strategy's pick failed and another candidate answered; record the
+                        // outcome in the event log, not just on the response.
+                        ctx.sendEvent(
+                                new ModelRoutingEvent(
+                                        initialRequestId,
+                                        selection.requestedModel,
+                                        selection.candidates,
+                                        result.model,
+                                        ModelRoutingEvent.SOURCE_FALLBACK,
+                                        selection.fallbackEnabled,
+                                        String.format(
+                                                "fallback after selected model '%s' failed",
+                                                selection.selectedModel),
+                                        null,
+                                        selection.metadata,
+                                        null));
+                    }
+                } else if (selection.carriedRouting != null) {
+                    result.response
+                            .getExtraArgs()
+                            .put("model_routing", new LinkedHashMap<>(selection.carriedRouting));
+                }
+
+                if (!Objects.requireNonNull(result.response).getToolCalls().isEmpty()) {
+                    handleToolCalls(
+                            result.response,
+                            initialRequestId,
+                            result.model,
+                            result.chatModel,
+                            messages,
+                            promptArgs,
+                            outputSchema,
+                            ctx);
+                } else {
+                    Map<String, Long> retryStats =
+                            getRetryStats(ctx.getSensoryMemory(), initialRequestId);
+                    int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
+                    int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
+
+                    ctx.sendEvent(
+                            new ChatResponseEvent(
+                                    initialRequestId,
+                                    result.response,
+                                    totalRetryCount,
+                                    totalRetryWaitSec));
+                }
+                return;
+            } catch (ChatAttemptFailed e) {
+                recordAttemptRetryStats(
+                        ctx, initialRequestId, e.chatModel, e.retryCount, e.totalRetryWaitSec);
+                lastError = e.error;
+                LOG.debug(
+                        "Chat request {} failed for model {}, the input chat messages are {}.",
+                        initialRequestId,
+                        e.model,
+                        messages);
+            }
+        }
+
+        if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
+            LOG.warn(
+                    "Chat request {} failed with error: {}, ignored.", initialRequestId, lastError);
+            return;
+        }
+        throw Objects.requireNonNull(lastError);
+    }
+
+    private static ChatAttemptResult chatWithRetries(
+            UUID initialRequestId,
+            String model,
+            String durableCallId,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            @Nullable Object outputSchema,
+            RunnerContext ctx,
+            Agent.ErrorHandlingStrategy strategy,
+            int numRetries,
+            int retryWaitIntervalSec)
+            throws ChatAttemptFailed, Exception {
+        BaseChatModelSetup chatModel =
+                (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
+
+        boolean chatAsync = ctx.getConfig().get(AgentExecutionOptions.CHAT_ASYNC);
+
+        if ((chatModel instanceof PythonChatModelSetup) && !supportAsync()) {
+            chatAsync = false;
+        }
+
         int actualRetryCount = 0;
         int totalWaitTimeSec = 0;
+        ChatMessage response;
 
         DurableCallable<ChatMessage> callable =
                 new DurableCallable<>() {
                     @Override
                     public String getId() {
-                        return "chat";
+                        return durableCallId;
                     }
 
                     @Override
@@ -377,16 +652,10 @@ public class ChatModelAction {
                 if (outputSchema != null && response.getToolCalls().isEmpty()) {
                     response = generateStructuredOutput(response, outputSchema);
                 }
-                break;
+                return new ChatAttemptResult(
+                        model, chatModel, response, actualRetryCount, totalWaitTimeSec);
             } catch (Exception e) {
-                if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
-                    LOG.warn(
-                            "Chat request {} failed with error: {}, ignored.", initialRequestId, e);
-                    return;
-                } else if (strategy == Agent.ErrorHandlingStrategy.RETRY) {
-                    if (attempt == numRetries) {
-                        throw e;
-                    }
+                if (strategy == Agent.ErrorHandlingStrategy.RETRY && attempt < numRetries) {
                     actualRetryCount = attempt + 1;
                     int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
                     LOG.warn(
@@ -400,54 +669,197 @@ public class ChatModelAction {
                         Thread.sleep(currentWaitSec * 1000L);
                         totalWaitTimeSec += currentWaitSec;
                     }
-                } else {
-                    LOG.debug(
-                            "Chat request {} failed, the input chat messages are {}.",
-                            initialRequestId,
-                            messages);
-                    throw e;
+                    continue;
+                }
+                throw new ChatAttemptFailed(
+                        model, chatModel, e, actualRetryCount, totalWaitTimeSec);
+            }
+        }
+        throw new IllegalStateException("Unreachable chat retry state.");
+    }
+
+    private static void recordAttemptRetryStats(
+            RunnerContext ctx,
+            UUID initialRequestId,
+            BaseChatModelSetup chatModel,
+            int retryCount,
+            int retryWaitSec)
+            throws Exception {
+        if (retryCount <= 0) {
+            return;
+        }
+        accumulateRetryStats(ctx.getSensoryMemory(), initialRequestId, retryCount, retryWaitSec);
+        String metricModel = chatModel.getConnectionName();
+        recordRetryMetrics(
+                ctx,
+                metricModel == null || metricModel.isEmpty() ? "unknown" : metricModel,
+                retryCount,
+                retryWaitSec);
+    }
+
+    private static List<String> candidateAttemptOrder(RoutingSelection selection) {
+        List<String> order = new ArrayList<>();
+        order.add(selection.selectedModel);
+        if (selection.isRouter && selection.fallbackEnabled) {
+            for (String candidate : selection.candidates) {
+                if (!candidate.equals(selection.selectedModel)) {
+                    order.add(candidate);
                 }
             }
         }
+        return order;
+    }
 
-        if (actualRetryCount > 0) {
-            accumulateRetryStats(
-                    ctx.getSensoryMemory(), initialRequestId, actualRetryCount, totalWaitTimeSec);
+    private static String durableChatCallId(RoutingSelection selection, String candidate) {
+        if (!selection.isRouter) {
+            return "chat";
         }
+        return "chat:" + selection.requestedModel + ":" + candidate;
+    }
 
-        if (!Objects.requireNonNull(response).getToolCalls().isEmpty()) {
-            handleToolCalls(
-                    response,
-                    initialRequestId,
-                    model,
-                    chatModel,
-                    messages,
-                    promptArgs,
-                    outputSchema,
-                    ctx);
-        } else {
-            Map<String, Long> retryStats = getRetryStats(ctx.getSensoryMemory(), initialRequestId);
-            int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
-            int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
-
-            recordRetryMetrics(
-                    ctx, chatModel.getConnectionName(), totalRetryCount, totalRetryWaitSec);
-
-            ctx.sendEvent(
-                    new ChatResponseEvent(
-                            initialRequestId, response, totalRetryCount, totalRetryWaitSec));
+    private static void attachRoutingMetadata(
+            ChatMessage response,
+            RoutingSelection selection,
+            String finalModel,
+            List<String> triedModels) {
+        boolean fallbackAttempted = !finalModel.equals(selection.selectedModel);
+        List<String> fallbackModelsTried = new ArrayList<>();
+        for (int i = 1; i < triedModels.size(); i++) {
+            fallbackModelsTried.add(triedModels.get(i));
         }
+        Map<String, Object> routing = new LinkedHashMap<>();
+        routing.put("router", selection.requestedModel);
+        routing.put("selected_model", selection.selectedModel);
+        routing.put("initial_selected_model", selection.selectedModel);
+        routing.put("final_model", finalModel);
+        routing.put("candidates", new ArrayList<>(selection.candidates));
+        routing.put(
+                "decision_source",
+                fallbackAttempted ? ModelRoutingEvent.SOURCE_FALLBACK : selection.decisionSource);
+        routing.put("fallback_enabled", selection.fallbackEnabled);
+        routing.put("fallback_attempted", fallbackAttempted);
+        routing.put("fallback_models_tried", fallbackModelsTried);
+        routing.put("metadata", new LinkedHashMap<>(selection.metadata));
+        if (selection.reason != null) {
+            routing.put("reason", selection.reason);
+        }
+        if (selection.score != null) {
+            routing.put("score", selection.score);
+        }
+        response.getExtraArgs().put("model_routing", routing);
     }
 
     private static void processChatRequest(ChatRequestEvent event, RunnerContext ctx)
             throws Exception {
+        RoutingSelection selection =
+                resolveRouter(
+                        event.getId(),
+                        event.getModel(),
+                        event.getMessages(),
+                        event.getPromptArgs(),
+                        ctx);
         chat(
                 event.getId(),
-                event.getModel(),
+                selection,
                 event.getMessages(),
                 event.getPromptArgs(),
                 event.getOutputSchema(),
                 ctx);
+    }
+
+    /**
+     * If {@code model} names a {@link ModelRouter}, run its strategy (as a durable {@code "route"}
+     * call so the decision replays deterministically on recovery), normalize the result (abstain ->
+     * default model, non-candidate -> fail clearly), emit an observability-only {@link
+     * ModelRoutingEvent}, and return the selected concrete model. Otherwise returns a direct
+     * selection.
+     *
+     * <p>Routing runs once for the initial chat request; tool-call rounds reuse the selected
+     * concrete model because it is saved in the tool-request context (see {@link
+     * #handleToolCalls}), so this method is only reached with a router name on the initial request.
+     */
+    private static RoutingSelection resolveRouter(
+            UUID requestId,
+            String model,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            RunnerContext ctx)
+            throws Exception {
+        if (!ctx.hasResource(model, ResourceType.MODEL_ROUTER)) {
+            return RoutingSelection.direct(model);
+        }
+        ModelRouter router = (ModelRouter) ctx.getResource(model, ResourceType.MODEL_ROUTER);
+        RoutingContext routingContext =
+                new RoutingContext(requestId, model, messages, promptArgs, router.getCandidates());
+
+        DurableCallable<RoutingDecision> routeCallable =
+                new DurableCallable<>() {
+                    @Override
+                    public String getId() {
+                        return "route:" + requestId + ":" + model;
+                    }
+
+                    @Override
+                    public Class<RoutingDecision> getResultClass() {
+                        return RoutingDecision.class;
+                    }
+
+                    @Override
+                    public RoutingDecision call() throws Exception {
+                        // Timed inside the durable call so the latency is persisted with the
+                        // decision: a replayed run reports the original strategy wall time.
+                        long start = System.nanoTime();
+                        RoutingDecision decision = router.route(routingContext);
+                        return decision.withDecisionMs((System.nanoTime() - start) / 1_000_000.0);
+                    }
+                };
+
+        RoutingDecision decision = ctx.durableExecute(routeCallable);
+        Double decisionMs = decision.getDecisionMs();
+        FlinkAgentsMetricGroup actionMetrics = ctx.getActionMetricGroup();
+        if (actionMetrics != null && decisionMs != null) {
+            actionMetrics.getHistogram("routingDecisionLatencyMs").update(Math.round(decisionMs));
+        }
+
+        String selectedModel;
+        String decisionSource;
+        if (decision.isAbstain()) {
+            selectedModel = router.getDefaultModel().orElse(router.getCandidateNames().get(0));
+            decisionSource = ModelRoutingEvent.SOURCE_DEFAULT;
+        } else {
+            selectedModel = decision.getSelectedModel();
+            if (!router.isCandidate(selectedModel)) {
+                throw new IllegalStateException(
+                        String.format(
+                                "Routing strategy for router '%s' returned non-candidate model '%s'; candidates are %s.",
+                                model, selectedModel, router.getCandidateNames()));
+            }
+            decisionSource = ModelRoutingEvent.SOURCE_STRATEGY;
+        }
+
+        ctx.sendEvent(
+                new ModelRoutingEvent(
+                        requestId,
+                        model,
+                        router.getCandidateNames(),
+                        selectedModel,
+                        decisionSource,
+                        router.isFallbackEnabled(),
+                        decision.getReason(),
+                        decision.getScore(),
+                        decision.getMetadata(),
+                        decisionMs));
+        return new RoutingSelection(
+                model,
+                selectedModel,
+                router.getCandidateNames(),
+                true,
+                router.isFallbackEnabled(),
+                decisionSource,
+                decision.getReason(),
+                decision.getScore(),
+                decision.getMetadata(),
+                null);
     }
 
     @SuppressWarnings("unchecked")
@@ -495,7 +907,14 @@ public class ChatModelAction {
                         Collections.emptyList(),
                         toolResponseMessages);
 
-        chat(initialRequestId, model, messages, promptArgs, outputSchema, ctx);
+        // Tool rounds reuse the already-selected concrete model (no re-routing); if the initial
+        // request was routed, carry its routing metadata onto the eventual final response.
+        Map<String, Object> routingMetadata = (Map<String, Object>) context.get(ROUTING);
+        RoutingSelection selection =
+                routingMetadata == null
+                        ? RoutingSelection.direct(model)
+                        : RoutingSelection.carried(model, routingMetadata);
+        chat(initialRequestId, selection, messages, promptArgs, outputSchema, ctx);
     }
 
     /**

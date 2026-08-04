@@ -654,9 +654,37 @@ public class AgentPlan implements Serializable {
 
     /** Adds a resource provider to the resourceProviders map. */
     private void addResourceProvider(ResourceProvider provider) {
+        checkNoRouterModelNameClash(provider);
         resourceProviders
                 .computeIfAbsent(provider.getType(), k -> new HashMap<>())
                 .put(provider.getName(), provider);
+    }
+
+    /**
+     * A name must not be registered as both a {@link ResourceType#CHAT_MODEL} and a {@link
+     * ResourceType#MODEL_ROUTER}: an agent references either by putting it in {@code
+     * ChatRequestEvent.model}, so a name that is both would resolve ambiguously. Fail clearly at
+     * plan-construction time rather than at request time.
+     */
+    private void checkNoRouterModelNameClash(ResourceProvider provider) {
+        final ResourceType conflicting;
+        if (provider.getType() == ResourceType.MODEL_ROUTER) {
+            conflicting = ResourceType.CHAT_MODEL;
+        } else if (provider.getType() == ResourceType.CHAT_MODEL) {
+            conflicting = ResourceType.MODEL_ROUTER;
+        } else {
+            return;
+        }
+        Map<String, ResourceProvider> existing = resourceProviders.get(conflicting);
+        if (existing != null && existing.containsKey(provider.getName())) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Resource name '%s' is registered as both %s and %s; a name must not be"
+                                    + " both a chat model and a model router.",
+                            provider.getName(),
+                            ResourceType.CHAT_MODEL,
+                            ResourceType.MODEL_ROUTER));
+        }
     }
 
     /**
