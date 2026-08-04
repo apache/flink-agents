@@ -69,12 +69,16 @@ class TokenMetricsE2ETest {
                     + "\"finish_reason\":\"stop\"}],"
                     + "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}";
 
+    private static final String OPERATOR_NAME = TokenMetricsE2EAgent.class.getSimpleName();
+
     private static final Pattern PREFIX_PATTERN =
             Pattern.compile(
-                    "^\\.taskmanager\\.([a-f0-9-]+)\\.Flink Streaming Job\\.action-execute-operator\\.0\\.");
+                    "^\\.taskmanager\\.([a-f0-9-]+)\\.Flink Streaming Job\\."
+                            + Pattern.quote(OPERATOR_NAME)
+                            + "\\.0\\.");
 
     private static final String PREFIX_TEMPLATE =
-            ".taskmanager.%s.Flink Streaming Job.action-execute-operator.0.";
+            ".taskmanager.%s.Flink Streaming Job." + OPERATOR_NAME + ".0.";
 
     /**
      * Expected agent Counter metrics. Each key is the deterministic suffix after the prefix in the
