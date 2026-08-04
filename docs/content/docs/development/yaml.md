@@ -529,7 +529,7 @@ Common chat-model aliases:
 | `openai_responses`   | —                           | OpenAI Responses (Java)     |
 | `anthropic`          | Anthropic                   | Anthropic                   |
 | `azure_openai`       | Azure OpenAI (Python)       | —                           |
-| `azure`              | —                           | Azure OpenAI (Java)         |
+| `azure`              | —                           | Azure AI (Java)             |
 | `bedrock`            | —                           | Bedrock (Java)              |
 | `tongyi`             | Tongyi (Python)             | —                           |
 
