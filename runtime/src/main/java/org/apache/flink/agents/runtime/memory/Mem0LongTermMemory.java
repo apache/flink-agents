@@ -44,7 +44,7 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
     private static final String MEM0_ITEMS_TO_JAVA = "python_java_utils.mem0_items_to_java";
 
     private final PythonResourceAdapter adapter;
-    private final PyObject pyMem0;
+    private PyObject pyMem0;
 
     public Mem0LongTermMemory(PythonResourceAdapter adapter, PyObject pyMem0) {
         this.adapter = adapter;
@@ -135,8 +135,15 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
     }
 
     @Override
-    public void close() {
-        adapter.callMethod(pyMem0, "close", Map.of());
+    public void close() throws Exception {
+        // Clear first because Pemja's close performs an unguarded native decRef.
+        PyObject memory = pyMem0;
+        pyMem0 = null;
+        if (memory != null) {
+            try (memory) {
+                adapter.callMethod(memory, "close", Map.of());
+            }
+        }
     }
 
     private Object buildPyMemorySet(MemorySet memorySet) {

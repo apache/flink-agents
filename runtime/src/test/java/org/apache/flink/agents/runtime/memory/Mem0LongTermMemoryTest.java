@@ -31,9 +31,11 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -229,12 +231,26 @@ public class Mem0LongTermMemoryTest {
     }
 
     @Test
-    void testSwitchContextAndCloseForward() {
+    void testSwitchContextAndCloseForward() throws Exception {
         ltm.switchContext("k1");
+        ltm.close();
         ltm.close();
 
         verify(mockAdapter)
                 .callMethod(eq(mockPyMem0), eq("switch_context"), eq(Map.of("key", "k1")));
         verify(mockAdapter).callMethod(eq(mockPyMem0), eq("close"), eq(Map.of()));
+        verify(mockPyMem0).close();
+    }
+
+    @Test
+    void testCloseReleasesPythonObjectWhenLogicalCleanupFails() throws Exception {
+        RuntimeException failure = new RuntimeException("logical close failed");
+        doThrow(failure).when(mockAdapter).callMethod(mockPyMem0, "close", Map.of());
+
+        assertThatThrownBy(ltm::close).isSameAs(failure);
+        ltm.close();
+
+        verify(mockAdapter).callMethod(mockPyMem0, "close", Map.of());
+        verify(mockPyMem0).close();
     }
 }

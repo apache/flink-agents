@@ -752,14 +752,17 @@ class FlinkRunnerContext(RunnerContext):
 
     @override
     def close(self) -> None:
-        if self.long_term_memory is not None:
-            self.long_term_memory.close()
-
-        if self.__resource_cache is not None:
-            try:
-                self.__resource_cache.close()
-            finally:
-                self.__resource_cache = None
+        ltm = self.__ltm
+        self.__ltm = None
+        try:
+            if ltm is not None:
+                ltm.close()
+        finally:
+            if self.__resource_cache is not None:
+                try:
+                    self.__resource_cache.close()
+                finally:
+                    self.__resource_cache = None
 
 
 def create_flink_runner_context(
