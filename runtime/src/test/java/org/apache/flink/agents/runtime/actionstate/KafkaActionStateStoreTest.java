@@ -280,4 +280,67 @@ public class KafkaActionStateStoreTest {
 
         verify(consumer).close();
     }
+
+    /**
+     * Contract: when both closes fail, the producer's exception is the one thrown and the
+     * consumer's is attached to it as a suppressed exception, so neither failure is lost.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void testCloseKeepsProducerFailureWhenBothCloseFail() {
+        Producer<String, ActionState> failingProducer = mock(Producer.class);
+        Consumer<String, ActionState> failingConsumer = mock(Consumer.class);
+        RuntimeException producerFailure = new RuntimeException("producer close failed");
+        RuntimeException consumerFailure = new RuntimeException("consumer close failed");
+        doThrow(producerFailure).when(failingProducer).close();
+        doThrow(consumerFailure).when(failingConsumer).close();
+
+        KafkaActionStateStore store =
+                new KafkaActionStateStore(
+                        actionStates,
+                        new AgentConfiguration(),
+                        failingProducer,
+                        failingConsumer,
+                        TEST_TOPIC);
+
+        RuntimeException thrown = assertThrows(RuntimeException.class, store::close);
+
+        assertThat(thrown).isSameAs(producerFailure);
+        assertThat(thrown.getSuppressed()).containsExactly(consumerFailure);
+    }
+
+    /**
+     * Contract: when only the consumer close fails, its exception reaches the caller unchanged,
+     * with nothing attached as suppressed.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void testCloseThrowsConsumerFailureWhenOnlyConsumerCloseFails() {
+        Producer<String, ActionState> producer = mock(Producer.class);
+        Consumer<String, ActionState> failingConsumer = mock(Consumer.class);
+        RuntimeException consumerFailure = new RuntimeException("consumer close failed");
+        doThrow(consumerFailure).when(failingConsumer).close();
+
+        KafkaActionStateStore store =
+                new KafkaActionStateStore(
+                        actionStates,
+                        new AgentConfiguration(),
+                        producer,
+                        failingConsumer,
+                        TEST_TOPIC);
+
+        RuntimeException thrown = assertThrows(RuntimeException.class, store::close);
+
+        assertThat(thrown).isSameAs(consumerFailure);
+        assertThat(thrown.getSuppressed()).isEmpty();
+    }
+
+    /** Contract: both the producer and the consumer are closed when neither close fails. */
+    @Test
+    void testCloseClosesProducerAndConsumer() throws Exception {
+        actionStateStore.close();
+
+        assertThat(mockProducer.closed()).isTrue();
+        assertThat(mockConsumer.closed()).isTrue();
+    }
 }
