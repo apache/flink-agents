@@ -312,6 +312,14 @@ class RunnerContext(ABC):
             An awaitable object that yields the function result when awaited.
         """
 
+    @abstractmethod
+    def next_session_id(self) -> str:
+        """Create a unique sub-agent session id for the current action."""
+
+    @abstractmethod
+    def next_call_id(self, session_id: str) -> str:
+        """Create a call id for a sub-agent invocation under the given session."""
+
     @property
     @abstractmethod
     def config(self) -> ReadableConfiguration:

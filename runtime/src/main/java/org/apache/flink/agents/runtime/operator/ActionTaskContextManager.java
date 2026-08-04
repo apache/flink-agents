@@ -72,6 +72,8 @@ class ActionTaskContextManager implements AutoCloseable {
     private final Map<ActionTask, RunnerContextImpl.MemoryContext> actionTaskMemoryContexts;
     private final Map<ActionTask, ContinuationContext> continuationContexts;
     private final Map<ActionTask, String> pythonAwaitableRefs;
+    private final Map<ActionTask, RunnerContextImpl.SubagentIdentityContext>
+            subagentIdentityContexts;
 
     private ContinuationActionExecutor continuationActionExecutor;
 
@@ -79,6 +81,7 @@ class ActionTaskContextManager implements AutoCloseable {
         this.actionTaskMemoryContexts = new HashMap<>();
         this.continuationContexts = new HashMap<>();
         this.pythonAwaitableRefs = new HashMap<>();
+        this.subagentIdentityContexts = new HashMap<>();
         this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
     }
 
@@ -170,6 +173,7 @@ class ActionTaskContextManager implements AutoCloseable {
     void createAndSetRunnerContext(
             ActionTask actionTask,
             Object key,
+            long sequenceNumber,
             AgentPlan agentPlan,
             ResourceCache resourceCache,
             FlinkAgentsMetricGroupImpl metricGroup,
@@ -217,8 +221,21 @@ class ActionTaskContextManager implements AutoCloseable {
                             new CachedMemoryStore(shortTermMemState));
         }
 
+        RunnerContextImpl.SubagentIdentityContext identityContext =
+                subagentIdentityContexts.get(actionTask);
+        if (identityContext == null) {
+            // Built from caller-side facts only, so a failover replay (task absent from this
+            // transient map) reproduces an identical namespace and allocation sequence.
+            identityContext =
+                    new RunnerContextImpl.SubagentIdentityContext(
+                            key, sequenceNumber, actionTask.action.getName(), actionTask.event);
+        }
+
         context.switchActionContext(
-                actionTask.action.getName(), memoryContext, String.valueOf(key.hashCode()));
+                actionTask.action.getName(),
+                memoryContext,
+                identityContext,
+                String.valueOf(key.hashCode()));
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;
@@ -250,14 +267,19 @@ class ActionTaskContextManager implements AutoCloseable {
         return actionTaskMemoryContexts.remove(actionTask);
     }
 
+    void removeIdentityContext(ActionTask actionTask) {
+        subagentIdentityContexts.remove(actionTask);
+    }
+
     /**
      * Transfers per-task contexts from a finishing action task to the action task it generated.
      *
-     * <p>Always transfers the memory context. For Java tasks, transfers the continuation context.
-     * For Python tasks, transfers the awaitable reference when present. The durable-execution
-     * context map lives on {@link DurableExecutionManager}, so that manager is passed in as a
-     * parameter rather than held as a field — this keeps the no-manager-to-manager-references
-     * design constraint intact.
+     * <p>Always transfers the memory context and, if present, the sub-agent identity context (so a
+     * same-process continuation resume keeps its id ordinals). For Java tasks, transfers the
+     * continuation context. For Python tasks, transfers the awaitable reference when present. The
+     * durable-execution context map lives on {@link DurableExecutionManager}, so that manager is
+     * passed in as a parameter rather than held as a field — this keeps the
+     * no-manager-to-manager-references design constraint intact.
      *
      * @param fromTask the finishing task whose contexts should be transferred.
      * @param toTask the newly generated task that will inherit the contexts.
@@ -270,6 +292,11 @@ class ActionTaskContextManager implements AutoCloseable {
                 fromTask.getRunnerContext().getDurableExecutionContext();
         if (durableContext != null) {
             durableExecManager.putDurableContext(toTask, durableContext);
+        }
+        RunnerContextImpl.SubagentIdentityContext identityContext =
+                fromTask.getRunnerContext().getSubagentIdentityContext();
+        if (identityContext != null) {
+            subagentIdentityContexts.put(toTask, identityContext);
         }
         if (fromTask.getRunnerContext() instanceof JavaRunnerContextImpl) {
             this.putContinuationContext(

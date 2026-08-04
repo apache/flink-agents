@@ -222,6 +222,69 @@ class ActionTaskContextManagerTest {
         mgr.close();
     }
 
+    @Test
+    void createAndSetRunnerContextBuildsFreshIdentityContextOnFirstCall() throws Exception {
+        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+            ActionTask t = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction());
+            invokeCreateAndSetRunnerContext(mgr, t);
+
+            assertThat(t.getRunnerContext().getSubagentIdentityContext()).isNotNull();
+        }
+    }
+
+    @Test
+    void identityContextIsInheritedAcrossTransferWithOrdinalContinuation() throws Exception {
+        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+            Action action = TestActions.noopAction();
+            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action);
+            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action);
+
+            invokeCreateAndSetRunnerContext(mgr, from);
+            RunnerContextImpl.SubagentIdentityContext fromIdentityCtx =
+                    from.getRunnerContext().getSubagentIdentityContext();
+            assertThat(fromIdentityCtx).isNotNull();
+
+            // Advance the ordinal on `from`'s context so continuation (not reset) is observable
+            // once `to` inherits it.
+            String firstSessionId = fromIdentityCtx.nextSessionId();
+
+            mgr.transferContexts(from, to, new DurableExecutionManager(null));
+            invokeCreateAndSetRunnerContext(mgr, to);
+
+            // `to` inherits the exact same instance — a same-process continuation resume keeps
+            // the ordinal state alive rather than restarting it.
+            RunnerContextImpl.SubagentIdentityContext toIdentityCtx =
+                    to.getRunnerContext().getSubagentIdentityContext();
+            assertThat(toIdentityCtx).isSameAs(fromIdentityCtx);
+            assertThat(toIdentityCtx.nextSessionId()).isNotEqualTo(firstSessionId);
+        }
+    }
+
+    @Test
+    void removeIdentityContextThenSetupBuildsFreshContext() throws Exception {
+        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+            Action action = TestActions.noopAction();
+            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action);
+            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action);
+
+            invokeCreateAndSetRunnerContext(mgr, from);
+            RunnerContextImpl.SubagentIdentityContext fromIdentityCtx =
+                    from.getRunnerContext().getSubagentIdentityContext();
+
+            mgr.transferContexts(from, to, new DurableExecutionManager(null));
+            // Simulate the transient per-task map losing `to`'s entry (e.g. a failover restart,
+            // since this map is heap-only and never checkpointed) before `to` is set up.
+            mgr.removeIdentityContext(to);
+
+            invokeCreateAndSetRunnerContext(mgr, to);
+
+            RunnerContextImpl.SubagentIdentityContext toIdentityCtx =
+                    to.getRunnerContext().getSubagentIdentityContext();
+            assertThat(toIdentityCtx).isNotNull();
+            assertThat(toIdentityCtx).isNotSameAs(fromIdentityCtx);
+        }
+    }
+
     /**
      * Shared helper: install a runner context on {@code task} using mocked collaborators. Used by
      * tests that need a fully wired runner context but do not care about the collaborator details.
@@ -238,6 +301,7 @@ class ActionTaskContextManagerTest {
         mgr.createAndSetRunnerContext(
                 task,
                 "k",
+                0L,
                 plan,
                 cache,
                 metricGroup,

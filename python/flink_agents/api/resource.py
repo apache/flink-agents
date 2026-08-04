@@ -32,7 +32,7 @@ class ResourceType(Enum):
     """Type enum of resource.
 
     Currently, support chat_model, chat_model_server, tool, embedding_model,
-    vector_store, prompt, mcp_server, skills.
+    vector_store, prompt, mcp_server, skills, agent.
     """
 
     CHAT_MODEL = "chat_model"
@@ -44,6 +44,7 @@ class ResourceType(Enum):
     PROMPT = "prompt"
     MCP_SERVER = "mcp_server"
     SKILLS = "skills"
+    AGENT = "agent"
 
 
 class Resource(BaseModel, ABC):

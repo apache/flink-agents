@@ -316,9 +316,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
 
         // 2. Invoke the action task.
+        long sequenceNumber = stateManager.getSequenceNumber();
         contextManager.createAndSetRunnerContext(
                 actionTask,
                 key,
+                sequenceNumber,
                 agentPlan,
                 resourceCache,
                 metricGroup,
@@ -329,7 +331,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 pythonBridge.getPythonRunnerContext(),
                 ltm);
 
-        long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt = Optional.empty();
@@ -385,6 +386,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             durableExecManager.removeDurableContext(actionTask);
             contextManager.removeContinuationContext(actionTask);
             contextManager.removePythonAwaitableRef(actionTask);
+            contextManager.removeIdentityContext(actionTask);
             durableExecManager.maybePersistTaskResult(
                     key,
                     sequenceNumber,

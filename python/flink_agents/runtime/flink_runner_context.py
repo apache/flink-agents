@@ -738,6 +738,16 @@ class FlinkRunnerContext(RunnerContext):
             kwargs,
         )
 
+    @override
+    def next_session_id(self) -> str:
+        """Create a unique sub-agent session id for the current action."""
+        return self._j_runner_context.nextSessionId()
+
+    @override
+    def next_call_id(self, session_id: str) -> str:
+        """Create a call id for a sub-agent invocation under ``session_id``."""
+        return self._j_runner_context.nextCallId(session_id)
+
     @property
     @override
     def config(self) -> ReadableConfiguration:

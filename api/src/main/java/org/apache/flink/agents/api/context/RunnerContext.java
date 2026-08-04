@@ -146,6 +146,12 @@ public interface RunnerContext {
      */
     <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception;
 
+    /** Creates a new session id for a sub-agent call. */
+    String nextSessionId();
+
+    /** Creates a new call id for a sub-agent invocation under the given session. */
+    String nextCallId(String sessionId);
+
     /** Clean up the resource. */
     void close() throws Exception;
 }

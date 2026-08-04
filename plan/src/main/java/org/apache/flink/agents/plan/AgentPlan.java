@@ -37,6 +37,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameterInjectionValidator;
@@ -80,7 +81,14 @@ import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
 import static org.apache.flink.agents.api.resource.ResourceType.PROMPT;
 import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
 
-/** Agent plan compiled from user defined agent. */
+/**
+ * Agent plan compiled from a user-defined {@link Agent}.
+ *
+ * <p>{@code AgentPlan} is a single-scope structure: each instance carries its own actions,
+ * actions-by-event dispatch table, resource providers, and optional configuration. Sub-agents are
+ * represented as {@link SubagentSetup} resources (type {@code AGENT}) within the resource providers
+ * map.
+ */
 @JsonSerialize(using = AgentPlanJsonSerializer.class)
 @JsonDeserialize(using = AgentPlanJsonDeserializer.class)
 public class AgentPlan implements Serializable {
@@ -580,6 +588,30 @@ public class AgentPlan implements Serializable {
                                     + " Declare the MCP server with a @MCPServer-annotated static"
                                     + " method on your Agent class so its tools and prompts can be"
                                     + " discovered.");
+                }
+            } else if (type == ResourceType.AGENT) {
+                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
+                    String name = kv.getKey();
+                    Object value = kv.getValue();
+                    if (value instanceof SubagentSetup) {
+                        addResourceProvider(
+                                JavaSerializableResourceProvider.createResourceProvider(
+                                        name, ResourceType.AGENT, (SubagentSetup) value));
+                    } else if (value instanceof ResourceDescriptor) {
+                        // Declared via YAML: the descriptor names a SubagentSetup subclass that is
+                        // instantiated when the resource is first resolved.
+                        addResourceProvider(
+                                createDescriptorResourceProvider(
+                                        name, ResourceType.AGENT, (ResourceDescriptor) value));
+                    } else {
+                        throw new IllegalArgumentException(
+                                "AGENT resource '"
+                                        + name
+                                        + "' must be a SubagentSetup or a ResourceDescriptor, but"
+                                        + " got "
+                                        + value.getClass().getName()
+                                        + ".");
+                    }
                 }
             } else {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
