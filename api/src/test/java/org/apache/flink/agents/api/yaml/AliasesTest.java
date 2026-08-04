@@ -64,8 +64,7 @@ class AliasesTest {
         String geminiConn =
                 Aliases.resolveClazz("gemini", ResourceType.CHAT_MODEL_CONNECTION, Language.JAVA);
         assertThat(geminiConn).isEqualTo(ResourceName.ChatModel.GEMINI_CONNECTION);
-        String geminiSetup =
-                Aliases.resolveClazz("gemini", ResourceType.CHAT_MODEL, Language.JAVA);
+        String geminiSetup = Aliases.resolveClazz("gemini", ResourceType.CHAT_MODEL, Language.JAVA);
         assertThat(geminiSetup).isEqualTo(ResourceName.ChatModel.GEMINI_SETUP);
         String azureOpenAIConn =
                 Aliases.resolveClazz(
