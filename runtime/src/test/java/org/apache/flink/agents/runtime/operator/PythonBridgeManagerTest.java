@@ -20,17 +20,54 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
+import pemja.core.PythonInterpreter;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 
 /** Contract tests for {@link PythonBridgeManager}. */
 class PythonBridgeManagerTest {
+
+    @Test
+    void closeAttemptsAllResourcesAndSuppressesLaterFailures() throws Exception {
+        PythonBridgeManager bridge = new PythonBridgeManager();
+        PythonActionExecutor actionExecutor = mock(PythonActionExecutor.class);
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonEnvironmentManager environmentManager = mock(PythonEnvironmentManager.class);
+        RuntimeException actionExecutorFailure =
+                new RuntimeException("action executor close failed");
+        RuntimeException interpreterFailure = new RuntimeException("interpreter close failed");
+        RuntimeException environmentFailure = new RuntimeException("environment close failed");
+
+        doThrow(actionExecutorFailure).when(actionExecutor).close();
+        doThrow(interpreterFailure).when(interpreter).close();
+        doThrow(environmentFailure).when(environmentManager).close();
+        setPrivateField(bridge, "pythonActionExecutor", actionExecutor);
+        setPrivateField(bridge, "pythonInterpreter", interpreter);
+        setPrivateField(bridge, "pythonEnvironmentManager", environmentManager);
+
+        assertThatThrownBy(bridge::close)
+                .isSameAs(actionExecutorFailure)
+                .hasSuppressedException(interpreterFailure)
+                .hasSuppressedException(environmentFailure);
+        InOrder closeOrder = inOrder(actionExecutor, interpreter, environmentManager);
+        closeOrder.verify(actionExecutor).close();
+        closeOrder.verify(interpreter).close();
+        closeOrder.verify(environmentManager).close();
+    }
 
     @Test
     void openIsNoOpWhenPlanHasNeitherPythonActionsNorResources() throws Exception {
@@ -58,5 +95,12 @@ class PythonBridgeManagerTest {
             assertThat(bridge.getPythonActionExecutor()).isNull();
             assertThat(bridge.getPythonRunnerContext()).isNull();
         }
+    }
+
+    private static void setPrivateField(Object target, String fieldName, Object value)
+            throws ReflectiveOperationException {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 }
