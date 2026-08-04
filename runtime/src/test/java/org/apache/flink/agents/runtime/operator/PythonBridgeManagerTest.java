@@ -21,7 +21,9 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
+import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.junit.jupiter.api.Test;
@@ -44,7 +46,9 @@ class PythonBridgeManagerTest {
     @Test
     void closeAttemptsAllResourcesAndSuppressesLaterFailures() throws Exception {
         PythonBridgeManager bridge = new PythonBridgeManager();
+        Mem0LongTermMemory longTermMemory = mock(Mem0LongTermMemory.class);
         PythonActionExecutor actionExecutor = mock(PythonActionExecutor.class);
+        PythonResourceAdapterImpl resourceAdapter = mock(PythonResourceAdapterImpl.class);
         PythonInterpreter interpreter = mock(PythonInterpreter.class);
         PythonEnvironmentManager environmentManager = mock(PythonEnvironmentManager.class);
         RuntimeException actionExecutorFailure =
@@ -53,18 +57,32 @@ class PythonBridgeManagerTest {
         RuntimeException environmentFailure = new RuntimeException("environment close failed");
 
         doThrow(actionExecutorFailure).when(actionExecutor).close();
+        RuntimeException resourceAdapterFailure =
+                new RuntimeException("resource adapter close failed");
+        doThrow(resourceAdapterFailure).when(resourceAdapter).close();
         doThrow(interpreterFailure).when(interpreter).close();
         doThrow(environmentFailure).when(environmentManager).close();
+        setPrivateField(bridge, "longTermMemory", longTermMemory);
         setPrivateField(bridge, "pythonActionExecutor", actionExecutor);
+        setPrivateField(bridge, "pythonResourceAdapter", resourceAdapter);
         setPrivateField(bridge, "pythonInterpreter", interpreter);
         setPrivateField(bridge, "pythonEnvironmentManager", environmentManager);
 
         assertThatThrownBy(bridge::close)
                 .isSameAs(actionExecutorFailure)
+                .hasSuppressedException(resourceAdapterFailure)
                 .hasSuppressedException(interpreterFailure)
                 .hasSuppressedException(environmentFailure);
-        InOrder closeOrder = inOrder(actionExecutor, interpreter, environmentManager);
+        InOrder closeOrder =
+                inOrder(
+                        longTermMemory,
+                        actionExecutor,
+                        resourceAdapter,
+                        interpreter,
+                        environmentManager);
+        closeOrder.verify(longTermMemory).close();
         closeOrder.verify(actionExecutor).close();
+        closeOrder.verify(resourceAdapter).close();
         closeOrder.verify(interpreter).close();
         closeOrder.verify(environmentManager).close();
     }
