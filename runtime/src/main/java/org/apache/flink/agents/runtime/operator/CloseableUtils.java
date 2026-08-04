@@ -17,10 +17,16 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
-import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
-import org.apache.flink.streaming.api.operators.ChainingStrategy;
+import org.apache.flink.util.LambdaUtil;
 
-public class OperatorUtils {
-    public static void setChainStrategy(
-            AbstractStreamOperator<?> operator, ChainingStrategy strategy) {}
+import java.util.Arrays;
+
+final class CloseableUtils {
+
+    private CloseableUtils() {}
+
+    static void closeAll(AutoCloseable... closeables) throws Exception {
+        LambdaUtil.applyToAllWhileSuppressingExceptions(
+                Arrays.asList(closeables), AutoCloseable::close);
+    }
 }

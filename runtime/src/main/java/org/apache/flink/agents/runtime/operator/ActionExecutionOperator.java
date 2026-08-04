@@ -554,7 +554,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void close() throws Exception {
         // Must close before pythonInterpreter since cached resources may hold Python references.
-        OperatorUtils.closeAllResources(
+        CloseableUtils.closeAll(
                 resourceCache,
                 contextManager,
                 pythonBridge,
