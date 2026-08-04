@@ -25,6 +25,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.ExceptionUtils;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
@@ -202,17 +203,32 @@ public class PythonActionExecutor {
     }
 
     public void close() throws Exception {
-        if (interpreter != null) {
-            if (pythonAsyncThreadPool != null) {
-                interpreter.invoke(CLOSE_ASYNC_THREAD_POOL, pythonAsyncThreadPool);
-            }
+        PyObject asyncThreadPool = pythonAsyncThreadPool;
+        PyObject runnerContext = pythonRunnerContext;
+        pythonAsyncThreadPool = null;
+        pythonRunnerContext = null;
 
-            if (pythonRunnerContext != null) {
-                try {
-                    interpreter.invoke(CLOSE_FLINK_RUNNER_CONTEXT, pythonRunnerContext);
-                } finally {
-                    pythonRunnerContext = null;
-                }
+        Exception exception = null;
+        try {
+            closePythonObject(CLOSE_ASYNC_THREAD_POOL, asyncThreadPool);
+        } catch (Exception e) {
+            exception = ExceptionUtils.firstOrSuppressed(e, exception);
+        }
+        try {
+            closePythonObject(CLOSE_FLINK_RUNNER_CONTEXT, runnerContext);
+        } catch (Exception e) {
+            exception = ExceptionUtils.firstOrSuppressed(e, exception);
+        }
+
+        if (exception != null) {
+            throw exception;
+        }
+    }
+
+    private void closePythonObject(String closeFunction, PyObject pythonObject) throws Exception {
+        if (pythonObject != null) {
+            try (pythonObject) {
+                interpreter.invoke(closeFunction, pythonObject);
             }
         }
     }
