@@ -378,13 +378,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             getRuntimeContext().getUserCodeClassLoader(),
                             this.pythonBridge.getPythonActionExecutor());
 
-            // We remove the contexts from the map after the task is processed. They will be added
-            // back later if the action task has a generated action task, meaning it is not
-            // finished.
-            contextManager.removeMemoryContext(actionTask);
+            // We remove the contexts record from the map after the task is processed. It will be
+            // recreated
+            // by transferContexts below if the action task has a generated action task, meaning it
+            // is not finished.
+            contextManager.removeContexts(actionTask);
             durableExecManager.removeDurableContext(actionTask);
-            contextManager.removeContinuationContext(actionTask);
-            contextManager.removePythonAwaitableRef(actionTask);
             durableExecManager.maybePersistTaskResult(
                     key,
                     sequenceNumber,

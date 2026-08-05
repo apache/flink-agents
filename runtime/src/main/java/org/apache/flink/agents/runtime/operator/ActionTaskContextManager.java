@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -31,10 +32,13 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.util.Preconditions;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -45,9 +49,10 @@ import java.util.Map;
  * <ul>
  *   <li>The shared (Java) {@link RunnerContextImpl} that is reused across action tasks via {@link
  *       RunnerContextImpl#switchActionContext}.
- *   <li>Three per-{@link ActionTask} maps that survive across the boundary between a finishing
- *       action and the action it generates: memory contexts, continuation contexts (for async Java
- *       actions), and Python awaitable references.
+ *   <li>A single per-{@link ActionTask} contexts record ({@link ActionTaskContexts}) that survives
+ *       across the boundary between a finishing action and the action it generates: memory context,
+ *       continuation context (for async Java actions), and the Python awaitable reference —
+ *       created, transferred, and removed as one unit.
  *   <li>The {@link ContinuationActionExecutor} thread pool used to run async Java continuations.
  * </ul>
  *
@@ -61,25 +66,74 @@ import java.util.Map;
  * #createAndSetRunnerContext}. The durable-execution context map likewise lives on {@link
  * DurableExecutionManager} and is accessed via the manager parameter passed to {@link
  * #transferContexts}.
- *
- * <p>Design constraint: package-private; no manager-to-manager held references. Cross-cutting data
- * flows via method parameters.
  */
 class ActionTaskContextManager implements AutoCloseable {
 
     private RunnerContextImpl runnerContext;
 
-    private final Map<ActionTask, RunnerContextImpl.MemoryContext> actionTaskMemoryContexts;
-    private final Map<ActionTask, ContinuationContext> continuationContexts;
-    private final Map<ActionTask, String> pythonAwaitableRefs;
+    /**
+     * Single per-{@link ActionTask} contexts record keyed by the task. Replaces the previous
+     * parallel maps (memory / continuation / Python-awaitable) so that every per-task context is
+     * created, transferred, and removed as one unit — eliminating the class of bugs where one map
+     * was updated but a sibling map was forgotten. The durable-execution context deliberately stays
+     * on {@link DurableExecutionManager} and is not part of these contexts; where needed it is
+     * passed as a parameter, keeping the managers free of cross-references.
+     */
+    private final Map<ActionTask, ActionTaskContexts> actionTaskContexts;
 
     private ContinuationActionExecutor continuationActionExecutor;
 
     ActionTaskContextManager(int numAsyncThreads) {
-        this.actionTaskMemoryContexts = new HashMap<>();
-        this.continuationContexts = new HashMap<>();
-        this.pythonAwaitableRefs = new HashMap<>();
+        this.actionTaskContexts = new HashMap<>();
         this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
+    }
+
+    /**
+     * Mutable holder for all per-task contexts except durable execution. Fields are populated
+     * incrementally: memory + continuation (Java), or memory + awaitable ref (Python). The buffer
+     * of pending output events ({@link #pendingEvents}) is a first-class per-task field here (it is
+     * an output buffer, not part of memory) and is re-pointed onto the runner context by {@link
+     * RunnerContextImpl#switchActionContext}.
+     */
+    private static final class ActionTaskContexts {
+        @Nullable private RunnerContextImpl.MemoryContext memoryContext;
+        @Nullable private ContinuationContext continuationContext;
+        @Nullable private String pythonAwaitableRef;
+        private List<Event> pendingEvents = new ArrayList<>();
+    }
+
+    private boolean hasContexts(ActionTask actionTask) {
+        return actionTaskContexts.containsKey(actionTask);
+    }
+
+    /**
+     * Explicitly creates the single contexts record for a task. Fails if one already exists so that
+     * creation is always intentional and destroyed contexts can never be silently resurrected by a
+     * stray mutator call.
+     */
+    void createContexts(ActionTask actionTask) {
+        Preconditions.checkState(
+                !actionTaskContexts.containsKey(actionTask),
+                "Contexts already exist for action task");
+        actionTaskContexts.put(actionTask, new ActionTaskContexts());
+    }
+
+    /**
+     * Returns the existing contexts record for a task, failing fast if it was never created or
+     * removed.
+     */
+    private ActionTaskContexts requireContexts(ActionTask actionTask) {
+        return Preconditions.checkNotNull(
+                actionTaskContexts.get(actionTask), "Missing contexts for action task");
+    }
+
+    /**
+     * Removes the whole per-task contexts record as one unit. Fails if there is nothing to remove.
+     */
+    void removeContexts(ActionTask actionTask) {
+        Preconditions.checkState(
+                actionTaskContexts.remove(actionTask) != null,
+                "No contexts to remove for action task");
     }
 
     /**
@@ -179,6 +233,12 @@ class ActionTaskContextManager implements AutoCloseable {
             MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState,
             PythonRunnerContextImpl pythonRunnerContext,
             @Nullable InteranlBaseLongTermMemory longTermMemory) {
+        if (!hasContexts(actionTask)) {
+            // First preparation of a root task materializes its contexts. Re-preparations of a
+            // suspended task, or preparation of a generated successor, already have one (created by
+            // transferContexts), so we never recreate here.
+            createContexts(actionTask);
+        }
         RunnerContextImpl context;
         if (actionTask.action.getExec() instanceof JavaFunction) {
             context =
@@ -207,18 +267,20 @@ class ActionTaskContextManager implements AutoCloseable {
                     "Unsupported action type: " + actionTask.action.getExec().getClass());
         }
 
-        RunnerContextImpl.MemoryContext memoryContext;
-        if (actionTaskMemoryContexts.containsKey(actionTask)) {
-            memoryContext = actionTaskMemoryContexts.get(actionTask);
-        } else {
+        RunnerContextImpl.MemoryContext memoryContext = getMemoryContext(actionTask);
+        if (memoryContext == null) {
             memoryContext =
                     new RunnerContextImpl.MemoryContext(
                             new CachedMemoryStore(sensoryMemState),
                             new CachedMemoryStore(shortTermMemState));
+            putMemoryContext(actionTask, memoryContext);
         }
 
         context.switchActionContext(
-                actionTask.action.getName(), memoryContext, String.valueOf(key.hashCode()));
+                actionTask.action.getName(),
+                memoryContext,
+                requireContexts(actionTask).pendingEvents,
+                String.valueOf(key.hashCode()));
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;
@@ -228,6 +290,7 @@ class ActionTaskContextManager implements AutoCloseable {
                 continuationContext = this.getContinuationContext(actionTask);
             } else {
                 continuationContext = new ContinuationContext();
+                putContinuationContext(actionTask, continuationContext);
             }
             ((JavaRunnerContextImpl) context).setContinuationContext(continuationContext);
         }
@@ -242,12 +305,12 @@ class ActionTaskContextManager implements AutoCloseable {
 
     private void putMemoryContext(
             ActionTask actionTask, RunnerContextImpl.MemoryContext memoryContext) {
-        actionTaskMemoryContexts.put(actionTask, memoryContext);
+        requireContexts(actionTask).memoryContext = memoryContext;
     }
 
     @Nullable
-    RunnerContextImpl.MemoryContext removeMemoryContext(ActionTask actionTask) {
-        return actionTaskMemoryContexts.remove(actionTask);
+    private RunnerContextImpl.MemoryContext getMemoryContext(ActionTask actionTask) {
+        return requireContexts(actionTask).memoryContext;
     }
 
     /**
@@ -265,7 +328,12 @@ class ActionTaskContextManager implements AutoCloseable {
      */
     void transferContexts(
             ActionTask fromTask, ActionTask toTask, DurableExecutionManager durableExecManager) {
+        createContexts(toTask);
         putMemoryContext(toTask, fromTask.getRunnerContext().getMemoryContext());
+        // The pending-event buffer is per task (an output buffer, not part of MemoryContext);
+        // share the finishing task's live buffer (sourced from its runner context, which outlives
+        // the removed contexts) so events emitted before a suspend survive into the generated task.
+        requireContexts(toTask).pendingEvents = fromTask.getRunnerContext().getPendingEvents();
         RunnerContextImpl.DurableExecutionContext durableContext =
                 fromTask.getRunnerContext().getDurableExecutionContext();
         if (durableContext != null) {
@@ -287,32 +355,24 @@ class ActionTaskContextManager implements AutoCloseable {
 
     @Nullable
     ContinuationContext getContinuationContext(ActionTask actionTask) {
-        return continuationContexts.get(actionTask);
+        return requireContexts(actionTask).continuationContext;
     }
 
     void putContinuationContext(ActionTask actionTask, ContinuationContext context) {
-        continuationContexts.put(actionTask, context);
-    }
-
-    void removeContinuationContext(ActionTask actionTask) {
-        continuationContexts.remove(actionTask);
+        requireContexts(actionTask).continuationContext = context;
     }
 
     boolean hasContinuationContext(ActionTask actionTask) {
-        return continuationContexts.containsKey(actionTask);
+        return getContinuationContext(actionTask) != null;
     }
 
     @Nullable
     String getPythonAwaitableRef(ActionTask actionTask) {
-        return pythonAwaitableRefs.get(actionTask);
+        return requireContexts(actionTask).pythonAwaitableRef;
     }
 
     void putPythonAwaitableRef(ActionTask actionTask, String ref) {
-        pythonAwaitableRefs.put(actionTask, ref);
-    }
-
-    void removePythonAwaitableRef(ActionTask actionTask) {
-        pythonAwaitableRefs.remove(actionTask);
+        requireContexts(actionTask).pythonAwaitableRef = ref;
     }
 
     @Override

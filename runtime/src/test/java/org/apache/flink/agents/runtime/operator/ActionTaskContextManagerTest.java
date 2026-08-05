@@ -46,17 +46,21 @@ import static org.mockito.Mockito.verify;
 class ActionTaskContextManagerTest {
 
     @Test
-    void perTaskMapsAreIsolatedAcrossPutGetRemove() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+    void perTaskContextsAreIsolatedAcrossPutGetRemove() throws Exception {
+        try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             ActionTask t1 = new JavaActionTask("k", new InputEvent(1L), action);
             ActionTask t2 = new JavaActionTask("k", new InputEvent(2L), action);
+
+            // Contexts records are created explicitly; mutators never create one implicitly.
+            mgr.createContexts(t1);
+            mgr.createContexts(t2);
 
             ContinuationContext c1 = new ContinuationContext();
             mgr.putContinuationContext(t1, c1);
             mgr.putPythonAwaitableRef(t2, "ref-2");
 
-            // Cross-task isolation: each map only carries the entry it was given.
+            // Cross-task isolation: each contexts record only carries the entry it was given.
             assertThat(mgr.getContinuationContext(t1)).isSameAs(c1);
             assertThat(mgr.getContinuationContext(t2)).isNull();
             assertThat(mgr.getPythonAwaitableRef(t1)).isNull();
@@ -64,17 +68,18 @@ class ActionTaskContextManagerTest {
             assertThat(mgr.hasContinuationContext(t1)).isTrue();
             assertThat(mgr.hasContinuationContext(t2)).isFalse();
 
-            // Remove and re-check
-            mgr.removeContinuationContext(t1);
-            mgr.removePythonAwaitableRef(t2);
-            assertThat(mgr.hasContinuationContext(t1)).isFalse();
-            assertThat(mgr.getPythonAwaitableRef(t2)).isNull();
+            // Removing the whole contexts record wipes that task's contexts as a unit; the sibling
+            // is intact.
+            mgr.removeContexts(t1);
+            assertThat(mgr.getPythonAwaitableRef(t2)).isEqualTo("ref-2");
+            assertThat(mgr.hasContinuationContext(t2)).isFalse();
+            mgr.removeContexts(t2);
         }
     }
 
     @Test
     void createOrGetRunnerContextThrowsWhenPythonContextRequestedButNull() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             assertThatThrownBy(
                             () ->
                                     mgr.createOrGetRunnerContext(
@@ -93,12 +98,11 @@ class ActionTaskContextManagerTest {
 
     @Test
     void createAndSetRunnerContextBuildsFreshMemoryContextOnFirstCall() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             ActionTask t = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction());
             invokeCreateAndSetRunnerContext(mgr, t);
 
-            // Production path: createAndSetRunnerContext at ActionTaskContextManager.java:210-218
-            // — the else branch builds a fresh MemoryContext when the map has no entry.
+            // Production path: createAndSetRunnerContext pins the freshly created MemoryContext.
             assertThat(t.getRunnerContext()).isInstanceOf(JavaRunnerContextImpl.class);
             assertThat(t.getRunnerContext().getMemoryContext()).isNotNull();
         }
@@ -106,14 +110,13 @@ class ActionTaskContextManagerTest {
 
     @Test
     void createAndSetRunnerContextReusesExistingMemoryContext() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             ActionTask from = new JavaActionTask("k", new InputEvent(1L), action);
             ActionTask to = new JavaActionTask("k", new InputEvent(2L), action);
 
-            // Step 1: createAndSetRunnerContext(from) — runner context now carries a fresh
-            // MemoryContext, but the map (actionTaskMemoryContexts) is still empty (production
-            // code at lines 210-218 only reads from the map, never writes).
+            // Step 1: createAndSetRunnerContext(from) — runner context carries and pins a fresh
+            // MemoryContext.
             invokeCreateAndSetRunnerContext(mgr, from);
             RunnerContextImpl.MemoryContext fromMemCtx = from.getRunnerContext().getMemoryContext();
             assertThat(fromMemCtx).isNotNull();
@@ -136,7 +139,7 @@ class ActionTaskContextManagerTest {
 
     @Test
     void transferContextsCopiesMemoryAndContinuationToNewTask() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             ActionTask from = new JavaActionTask("k", new InputEvent(1L), action);
             ActionTask to = new JavaActionTask("k", new InputEvent(2L), action);
@@ -146,33 +149,27 @@ class ActionTaskContextManagerTest {
             RunnerContextImpl.MemoryContext fromMemCtx = from.getRunnerContext().getMemoryContext();
             assertThat(fromMemCtx).isNotNull();
 
-            // transferContexts (ActionTaskContextManager.java:266-286) copies but does NOT
-            // remove from source. The from-side continuation map is never populated (the
-            // continuation lives on from's runner context until transfer copies it over for
-            // `to`). Operator-side cleanup of `from`'s entries is the operator's
-            // responsibility — see ActionExecutionOperator.java:366-369.
+            // transferContexts copies but does NOT remove the source contexts record. The
+            // operator-side
+            // cleanup of the source contexts record remains the operator's responsibility.
             mgr.transferContexts(from, to, new DurableExecutionManager(null));
 
-            // (a) The memory context entry for `to` is the same instance fromTask holds.
-            RunnerContextImpl.MemoryContext toMemCtx = mgr.removeMemoryContext(to);
-            assertThat(toMemCtx).isSameAs(fromMemCtx);
-
-            // After remove, the map no longer has `to`'s entry.
-            assertThat(mgr.removeMemoryContext(to)).isNull();
+            // (a) Preparing `to` reuses the transferred MemoryContext instance.
+            invokeCreateAndSetRunnerContext(mgr, to);
+            assertThat(to.getRunnerContext().getMemoryContext()).isSameAs(fromMemCtx);
 
             // (b) Continuation context routed to `to`.
             assertThat(mgr.hasContinuationContext(to)).isTrue();
 
-            // (c) The `from`-side continuation map entry was never populated by the transfer
-            // — the source carries its continuation on its runner context, not on the
-            // manager's map.
-            assertThat(mgr.hasContinuationContext(from)).isFalse();
+            // (c) The source continuation remains pinned as well, so either task can be restored
+            // until the operator performs completion cleanup.
+            assertThat(mgr.hasContinuationContext(from)).isTrue();
         }
     }
 
     @Test
     void transferContextsRoutesDurableContextThroughManager() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             InputEvent event = new InputEvent(1L);
             ActionTask from = new JavaActionTask("k", event, action);
@@ -210,7 +207,7 @@ class ActionTaskContextManagerTest {
     @Test
     void closeIsIdempotent() throws Exception {
         // Not using try-with-resources here because we want to call close() explicitly twice.
-        ActionTaskContextManager mgr = new ActionTaskContextManager(1);
+        ActionTaskContextManager mgr = newManager();
         ActionTask t = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction());
         invokeCreateAndSetRunnerContext(mgr, t);
 
@@ -251,5 +248,9 @@ class ActionTaskContextManagerTest {
 
     private static AgentPlan newEmptyAgentPlan() {
         return new AgentPlan(new HashMap<>(), new HashMap<>());
+    }
+
+    private static ActionTaskContextManager newManager() {
+        return new ActionTaskContextManager(1);
     }
 }

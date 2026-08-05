@@ -95,7 +95,13 @@ public class RunnerContextImpl implements RunnerContext {
 
     private static final Logger LOG = LoggerFactory.getLogger(RunnerContextImpl.class);
 
-    protected final List<Event> pendingEvents = new ArrayList<>();
+    /**
+     * Points at the per-action-task pending-event buffer supplied to {@link #switchActionContext}.
+     * Re-pointed on every context handoff. Initialized to a standalone empty list so the field is
+     * never {@code null} before the first switch.
+     */
+    protected List<Event> pendingEvents = new ArrayList<>();
+
     protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
     protected final Runnable mailboxThreadChecker;
     protected final AgentPlan agentPlan;
@@ -124,9 +130,14 @@ public class RunnerContextImpl implements RunnerContext {
         this.ltm = ltm;
     }
 
-    public void switchActionContext(String actionName, MemoryContext memoryContext, String key) {
+    public void switchActionContext(
+            String actionName, MemoryContext memoryContext, List<Event> pendingEvents, String key) {
         this.actionName = actionName;
         this.memoryContext = memoryContext;
+        // Re-point the pending-event view at the per-task buffer supplied by the caller so
+        // sendEvent/drainEvents operate on the buffer owned by the action task currently wired
+        // onto this context.
+        this.pendingEvents = pendingEvents;
         if (ltm != null) {
             ltm.switchContext(key);
         }
@@ -172,6 +183,14 @@ public class RunnerContextImpl implements RunnerContext {
     public void checkNoPendingEvents() {
         Preconditions.checkState(
                 this.pendingEvents.isEmpty(), "There are pending events remaining in the context.");
+    }
+
+    /**
+     * Returns the live per-task pending-event buffer currently wired onto this context. Used to
+     * hand the same buffer to a generated action task so events emitted before a suspend survive.
+     */
+    public List<Event> getPendingEvents() {
+        return this.pendingEvents;
     }
 
     public List<MemoryUpdate> getSensoryMemoryUpdates() {
