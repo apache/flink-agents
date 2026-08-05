@@ -117,7 +117,26 @@ class SubagentFutureGroup(SubagentFutures):
         return SubagentFutureGroup((*self._futures, *others))
 
     def __await__(self) -> Any:
-        """Wait for every handle in submission order."""
+        """Wait for every handle in submission order.
+
+        Pending deferred handles are prepared before any execution
+        starts, then executed one by one.
+        """
+        # Late import: deferred handles build on this module.
+        from flink_agents.runtime.deferred_subagent import DeferredSubagentFuture
+
+        pending = [
+            future
+            for future in self._futures
+            if isinstance(future, DeferredSubagentFuture) and not future.done()
+        ]
+        for future in pending:
+            future.prepare()
+        # TODO(#926): execute the prepared calls as one batch once durable
+        # execution supports batched submission; until then the prepared
+        # calls are executed one by one.
+        for future in pending:
+            yield from future.execute()
         outcomes = []
         for future in self._futures:
             outcome = yield from future.__await__()
