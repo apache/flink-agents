@@ -13,7 +13,7 @@ contracts:
       repository: apache/flink-agents
       ref: main
       path: docs/yaml-schema.json
-      blob_sha: 183cc7ac800cf97d030b75b166ea8146368747d5
+      blob_sha: dc593377b5c67be2364f93317c23f1c960cdb39c
 
 versions_without_yaml_api:
   - "0.2.1"

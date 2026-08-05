@@ -15,9 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import hashlib
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from flink_agents.api.tools import InjectedArg
@@ -390,7 +392,17 @@ def test_yaml_document_and_agent_reject_events() -> None:
         AgentSpec.model_validate({"name": "a", "events": [{"name": "evt"}]})
 
 
-_SCHEMA_FILE = Path(__file__).parents[5] / "docs" / "yaml-schema.json"
+_REPO_ROOT = Path(__file__).parents[5]
+_SCHEMA_FILE = _REPO_ROOT / "docs" / "yaml-schema.json"
+_SKILL_SCHEMA_FILE = (
+    _REPO_ROOT
+    / "dev"
+    / "agent-skills"
+    / "flink-agents-dev"
+    / "assets"
+    / "yaml-schema.json"
+)
+_SKILL_CONTRACTS_FILE = _SKILL_SCHEMA_FILE.with_name("yaml-contracts.yaml")
 
 
 def test_action_spec_rejects_parameter_types() -> None:
@@ -428,3 +440,18 @@ def test_checked_in_schema_matches_pydantic_models() -> None:
         "Run: python -m flink_agents.api.yaml.specs "
         "> docs/yaml-schema.json"
     )
+
+
+def test_development_skill_main_schema_matches_checked_in_schema() -> None:
+    schema_bytes = _SCHEMA_FILE.read_bytes()
+    assert _SKILL_SCHEMA_FILE.read_bytes() == schema_bytes, (
+        "The development skill's bundled main schema is out of sync with "
+        "docs/yaml-schema.json"
+    )
+
+    manifest = yaml.safe_load(_SKILL_CONTRACTS_FILE.read_text())
+    blob_header = f"blob {len(schema_bytes)}\0".encode()
+    blob_sha = hashlib.sha1(
+        blob_header + schema_bytes, usedforsecurity=False
+    ).hexdigest()
+    assert manifest["contracts"]["main"]["source"]["blob_sha"] == blob_sha
