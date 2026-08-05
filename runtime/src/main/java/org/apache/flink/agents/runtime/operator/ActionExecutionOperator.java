@@ -28,6 +28,7 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
@@ -118,6 +119,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // Inspired by Apache Paimon.
     private transient String jobIdentifier;
 
+    // Broadcast targets for the per-record/per-task lifecycle events; the operator itself holds
+    // no listener-specific logic. All callbacks run on the mailbox thread.
+    private transient List<TaskLifecycleListener> taskLifecycleListeners = new ArrayList<>();
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
@@ -184,6 +189,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Capture the wired Mem0 long-term memory, if any, so it can be plumbed into the Java
         // runner context created by ActionTaskContextManager.
         ltm = pythonBridge.getLongTermMemory();
+
+        // The transient listener list survives only within the JVM; re-initialize it after Java
+        // deserialization so the notification methods never run into a null list.
+        if (taskLifecycleListeners == null) {
+            taskLifecycleListeners = new ArrayList<>();
+        }
 
         // init context manager for runner context creation and memory contexts
         contextManager =
@@ -259,8 +270,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 output.collect(eventRouter.getReusedStreamRecord().replace(outputData));
             }
         } else {
+            boolean freshRecordRound = false;
             if (isInputEvent) {
                 // If the event is an InputEvent, we mark that the key is currently being processed.
+                if (!stateManager.hasMoreActionTasks()) {
+                    // No tasks in flight for this key: this input record starts a fresh record
+                    // processing round; the listeners are notified once its first task is
+                    // created, so a record that triggers no actions emits no lifecycle events.
+                    freshRecordRound = true;
+                }
                 stateManager.addProcessingKey(key);
                 stateManager.initOrIncSequenceNumber();
             }
@@ -272,6 +290,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     stateManager.addActionTask(
                             createActionTask(
                                     key, triggerAction, event, stateManager.getSequenceNumber()));
+                    if (freshRecordRound) {
+                        notifyRecordStart(key);
+                        freshRecordRound = false;
+                    }
                 }
             }
         }
@@ -330,6 +352,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 stateManager.getShortTermMemState(),
                 pythonBridge.getPythonRunnerContext(),
                 ltm);
+        notifyTaskPrepared(actionTask);
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
@@ -404,6 +427,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         boolean currentInputEventFinished = false;
         if (isFinished) {
+            notifyTaskFinished(actionTask);
             builtInMetrics.markActionExecuted(actionTask.action.getName());
             currentInputEventFinished = !stateManager.hasMoreActionTasks();
 
@@ -421,12 +445,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // If the action task is not finished, we keep the contexts in memory for the
             // next generated ActionTask to be invoked.
             contextManager.transferContexts(actionTask, generatedActionTask, durableExecManager);
+            notifyTaskTransferred(actionTask, generatedActionTask);
 
             stateManager.addActionTask(generatedActionTask);
         }
 
         // 3. Process the next InputEvent or next action task
         if (currentInputEventFinished) {
+            notifyRecordFinished(key);
             // Clean up sensory memory when a single run finished.
             actionTask.getRunnerContext().clearSensoryMemory();
             durableExecManager.updateLastCompletedSequenceNumber(sequenceNumber);
@@ -543,6 +569,44 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         checkState(
                 mailboxProcessor.isMailboxThread(),
                 "Expected to be running on the task mailbox thread, but was not.");
+    }
+
+    /**
+     * Registers a listener to be notified of per-record/per-task lifecycle events. Must be called
+     * before records are processed; callbacks run on the mailbox thread.
+     */
+    public void addTaskLifecycleListener(TaskLifecycleListener listener) {
+        taskLifecycleListeners.add(listener);
+    }
+
+    private void notifyRecordStart(Object key) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onRecordStart(key);
+        }
+    }
+
+    private void notifyTaskPrepared(ActionTask task) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onTaskPrepared(task);
+        }
+    }
+
+    private void notifyTaskTransferred(ActionTask from, ActionTask to) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onTaskTransferred(from, to);
+        }
+    }
+
+    private void notifyTaskFinished(ActionTask task) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onTaskFinished(task);
+        }
+    }
+
+    private void notifyRecordFinished(Object key) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onRecordFinished(key);
+        }
     }
 
     private ActionTask createActionTask(
