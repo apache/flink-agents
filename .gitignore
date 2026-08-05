@@ -11,6 +11,9 @@ python/.idea
 .DS_Store
 python/.DS_Store
 
+# JVM crash logs
+hs_err_pid*.log
+
 # Build
 target/
 **/dependency-reduced-pom.xml
