@@ -45,6 +45,7 @@ from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
     _validate_reconciler_callable,
+    with_durable_id,
 )
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
@@ -711,6 +712,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         func: Callable[[Any], Any],
         *args: Any,
         reconciler: Callable[[], Any] | None = None,
+        durable_id: str | None = None,
         **kwargs: Any,
     ) -> Any:
         """Synchronously execute the provided function with durable execution support.
@@ -724,6 +726,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         the operator until completion.
         """
         validated_reconciler = _validate_reconciler_callable(reconciler)
+        if durable_id is not None:
+            func = with_durable_id(func, durable_id)
 
         if validated_reconciler is not None:
             plan = self._plan_reconciler_execution(
@@ -769,6 +773,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         func: Callable[[Any], Any],
         *args: Any,
         reconciler: Callable[[], Any] | None = None,
+        durable_id: str | None = None,
         **kwargs: Any,
     ) -> AsyncExecutionResult:
         """Asynchronously execute the provided function with durable execution support.
@@ -783,6 +788,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         recorded and cannot be recovered.
         """
         validated_reconciler = _validate_reconciler_callable(reconciler)
+        if durable_id is not None:
+            func = with_durable_id(func, durable_id)
 
         if validated_reconciler is not None:
             return _ReconcilerDurableAsyncExecutionResult(
