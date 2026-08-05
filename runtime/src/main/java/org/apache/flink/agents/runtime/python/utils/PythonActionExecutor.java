@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
+import org.apache.flink.agents.runtime.operator.ActionTask;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.types.Row;
 import pemja.core.PythonInterpreter;
@@ -47,6 +48,17 @@ public class PythonActionExecutor {
 
     private static final String CLOSE_FLINK_RUNNER_CONTEXT =
             "flink_runner_context.close_flink_runner_context";
+
+    // =========== TASK LIFECYCLE FORWARDING ===========
+    private static final String ADD_TASK_LIFECYCLE_LISTENER =
+            "flink_runner_context.add_task_lifecycle_listener";
+    private static final String NOTIFY_RECORD_START = "flink_runner_context.notify_record_start";
+    private static final String NOTIFY_TASK_PREPARED = "flink_runner_context.notify_task_prepared";
+    private static final String NOTIFY_TASK_TRANSFERRED =
+            "flink_runner_context.notify_task_transferred";
+    private static final String NOTIFY_TASK_FINISHED = "flink_runner_context.notify_task_finished";
+    private static final String NOTIFY_RECORD_FINISHED =
+            "flink_runner_context.notify_record_finished";
 
     // ========== ASYNC THREAD POOL ===========
     private static final String CREATE_ASYNC_THREAD_POOL =
@@ -94,6 +106,46 @@ public class PythonActionExecutor {
 
     public PyObject getPythonRunnerContext() {
         return pythonRunnerContext;
+    }
+
+    /**
+     * Registers a Python object in the Python runtime's task lifecycle registry. The Python side
+     * fans the operator's callbacks out to that registry when {@link
+     * org.apache.flink.agents.runtime.lifecycle.PythonTaskLifecycleListener} forwards them.
+     *
+     * @return whether the object observes the lifecycle, so the caller can tell whether the Python
+     *     runtime has anything to be notified about.
+     */
+    public boolean addTaskLifecycleListener(PyObject pythonListener) {
+        Object registered =
+                interpreter.invoke(
+                        ADD_TASK_LIFECYCLE_LISTENER, pythonRunnerContext, pythonListener);
+        return Boolean.TRUE.equals(registered);
+    }
+
+    /** Forwards {@code onRecordStart} to the Python runtime lifecycle listeners. */
+    public void notifyRecordStart(Object key) {
+        interpreter.invoke(NOTIFY_RECORD_START, pythonRunnerContext, key);
+    }
+
+    /** Forwards {@code onTaskPrepared} to the Python runtime lifecycle listeners. */
+    public void notifyTaskPrepared(ActionTask task) {
+        interpreter.invoke(NOTIFY_TASK_PREPARED, pythonRunnerContext, task);
+    }
+
+    /** Forwards {@code onTaskTransferred} to the Python runtime lifecycle listeners. */
+    public void notifyTaskTransferred(ActionTask fromTask, ActionTask toTask) {
+        interpreter.invoke(NOTIFY_TASK_TRANSFERRED, pythonRunnerContext, fromTask, toTask);
+    }
+
+    /** Forwards {@code onTaskFinished} to the Python runtime lifecycle listeners. */
+    public void notifyTaskFinished(ActionTask task) {
+        interpreter.invoke(NOTIFY_TASK_FINISHED, pythonRunnerContext, task);
+    }
+
+    /** Forwards {@code onRecordFinished} to the Python runtime lifecycle listeners. */
+    public void notifyRecordFinished(Object key) {
+        interpreter.invoke(NOTIFY_RECORD_FINISHED, pythonRunnerContext, key);
     }
 
     public void open() throws Exception {

@@ -56,6 +56,7 @@ from flink_agents.runtime.memory.mem0.mem0_long_term_memory import (
     Mem0LongTermMemory,
 )
 from flink_agents.runtime.resource_cache import ResourceCache
+from flink_agents.runtime.task_lifecycle_listener import TaskLifecycleListener
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +295,10 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         )
         self.__resource_cache.set_java_resource_adapter(j_resource_adapter)
         self.executor = executor
+        # Task lifecycle listeners the operator's callbacks fan out to,
+        # registered via add_task_lifecycle_listener() (aligned with the Java
+        # operator's taskLifecycleListeners).
+        self.__task_lifecycle_listeners: list = []
 
     def set_long_term_memory(self, ltm: InternalBaseLongTermMemory) -> None:
         """Set long term memory instance to this context.
@@ -338,6 +343,39 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         # Bind metric group to the resource
         resource.set_metric_group(metric_group or self.action_metric_group)
         return resource
+
+    def add_task_lifecycle_listener(self, listener: Any) -> None:
+        """Register a task lifecycle listener the operator's callbacks fan out to."""
+        self.__task_lifecycle_listeners.append(listener)
+
+    def notify_record_start(self, key: Any) -> None:
+        """Fan out the operator's onRecordStart to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_record_start(key)
+
+    def notify_task_prepared(self, task: Any) -> None:
+        """Fan out the operator's onTaskPrepared to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_task_prepared(task)
+
+    def notify_task_transferred(self, from_task: Any, to_task: Any) -> None:
+        """Fan out the operator's onTaskTransferred to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_task_transferred(from_task, to_task)
+
+    def notify_task_finished(self, task: Any) -> None:
+        """Fan out the operator's onTaskFinished to the task lifecycle listeners.
+
+        A listener may raise here to enforce an end-of-task invariant; the
+        exception propagates back over the bridge and fails the action.
+        """
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_task_finished(task)
+
+    def notify_record_finished(self, key: Any) -> None:
+        """Fan out the operator's onRecordFinished to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_record_finished(key)
 
     @property
     @override
@@ -886,6 +924,45 @@ def close_flink_runner_context(
 ) -> None:
     """Clean up the resources kept by the flink runner context."""
     ctx.close()
+
+
+def add_task_lifecycle_listener(ctx: FlinkRunnerContext, listener: Any) -> bool:
+    """Java entry: register a Python object as a task lifecycle listener.
+
+    Returns whether it observes the lifecycle, so the Java side knows whether the
+    Python runtime has anything to be notified about.
+    """
+    if not isinstance(listener, TaskLifecycleListener):
+        return False
+    ctx.add_task_lifecycle_listener(listener)
+    return True
+
+
+def notify_record_start(ctx: FlinkRunnerContext, key: Any) -> None:
+    """Java entry: forward onRecordStart to the Python task lifecycle listeners."""
+    ctx.notify_record_start(key)
+
+
+def notify_task_prepared(ctx: FlinkRunnerContext, task: Any) -> None:
+    """Java entry: forward onTaskPrepared to the Python task lifecycle listeners."""
+    ctx.notify_task_prepared(task)
+
+
+def notify_task_transferred(
+    ctx: FlinkRunnerContext, from_task: Any, to_task: Any
+) -> None:
+    """Java entry: forward onTaskTransferred to the Python task lifecycle listeners."""
+    ctx.notify_task_transferred(from_task, to_task)
+
+
+def notify_task_finished(ctx: FlinkRunnerContext, task: Any) -> None:
+    """Java entry: forward onTaskFinished to the Python task lifecycle listeners."""
+    ctx.notify_task_finished(task)
+
+
+def notify_record_finished(ctx: FlinkRunnerContext, key: Any) -> None:
+    """Java entry: forward onRecordFinished to the Python task lifecycle listeners."""
+    ctx.notify_record_finished(key)
 
 
 def create_async_thread_pool(max_workers: int | None) -> ThreadPoolExecutor:
