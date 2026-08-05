@@ -33,6 +33,7 @@ from flink_agents.api.skills import (
     LOAD_SKILL_TOOL,
     Skills,
 )
+from flink_agents.api.subagent import SubagentSetup
 from flink_agents.api.tools.function_tool import FunctionTool as ApiFunctionTool
 from flink_agents.api.tools.tool import Tool
 from flink_agents.plan.actions.action import Action
@@ -423,6 +424,25 @@ def _get_resource_providers(
         {**skills_descriptors, **agent.resources[ResourceType.SKILLS]}.items()
     )
     _add_skills(all_skills, resource_providers)
+
+    # Handle AGENT resources (subagent setups)
+    for name, value in agent.resources[ResourceType.AGENT].items():
+        if isinstance(value, SubagentSetup):
+            resource_providers.append(
+                PythonSerializableResourceProvider.from_resource(
+                    name=name, resource=value
+                )
+            )
+        elif isinstance(value, ResourceDescriptor):
+            resource_providers.append(
+                PythonResourceProvider.get(name=name, descriptor=value)
+            )
+        else:
+            msg = (
+                f"AGENT resource '{name}' must be a SubagentSetup or a "
+                f"ResourceDescriptor, but got {type(value).__name__}."
+            )
+            raise TypeError(msg)
 
     for resource_type in [
         ResourceType.CHAT_MODEL,
