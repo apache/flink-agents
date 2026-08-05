@@ -47,7 +47,12 @@ class RunnerContextImplExecutionReporterTest {
         runnerContext.setExecutionEventSink(
                 (event, context) -> reports.add(new RecordedReport(event, context)));
         runnerContext.switchActionContext(
-                "chat_model_action", null, "business-key", actionTraceContext, new HashMap<>());
+                "chat_model_action",
+                null,
+                new ArrayList<>(),
+                "business-key",
+                actionTraceContext,
+                new HashMap<>());
 
         runnerContext.reportExecutionStarted(
                 ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
@@ -93,17 +98,32 @@ class RunnerContextImplExecutionReporterTest {
         Map<ReportedExecutionKey, ExecutionTraceContext> activeReportsB = new HashMap<>();
 
         runnerContext.switchActionContext(
-                "chat_model_action", null, "business-key", actionA, activeReportsA);
+                "chat_model_action",
+                null,
+                new ArrayList<>(),
+                "business-key",
+                actionA,
+                activeReportsA);
         runnerContext.reportExecutionStarted(
                 ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
 
         runnerContext.switchActionContext(
-                "tool_call_action", null, "business-key", actionB, activeReportsB);
+                "tool_call_action",
+                null,
+                new ArrayList<>(),
+                "business-key",
+                actionB,
+                activeReportsB);
         runnerContext.reportExecutionStarted(
                 ExecutionReporter.EntityTypes.TOOL, "search", Map.of("toolCallId", "call-1"));
 
         runnerContext.switchActionContext(
-                "chat_model_action", null, "business-key", actionA, activeReportsA);
+                "chat_model_action",
+                null,
+                new ArrayList<>(),
+                "business-key",
+                actionA,
+                activeReportsA);
         runnerContext.reportExecutionSucceeded(
                 ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
 
@@ -131,7 +151,12 @@ class RunnerContextImplExecutionReporterTest {
         runnerContext.setExecutionEventSink(
                 (event, context) -> reports.add(new RecordedReport(event, context)));
         runnerContext.switchActionContext(
-                "tool_call_action", null, "business-key", actionTraceContext, new HashMap<>());
+                "tool_call_action",
+                null,
+                new ArrayList<>(),
+                "business-key",
+                actionTraceContext,
+                new HashMap<>());
 
         String metadata = "{\"toolCallId\":\"call-1\",\"toolType\":\"function\"}";
         runnerContext.reportExecutionStartedJson(
