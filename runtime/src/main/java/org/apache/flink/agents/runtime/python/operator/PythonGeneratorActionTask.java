@@ -27,22 +27,28 @@ import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 /** An {@link ActionTask} wrapper a Python awaitable to represent a code block in Python action. */
 public class PythonGeneratorActionTask extends PythonActionTask {
 
-    public PythonGeneratorActionTask(Object key, Event event, Action action, String observationId) {
-        super(key, event, action, observationId);
-    }
-
     public PythonGeneratorActionTask(
-            Object key, Event event, Action action, ExecutionTraceContext traceContext) {
-        super(key, event, action, traceContext);
+            Object key, Event event, Action action, long sequenceNumber, String observationId) {
+        super(key, event, action, sequenceNumber, observationId);
     }
 
     public PythonGeneratorActionTask(
             Object key,
             Event event,
             Action action,
+            long sequenceNumber,
+            ExecutionTraceContext traceContext) {
+        super(key, event, action, sequenceNumber, traceContext);
+    }
+
+    public PythonGeneratorActionTask(
+            Object key,
+            Event event,
+            Action action,
+            long sequenceNumber,
             String observationId,
             ExecutionTraceContext traceContext) {
-        super(key, event, action, observationId, traceContext);
+        super(key, event, action, sequenceNumber, observationId, traceContext);
     }
 
     @Override
@@ -63,7 +69,8 @@ public class PythonGeneratorActionTask extends PythonActionTask {
                             + "re-executing from beginning.",
                     action.getName());
             PythonActionTask freshTask =
-                    new PythonActionTask(key, event, action, getObservationId(), traceContext);
+                    new PythonActionTask(
+                            key, event, action, sequenceNumber, getObservationId(), traceContext);
             freshTask.setRunnerContext(runnerContext);
             return freshTask.invoke(userCodeClassLoader, executor);
         }

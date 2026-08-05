@@ -35,19 +35,24 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 public class PythonActionTask extends ActionTask {
 
-    public PythonActionTask(Object key, Event event, Action action) {
-        super(key, event, action);
+    public PythonActionTask(Object key, Event event, Action action, long sequenceNumber) {
+        super(key, event, action, sequenceNumber);
         checkState(action.getExec() instanceof PythonFunction);
     }
 
-    protected PythonActionTask(Object key, Event event, Action action, String observationId) {
-        super(key, event, action, observationId);
+    protected PythonActionTask(
+            Object key, Event event, Action action, long sequenceNumber, String observationId) {
+        super(key, event, action, sequenceNumber, observationId);
         checkState(action.getExec() instanceof PythonFunction);
     }
 
     public PythonActionTask(
-            Object key, Event event, Action action, ExecutionTraceContext traceContext) {
-        super(key, event, action, traceContext);
+            Object key,
+            Event event,
+            Action action,
+            long sequenceNumber,
+            ExecutionTraceContext traceContext) {
+        super(key, event, action, sequenceNumber, traceContext);
         checkState(action.getExec() instanceof PythonFunction);
     }
 
@@ -55,9 +60,10 @@ public class PythonActionTask extends ActionTask {
             Object key,
             Event event,
             Action action,
+            long sequenceNumber,
             String observationId,
             ExecutionTraceContext traceContext) {
-        super(key, event, action, observationId, traceContext);
+        super(key, event, action, sequenceNumber, observationId, traceContext);
         checkState(action.getExec() instanceof PythonFunction);
     }
 
@@ -81,7 +87,7 @@ public class PythonActionTask extends ActionTask {
             ((PythonRunnerContextImpl) runnerContext).setPythonAwaitableRef(pythonAwaitableRef);
             ActionTask tempGeneratedActionTask =
                     new PythonGeneratorActionTask(
-                            key, event, action, getObservationId(), traceContext);
+                            key, event, action, sequenceNumber, getObservationId(), traceContext);
             tempGeneratedActionTask.setRunnerContext(runnerContext);
             return tempGeneratedActionTask.invoke(userCodeClassLoader, executor);
         }
