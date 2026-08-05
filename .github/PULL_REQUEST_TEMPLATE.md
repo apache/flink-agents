@@ -33,4 +33,4 @@ Linked issue: #xxx
 - [ ] Yes
 - [ ] No
 
-If yes, include a `Generated-by: <tool name and version>` line in this description. See the [ASF generative tooling guidance](https://www.apache.org/legal/generative-tooling.html).
+If yes, include a `Generated-by: <tool name and version>` line in the commit message so it reaches Git history, and repeat it here for reviewer visibility. See the [ASF generative tooling guidance](https://www.apache.org/legal/generative-tooling.html).
