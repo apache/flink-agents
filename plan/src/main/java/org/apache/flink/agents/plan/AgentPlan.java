@@ -37,6 +37,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameterInjectionValidator;
@@ -584,6 +585,30 @@ public class AgentPlan implements Serializable {
                                     + " Declare the MCP server with a @MCPServer-annotated static"
                                     + " method on your Agent class so its tools and prompts can be"
                                     + " discovered.");
+                }
+            } else if (type == ResourceType.AGENT) {
+                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
+                    String name = kv.getKey();
+                    Object value = kv.getValue();
+                    if (value instanceof SubagentSetup) {
+                        addResourceProvider(
+                                JavaSerializableResourceProvider.createResourceProvider(
+                                        name, ResourceType.AGENT, (SubagentSetup) value));
+                    } else if (value instanceof ResourceDescriptor) {
+                        // Declared via YAML: the descriptor names a SubagentSetup subclass that is
+                        // instantiated when the resource is first resolved.
+                        addResourceProvider(
+                                createDescriptorResourceProvider(
+                                        name, ResourceType.AGENT, (ResourceDescriptor) value));
+                    } else {
+                        throw new IllegalArgumentException(
+                                "AGENT resource '"
+                                        + name
+                                        + "' must be a SubagentSetup or a ResourceDescriptor, but"
+                                        + " got "
+                                        + value.getClass().getName()
+                                        + ".");
+                    }
                 }
             } else {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
