@@ -95,6 +95,12 @@ public final class ResourceName {
         public static final String AZURE_OPENAI_SETUP =
                 "org.apache.flink.agents.integrations.chatmodels.openai.AzureOpenAIChatModelSetup";
 
+        // IBM watsonx.ai
+        public static final String WATSONX_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelConnection";
+        public static final String WATSONX_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelSetup";
+
         // Python Wrapper
         public static final String PYTHON_WRAPPER_CONNECTION =
                 "org.apache.flink.agents.api.chat.model.python.PythonChatModelConnection";
@@ -133,6 +139,12 @@ public final class ResourceName {
                     "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelConnection";
             public static final String TONGYI_SETUP =
                     "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelSetup";
+
+            // IBM watsonx.ai
+            public static final String WATSONX_CONNECTION =
+                    "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelConnection";
+            public static final String WATSONX_SETUP =
+                    "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelSetup";
 
             private Python() {}
         }
