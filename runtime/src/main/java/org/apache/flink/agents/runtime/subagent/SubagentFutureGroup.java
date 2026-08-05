@@ -58,6 +58,18 @@ final class SubagentFutureGroup extends SubagentFutures {
 
     @Override
     public List<SubagentResult> awaitAll() throws Exception {
+        for (SubagentFuture future : futures) {
+            if (future instanceof DeferredSubagentFuture && !future.isDone()) {
+                ((DeferredSubagentFuture) future).prepare();
+            }
+        }
+        // TODO(#926): execute the prepared calls as one batch once durable execution supports
+        // batched submission; until then the prepared calls are executed one by one.
+        for (SubagentFuture future : futures) {
+            if (future instanceof DeferredSubagentFuture && !future.isDone()) {
+                ((DeferredSubagentFuture) future).execute();
+            }
+        }
         List<SubagentResult> outcomes = new ArrayList<>(futures.size());
         for (SubagentFuture future : futures) {
             outcomes.add(future.await());
