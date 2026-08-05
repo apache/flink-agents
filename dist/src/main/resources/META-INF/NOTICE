@@ -183,8 +183,11 @@ See bundled license files for details.
 This project bundles the following dependencies under the BSD 3-Clause license.
 See bundled license files for details.
 
-- com.google.protobuf:protobuf-java:3.25.5
+- com.google.protobuf:protobuf-java:4.33.5
+- com.google.re2j:re2j:1.8
+- org.antlr:antlr4-runtime:4.13.2
 - org.ow2.asm:asm:9.3
+- org.threeten:threeten-extra:1.8.0
 
 This project bundles the following dependencies under the EPL2 license.
 See bundled license files for details.
