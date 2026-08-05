@@ -149,6 +149,13 @@
           "title": "Skills",
           "type": "array"
         },
+        "subagents": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Subagents",
+          "type": "array"
+        },
         "tools": {
           "items": {
             "$ref": "#/$defs/ToolSpec"
@@ -512,6 +519,13 @@
         "$ref": "#/$defs/SkillsSpec"
       },
       "title": "Skills",
+      "type": "array"
+    },
+    "subagents": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Subagents",
       "type": "array"
     },
     "tools": {

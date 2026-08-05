@@ -39,6 +39,7 @@ public final class YamlAgentsDocument {
     private final List<DescriptorSpec> embeddingModelSetups;
     private final List<DescriptorSpec> vectorStores;
     private final List<DescriptorSpec> mcpServers;
+    private final List<DescriptorSpec> subagents;
 
     @JsonCreator
     public YamlAgentsDocument(
@@ -53,7 +54,8 @@ public final class YamlAgentsDocument {
                     List<DescriptorSpec> embeddingModelConnections,
             @JsonProperty("embedding_model_setups") List<DescriptorSpec> embeddingModelSetups,
             @JsonProperty("vector_stores") List<DescriptorSpec> vectorStores,
-            @JsonProperty("mcp_servers") List<DescriptorSpec> mcpServers) {
+            @JsonProperty("mcp_servers") List<DescriptorSpec> mcpServers,
+            @JsonProperty("subagents") List<DescriptorSpec> subagents) {
         this.agents = orEmpty(agents);
         this.prompts = orEmpty(prompts);
         this.tools = orEmpty(tools);
@@ -65,6 +67,7 @@ public final class YamlAgentsDocument {
         this.embeddingModelSetups = orEmpty(embeddingModelSetups);
         this.vectorStores = orEmpty(vectorStores);
         this.mcpServers = orEmpty(mcpServers);
+        this.subagents = orEmpty(subagents);
     }
 
     private static <T> List<T> orEmpty(List<T> list) {
@@ -113,5 +116,9 @@ public final class YamlAgentsDocument {
 
     public List<DescriptorSpec> getMcpServers() {
         return mcpServers;
+    }
+
+    public List<DescriptorSpec> getSubagents() {
+        return subagents;
     }
 }
