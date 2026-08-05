@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Test;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -84,6 +85,7 @@ class TestMemoryObservationFlush {
                 new RunnerContextImpl.MemoryContext(
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                new ArrayList<>(),
                 contextKey,
                 "observation-1",
                 suppressed);
@@ -222,6 +224,7 @@ class TestMemoryObservationFlush {
                 new RunnerContextImpl.MemoryContext(
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                new ArrayList<>(),
                 "user-43",
                 "observation-2",
                 true);
@@ -259,6 +262,7 @@ class TestMemoryObservationFlush {
                 new RunnerContextImpl.MemoryContext(
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                new ArrayList<>(),
                 "user-42",
                 "observation-2",
                 false);
@@ -274,6 +278,7 @@ class TestMemoryObservationFlush {
                 new RunnerContextImpl.MemoryContext(
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                new ArrayList<>(),
                 "user-42",
                 "observation-1",
                 false);
