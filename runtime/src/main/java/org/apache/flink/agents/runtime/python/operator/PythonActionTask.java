@@ -34,8 +34,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 public class PythonActionTask extends ActionTask {
 
-    public PythonActionTask(Object key, Event event, Action action) {
-        super(key, event, action);
+    public PythonActionTask(Object key, Event event, Action action, long sequenceNumber) {
+        super(key, event, action, sequenceNumber);
         checkState(action.getExec() instanceof PythonFunction);
     }
 
@@ -58,7 +58,8 @@ public class PythonActionTask extends ActionTask {
             // The Python action generates an awaitable. We need to execute it once, which will
             // submit an asynchronous task and return whether the action has been completed.
             ((PythonRunnerContextImpl) runnerContext).setPythonAwaitableRef(pythonAwaitableRef);
-            ActionTask tempGeneratedActionTask = new PythonGeneratorActionTask(key, event, action);
+            ActionTask tempGeneratedActionTask =
+                    new PythonGeneratorActionTask(key, event, action, sequenceNumber);
             tempGeneratedActionTask.setRunnerContext(runnerContext);
             return tempGeneratedActionTask.invoke(userCodeClassLoader, executor);
         }

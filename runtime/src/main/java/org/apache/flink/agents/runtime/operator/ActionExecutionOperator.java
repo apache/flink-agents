@@ -269,7 +269,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             List<Action> triggerActions = eventRouter.getActionsTriggeredBy(event, agentPlan);
             if (triggerActions != null && !triggerActions.isEmpty()) {
                 for (Action triggerAction : triggerActions) {
-                    stateManager.addActionTask(createActionTask(key, triggerAction, event));
+                    stateManager.addActionTask(
+                            createActionTask(
+                                    key, triggerAction, event, stateManager.getSequenceNumber()));
                 }
             }
         }
@@ -543,11 +545,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 "Expected to be running on the task mailbox thread, but was not.");
     }
 
-    private ActionTask createActionTask(Object key, Action action, Event event) {
+    private ActionTask createActionTask(
+            Object key, Action action, Event event, long sequenceNumber) {
         if (action.getExec() instanceof JavaFunction) {
-            return new JavaActionTask(key, event, action);
+            return new JavaActionTask(key, event, action, sequenceNumber);
         } else if (action.getExec() instanceof PythonFunction) {
-            return new PythonActionTask(key, event, action);
+            return new PythonActionTask(key, event, action, sequenceNumber);
         } else {
             throw new IllegalStateException(
                     "Unsupported action type: " + action.getExec().getClass());

@@ -40,8 +40,8 @@ public class JavaActionTask extends ActionTask {
 
     private boolean executionStarted = false;
 
-    public JavaActionTask(Object key, Event event, Action action) {
-        super(key, event, action);
+    public JavaActionTask(Object key, Event event, Action action, long sequenceNumber) {
+        super(key, event, action, sequenceNumber);
         checkState(action.getExec() instanceof JavaFunction);
     }
 

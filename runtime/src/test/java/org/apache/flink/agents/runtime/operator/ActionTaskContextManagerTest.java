@@ -49,8 +49,8 @@ class ActionTaskContextManagerTest {
     void perTaskContextsAreIsolatedAcrossPutGetRemove() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask t1 = new JavaActionTask("k", new InputEvent(1L), action);
-            ActionTask t2 = new JavaActionTask("k", new InputEvent(2L), action);
+            ActionTask t1 = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            ActionTask t2 = new JavaActionTask("k", new InputEvent(2L), action, 1L);
 
             // Contexts records are created explicitly; mutators never create one implicitly.
             mgr.createContexts(t1);
@@ -99,7 +99,8 @@ class ActionTaskContextManagerTest {
     @Test
     void createAndSetRunnerContextBuildsFreshMemoryContextOnFirstCall() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
-            ActionTask t = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction());
+            ActionTask t =
+                    new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
             invokeCreateAndSetRunnerContext(mgr, t);
 
             // Production path: createAndSetRunnerContext pins the freshly created MemoryContext.
@@ -112,8 +113,8 @@ class ActionTaskContextManagerTest {
     void createAndSetRunnerContextReusesExistingMemoryContext() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action);
-            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action);
+            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action, 1L);
 
             // Step 1: createAndSetRunnerContext(from) — runner context carries and pins a fresh
             // MemoryContext.
@@ -141,8 +142,8 @@ class ActionTaskContextManagerTest {
     void transferContextsCopiesMemoryAndContinuationToNewTask() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action);
-            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action);
+            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action, 1L);
 
             // Populate `from`'s runner context with a MemoryContext and ContinuationContext.
             invokeCreateAndSetRunnerContext(mgr, from);
@@ -172,8 +173,8 @@ class ActionTaskContextManagerTest {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             InputEvent event = new InputEvent(1L);
-            ActionTask from = new JavaActionTask("k", event, action);
-            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action);
+            ActionTask from = new JavaActionTask("k", event, action, 1L);
+            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action, 1L);
 
             invokeCreateAndSetRunnerContext(mgr, from);
 
@@ -208,7 +209,7 @@ class ActionTaskContextManagerTest {
     void closeIsIdempotent() throws Exception {
         // Not using try-with-resources here because we want to call close() explicitly twice.
         ActionTaskContextManager mgr = newManager();
-        ActionTask t = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction());
+        ActionTask t = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
         invokeCreateAndSetRunnerContext(mgr, t);
 
         // First close() shuts down the runner context and the continuation executor

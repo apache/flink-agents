@@ -47,6 +47,14 @@ public abstract class ActionTask {
     protected final Object key;
     protected final Event event;
     protected final Action action;
+
+    /**
+     * The sequence number of the input-record processing round this task belongs to, assigned by
+     * the operator's state manager. Exposed so consumers can derive deterministic per-execution
+     * facts without reaching into operator state.
+     */
+    protected final long sequenceNumber;
+
     /**
      * Since RunnerContextImpl contains references to the Operator and state, it should not be
      * serialized and included in the state with ActionTask. Instead, we should check if a valid
@@ -54,10 +62,11 @@ public abstract class ActionTask {
      */
     protected transient RunnerContextImpl runnerContext;
 
-    public ActionTask(Object key, Event event, Action action) {
+    public ActionTask(Object key, Event event, Action action, long sequenceNumber) {
         this.key = key;
         this.event = event;
         this.action = action;
+        this.sequenceNumber = sequenceNumber;
     }
 
     public RunnerContextImpl getRunnerContext() {
@@ -70,6 +79,18 @@ public abstract class ActionTask {
 
     public Object getKey() {
         return key;
+    }
+
+    public Event getEvent() {
+        return event;
+    }
+
+    public Action getAction() {
+        return action;
+    }
+
+    public long getSequenceNumber() {
+        return sequenceNumber;
     }
 
     @Override
