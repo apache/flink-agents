@@ -25,8 +25,11 @@ import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
+import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -47,6 +50,14 @@ public class ResourceCache implements AutoCloseable {
     private final Map<ResourceType, Map<String, Resource>> cache = new ConcurrentHashMap<>();
     private volatile PythonResourceAdapter pythonResourceAdapter;
     private final ResourceContextImpl resourceContext;
+    private final ResourceCache parent;
+
+    /**
+     * Prefix qualifying the resource name injected into materialized sub-agent setups: empty at the
+     * root cache, the enclosing plan's scope plus {@code #} for child caches, so setups
+     * materialized here receive {@code prefix + resourceName} as their agent name.
+     */
+    private final String scopePrefix;
 
     /**
      * Construct a cache that resolves {@code classpath:} skill sources via {@code classLoader}.
@@ -57,6 +68,32 @@ public class ResourceCache implements AutoCloseable {
     public ResourceCache(
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
             ClassLoader classLoader) {
+        this(resourceProviders, classLoader, null);
+    }
+
+    /**
+     * Construct a cache with a parent for resource inheritance. Resolution order: own cache → own
+     * providers → parent. The parent's resources are cached in the parent; this cache's {@link
+     * #close()} does not affect them.
+     */
+    public ResourceCache(
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            ClassLoader classLoader,
+            ResourceCache parent) {
+        this(resourceProviders, classLoader, parent, "");
+    }
+
+    /**
+     * Construct a child cache whose materialized sub-agent setups receive a resource name qualified
+     * by {@code scopePrefix}.
+     */
+    public ResourceCache(
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            ClassLoader classLoader,
+            ResourceCache parent,
+            String scopePrefix) {
+        this.parent = parent;
+        this.scopePrefix = scopePrefix;
         // Defensive copy: the cache must not be affected by later mutations to the source map.
         this.resourceProviders = new HashMap<>();
         for (Map.Entry<ResourceType, Map<String, ResourceProvider>> entry :
@@ -78,7 +115,7 @@ public class ResourceCache implements AutoCloseable {
 
     /** Convenience overload that uses the current thread's context class loader. */
     public ResourceCache(Map<ResourceType, Map<String, ResourceProvider>> resourceProviders) {
-        this(resourceProviders, Thread.currentThread().getContextClassLoader());
+        this(resourceProviders, Thread.currentThread().getContextClassLoader(), null);
     }
 
     void setPythonResourceAdapter(PythonResourceAdapter adapter) {
@@ -108,6 +145,9 @@ public class ResourceCache implements AutoCloseable {
 
         Map<String, ResourceProvider> providers = resourceProviders.get(type);
         if (providers == null || !providers.containsKey(name)) {
+            if (parent != null) {
+                return parent.getResource(name, type);
+            }
             throw new IllegalArgumentException("Resource not found: " + name + " of type " + type);
         }
         ResourceProvider provider = providers.get(name);
@@ -117,6 +157,13 @@ public class ResourceCache implements AutoCloseable {
         }
 
         Resource resource = provider.provide(resourceContext);
+
+        if (resource instanceof BaseSubagentSetup) {
+            // The framework owns the setup's identity: qualify the resource name by this cache's
+            // prefix and inject it as the agent name, so sub-agents sharing one caller's counting
+            // range never hand out the same ids.
+            ((BaseSubagentSetup) resource).setResourceName(scopePrefix + name);
+        }
 
         if (pythonResourceAdapter != null && resource instanceof FunctionTool) {
             ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
@@ -136,6 +183,40 @@ public class ResourceCache implements AutoCloseable {
      */
     public void put(String name, ResourceType type, Resource resource) {
         cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
+    }
+
+    /**
+     * The resources of the given type already materialized into this cache, without triggering any
+     * new materialization. Used to walk the setups of lazily created child caches (e.g. to locate
+     * an internal sub-agent call status across nested scopes).
+     *
+     * @param type the resource type to inspect.
+     * @return the cached instances, empty when nothing of the type has been materialized yet.
+     */
+    public List<Resource> materializedResources(ResourceType type) {
+        Map<String, Resource> typed = cache.get(type);
+        return typed == null ? new ArrayList<>() : new ArrayList<>(typed.values());
+    }
+
+    /**
+     * Eagerly materializes every registered resource of the given type, resolving each through its
+     * provider exactly like a first {@link #getResource} access. Returns the materialized instances
+     * so the caller can inspect them (e.g. to register lifecycle listeners). Providers are resolved
+     * in an unspecified order; resource construction must not depend on that order.
+     *
+     * @param type the resource type to materialize.
+     * @return the materialized resource instances, empty when the type has no providers.
+     */
+    public synchronized List<Resource> eagerMaterialize(ResourceType type) throws Exception {
+        Map<String, ResourceProvider> providers = resourceProviders.get(type);
+        List<Resource> materialized = new ArrayList<>();
+        if (providers == null) {
+            return materialized;
+        }
+        for (String name : providers.keySet()) {
+            materialized.add(getResource(name, type));
+        }
+        return materialized;
     }
 
     @Override

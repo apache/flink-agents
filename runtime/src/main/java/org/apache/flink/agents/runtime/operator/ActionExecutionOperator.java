@@ -21,6 +21,8 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -194,6 +196,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // deserialization so the notification methods never run into a null list.
         if (taskLifecycleListeners == null) {
             taskLifecycleListeners = new ArrayList<>();
+        }
+
+        // Eagerly materialize all AGENT resources (after the Python bridge injected the
+        // resource adapter) and register the instances that opt into task lifecycle
+        // notifications. Materialization respects the "no expensive connections in open"
+        // contract of Resource; no listeners are added when no AGENT resource implements the
+        // interface.
+        for (Resource resource : resourceCache.eagerMaterialize(ResourceType.AGENT)) {
+            if (resource instanceof TaskLifecycleListener) {
+                taskLifecycleListeners.add((TaskLifecycleListener) resource);
+            }
         }
 
         // init context manager for runner context creation and memory contexts
