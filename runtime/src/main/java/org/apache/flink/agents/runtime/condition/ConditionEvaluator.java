@@ -148,7 +148,7 @@ final class ConditionEvaluator {
             return ((Number) value).longValue();
         }
         if (value instanceof Float) {
-            return ((Float) value).doubleValue();
+            return Double.parseDouble(Float.toString((Float) value));
         }
         if (value instanceof BigInteger) {
             BigInteger bigInt = (BigInteger) value;

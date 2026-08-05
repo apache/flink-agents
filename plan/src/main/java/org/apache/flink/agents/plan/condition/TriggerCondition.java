@@ -47,8 +47,9 @@ public abstract class TriggerCondition {
             String bareType = matcher.group(1);
             String eventType = bareType != null ? bareType : matcher.group(3);
             boolean reservedExpression =
-                    eventType.startsWith("EventType.")
-                            || (bareType != null && EXPRESSION_LITERALS.contains(bareType));
+                    bareType != null
+                            && (bareType.startsWith("EventType.")
+                                    || EXPRESSION_LITERALS.contains(bareType));
             if (!reservedExpression) {
                 return new EventTypeCondition(eventType);
             }
