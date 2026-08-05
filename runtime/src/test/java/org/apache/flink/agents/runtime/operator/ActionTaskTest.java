@@ -42,8 +42,8 @@ class ActionTaskTest {
         Event triggeringEvent = new InputEvent(1L);
         Action action = TestActions.noopAction();
 
-        ActionTask first = new JavaActionTask("key", triggeringEvent, action);
-        ActionTask second = new JavaActionTask("key", triggeringEvent, action);
+        ActionTask first = new JavaActionTask("key", triggeringEvent, action, 1L);
+        ActionTask second = new JavaActionTask("key", triggeringEvent, action, 1L);
 
         assertThat(first.getObservationId()).isNotEqualTo(second.getObservationId());
         assertThat(first).isNotEqualTo(second);
@@ -51,7 +51,8 @@ class ActionTaskTest {
 
     @Test
     void taskRestoredWithoutObservationIdGetsStableFallback() {
-        ActionTask task = new JavaActionTask("key", new InputEvent(1L), TestActions.noopAction());
+        ActionTask task =
+                new JavaActionTask("key", new InputEvent(1L), TestActions.noopAction(), 1L);
         task.observationId = null;
 
         String restoredObservationId = task.getObservationId();
@@ -67,7 +68,7 @@ class ActionTaskTest {
                         "python-action",
                         new PythonFunction("test_module", "test_action"),
                         List.of(InputEvent.EVENT_TYPE));
-        PythonActionTask task = new PythonActionTask("key", new InputEvent(1L), action);
+        PythonActionTask task = new PythonActionTask("key", new InputEvent(1L), action, 1L);
         PythonRunnerContextImpl context = mock(PythonRunnerContextImpl.class);
         PythonActionExecutor executor = mock(PythonActionExecutor.class);
         task.setRunnerContext(context);
@@ -93,7 +94,8 @@ class ActionTaskTest {
                         new PythonFunction("test_module", "test_action"),
                         List.of(InputEvent.EVENT_TYPE));
         PythonGeneratorActionTask task =
-                new PythonGeneratorActionTask("key", new InputEvent(1L), action, "observation-id");
+                new PythonGeneratorActionTask(
+                        "key", new InputEvent(1L), action, 1L, "observation-id");
         PythonRunnerContextImpl context = mock(PythonRunnerContextImpl.class);
         PythonActionExecutor executor = mock(PythonActionExecutor.class);
         task.setRunnerContext(context);
@@ -115,7 +117,7 @@ class ActionTaskTest {
     void resultFinalizesOutputLineage() {
         Event triggeringEvent = new InputEvent(1L);
         Action action = TestActions.noopAction();
-        ActionTask task = new JavaActionTask("key", triggeringEvent, action);
+        ActionTask task = new JavaActionTask("key", triggeringEvent, action, 1L);
         Event outputEvent = new Event("result");
 
         ActionTask.ActionTaskResult result =
@@ -130,7 +132,7 @@ class ActionTaskTest {
     void resultRejectsSelfLoopBeforeMutatingAnyOutput() {
         Event triggeringEvent = new InputEvent(1L);
         Action action = TestActions.noopAction();
-        ActionTask task = new JavaActionTask("key", triggeringEvent, action);
+        ActionTask task = new JavaActionTask("key", triggeringEvent, action, 1L);
         Event validOutput = new Event("result");
 
         assertThatThrownBy(

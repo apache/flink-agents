@@ -317,7 +317,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             if (triggerActions != null && !triggerActions.isEmpty()) {
                 for (Action triggerAction : triggerActions) {
                     stateManager.addActionTask(
-                            createActionTask(key, triggerAction, event, traceContext));
+                            createActionTask(
+                                    key,
+                                    triggerAction,
+                                    event,
+                                    stateManager.getSequenceNumber(),
+                                    traceContext));
                 }
             }
         }
@@ -729,13 +734,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private ActionTask createActionTask(
-            Object key, Action action, Event event, ExecutionTraceContext sourceTraceContext) {
+            Object key,
+            Action action,
+            Event event,
+            long sequenceNumber,
+            ExecutionTraceContext sourceTraceContext) {
         ExecutionTraceContext actionTraceContext =
                 ExecutionTraceContext.forAction(sourceTraceContext, action.getName());
         if (action.getExec() instanceof JavaFunction) {
-            return new JavaActionTask(key, event, action, actionTraceContext);
+            return new JavaActionTask(key, event, action, sequenceNumber, actionTraceContext);
         } else if (action.getExec() instanceof PythonFunction) {
-            return new PythonActionTask(key, event, action, actionTraceContext);
+            return new PythonActionTask(key, event, action, sequenceNumber, actionTraceContext);
         } else {
             throw new IllegalStateException(
                     "Unsupported action type: " + action.getExec().getClass());
