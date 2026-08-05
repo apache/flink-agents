@@ -62,6 +62,7 @@ _DESCRIPTOR_TYPES: Dict[str, ResourceType] = {
     "embedding_model_setups": ResourceType.EMBEDDING_MODEL,
     "vector_stores": ResourceType.VECTOR_STORE,
     "mcp_servers": ResourceType.MCP_SERVER,
+    "subagents": ResourceType.AGENT,
 }
 
 

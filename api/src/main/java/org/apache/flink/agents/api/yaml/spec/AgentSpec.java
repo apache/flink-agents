@@ -40,6 +40,7 @@ public final class AgentSpec {
     private final List<DescriptorSpec> embeddingModelSetups;
     private final List<DescriptorSpec> vectorStores;
     private final List<DescriptorSpec> mcpServers;
+    private final List<DescriptorSpec> subagents;
 
     @JsonCreator
     public AgentSpec(
@@ -55,7 +56,8 @@ public final class AgentSpec {
                     List<DescriptorSpec> embeddingModelConnections,
             @JsonProperty("embedding_model_setups") List<DescriptorSpec> embeddingModelSetups,
             @JsonProperty("vector_stores") List<DescriptorSpec> vectorStores,
-            @JsonProperty("mcp_servers") List<DescriptorSpec> mcpServers) {
+            @JsonProperty("mcp_servers") List<DescriptorSpec> mcpServers,
+            @JsonProperty("subagents") List<DescriptorSpec> subagents) {
         this.name = name;
         this.description = description;
         this.prompts = orEmpty(prompts);
@@ -68,6 +70,7 @@ public final class AgentSpec {
         this.embeddingModelSetups = orEmpty(embeddingModelSetups);
         this.vectorStores = orEmpty(vectorStores);
         this.mcpServers = orEmpty(mcpServers);
+        this.subagents = orEmpty(subagents);
     }
 
     private static <T> List<T> orEmpty(List<T> list) {
@@ -120,5 +123,9 @@ public final class AgentSpec {
 
     public List<DescriptorSpec> getMcpServers() {
         return mcpServers;
+    }
+
+    public List<DescriptorSpec> getSubagents() {
+        return subagents;
     }
 }
