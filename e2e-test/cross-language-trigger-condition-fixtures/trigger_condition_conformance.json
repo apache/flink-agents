@@ -61,6 +61,16 @@
       "matches_probe": true
     },
     {
+      "name": "quoted_event_type_namespace",
+      "entry": "'EventType.custom'",
+      "classification": "event_type",
+      "plan_validation": "pass",
+      "runtime_compilation": "not_applicable",
+      "probe_event_type": "EventType.custom",
+      "probe_attributes": {},
+      "matches_probe": true
+    },
+    {
       "name": "bare_in_event_type",
       "entry": "in",
       "classification": "event_type",

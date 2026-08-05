@@ -318,6 +318,20 @@ class ConditionEvaluatorTest {
     }
 
     @Test
+    void typedFloatAttributeMatchesJsonRoundTrip() throws Exception {
+        String source = "score > 0.1";
+        Event typed = new Event("test_type", Map.of("score", 0.1F));
+        Event jsonShaped = Event.fromJson(JSON_MAPPER.writeValueAsString(typed));
+        EvaluatorHarness testEvaluator =
+                new EvaluatorHarness(List.of(source), ConditionEvaluationFailureStrategy.FAIL);
+
+        assertThat(testEvaluator.buildConditionVariables(typed, source))
+                .isEqualTo(testEvaluator.buildConditionVariables(jsonShaped, source));
+        assertThat(testEvaluator.evaluate(source, typed)).isFalse();
+        assertThat(testEvaluator.evaluate(source, jsonShaped)).isFalse();
+    }
+
+    @Test
     void normalizeBigIntegerInLongRange() {
         // BigInteger within Long range should pass through normalizeValue cleanly.
         String source = "attributes.amount > 1000";
