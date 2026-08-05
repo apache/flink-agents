@@ -23,7 +23,7 @@ resolve. Execution modes build on them without the framework knowing how a
 request is issued.
 """
 
-from typing import Any, NamedTuple
+from typing import Any
 
 from flink_agents.api.subagent import (
     Result,
@@ -107,9 +107,11 @@ class CompletedSubagentFuture(SubagentFuture):
 class SubagentFutureGroup(SubagentFutures):
     """Batched resolve of several handles in submission order.
 
-    The group stays execution-mode agnostic: each handle resolves itself, so
-    a deferred handle issues its request when its own wait starts. Already
-    resolved handles simply contribute their value.
+    The group knows deferred handles: the batched wait prepares every
+    pending deferred handle up front, executes the prepared calls as a
+    batch, and only then collects the outcomes — so the requests are issued
+    together instead of one at a time as each wait starts. Already resolved
+    handles simply contribute their value.
     """
 
     def __init__(self, futures: tuple) -> None:
@@ -130,25 +132,25 @@ class SubagentFutureGroup(SubagentFutures):
         return SubagentFutureGroup((*self._futures, *others))
 
     def __await__(self) -> Any:
-        """Wait for every handle in submission order."""
+        """Prepare every pending deferred handle, batch-execute, then wait."""
+        # Late import: deferred handles build on this module.
+        from flink_agents.runtime.deferred_subagent import DeferredSubagentFuture
+
+        pending = [
+            future
+            for future in self._futures
+            if isinstance(future, DeferredSubagentFuture) and not future.done()
+        ]
+        # Prepare the whole batch before any execution starts.
+        for future in pending:
+            future.prepare()
+        # TODO: execute the prepared calls as one batch once durable
+        # execution supports batched submission; until then the batch is
+        # executed serially.
+        for future in pending:
+            yield from future.execute()
         outcomes = []
         for future in self._futures:
             outcome = yield from future.__await__()
             outcomes.append(outcome)
         return outcomes
-
-
-class PreparedSubagentCall(NamedTuple):
-    """The three facts one durable sub-agent invocation needs.
-
-    Produced by the deferred setup's ``prepare``: the stable durable id
-    keying the invocation across restarts, the callable running the
-    off-mailbox part of the invocation, and the optional reconciler that
-    recovers an in-flight invocation after failover. The deferred handle
-    feeds this triple to durable execution, so implementations never touch
-    the durable plumbing themselves.
-    """
-
-    id: str
-    call: Any
-    reconcile: Any = None

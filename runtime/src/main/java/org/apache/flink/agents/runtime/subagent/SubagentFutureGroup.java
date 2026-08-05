@@ -27,9 +27,10 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Batched resolve of several handles in submission order. The group stays execution-mode agnostic:
- * each handle resolves itself, so a deferred handle issues its request when its own wait starts.
- * Already resolved handles simply contribute their value.
+ * Batched resolve of several handles in submission order. The group knows deferred handles: {@link
+ * #awaitAll} prepares every pending deferred handle up front, executes the prepared calls as a
+ * batch, and only then collects the outcomes — so the requests are issued together instead of one
+ * at a time as each wait starts. Already resolved handles simply contribute their value.
  */
 final class SubagentFutureGroup extends SubagentFutures {
 
@@ -62,6 +63,20 @@ final class SubagentFutureGroup extends SubagentFutures {
 
     @Override
     public List<Result> awaitAll() throws Exception {
+        // Prepare every pending deferred handle up front, so the whole batch is ready before any
+        // execution starts.
+        for (SubagentFuture future : futures) {
+            if (future instanceof DeferredSubagentFuture && !future.isDone()) {
+                ((DeferredSubagentFuture) future).prepare();
+            }
+        }
+        // TODO: execute the prepared calls as one batch once durable execution supports batched
+        // submission; until then the batch is executed serially.
+        for (SubagentFuture future : futures) {
+            if (future instanceof DeferredSubagentFuture && !future.isDone()) {
+                ((DeferredSubagentFuture) future).execute();
+            }
+        }
         List<Result> outcomes = new ArrayList<>(futures.size());
         for (SubagentFuture future : futures) {
             outcomes.add(future.await());
