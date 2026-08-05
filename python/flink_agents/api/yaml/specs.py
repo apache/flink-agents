@@ -260,6 +260,7 @@ class AgentSpec(BaseModel):
     embedding_model_setups: List[DescriptorSpec] = Field(default_factory=list)
     vector_stores: List[DescriptorSpec] = Field(default_factory=list)
     mcp_servers: List[DescriptorSpec] = Field(default_factory=list)
+    subagents: List[DescriptorSpec] = Field(default_factory=list)
 
 
 class YamlAgentsDocument(BaseModel):
@@ -289,6 +290,7 @@ class YamlAgentsDocument(BaseModel):
     embedding_model_setups: List[DescriptorSpec] = Field(default_factory=list)
     vector_stores: List[DescriptorSpec] = Field(default_factory=list)
     mcp_servers: List[DescriptorSpec] = Field(default_factory=list)
+    subagents: List[DescriptorSpec] = Field(default_factory=list)
 
 
 def export() -> str:
