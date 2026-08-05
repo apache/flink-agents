@@ -19,6 +19,7 @@
 package org.apache.flink.agents.runtime.eventlog;
 
 import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -26,8 +27,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
+import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * Custom JSON deserializer for {@link EventLogRecord}.
@@ -35,7 +41,7 @@ import java.io.IOException;
  * <p>This deserializer reconstructs EventLogRecord instances from JSON format by:
  *
  * <ul>
- *   <li>Deserializing the EventContext (contains eventType and timestamp)
+ *   <li>Deserializing normalized Event Log fields
  *   <li>Deserializing the event as a base {@link Event} with type and attributes
  * </ul>
  *
@@ -57,21 +63,88 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
             throw new IOException("Missing 'timestamp' field in EventLogRecord JSON");
         }
 
+        if (rootNode.has("eventAttributes")) {
+            return deserializeNormalizedRecord(mapper, rootNode, timestampNode.asText());
+        }
+
+        return deserializeLegacyRecord(mapper, rootNode, timestampNode.asText());
+    }
+
+    private static EventLogRecord deserializeNormalizedRecord(
+            ObjectMapper mapper, JsonNode rootNode, String timestamp) throws IOException {
+        String eventType = getText(rootNode, "eventType", true);
+        UUID eventId = parseUuid(getText(rootNode, "eventId", true));
+        JsonNode attributesNode = rootNode.get("eventAttributes");
+        if (attributesNode == null || !attributesNode.isObject()) {
+            throw new IOException(
+                    "Field 'eventAttributes' must be an object in EventLogRecord JSON");
+        }
+        Map<String, Object> attributes =
+                mapper.convertValue(attributesNode, new TypeReference<Map<String, Object>>() {});
+        boolean executionLifecycleEvent =
+                ExecutionLifecycleEvents.isExecutionLifecycleEvent(eventType);
+        String status = executionLifecycleEvent ? getText(rootNode, "status", false) : null;
+        String problemCategory =
+                executionLifecycleEvent ? getText(rootNode, "problemCategory", false) : null;
+        if (executionLifecycleEvent) {
+            if (status != null) {
+                attributes.putIfAbsent(ExecutionLifecycleEvents.STATUS_ATTRIBUTE, status);
+            }
+            if (problemCategory != null) {
+                attributes.putIfAbsent(
+                        ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE, problemCategory);
+            }
+        }
+        Event event = new Event(eventId, eventType, attributes);
+        return new EventLogRecord(
+                new EventContext(eventType, timestamp), traceContext(mapper, rootNode), event);
+    }
+
+    private static EventLogRecord deserializeLegacyRecord(
+            ObjectMapper mapper, JsonNode rootNode, String timestamp) throws IOException {
         // Deserialize event as base Event. Any top-level "logLevel" field present in older log
-        // files is silently ignored — it is no longer part of the record.
+        // files is silently ignored — it is not part of EventLogRecord.
         JsonNode eventNode = rootNode.get("event");
         if (eventNode == null) {
             throw new IOException("Missing 'event' field in EventLogRecord JSON");
         }
-        String eventType = getEventType(eventNode);
-
+        String eventType = getLegacyEventType(eventNode);
         Event event = mapper.treeToValue(stripMetaFields(eventNode), Event.class);
-        EventContext eventContext = new EventContext(eventType, timestampNode.asText());
-
-        return new EventLogRecord(eventContext, event);
+        return new EventLogRecord(new EventContext(eventType, timestamp), null, event);
     }
 
-    private static String getEventType(JsonNode eventNode) throws IOException {
+    private static ExecutionTraceContext traceContext(ObjectMapper mapper, JsonNode rootNode)
+            throws IOException {
+        String inputRunId = getText(rootNode, "inputRunId", false);
+        String businessKey = getText(rootNode, "businessKey", false);
+        String agentName = getText(rootNode, "agentName", false);
+        String executionId = getText(rootNode, "executionId", false);
+        String parentExecutionId = getText(rootNode, "parentExecutionId", false);
+        String entityType = getText(rootNode, "entityType", false);
+        String entityName = getText(rootNode, "entityName", false);
+        Map<String, Object> entityMetadata = getObjectMap(mapper, rootNode.get("entityMetadata"));
+        if (inputRunId == null
+                && businessKey == null
+                && agentName == null
+                && executionId == null
+                && parentExecutionId == null
+                && entityType == null
+                && entityName == null
+                && (entityMetadata == null || entityMetadata.isEmpty())) {
+            return null;
+        }
+        return ExecutionTraceContext.fromExistingIds(
+                inputRunId,
+                businessKey,
+                agentName,
+                executionId,
+                parentExecutionId,
+                entityType,
+                entityName,
+                entityMetadata);
+    }
+
+    private static String getLegacyEventType(JsonNode eventNode) throws IOException {
         JsonNode eventTypeNode = eventNode.get("eventType");
         if (eventTypeNode == null || !eventTypeNode.isTextual()) {
             throw new IOException("Missing 'eventType' field in event JSON");
@@ -87,5 +160,42 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
             return copy;
         }
         return eventNode;
+    }
+
+    private static String getText(JsonNode node, String field, boolean required)
+            throws IOException {
+        JsonNode value = node.get(field);
+        if (value == null || value.isNull()) {
+            if (required) {
+                throw new IOException("Missing '" + field + "' field in EventLogRecord JSON");
+            }
+            return null;
+        }
+        if (!value.isTextual()) {
+            throw new IOException("Field '" + field + "' must be textual in EventLogRecord JSON");
+        }
+        return value.asText();
+    }
+
+    private static UUID parseUuid(String value) throws IOException {
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid 'eventId' field in EventLogRecord JSON", e);
+        }
+    }
+
+    private static Map<String, Object> getObjectMap(ObjectMapper mapper, JsonNode node)
+            throws IOException {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (!node.isObject()) {
+            throw new IOException(
+                    "Field 'entityMetadata' must be an object in EventLogRecord JSON");
+        }
+        Map<String, Object> result =
+                mapper.convertValue(node, new TypeReference<Map<String, Object>>() {});
+        return result == null ? new HashMap<>() : result;
     }
 }

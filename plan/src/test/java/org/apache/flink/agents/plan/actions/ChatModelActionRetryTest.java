@@ -31,6 +31,7 @@ import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.metrics.Counter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -128,6 +129,129 @@ class ChatModelActionRetryTest {
     }
 
     @Test
+    void chatReportsLlmExecution() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "hello"));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                reportingCtx);
+
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter)
+                .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+        verify(reporter)
+                .reportExecutionSucceeded(
+                        ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+    }
+
+    @Test
+    void chatReportsStructuredOutputParserExecution() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "{\"answer\":\"42\"}"));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter)
+                .reportExecutionStarted(
+                        ExecutionReporter.EntityTypes.PARSER, Agent.STRUCTURED_OUTPUT, Map.of());
+        verify(reporter)
+                .reportExecutionSucceeded(
+                        ExecutionReporter.EntityTypes.PARSER, Agent.STRUCTURED_OUTPUT, Map.of());
+    }
+
+    @Test
+    void chatRetriesStructuredOutputParseErrorWithoutFailingLlm() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(reportingCtx.getConfig())
+                .thenReturn(readableConfig(Agent.ErrorHandlingStrategy.RETRY, 1, 0));
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        new ChatMessage(MessageRole.ASSISTANT, "not-json"),
+                        new ChatMessage(MessageRole.ASSISTANT, "{\"answer\":\"42\"}"));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+
+        verify(chatModel, times(2)).chat(any(), any(), any());
+
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter, times(2))
+                .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+        verify(reporter, times(2))
+                .reportExecutionSucceeded(
+                        ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+        verify(reporter)
+                .reportExecutionFailed(
+                        eq(ExecutionReporter.EntityTypes.PARSER),
+                        eq(Agent.STRUCTURED_OUTPUT),
+                        eq(Map.of()),
+                        any(Exception.class),
+                        eq(ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR));
+        verify(reporter, never())
+                .reportExecutionFailed(
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(Map.of()),
+                        any(Throwable.class),
+                        any());
+    }
+
+    @Test
+    void chatReportsEachRetriedModelInvocation() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(reportingCtx.getConfig())
+                .thenReturn(readableConfig(Agent.ErrorHandlingStrategy.RETRY, 1, 0));
+        when(chatModel.chat(any(), any(), any()))
+                .thenThrow(new RuntimeException("transient error"))
+                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "success"));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                reportingCtx);
+
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter, times(2))
+                .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+        verify(reporter)
+                .reportExecutionFailed(
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(Map.of()),
+                        any(RuntimeException.class),
+                        eq(ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED));
+        verify(reporter)
+                .reportExecutionSucceeded(
+                        ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+    }
+
+    @Test
     void chatRetriesWithExponentialBackoff() throws Exception {
         // 1 second base interval; fail once then succeed -> wait 1s (1 * 2^0)
         configureRetryStrategy(3, 1);
@@ -163,8 +287,8 @@ class ChatModelActionRetryTest {
         assertThat(responseEvent.getTotalRetryWaitSec()).isEqualTo(1);
         assertThat(elapsed).isGreaterThanOrEqualTo(1000L);
 
-        // Verify metrics recorded under connection name
-        verify(mockActionMetricGroup).getSubGroup("model", mockChatModel.getConnectionName());
+        // Retry health belongs to the ChatModel resource, not the provider connection or model.
+        verify(mockActionMetricGroup).getSubGroup("model_resource", "test-model");
         verify(mockRetryCountCounter).inc(1);
         verify(mockRetryWaitSecCounter).inc(1);
     }
@@ -191,6 +315,9 @@ class ChatModelActionRetryTest {
                 .hasMessage("persistent error");
 
         assertThat(sentEvents).isEmpty();
+        verify(mockActionMetricGroup).getSubGroup("model_resource", "test-model");
+        verify(mockRetryCountCounter).inc(2);
+        verify(mockRetryWaitSecCounter).inc(0);
     }
 
     @Test
@@ -325,6 +452,87 @@ class ChatModelActionRetryTest {
                                 }
                             };
                         });
+    }
+
+    private RunnerContext reportingRunnerContext() {
+        return mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+    }
+
+    private BaseChatModelSetup configureReportingChatContext(RunnerContext reportingCtx)
+            throws Exception {
+        BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
+        MemoryObject memory = createStatefulMemoryObject();
+
+        when(chatModel.getConnectionName()).thenReturn("test-connection");
+        when(reportingCtx.getResource(anyString(), eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(chatModel);
+        when(reportingCtx.getSensoryMemory()).thenReturn(memory);
+        when(reportingCtx.getActionMetricGroup()).thenReturn(mockActionMetricGroup);
+        when(reportingCtx.<ChatMessage>durableExecute(any()))
+                .thenAnswer(inv -> inv.<DurableCallable<ChatMessage>>getArgument(0).call());
+        doAnswer(inv -> sentEvents.add(inv.getArgument(0))).when(reportingCtx).sendEvent(any());
+        when(reportingCtx.getConfig()).thenReturn(readableConfig(Agent.ErrorHandlingStrategy.FAIL));
+        return chatModel;
+    }
+
+    private org.apache.flink.agents.api.configuration.ReadableConfiguration readableConfig(
+            Agent.ErrorHandlingStrategy errorHandlingStrategy) {
+        return readableConfig(errorHandlingStrategy, 0, 0);
+    }
+
+    private org.apache.flink.agents.api.configuration.ReadableConfiguration readableConfig(
+            Agent.ErrorHandlingStrategy errorHandlingStrategy,
+            int maxRetries,
+            int retryWaitIntervalSec) {
+        return new org.apache.flink.agents.api.configuration.ReadableConfiguration() {
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T get(org.apache.flink.agents.api.configuration.ConfigOption<T> option) {
+                if (option == AgentExecutionOptions.ERROR_HANDLING_STRATEGY) {
+                    return (T) errorHandlingStrategy;
+                }
+                if (option == AgentExecutionOptions.MAX_RETRIES) {
+                    return (T) Integer.valueOf(maxRetries);
+                }
+                if (option == AgentExecutionOptions.RETRY_WAIT_INTERVAL) {
+                    return (T) Integer.valueOf(retryWaitIntervalSec);
+                }
+                if (option == AgentExecutionOptions.CHAT_ASYNC) {
+                    return (T) Boolean.FALSE;
+                }
+                return option.getDefaultValue();
+            }
+
+            @Override
+            public Integer getInt(String key, Integer defaultValue) {
+                return defaultValue;
+            }
+
+            @Override
+            public Long getLong(String key, Long defaultValue) {
+                return defaultValue;
+            }
+
+            @Override
+            public Float getFloat(String key, Float defaultValue) {
+                return defaultValue;
+            }
+
+            @Override
+            public Double getDouble(String key, Double defaultValue) {
+                return defaultValue;
+            }
+
+            @Override
+            public Boolean getBool(String key, Boolean defaultValue) {
+                return defaultValue;
+            }
+
+            @Override
+            public String getStr(String key, String defaultValue) {
+                return defaultValue;
+            }
+        };
     }
 
     /**

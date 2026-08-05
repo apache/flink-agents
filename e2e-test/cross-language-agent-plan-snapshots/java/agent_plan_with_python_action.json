@@ -1,4 +1,5 @@
 {
+  "agent_name" : "Agent",
   "actions" : {
     "chat_model_action" : {
       "name" : "chat_model_action",

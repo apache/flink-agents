@@ -18,6 +18,8 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -26,6 +28,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.io.Serializable;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -40,13 +43,18 @@ import java.util.Optional;
  * {@code ActionTask} via {@link ActionTaskResult#getGeneratedActionTask()} and continue executing
  * it.
  */
-public abstract class ActionTask {
+public abstract class ActionTask implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     protected static final Logger LOG = LoggerFactory.getLogger(ActionTask.class);
 
     protected final Object key;
     protected final Event event;
     protected final Action action;
+    protected final ExecutionTraceContext traceContext;
+
+    private boolean executionStartedEventEmitted;
     /**
      * Since RunnerContextImpl contains references to the Operator and state, it should not be
      * serialized and included in the state with ActionTask. Instead, we should check if a valid
@@ -55,9 +63,20 @@ public abstract class ActionTask {
     protected transient RunnerContextImpl runnerContext;
 
     public ActionTask(Object key, Event event, Action action) {
+        this(
+                key,
+                event,
+                action,
+                ExecutionTraceContext.forExecution(
+                        null, null, null, ExecutionReporter.EntityTypes.ACTION, action.getName()));
+    }
+
+    protected ActionTask(
+            Object key, Event event, Action action, ExecutionTraceContext traceContext) {
         this.key = key;
         this.event = event;
         this.action = action;
+        this.traceContext = Objects.requireNonNull(traceContext, "traceContext must not be null");
     }
 
     public RunnerContextImpl getRunnerContext() {
@@ -72,6 +91,32 @@ public abstract class ActionTask {
         return key;
     }
 
+    ExecutionTraceContext getTraceContext() {
+        return traceContext;
+    }
+
+    void inheritLifecycleState(ActionTask source) {
+        if (source == this) {
+            return;
+        }
+        this.executionStartedEventEmitted = source.executionStartedEventEmitted;
+    }
+
+    /**
+     * Returns whether the started lifecycle event has already been emitted for this execution.
+     *
+     * <p>This state is part of the pending continuation task so a resumed continuation does not
+     * emit duplicate started events for the same execution.
+     */
+    boolean hasExecutionStartedEventEmitted() {
+        return executionStartedEventEmitted;
+    }
+
+    /** Marks the started lifecycle event as emitted for this execution. */
+    void markExecutionStartedEventEmitted() {
+        executionStartedEventEmitted = true;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -79,12 +124,13 @@ public abstract class ActionTask {
         ActionTask other = (ActionTask) o;
         return Objects.equals(this.key, other.key)
                 && Objects.equals(this.event, other.event)
-                && Objects.equals(this.action, other.action);
+                && Objects.equals(this.action, other.action)
+                && Objects.equals(this.traceContext, other.traceContext);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(key, event, action);
+        return Objects.hash(key, event, action, traceContext);
     }
 
     /** Invokes the action task. */

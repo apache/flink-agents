@@ -26,6 +26,8 @@ import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import pemja.core.object.PyObject;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -55,12 +57,17 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
 
     @SuppressWarnings("unchecked")
     public List<PythonMCPTool> listTools() {
+        return listTools(null);
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<PythonMCPTool> listTools(@Nullable String mcpServerName) {
         Object result = adapter.callMethod(server, "list_tools", Collections.emptyMap());
         if (result instanceof List) {
             List<Object> pythonTools = (List<Object>) result;
             List<PythonMCPTool> tools = new ArrayList<>(pythonTools.size());
             for (Object pyTool : pythonTools) {
-                tools.add(new PythonMCPTool(adapter, (PyObject) pyTool));
+                tools.add(new PythonMCPTool(adapter, (PyObject) pyTool, mcpServerName));
             }
             return tools;
         }

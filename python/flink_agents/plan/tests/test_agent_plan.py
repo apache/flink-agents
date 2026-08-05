@@ -69,6 +69,7 @@ class AgentForTest(Agent):
 def test_from_agent():
     agent = AgentForTest()
     agent_plan = AgentPlan.from_agent(agent, AgentConfiguration())
+    assert agent_plan.agent_name == "AgentForTest"
     actions = agent_plan.get_actions(InputEvent.EVENT_TYPE)
     assert len(actions) == 1
     action = actions[0]
@@ -78,6 +79,14 @@ def test_from_agent():
     assert func.module == "flink_agents.plan.tests.test_agent_plan"
     assert func.qualname == "AgentForTest.increment"
     assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
+
+
+def test_from_agent_uses_explicit_agent_name() -> None:
+    agent_plan = AgentPlan.from_agent(
+        AgentForTest(), AgentConfiguration(), "registered_agent"
+    )
+
+    assert agent_plan.agent_name == "registered_agent"
 
 
 class InvalidAgent(Agent):
@@ -149,8 +158,7 @@ def test_action_inherited_from_parent_agent_class_is_rejected() -> None:
 
 
 _JAVA_HANDLER_QUALNAME = (
-    "org.apache.flink.agents.runtime.operator."
-    "CrossLanguageActionRuntimeTest$Handlers"
+    "org.apache.flink.agents.runtime.operator.CrossLanguageActionRuntimeTest$Handlers"
 )
 
 
@@ -510,10 +518,14 @@ def test_get_resource() -> None:
 def test_add_action_and_resource_to_agent() -> None:
     my_agent = Agent()
     my_agent.add_action(
-        name="first_action", trigger_conditions=["_input_event"], func=MyAgent.first_action
+        name="first_action",
+        trigger_conditions=["_input_event"],
+        func=MyAgent.first_action,
     )
     my_agent.add_action(
-        name="second_action", trigger_conditions=["_input_event", "_my_event"], func=MyAgent.second_action
+        name="second_action",
+        trigger_conditions=["_input_event", "_my_event"],
+        func=MyAgent.second_action,
     )
     my_agent.add_resource(
         name="mock",
@@ -556,7 +568,7 @@ def test_add_action_and_resource_to_agent() -> None:
         ),
     )
     agent_plan = AgentPlan.from_agent(
-        my_agent, AgentConfiguration({"mock.key": "mock.value"})
+        my_agent, AgentConfiguration({"mock.key": "mock.value"}), "MyAgent"
     )
     json_value = agent_plan.model_dump_json(serialize_as_any=True, indent=4)
     with Path.open(Path(f"{current_dir}/resources/agent_plan.json")) as f:

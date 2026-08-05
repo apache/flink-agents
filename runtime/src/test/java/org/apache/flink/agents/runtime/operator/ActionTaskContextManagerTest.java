@@ -18,6 +18,8 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
@@ -28,10 +30,19 @@ import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.trace.ExecutionEventSink;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.core.memory.DataInputDeserializer;
+import org.apache.flink.core.memory.DataOutputSerializer;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -145,6 +156,7 @@ class ActionTaskContextManagerTest {
             invokeCreateAndSetRunnerContext(mgr, from);
             RunnerContextImpl.MemoryContext fromMemCtx = from.getRunnerContext().getMemoryContext();
             assertThat(fromMemCtx).isNotNull();
+            from.markExecutionStartedEventEmitted();
 
             // transferContexts (ActionTaskContextManager.java:266-286) copies but does NOT
             // remove from source. The from-side continuation map is never populated (the
@@ -167,6 +179,84 @@ class ActionTaskContextManagerTest {
             // — the source carries its continuation on its runner context, not on the
             // manager's map.
             assertThat(mgr.hasContinuationContext(from)).isFalse();
+
+            // (d) Persisted Action lifecycle state follows the continuation task.
+            assertThat(to.hasExecutionStartedEventEmitted()).isTrue();
+        }
+    }
+
+    @Test
+    void reportedExecutionStateFollowsActionExecutionAcrossContinuationTasks() throws Exception {
+        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+            Action action = TestActions.noopAction();
+            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action);
+            ActionTask to =
+                    new JavaActionTask("k", new InputEvent(1L), action, from.getTraceContext());
+            List<ExecutionTraceContext> reports = new ArrayList<>();
+            ExecutionEventSink sink = (event, context) -> reports.add(context);
+
+            invokeCreateAndSetRunnerContext(mgr, from, sink);
+            from.getRunnerContext()
+                    .reportExecutionStarted(
+                            ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
+
+            mgr.transferContexts(from, to, new DurableExecutionManager(null));
+            invokeCreateAndSetRunnerContext(mgr, to, sink);
+            to.getRunnerContext()
+                    .reportExecutionSucceeded(
+                            ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
+
+            assertThat(reports).hasSize(2);
+            assertThat(reports.get(1).getExecutionId()).isEqualTo(reports.get(0).getExecutionId());
+        }
+    }
+
+    @Test
+    void completingActionExecutionDropsReportedExecutionState() throws Exception {
+        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+            ActionTask task = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction());
+            List<ExecutionTraceContext> reports = new ArrayList<>();
+            ExecutionEventSink sink = (event, context) -> reports.add(context);
+
+            invokeCreateAndSetRunnerContext(mgr, task, sink);
+            task.getRunnerContext()
+                    .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+
+            mgr.completeActionExecution(task);
+            invokeCreateAndSetRunnerContext(mgr, task, sink);
+            task.getRunnerContext()
+                    .reportExecutionSucceeded(
+                            ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+
+            assertThat(reports).hasSize(2);
+            assertThat(reports.get(1).getExecutionId())
+                    .isNotEqualTo(reports.get(0).getExecutionId());
+        }
+    }
+
+    @Test
+    void activeExecutionReportsDoNotEnterActionTaskState() throws Exception {
+        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+            ActionTask task = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction());
+            invokeCreateAndSetRunnerContext(mgr, task, (event, context) -> {});
+            task.getRunnerContext()
+                    .reportExecutionStarted(
+                            ExecutionReporter.EntityTypes.TOOL,
+                            "search",
+                            Map.of("toolCallId", "call-1"));
+            task.markExecutionStartedEventEmitted();
+
+            TypeSerializer<ActionTask> serializer =
+                    TypeInformation.of(ActionTask.class)
+                            .createSerializer(new SerializerConfigImpl());
+            DataOutputSerializer output = new DataOutputSerializer(512);
+            serializer.serialize(task, output);
+            ActionTask restored =
+                    serializer.deserialize(new DataInputDeserializer(output.getCopyOfBuffer()));
+
+            assertThat(restored.getTraceContext()).isEqualTo(task.getTraceContext());
+            assertThat(restored.hasExecutionStartedEventEmitted()).isTrue();
+            assertThat(restored.getRunnerContext()).isNull();
         }
     }
 
@@ -226,9 +316,14 @@ class ActionTaskContextManagerTest {
      * Shared helper: install a runner context on {@code task} using mocked collaborators. Used by
      * tests that need a fully wired runner context but do not care about the collaborator details.
      */
-    @SuppressWarnings("unchecked")
     private static void invokeCreateAndSetRunnerContext(
             ActionTaskContextManager mgr, ActionTask task) {
+        invokeCreateAndSetRunnerContext(mgr, task, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void invokeCreateAndSetRunnerContext(
+            ActionTaskContextManager mgr, ActionTask task, ExecutionEventSink executionEventSink) {
         AgentPlan plan = newEmptyAgentPlan();
         ResourceCache cache = mock(ResourceCache.class);
         FlinkAgentsMetricGroupImpl metricGroup =
@@ -246,7 +341,8 @@ class ActionTaskContextManagerTest {
                 sensoryMem,
                 shortTermMem,
                 /* pythonRunnerContext */ null,
-                /* longTermMemory */ null);
+                /* longTermMemory */ null,
+                executionEventSink);
     }
 
     private static AgentPlan newEmptyAgentPlan() {

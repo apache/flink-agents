@@ -21,6 +21,9 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -28,10 +31,12 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
+import org.apache.flink.agents.runtime.trace.ExecutionEventLogger;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
@@ -53,6 +58,8 @@ import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxProcessor;
 import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -107,6 +114,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private final transient EventRouter<IN, OUT> eventRouter;
 
+    private final transient ExecutionEventLogger executionEventLogger;
+
+    private final transient EventLogWriter eventLogWriter;
+
     private final transient DurableExecutionManager durableExecManager;
 
     private transient OperatorStateManager stateManager;
@@ -127,7 +138,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         this.agentPlan = agentPlan;
         this.processingTimeService = processingTimeService;
         this.mailboxExecutor = mailboxExecutor;
-        this.eventRouter = new EventRouter<>(agentPlan, inputIsJava);
+        this.eventLogWriter = EventLogWriter.create(agentPlan);
+        this.eventRouter = new EventRouter<>(agentPlan, inputIsJava, eventLogWriter);
+        this.executionEventLogger = ExecutionEventLogger.forEventLogWriter(eventLogWriter);
         this.durableExecManager = new DurableExecutionManager(actionStateStore);
         OperatorUtils.setChainStrategy(this, ChainingStrategy.ALWAYS);
     }
@@ -192,8 +205,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         mailboxProcessor = getMailboxProcessor();
 
-        // Initialize the event logger if it is set.
-        eventRouter.initEventLogger(getRuntimeContext());
+        eventLogWriter.open(getRuntimeContext(), builtInMetrics);
 
         // Initialize user event listeners from configuration
         eventRouter.initEventListeners(getRuntimeContext());
@@ -222,26 +234,46 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (record.hasTimestamp()) {
             inputEvent.setSourceTimestamp(record.getTimestamp());
         }
+        builtInMetrics.markInputEventReceived(inputEvent);
 
-        eventRouter.getKeySegmentQueue().addKeyToLastSegment(getCurrentKey());
+        Object key = getCurrentKey();
+        try {
+            eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
 
-        if (stateManager.hasMoreActionTasks()) {
-            // If there are already actions being processed for the current key, the newly incoming
-            // event should be queued and processed later. Therefore, we add it to
-            // pendingInputEventsState.
-            stateManager.addPendingInputEvent(inputEvent);
-        } else {
-            // Otherwise, the new event is processed immediately.
-            processEvent(getCurrentKey(), inputEvent);
+            if (stateManager.hasMoreActionTasks()) {
+                // If there are already actions being processed for the current key, the newly
+                // incoming event should be queued and processed later. Therefore, we add it to
+                // pendingInputEventsState.
+                enqueuePendingInputEvent(inputEvent);
+                return;
+            }
+        } catch (Exception e) {
+            builtInMetrics.markInputEventFailed(inputEvent);
+            throw e;
+        }
+
+        // Otherwise, the new event is processed immediately. Its failures are attributed to the
+        // input run created by processInputEvent.
+        processInputEvent(key, inputEvent);
+    }
+
+    /** Starts an input run and dispatches its input event for processing. */
+    private void processInputEvent(Object key, Event inputEvent) throws Exception {
+        ExecutionTraceContext traceContext =
+                ExecutionTraceContext.forInputRun(
+                        businessKeyFromKey(key), agentPlan.getAgentName());
+        builtInMetrics.markInputRunStarted(inputEvent, traceContext);
+        try {
+            processEvent(key, inputEvent, traceContext);
+        } catch (Exception e) {
+            builtInMetrics.markInputRunFailed(traceContext.getInputRunId());
+            throw e;
         }
     }
 
-    /**
-     * Processes an incoming event for the given key and may submit a new mail
-     * `tryProcessActionTaskForKey` to continue processing.
-     */
-    private void processEvent(Object key, Event event) throws Exception {
-        eventRouter.notifyEventProcessed(event);
+    private void processEvent(Object key, Event event, ExecutionTraceContext traceContext)
+            throws Exception {
+        eventRouter.notifyEventProcessed(event, traceContext);
 
         boolean isInputEvent = EventUtil.isInputEvent(event);
         if (EventUtil.isOutputEvent(event)) {
@@ -269,20 +301,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             List<Action> triggerActions = eventRouter.getActionsTriggeredBy(event, agentPlan);
             if (triggerActions != null && !triggerActions.isEmpty()) {
                 for (Action triggerAction : triggerActions) {
-                    stateManager.addActionTask(createActionTask(key, triggerAction, event));
+                    enqueueActionTask(createActionTask(key, triggerAction, event, traceContext));
                 }
             }
         }
 
         if (isInputEvent) {
             // If the event is an InputEvent, we submit a new mail to try processing the actions.
-            mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
+            mailboxExecutor.submit(
+                    () -> tryProcessActionTaskForKey(key, traceContext.getInputRunId()),
+                    "process action task");
         }
     }
 
-    private void tryProcessActionTaskForKey(Object key) {
+    private void tryProcessActionTaskForKey(Object key, @Nullable String inputRunId) {
         try {
-            processActionTaskForKey(key);
+            processActionTaskForKey(key, inputRunId);
         } catch (Throwable t) {
             // MailboxExecutor.submit() stores task failures in its Future. Catch Throwable and
             // rethrow via execute() so Errors fail the task instead of leaving the key in-flight.
@@ -295,26 +329,37 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
-    private void processActionTaskForKey(Object key) throws Exception {
-        // 1. Get an action task for the key.
-        setCurrentKey(key);
+    private void processActionTaskForKey(Object key, @Nullable String inputRunId) throws Exception {
+        String currentInputRunId = inputRunId;
+        try {
+            // 1. Get an action task for the key.
+            setCurrentKey(key);
 
-        ActionTask actionTask = stateManager.pollNextActionTask();
-        if (actionTask == null) {
-            int removedCount = stateManager.removeProcessingKey(key);
-            checkState(
-                    removedCount == 1,
-                    "Current processing key count for key "
-                            + key
-                            + " should be 1, but got "
-                            + removedCount);
-            checkState(
-                    eventRouter.getKeySegmentQueue().removeKey(key),
-                    "Current key" + key + " is missing from the segmentedQueue.");
-            eventRouter.processEligibleWatermarks(super::processWatermark);
-            return;
+            ActionTask actionTask = pollNextActionTask();
+            if (actionTask == null) {
+                int removedCount = stateManager.removeProcessingKey(key);
+                checkState(
+                        removedCount == 1,
+                        "Current processing key count for key "
+                                + key
+                                + " should be 1, but got "
+                                + removedCount);
+                checkState(
+                        eventRouter.getKeySegmentQueue().removeKey(key),
+                        "Current key" + key + " is missing from the segmentedQueue.");
+                eventRouter.processEligibleWatermarks(super::processWatermark);
+                builtInMetrics.markInputRunCompleted(currentInputRunId);
+                return;
+            }
+            currentInputRunId = actionTask.getTraceContext().getInputRunId();
+            processActionTask(key, actionTask);
+        } catch (Exception e) {
+            builtInMetrics.markInputRunFailed(currentInputRunId);
+            throw e;
         }
+    }
 
+    private void processActionTask(Object key, ActionTask actionTask) throws Exception {
         // 2. Invoke the action task.
         contextManager.createAndSetRunnerContext(
                 actionTask,
@@ -327,7 +372,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 stateManager.getSensoryMemState(),
                 stateManager.getShortTermMemState(),
                 pythonBridge.getPythonRunnerContext(),
-                ltm);
+                ltm,
+                (event, traceContext) ->
+                        notifyExecutionLifecycleEvent(
+                                actionTask.action.getName(), traceContext, event));
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
@@ -359,6 +407,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .getSensoryMemory()
                         .set(memoryUpdate.getPath(), memoryUpdate.getValue());
             }
+            notifyActionReused(actionTask);
         } else {
             // Initialize ActionState if not exists, or use existing one for recovery
             if (actionState == null) {
@@ -369,36 +418,55 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 key, sequenceNumber, actionTask.action, actionTask.event);
             }
 
-            // Set up durable execution context for fine-grained recovery
-            durableExecManager.setupDurableExecutionContext(
-                    actionTask, actionState, sequenceNumber);
+            notifyActionStarted(actionTask);
+            try {
+                // Set up durable execution context for fine-grained recovery
+                durableExecManager.setupDurableExecutionContext(
+                        actionTask, actionState, sequenceNumber);
 
-            ActionTask.ActionTaskResult actionTaskResult =
-                    actionTask.invoke(
-                            getRuntimeContext().getUserCodeClassLoader(),
-                            this.pythonBridge.getPythonActionExecutor());
+                ActionTask.ActionTaskResult actionTaskResult =
+                        actionTask.invoke(
+                                getRuntimeContext().getUserCodeClassLoader(),
+                                this.pythonBridge.getPythonActionExecutor());
 
-            // We remove the contexts from the map after the task is processed. They will be added
-            // back later if the action task has a generated action task, meaning it is not
-            // finished.
-            contextManager.removeMemoryContext(actionTask);
-            durableExecManager.removeDurableContext(actionTask);
-            contextManager.removeContinuationContext(actionTask);
-            contextManager.removePythonAwaitableRef(actionTask);
-            durableExecManager.maybePersistTaskResult(
-                    key,
-                    sequenceNumber,
-                    actionTask.action,
-                    actionTask.event,
-                    actionTask.getRunnerContext(),
-                    actionTaskResult);
-            isFinished = actionTaskResult.isFinished();
-            outputEvents = actionTaskResult.getOutputEvents();
-            generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
+                // Drop task-local contexts after each step; continuations transfer them back.
+                contextManager.removeMemoryContext(actionTask);
+                durableExecManager.removeDurableContext(actionTask);
+                contextManager.removeContinuationContext(actionTask);
+                contextManager.removePythonAwaitableRef(actionTask);
+                durableExecManager.maybePersistTaskResult(
+                        key,
+                        sequenceNumber,
+                        actionTask.action,
+                        actionTask.event,
+                        actionTask.getRunnerContext(),
+                        actionTaskResult);
+                isFinished = actionTaskResult.isFinished();
+                outputEvents = actionTaskResult.getOutputEvents();
+                generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
+                if (isFinished) {
+                    notifyActionFinished(actionTask);
+                }
+            } catch (Throwable t) {
+                try {
+                    notifyActionFailed(actionTask, t);
+                } finally {
+                    contextManager.completeActionExecution(actionTask);
+                }
+                ExceptionUtils.rethrowException(t);
+                // Unreachable; required for Java definite-assignment analysis.
+                return;
+            }
         }
 
-        for (Event actionOutputEvent : outputEvents) {
-            processEvent(key, actionOutputEvent);
+        try {
+            for (Event actionOutputEvent : outputEvents) {
+                processEvent(key, actionOutputEvent, actionTask.getTraceContext());
+            }
+        } finally {
+            if (isFinished) {
+                contextManager.completeActionExecution(actionTask);
+            }
         }
 
         boolean currentInputEventFinished = false;
@@ -421,7 +489,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // next generated ActionTask to be invoked.
             contextManager.transferContexts(actionTask, generatedActionTask, durableExecManager);
 
-            stateManager.addActionTask(generatedActionTask);
+            enqueueActionTask(generatedActionTask);
         }
 
         // 3. Process the next InputEvent or next action task
@@ -443,14 +511,19 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     eventRouter.getKeySegmentQueue().removeKey(key),
                     "Current key" + key + " is missing from the segmentedQueue.");
             eventRouter.processEligibleWatermarks(super::processWatermark);
-            Event pendingInputEvent = stateManager.pollNextPendingInputEvent();
+            builtInMetrics.markInputRunCompleted(actionTask.getTraceContext().getInputRunId());
+            Event pendingInputEvent = pollNextPendingInputEvent();
             if (pendingInputEvent != null) {
-                processEvent(key, pendingInputEvent);
+                processInputEvent(key, pendingInputEvent);
             }
         } else if (stateManager.hasMoreActionTasks()) {
             // If the current key has additional action tasks remaining, we should submit a new mail
             // to continue processing them.
-            mailboxExecutor.submit(() -> tryProcessActionTaskForKey(key), "process action task");
+            mailboxExecutor.submit(
+                    () ->
+                            tryProcessActionTaskForKey(
+                                    key, actionTask.getTraceContext().getInputRunId()),
+                    "process action task");
         }
     }
 
@@ -478,8 +551,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (pythonBridge != null) {
             pythonBridge.close();
         }
-        if (eventRouter != null) {
-            eventRouter.close();
+        if (eventLogWriter != null) {
+            eventLogWriter.close();
         }
         if (durableExecManager != null) {
             durableExecManager.close();
@@ -544,19 +617,96 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 "Expected to be running on the task mailbox thread, but was not.");
     }
 
-    private ActionTask createActionTask(Object key, Action action, Event event) {
+    private void notifyActionStarted(ActionTask actionTask) {
+        if (actionTask.hasExecutionStartedEventEmitted()) {
+            return;
+        }
+        notifyExecutionLifecycleEvent(
+                actionTask.action.getName(),
+                actionTask.getTraceContext(),
+                ExecutionLifecycleEvents.executionStarted());
+        actionTask.markExecutionStartedEventEmitted();
+    }
+
+    private void notifyActionFinished(ActionTask actionTask) {
+        notifyExecutionLifecycleEvent(
+                actionTask.action.getName(),
+                actionTask.getTraceContext(),
+                ExecutionLifecycleEvents.executionFinished());
+    }
+
+    private void notifyActionReused(ActionTask actionTask) {
+        notifyExecutionLifecycleEvent(
+                actionTask.action.getName(),
+                actionTask.getTraceContext(),
+                ExecutionLifecycleEvents.executionReused());
+    }
+
+    private void notifyActionFailed(ActionTask actionTask, Throwable error) {
+        notifyExecutionLifecycleEvent(
+                actionTask.action.getName(),
+                actionTask.getTraceContext(),
+                ExecutionLifecycleEvents.executionFailed(
+                        error, ExecutionReporter.ProblemCategories.ACTION_EXECUTION_FAILED));
+    }
+
+    private void notifyExecutionLifecycleEvent(
+            String actionName, ExecutionTraceContext traceContext, Event event) {
+        builtInMetrics.markExecutionEvent(actionName, event, traceContext);
+        executionEventLogger.emit(event, traceContext);
+    }
+
+    private ActionTask createActionTask(
+            Object key, Action action, Event event, ExecutionTraceContext sourceTraceContext) {
+        ExecutionTraceContext actionTraceContext =
+                ExecutionTraceContext.forAction(sourceTraceContext, action.getName());
         if (action.getExec() instanceof JavaFunction) {
-            return new JavaActionTask(key, event, action);
+            return new JavaActionTask(key, event, action, actionTraceContext);
         } else if (action.getExec() instanceof PythonFunction) {
-            return new PythonActionTask(key, event, action);
+            return new PythonActionTask(key, event, action, actionTraceContext);
         } else {
             throw new IllegalStateException(
                     "Unsupported action type: " + action.getExec().getClass());
         }
     }
 
+    private static String businessKeyFromKey(Object key) {
+        return key == null ? null : String.valueOf(key);
+    }
+
+    private void enqueuePendingInputEvent(Event event) throws Exception {
+        stateManager.addPendingInputEvent(event);
+        builtInMetrics.markPendingInputEventEnqueued();
+    }
+
+    @Nullable
+    private Event pollNextPendingInputEvent() throws Exception {
+        Event event = stateManager.pollNextPendingInputEvent();
+        if (event != null) {
+            builtInMetrics.markPendingInputEventDequeued();
+        }
+        return event;
+    }
+
+    private void enqueueActionTask(ActionTask actionTask) throws Exception {
+        stateManager.addActionTask(actionTask);
+        builtInMetrics.markActionTaskEnqueued(
+                actionTask.getTraceContext(), actionTask.hasExecutionStartedEventEmitted());
+    }
+
+    @Nullable
+    private ActionTask pollNextActionTask() throws Exception {
+        ActionTask actionTask = stateManager.pollNextActionTask();
+        if (actionTask != null) {
+            builtInMetrics.markActionTaskDequeued(
+                    actionTask.getTraceContext(), actionTask.hasExecutionStartedEventEmitted());
+        }
+        return actionTask;
+    }
+
     private void tryResumeProcessActionTasks() throws Exception {
         Iterable<Object> keys = stateManager.getProcessingKeys();
+        long activeInputRuns = 0L;
         if (keys != null) {
             int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
             KeyGroupRange currentSubtaskKeyGroupRange =
@@ -573,20 +723,33 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 }
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
                 mailboxExecutor.submit(
-                        () -> tryProcessActionTaskForKey(key), "process action task");
+                        () -> tryProcessActionTaskForKey(key, null), "process action task");
             }
             stateManager.replaceProcessingKeys(new ArrayList<>(ownedKeys));
+            activeInputRuns = ownedKeys.size();
         }
+        builtInMetrics.restoreActiveInputRuns(activeInputRuns);
 
+        stateManager.forEachActionTaskKey(
+                getKeyedStateBackend(),
+                (key, state) -> {
+                    for (ActionTask actionTask : state.get()) {
+                        builtInMetrics.restoreActionTask(
+                                actionTask.getTraceContext(),
+                                actionTask.hasExecutionStartedEventEmitted());
+                    }
+                });
+
+        long[] pendingInputEvents = {0L};
         stateManager.forEachPendingInputEventKey(
                 getKeyedStateBackend(),
-                (key, state) ->
-                        state.get()
-                                .forEach(
-                                        event ->
-                                                eventRouter
-                                                        .getKeySegmentQueue()
-                                                        .addKeyToLastSegment(key)));
+                (key, state) -> {
+                    for (Event ignored : state.get()) {
+                        eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
+                        pendingInputEvents[0]++;
+                    }
+                });
+        builtInMetrics.restorePendingInputEvents(pendingInputEvents[0]);
     }
 
     @VisibleForTesting

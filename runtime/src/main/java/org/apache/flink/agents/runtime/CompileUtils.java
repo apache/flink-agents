@@ -27,9 +27,12 @@ import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.StringUtils;
 
 /** A utility class that bridges Flink DataStream/SQL with the Flink Agents agent. */
 public class CompileUtils {
+
+    private static final String DEFAULT_OPERATOR_NAME = "action-execute-operator";
 
     // ============================ invoke by python ====================================
     public static DataStream<byte[]> connectToAgent(
@@ -74,10 +77,13 @@ public class CompileUtils {
             AgentPlan agentPlan,
             TypeInformation<OUT> outTypeInformation,
             boolean inputIsJava) {
+        String agentName = agentPlan.getAgentName();
+        String operatorName =
+                StringUtils.isNullOrWhitespaceOnly(agentName) ? DEFAULT_OPERATOR_NAME : agentName;
         return (DataStream<OUT>)
                 keyedInputStream
                         .transform(
-                                "action-execute-operator",
+                                operatorName,
                                 outTypeInformation,
                                 new ActionExecutionOperatorFactory(agentPlan, inputIsJava))
                         .setParallelism(keyedInputStream.getParallelism());

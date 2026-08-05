@@ -24,14 +24,10 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
-import org.apache.flink.agents.api.logger.EventLoggerConfig;
-import org.apache.flink.agents.api.logger.EventLoggerFactory;
-import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
-import org.apache.flink.agents.api.logger.LoggerType;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
-import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
-import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
+import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -49,21 +45,18 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.apache.flink.agents.api.configuration.AgentConfigOptions.BASE_LOG_DIR;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LISTENERS;
-import static org.apache.flink.agents.api.configuration.AgentConfigOptions.EVENT_LOGGER_TYPE;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
  * Handles event-side concerns for {@link ActionExecutionOperator}: input/output transformation
- * between Java/Python representations, action lookup against the {@link AgentPlan}, event-logger
- * and event-listener notification, and watermark draining via the per-key segment queue.
+ * between Java/Python representations, action lookup against the {@link AgentPlan}, Event Log
+ * writing, event-listener notification, and watermark draining via the per-key segment queue.
  *
  * <p>Owned state:
  *
  * <ul>
- *   <li>The {@link EventLogger} created from the agent plan's logging configuration (may be {@code
- *       null} when logging is disabled).
+ *   <li>The shared {@link EventLogWriter} owned by the operator.
  *   <li>The list of registered {@link EventListener}s.
  *   <li>A reused {@link StreamRecord} used to emit outputs without per-record allocation.
  *   <li>The {@link SegmentedQueue} that orders watermarks behind in-flight keys so a watermark is
@@ -73,18 +66,16 @@ import static org.apache.flink.util.Preconditions.checkState;
  *
  * <p>Lifecycle: instantiated in the operator constructor (which decides {@link #inputIsJava}).
  * {@link #open(BuiltInMetrics)} runs from the operator's {@code open()} once metrics are available.
- * {@link #initEventLogger} also runs from the operator's {@code open()} once the runtime context is
- * available (after metrics have been built). {@link #close()} closes the event logger.
  *
  * <p>Design constraint: package-private; no manager-to-manager held references.
  *
  * @param <IN> input record type
  * @param <OUT> output record type
  */
-class EventRouter<IN, OUT> implements AutoCloseable {
+class EventRouter<IN, OUT> {
 
     private final boolean inputIsJava;
-    private final EventLogger eventLogger;
+    private final EventLogWriter eventLogWriter;
     private final List<EventListener> eventListeners;
     private final AgentPlan agentPlan;
     private StreamRecord<OUT> reusedStreamRecord;
@@ -92,14 +83,18 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     private BuiltInMetrics builtInMetrics;
 
     EventRouter(AgentPlan agentPlan, boolean inputIsJava) {
-        this(agentPlan, inputIsJava, createEventLogger(agentPlan));
+        this(agentPlan, inputIsJava, EventLogWriter.create(agentPlan));
     }
 
     @VisibleForTesting
     EventRouter(AgentPlan agentPlan, boolean inputIsJava, EventLogger eventLogger) {
+        this(agentPlan, inputIsJava, EventLogWriter.forEventLogger(eventLogger));
+    }
+
+    EventRouter(AgentPlan agentPlan, boolean inputIsJava, EventLogWriter eventLogWriter) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
-        this.eventLogger = eventLogger;
+        this.eventLogWriter = eventLogWriter;
         this.eventListeners = new ArrayList<>();
     }
 
@@ -107,8 +102,9 @@ class EventRouter<IN, OUT> implements AutoCloseable {
      * Initializes mutable runtime state that depends on metrics being available.
      *
      * <p>Allocates the reused stream record and the segmented watermark queue, and stores the
-     * supplied {@link BuiltInMetrics} for use in {@link #notifyEventProcessed(Event)}. Called from
-     * the operator's {@code open()} once metric groups are constructed.
+     * supplied {@link BuiltInMetrics} for use in {@link #notifyEventProcessed(Event,
+     * ExecutionTraceContext)}. Called from the operator's {@code open()} once metric groups are
+     * constructed.
      *
      * @param builtInMetrics the operator's built-in metrics handle.
      */
@@ -116,20 +112,6 @@ class EventRouter<IN, OUT> implements AutoCloseable {
         this.reusedStreamRecord = new StreamRecord<>(null);
         this.keySegmentQueue = new SegmentedQueue();
         this.builtInMetrics = builtInMetrics;
-    }
-
-    void initEventLogger(StreamingRuntimeContext runtimeContext) throws Exception {
-        if (eventLogger == null) {
-            return;
-        }
-        eventLogger.open(new EventLoggerOpenParams(runtimeContext));
-        if (eventLogger instanceof FileEventLogger) {
-            ((FileEventLogger) eventLogger)
-                    .setTruncatedEventsCounter(builtInMetrics.getEventLogTruncatedEventsCounter());
-        } else if (eventLogger instanceof Slf4jEventLogger) {
-            ((Slf4jEventLogger) eventLogger)
-                    .setTruncatedEventsCounter(builtInMetrics.getEventLogTruncatedEventsCounter());
-        }
     }
 
     /**
@@ -223,23 +205,20 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     /**
      * Notifies the configured event sinks (logger, listeners, metrics) that an event was processed.
      *
-     * <p>If event logging is enabled, appends and immediately flushes the event. Then notifies
-     * every registered {@link EventListener}. Finally increments the {@code eventProcessed}
-     * built-in metric. The event logger is flushed per call as a temporary measure pending a
-     * batched flush mechanism.
+     * <p>If event logging is enabled, appends and immediately flushes the event best-effort. Then
+     * notifies every registered {@link EventListener}. Finally increments the {@code
+     * eventProcessed} built-in metric. The event logger is flushed per call as a temporary measure
+     * pending a batched flush mechanism.
      *
      * @param event the event that was just processed.
      */
     void notifyEventProcessed(Event event) throws Exception {
+        notifyEventProcessed(event, null);
+    }
+
+    void notifyEventProcessed(Event event, ExecutionTraceContext traceContext) throws Exception {
         EventContext eventContext = new EventContext(event);
-        if (eventLogger != null) {
-            // If event logging is enabled, we log the event along with its context.
-            eventLogger.append(eventContext, event);
-            // For now, we flush the event logger after each event to ensure immediate logging.
-            // This is a temporary solution to ensure that events are logged immediately.
-            // TODO: In the future, we may want to implement a more efficient batching mechanism.
-            eventLogger.flush();
-        }
+        eventLogWriter.appendBusinessEventAndFlush(eventContext, event, traceContext);
         if (eventListeners != null) {
             // Notify all registered event listeners about the event.
             for (EventListener listener : eventListeners) {
@@ -277,40 +256,12 @@ class EventRouter<IN, OUT> implements AutoCloseable {
     @VisibleForTesting
     @Nullable
     EventLogger getEventLogger() {
-        return eventLogger;
+        return eventLogWriter.getEventLogger();
     }
 
     @VisibleForTesting
     void addEventListener(EventListener listener) {
         eventListeners.add(listener);
-    }
-
-    private static EventLogger createEventLogger(AgentPlan agentPlan) {
-        // Honor the EVENT_LOGGER_TYPE config, defaulting to SLF4J so events surface in the Flink
-        // Web UI by default. An explicit baseLogDir forces the file logger for backward
-        // compatibility with the existing file-based logging path.
-        LoggerType loggerType = agentPlan.getConfig().get(EVENT_LOGGER_TYPE);
-        String baseLogDir = agentPlan.getConfig().get(BASE_LOG_DIR);
-        if (baseLogDir != null && !baseLogDir.trim().isEmpty()) {
-            loggerType = LoggerType.FILE;
-        }
-        // The full agent config is the single source of truth for logger settings (baseLogDir,
-        // prettyPrint, event-log levels, truncation limits). Each logger pulls what it needs.
-        EventLoggerConfig config =
-                EventLoggerConfig.builder()
-                        .loggerType(loggerType)
-                        .property(
-                                EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY,
-                                agentPlan.getConfig().getConfData())
-                        .build();
-        return EventLoggerFactory.createLogger(config);
-    }
-
-    @Override
-    public void close() throws Exception {
-        if (eventLogger != null) {
-            eventLogger.close();
-        }
     }
 
     @FunctionalInterface
