@@ -162,6 +162,7 @@ Here are the configuration options for Kafka-based Action State Store.
 | `kafkaActionStateTopic`             | (none)                   | String  | The config parameter specifies the Kafka topic for action state.            |
 | `kafkaActionStateTopicNumPartitions`| 64                       | Integer | The config parameter specifies the number of partitions for the Kafka action state topic. |
 | `kafkaActionStateTopicReplicationFactor` | 1                     | Integer | The config parameter specifies the replication factor for the Kafka action state topic. |
+| `kafkaActionStateTombstoneEnabled`  | false                    | Boolean | Whether pruning sends tombstone records so log compaction can reclaim pruned keys. Off by default: without tombstones the topic grows unboundedly, but restoring any checkpoint or savepoint replays correctly. When enabled, restoring from the latest completed checkpoint is unaffected, but restoring an older checkpoint or savepoint may replay tombstones written after that restore point and re-execute already completed actions. Enable only if the job never restores from non-latest checkpoints or savepoints, or if re-executing actions is acceptable. |
 
 #### Fluss-based Action State Store
 
