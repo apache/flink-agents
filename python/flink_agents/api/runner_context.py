@@ -240,6 +240,7 @@ class RunnerContext(ABC):
         func: Callable[[Any], Any],
         *args: Any,
         reconciler: Callable[[], Any] | None = None,
+        durable_id: str | None = None,
         **kwargs: Any,
     ) -> Any:
         """Synchronously execute the provided function with durable execution support.
@@ -282,6 +283,12 @@ class RunnerContext(ABC):
             Optional zero-argument reconciler callable used only during recovery.
             This is a reserved keyword-only parameter and is not forwarded to
             `func`.
+        durable_id : str | None
+            Optional stable identity keying this call's persisted state. Supply
+            it when the caller owns an identity that survives failover;
+            otherwise the identity is derived from the callable and its
+            arguments. Reserved keyword-only parameter, not forwarded to
+            `func`.
         **kwargs : Any
             Keyword arguments to pass to the function.
 
@@ -297,6 +304,7 @@ class RunnerContext(ABC):
         func: Callable[[Any], Any],
         *args: Any,
         reconciler: Callable[[], Any] | None = None,
+        durable_id: str | None = None,
         **kwargs: Any,
     ) -> "AsyncExecutionResult":
         """Asynchronously execute the provided function with durable execution support.
@@ -339,6 +347,12 @@ class RunnerContext(ABC):
         reconciler : Callable[[], Any] | None
             Optional zero-argument reconciler callable used only during recovery.
             This is a reserved keyword-only parameter and is not forwarded to
+            `func`.
+        durable_id : str | None
+            Optional stable identity keying this call's persisted state. Supply
+            it when the caller owns an identity that survives failover;
+            otherwise the identity is derived from the callable and its
+            arguments. Reserved keyword-only parameter, not forwarded to
             `func`.
         **kwargs : Any
             Keyword arguments to pass to the function.
