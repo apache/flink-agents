@@ -86,6 +86,7 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void closeAttemptsAllResourcesAndSuppressesLaterFailures() throws Exception {
         AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
         ActionStateStore actionStateStore = mock(ActionStateStore.class);
@@ -94,28 +95,35 @@ public class ActionExecutionOperatorTest {
         ResourceCache resourceCache = mock(ResourceCache.class);
         ActionTaskContextManager contextManager = mock(ActionTaskContextManager.class);
         PythonBridgeManager pythonBridge = mock(PythonBridgeManager.class);
+        EventRouter<Object, Object> eventRouter = mock(EventRouter.class);
         RuntimeException resourceFailure = new RuntimeException("resource cache close failed");
         RuntimeException contextFailure = new RuntimeException("context manager close failed");
         RuntimeException bridgeFailure = new RuntimeException("python bridge close failed");
+        RuntimeException eventRouterFailure = new RuntimeException("event router close failed");
         RuntimeException durableFailure = new RuntimeException("durable manager close failed");
 
         doThrow(resourceFailure).when(resourceCache).close();
         doThrow(contextFailure).when(contextManager).close();
         doThrow(bridgeFailure).when(pythonBridge).close();
+        doThrow(eventRouterFailure).when(eventRouter).close();
         doThrow(durableFailure).when(actionStateStore).close();
         setPrivateField(operator, "resourceCache", resourceCache);
         setPrivateField(operator, "contextManager", contextManager);
         setPrivateField(operator, "pythonBridge", pythonBridge);
+        setPrivateField(operator, "eventRouter", eventRouter);
 
         assertThatThrownBy(operator::close)
                 .isSameAs(resourceFailure)
                 .hasSuppressedException(contextFailure)
                 .hasSuppressedException(bridgeFailure)
+                .hasSuppressedException(eventRouterFailure)
                 .hasSuppressedException(durableFailure);
-        InOrder closeOrder = inOrder(resourceCache, contextManager, pythonBridge, actionStateStore);
+        InOrder closeOrder =
+                inOrder(resourceCache, contextManager, pythonBridge, eventRouter, actionStateStore);
         closeOrder.verify(resourceCache).close();
         closeOrder.verify(contextManager).close();
         closeOrder.verify(pythonBridge).close();
+        closeOrder.verify(eventRouter).close();
         closeOrder.verify(actionStateStore).close();
     }
 
