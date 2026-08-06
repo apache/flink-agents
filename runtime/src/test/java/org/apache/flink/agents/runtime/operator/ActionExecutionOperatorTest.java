@@ -362,9 +362,9 @@ public class ActionExecutionOperatorTest {
         AgentPlan agentPlan =
                 new AgentPlan(
                         basePlan.getActions(),
-                        basePlan.getActionsByEvent(),
                         basePlan.getResourceProviders(),
-                        traceEnabledConfig());
+                        traceEnabledConfig(),
+                        basePlan.getAgentName());
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -754,9 +754,9 @@ public class ActionExecutionOperatorTest {
         AgentPlan agentPlan =
                 new AgentPlan(
                         basePlan.getActions(),
-                        basePlan.getActionsByEvent(),
                         basePlan.getResourceProviders(),
-                        config);
+                        config,
+                        basePlan.getAgentName());
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -836,9 +836,9 @@ public class ActionExecutionOperatorTest {
         AgentPlan agentPlan =
                 new AgentPlan(
                         basePlan.getActions(),
-                        basePlan.getActionsByEvent(),
                         basePlan.getResourceProviders(),
-                        config);
+                        config,
+                        basePlan.getAgentName());
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -1332,9 +1332,7 @@ public class ActionExecutionOperatorTest {
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
                         new ActionExecutionOperatorFactory<>(
-                                agentPlanWithStateStore,
-                                true,
-                                new InMemoryActionStateStore(false)),
+                                agentPlanWithStateStore, true, new InMemoryActionStateStore(false)),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();

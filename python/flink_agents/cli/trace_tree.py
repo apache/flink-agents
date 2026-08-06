@@ -23,6 +23,14 @@ from pathlib import Path
 from typing import Any, Iterator
 
 INPUT_EVENT_TYPE = "_input_event"
+EXECUTION_LIFECYCLE_EVENT_TYPES = frozenset(
+    {
+        "_execution_started_event",
+        "_execution_finished_event",
+        "_execution_failed_event",
+        "_execution_reused_event",
+    }
+)
 
 
 def _json_fingerprint(value: Any) -> str:
@@ -82,6 +90,67 @@ def read_json_objects(path: Path, warnings: list[dict[str, Any]]) -> Iterator[An
         yield record
 
 
+def _normalize_event_record(
+    record: Any,
+) -> tuple[dict[str, Any] | None, str | None, str | None]:
+    """Normalize flat and legacy Event Log records for lineage reconstruction."""
+    if not isinstance(record, dict):
+        return None, None, "record must be a JSON object"
+
+    event_type = record.get("eventType")
+    flat_record = "eventId" in record or "eventAttributes" in record
+    if flat_record:
+        event_id_value = record.get("eventId")
+        event_attributes = record.get("eventAttributes")
+        upstream_event_id = record.get("upstreamEventId")
+        upstream_action_name = record.get("upstreamActionName")
+        event_id_field = "eventId"
+        attributes_field = "eventAttributes"
+        lineage_prefix = ""
+    else:
+        event = record.get("event")
+        if not isinstance(event, dict):
+            return None, None, "field 'event' must be a JSON object"
+        event_id_value = event.get("id")
+        event_attributes = event.get("attributes")
+        upstream_event_id = event.get("upstreamEventId")
+        upstream_action_name = event.get("upstreamActionName")
+        event_id_field = "event.id"
+        attributes_field = "event.attributes"
+        lineage_prefix = "event."
+
+    if not isinstance(event_id_value, str) or not event_id_value:
+        return None, None, f"field '{event_id_field}' must be a non-empty string"
+    if not isinstance(event_type, str) or not event_type:
+        return None, None, "field 'eventType' must be a non-empty string"
+    if not isinstance(event_attributes, dict):
+        return None, None, f"field '{attributes_field}' must be a JSON object"
+
+    for field_name, field_value in (
+        ("upstreamEventId", upstream_event_id),
+        ("upstreamActionName", upstream_action_name),
+    ):
+        if field_value is not None and not isinstance(field_value, str):
+            return (
+                None,
+                event_id_value,
+                f"field '{lineage_prefix}{field_name}' must be a string or null",
+            )
+
+    return (
+        {
+            "eventId": event_id_value,
+            "eventType": event_type,
+            "timestamp": record.get("timestamp"),
+            "upstreamEventId": upstream_event_id,
+            "upstreamActionName": upstream_action_name,
+            "eventContent": event_attributes,
+        },
+        event_id_value,
+        None,
+    )
+
+
 def read_event_records(
     path: Path, warnings: list[dict[str, Any]]
 ) -> Iterator[dict[str, Any]]:
@@ -93,28 +162,15 @@ def read_event_records(
 
     for log_file in log_files:
         for record in read_json_objects(log_file, warnings):
-            event_id: str | None = None
-            invalid_reason: str | None = None
-            if not isinstance(record, dict):
-                invalid_reason = "record must be a JSON object"
-            else:
-                event = record.get("event")
-                event_type = record.get("eventType")
-                if not isinstance(event, dict):
-                    invalid_reason = "field 'event' must be a JSON object"
-                elif not isinstance(event.get("id"), str) or not event["id"]:
-                    invalid_reason = "field 'event.id' must be a non-empty string"
-                elif not isinstance(event_type, str) or not event_type:
-                    invalid_reason = "field 'eventType' must be a non-empty string"
-                else:
-                    event_id = event["id"]
-                    for field_name in ("upstreamEventId", "upstreamActionName"):
-                        field_value = event.get(field_name)
-                        if field_value is not None and not isinstance(field_value, str):
-                            invalid_reason = (
-                                f"field 'event.{field_name}' must be a string or null"
-                            )
-                            break
+            if (
+                isinstance(record, dict)
+                and record.get("eventType") in EXECUTION_LIFECYCLE_EVENT_TYPES
+            ):
+                continue
+
+            normalized_record, event_id, invalid_reason = _normalize_event_record(
+                record
+            )
 
             if invalid_reason is not None:
                 warnings.append(
@@ -127,20 +183,8 @@ def read_event_records(
                 )
                 continue
 
-            assert isinstance(record, dict)
-            event = record["event"]
-            assert isinstance(event, dict)
-            event_content = dict(event)
-            event_content.pop("upstreamEventId", None)
-            event_content.pop("upstreamActionName", None)
-            yield {
-                "eventId": event["id"],
-                "eventType": record["eventType"],
-                "timestamp": record.get("timestamp"),
-                "upstreamEventId": event.get("upstreamEventId"),
-                "upstreamActionName": event.get("upstreamActionName"),
-                "eventContent": event_content,
-            }
+            assert normalized_record is not None
+            yield normalized_record
 
 
 def build_trace_forest(

@@ -207,11 +207,11 @@ Example Trace record:
 }
 ```
 
-`upstreamEventId` identifies the Event consumed by the Action that emitted the current Event, and `upstreamActionName` identifies that Action. The framework maintains both fields directly on the `event` object, outside business `attributes`. A root `InputEvent` omits both fields.
+`upstreamEventId` identifies the Event consumed by the Action that emitted the current Event, and `upstreamActionName` identifies that Action. Both are top-level Event Log fields derived from framework-managed Event lineage and remain outside `eventAttributes`. A root `InputEvent` omits both fields.
 
 ### Trace Tree Reconstruction
 
-The `flink-agents-trace-tree` command is installed with the Flink Agents Python wheel. It rebuilds InputEvent-rooted Trace Trees from a saved File Event Log. Pass either one log file for text output or a log directory for Trace Tree JSON:
+The `flink-agents-trace-tree` command is installed with the Flink Agents Python wheel. It rebuilds InputEvent-rooted Trace Trees from business Events in a saved File Event Log and ignores execution lifecycle Events. The reader accepts both the current flat record shape and the previous nested `event` shape, including files that contain both formats. Pass either one log file for text output or a log directory for Trace Tree JSON:
 
 ```bash
 flink-agents-trace-tree /path/to/events-job-task-0.log
