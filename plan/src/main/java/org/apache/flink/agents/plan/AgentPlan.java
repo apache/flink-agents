@@ -380,7 +380,8 @@ public class AgentPlan implements Serializable {
         Iterable<? extends SerializableResource> tools =
                 (Iterable<? extends SerializableResource>) listToolsMethod.invoke(mcpServer);
 
-        for (SerializableResource tool : tools) {
+        for (SerializableResource discoveredTool : tools) {
+            SerializableResource tool = attachMcpServerNameIfSupported(discoveredTool, name);
             Method getNameMethod = tool.getClass().getMethod("getName");
             String toolName = (String) getNameMethod.invoke(tool);
             addResourceProvider(
@@ -404,6 +405,19 @@ public class AgentPlan implements Serializable {
         // Call close() via reflection
         Method closeMethod = mcpServer.getClass().getMethod("close");
         closeMethod.invoke(mcpServer);
+    }
+
+    private static SerializableResource attachMcpServerNameIfSupported(
+            SerializableResource tool, String mcpServerName) throws Exception {
+        try {
+            Method method = tool.getClass().getMethod("withMcpServerName", String.class);
+            Object associatedTool = method.invoke(tool, mcpServerName);
+            return associatedTool instanceof SerializableResource
+                    ? (SerializableResource) associatedTool
+                    : tool;
+        } catch (NoSuchMethodException ignored) {
+            return tool;
+        }
     }
 
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {

@@ -98,12 +98,7 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
         UUID upstreamEventId = parseOptionalUuid(getText(rootNode, "upstreamEventId", false));
         String upstreamActionName = getText(rootNode, "upstreamActionName", false);
         Event event =
-                new Event(
-                        eventId,
-                        eventType,
-                        attributes,
-                        upstreamEventId,
-                        upstreamActionName);
+                new Event(eventId, eventType, attributes, upstreamEventId, upstreamActionName);
         return new EventLogRecord(
                 new EventContext(eventType, timestamp), traceContext(mapper, rootNode), event);
     }
