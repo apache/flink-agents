@@ -189,7 +189,7 @@ The model only sees and provides normal tool parameters. The injected parameters
 
 {{< tab "Python" >}}
 ```python
-from flink_agents.api.agents import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import tool
 from flink_agents.api.tools import InjectedArg
 

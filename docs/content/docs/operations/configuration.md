@@ -48,7 +48,7 @@ env = StreamExecutionEnvironment.get_execution_environment()
 agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
 # Get configuration object from the environment
-config = agents_env.get_configuration()
+config = agents_env.get_config()
 
 # Set custom configuration using a direct key (string-based key)
 # This is suitable for user-defined or non-standardized settings.

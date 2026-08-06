@@ -644,7 +644,7 @@ python -m flink_agents.api.yaml.specs > docs/yaml-schema.json
 Continuous tests then verify cross-runtime consistency:
 
 - the JSON Schema exported by the Pydantic specs matches the checked-in `docs/yaml-schema.json`;
-- the JSON Schema exported by the Java POJOs matches the checked-in `docs/yaml-schema.json`;
+- the Java POJOs match the checked-in `docs/yaml-schema.json` in property names, required fields, and `additionalProperties` strictness;
 - the Pydantic specs stay aligned with the Python `Agent` API;
 - the Java POJOs stay aligned with the Java `Agent` API.
 
