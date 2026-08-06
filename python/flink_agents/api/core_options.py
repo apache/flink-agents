@@ -58,6 +58,16 @@ class LoggerType(Enum):
     FILE = "file"
 
 
+class ConditionEvaluationFailureStrategy(Enum):
+    """Behavior when evaluating an action trigger condition fails.
+
+    Mirrors Java ``ConditionEvaluationFailureStrategy``.
+    """
+
+    WARN_AND_SKIP = "WARN_AND_SKIP"
+    FAIL = "FAIL"
+
+
 class EventLogLevel(Enum):
     """Log level for event logging.
 
@@ -80,6 +90,12 @@ class AgentConfigOptions:
         key="eventLoggerType",
         config_type=LoggerType,
         default=LoggerType.SLF4J,
+    )
+
+    CONDITION_EVALUATION_FAILURE_STRATEGY = ConfigOption(
+        key="action.trigger-condition.evaluate-failure-strategy",
+        config_type=ConditionEvaluationFailureStrategy,
+        default=ConditionEvaluationFailureStrategy.WARN_AND_SKIP,
     )
 
     BASE_LOG_DIR = ConfigOption(

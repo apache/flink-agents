@@ -357,3 +357,107 @@ class TestSkillManagerMixedSources:
         assert closed == ["skill-1"], (
             "the repo opened before the partial-load failure must be closed"
         )
+
+    def test_load_failure_outside_wrapped_types_closes_repos_and_propagates(
+        self,
+    ) -> None:
+        # Contract: a source failure that is neither OSError nor ValueError still
+        # closes the repos opened before it, and reaches the caller unwrapped.
+        from typing import Dict, List
+
+        from flink_agents.runtime.skill import skill_source_registry
+        from flink_agents.runtime.skill.agent_skill import AgentSkill
+        from flink_agents.runtime.skill.skill_repository import SkillRepository
+
+        closed: List[str] = []
+
+        class FakeRepo(SkillRepository):
+            def get_skill(self, name: str) -> AgentSkill | None:
+                return self.get_skills()[0] if name == "skill-1" else None
+
+            def get_skills(self) -> List[AgentSkill]:
+                return [AgentSkill(name="skill-1", description="dummy", content="body")]
+
+            def get_resources(self, name: str) -> Dict[str, str]:
+                return {}
+
+            def close(self) -> None:
+                closed.append("skill-1")
+
+        counter = {"n": 0}
+
+        def opener(params) -> SkillRepository:
+            counter["n"] += 1
+            if counter["n"] == 2:
+                msg = "corrupt archive"
+                raise zipfile.BadZipFile(msg)
+            return FakeRepo()
+
+        skill_source_registry.register("test-badzip-close", opener)
+
+        config = Skills(
+            sources=[
+                SkillSourceSpec(scheme="test-badzip-close", params={}),
+                SkillSourceSpec(scheme="test-badzip-close", params={}),
+            ]
+        )
+
+        with pytest.raises(zipfile.BadZipFile):
+            SkillManager(config)
+        assert closed == ["skill-1"], (
+            "a load failure outside (OSError, ValueError) must still close the "
+            "repos opened before it"
+        )
+
+    def test_registration_failure_closes_earlier_repo_and_propagates(self) -> None:
+        # Contract: a failure raised while registering a repo — after its open()
+        # already succeeded — still closes the repo from an earlier source.
+        from typing import Dict, List
+
+        from flink_agents.runtime.skill import skill_source_registry
+        from flink_agents.runtime.skill.agent_skill import AgentSkill
+        from flink_agents.runtime.skill.skill_repository import SkillRepository
+
+        closed: List[str] = []
+
+        class FakeRepo(SkillRepository):
+            def __init__(self, tag: str, *, boom: bool) -> None:
+                self._tag = tag
+                self._boom = boom
+
+            def get_skill(self, name: str) -> AgentSkill | None:
+                return None
+
+            def get_skills(self) -> List[AgentSkill]:
+                if self._boom:
+                    msg = "exploding during registration"
+                    raise KeyError(msg)
+                return [AgentSkill(name=self._tag, description="d", content="b")]
+
+            def get_resources(self, name: str) -> Dict[str, str]:
+                return {}
+
+            def close(self) -> None:
+                closed.append(self._tag)
+
+        counter = {"n": 0}
+
+        def opener(params) -> SkillRepository:
+            counter["n"] += 1
+            return FakeRepo(f"skill-{counter['n']}", boom=counter["n"] == 2)
+
+        skill_source_registry.register("test-register-boom", opener)
+
+        config = Skills(
+            sources=[
+                SkillSourceSpec(scheme="test-register-boom", params={}),
+                SkillSourceSpec(scheme="test-register-boom", params={}),
+            ]
+        )
+
+        with pytest.raises(KeyError):
+            SkillManager(config)
+        assert closed == ["skill-1", "skill-2"], (
+            "a registration failure must close every repo opened so far — the "
+            "earlier source's repo and the one whose registration failed"
+        )

@@ -266,7 +266,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
             // We then obtain the triggered action and add ActionTasks to the waiting processing
             // queue.
-            List<Action> triggerActions = eventRouter.getActionsTriggeredBy(event, agentPlan);
+            List<Action> triggerActions = eventRouter.getActionsTriggeredBy(event);
             if (triggerActions != null && !triggerActions.isEmpty()) {
                 for (Action triggerAction : triggerActions) {
                     stateManager.addActionTask(createActionTask(key, triggerAction, event));
@@ -345,7 +345,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     actionTask.action.getName(),
                     key);
             isFinished = true;
-            outputEvents = actionState.getOutputEvents();
+            outputEvents = actionTask.finalizeOutputEvents(actionState.getOutputEvents());
             for (MemoryUpdate memoryUpdate : actionState.getShortTermMemoryUpdates()) {
                 actionTask
                         .getRunnerContext()
@@ -385,6 +385,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             durableExecManager.removeDurableContext(actionTask);
             contextManager.removeContinuationContext(actionTask);
             contextManager.removePythonAwaitableRef(actionTask);
+            outputEvents = actionTaskResult.getOutputEvents();
             durableExecManager.maybePersistTaskResult(
                     key,
                     sequenceNumber,
@@ -393,7 +394,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     actionTask.getRunnerContext(),
                     actionTaskResult);
             isFinished = actionTaskResult.isFinished();
-            outputEvents = actionTaskResult.getOutputEvents();
             generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
         }
 

@@ -24,8 +24,6 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -46,14 +44,21 @@ import java.util.Set;
  * <p>Setting any threshold to {@code 0} disables that specific truncation strategy. If all
  * thresholds are {@code 0}, no truncation occurs.
  *
- * <p>Protected fields at the top level of the event node ({@code eventType}, {@code id}, {@code
- * attributes}) are never truncated as structural fields. The {@code attributes} envelope is
- * additionally traversed so user payload stored inside it is truncated like any other field.
+ * <p>Protected fields at the top level of the event node ({@code eventType}, {@code type}, {@code
+ * id}, {@code upstreamEventId}, {@code upstreamActionName}, {@code attributes}) are never truncated
+ * as structural fields. The {@code attributes} envelope is additionally traversed so user payload
+ * stored inside it is truncated like any other field.
  */
 public class JsonTruncator {
 
     private static final Set<String> PROTECTED_FIELDS =
-            new HashSet<>(Arrays.asList("eventType", "id", "attributes"));
+            Set.of(
+                    "eventType",
+                    "type",
+                    "id",
+                    "upstreamEventId",
+                    "upstreamActionName",
+                    "attributes");
 
     private final int maxStringLength;
     private final int maxArrayElements;
@@ -75,9 +80,10 @@ public class JsonTruncator {
     /**
      * Truncates the given event node in place according to configured thresholds.
      *
-     * <p>Protected fields ({@code eventType}, {@code id}, {@code attributes}) at the top level of
-     * the event node are never truncated as structural fields. The {@code attributes} envelope is
-     * additionally traversed so user payload stored inside it is truncated like any other field.
+     * <p>Protected fields ({@code eventType}, {@code type}, {@code id}, {@code upstreamEventId},
+     * {@code upstreamActionName}, {@code attributes}) at the top level of the event node are never
+     * truncated as structural fields. The {@code attributes} envelope is additionally traversed so
+     * user payload stored inside it is truncated like any other field.
      *
      * @param eventNode the top-level event JSON object to truncate
      * @return {@code true} if any field was truncated, {@code false} if the node was unchanged

@@ -87,6 +87,21 @@ def _connections_implementing_chat() -> List[Type[BaseChatModelConnection]]:
     ]
 
 
+def _translates_schema_natively(cls: Type[BaseChatModelConnection]) -> bool:
+    """Whether ``cls`` applies an output schema through a native provider parameter.
+
+    Overriding ``supports_native_structured_output`` is how a connection reports that
+    capability, so the same override marks the connections that must accept a schema
+    instead of rejecting it. Such a connection owns the decision of what to do with a
+    schema it cannot apply natively for the effective model, and its own tests pin
+    that behavior.
+    """
+    return (
+        cls.supports_native_structured_output
+        is not BaseChatModelConnection.supports_native_structured_output
+    )
+
+
 def test_every_connection_declares_output_schema_param() -> None:
     """Every connection in the tree must declare ``output_schema`` defaulting to None.
 
@@ -147,13 +162,20 @@ def test_every_connection_rejects_an_output_schema_it_cannot_translate() -> None
     own it lets a connection silently return an unconstrained response that the caller
     would treat as schema-conforming. Rejecting turns that into an error at the call.
 
+    A connection that does translate a schema natively is exempt, since rejecting is
+    exactly what it must not do.
+
     The tree is walked rather than hand-listed, so a connection added to a module that
     is already imported is held to the contract for free. Reach still stops at those
     imports: ``__subclasses__()`` only sees classes that have been imported, so a
     connection in a brand-new module needs that module added at the top of this file.
     """
     schema = OutputSchema(output_schema=_Answer)
-    connections = _connections_implementing_chat()
+    connections = [
+        cls
+        for cls in _connections_implementing_chat()
+        if not _translates_schema_natively(cls)
+    ]
 
     assert connections, "the connection walk found nothing to check"
     offenders = [

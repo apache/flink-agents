@@ -4,7 +4,12 @@
     "func_type": "JavaFunction",
     "qualname": "org.apache.flink.agents.plan.TestAction",
     "method_name": "legal",
-    "parameter_types": ["org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext"]
+    "parameter_types": [
+      "org.apache.flink.agents.api.Event",
+      "org.apache.flink.agents.api.context.RunnerContext"
+    ]
   },
-  "trigger_conditions": ["_input_event"]
+  "trigger_conditions": [
+    "_input_event"
+  ]
 }

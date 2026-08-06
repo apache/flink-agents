@@ -17,15 +17,19 @@
 #################################################################################
 import json
 
+import cloudpickle
+
 from flink_agents.api.decorators import tool
 from flink_agents.api.embedding_models.embedding_model import (
     EmbeddingResult,
     EmbeddingTokenUsage,
 )
+from flink_agents.api.events.event import Event
 from flink_agents.api.tools import InjectedArg
 from flink_agents.runtime.python_java_utils import (
     call_embedding_with_usage,
     get_python_tool_metadata,
+    wrap_to_input_event,
 )
 
 
@@ -67,3 +71,14 @@ def test_call_embedding_with_usage_returns_pemja_safe_primitives() -> None:
         "embeddings": [0.1, 0.2],
         "token_usage": {"prompt_tokens": 7, "total_tokens": 9},
     }
+
+
+def test_wrap_to_input_event_assigns_unique_random_id_per_record() -> None:
+    payload = cloudpickle.dumps("same input")
+
+    first = Event.from_json(wrap_to_input_event(payload))
+    second = Event.from_json(wrap_to_input_event(payload))
+
+    assert first.id != second.id
+    assert first.id.version == 4
+    assert second.id.version == 4

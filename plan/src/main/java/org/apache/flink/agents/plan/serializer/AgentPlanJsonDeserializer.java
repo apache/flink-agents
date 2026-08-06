@@ -34,10 +34,9 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
@@ -57,39 +56,18 @@ public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
         JavaType actionType = ctx.constructType(Action.class);
         JsonDeserializer<?> actionDeserializer =
                 ctx.findContextualValueDeserializer(actionType, null);
-        Map<String, Action> actions = new HashMap<>();
-        if (actionsNode != null && actionsNode.isObject()) {
-            Iterator<Map.Entry<String, JsonNode>> iterator = actionsNode.fields();
-            while (iterator.hasNext()) {
-                Map.Entry<String, JsonNode> entry = iterator.next();
-                String actionName = entry.getKey();
-                JsonNode actionNode = entry.getValue();
-                JsonParser actionParser = codec.treeAsTokens(actionNode);
-                Action action = (Action) actionDeserializer.deserialize(actionParser, ctx);
-                actions.put(actionName, action);
-            }
+        if (actionsNode == null || !actionsNode.isObject()) {
+            throw new IOException("AgentPlan field 'actions' must be an object");
         }
-
-        // Deserialize event trigger actions
-        JsonNode actionsByEventNode = node.get("actions_by_event");
-        Map<String, List<Action>> actionsByEvent = new HashMap<>();
-        if (actionsByEventNode != null && actionsByEventNode.isObject()) {
-            Iterator<Map.Entry<String, JsonNode>> iterator = actionsByEventNode.fields();
-            while (iterator.hasNext()) {
-                Map.Entry<String, JsonNode> entry = iterator.next();
-                String eventClassName = entry.getKey();
-                JsonNode actionsArrayNode = entry.getValue();
-                List<Action> actionsTriggeredByEvent = new ArrayList<>();
-                for (JsonNode actionNameNode : actionsArrayNode) {
-                    String actionName = actionNameNode.asText();
-                    Action action = actions.get(actionName);
-                    if (action == null) {
-                        throw new IllegalStateException("Unknown action name: " + actionName);
-                    }
-                    actionsTriggeredByEvent.add(action);
-                }
-                actionsByEvent.put(eventClassName, actionsTriggeredByEvent);
-            }
+        Map<String, Action> actions = new LinkedHashMap<>();
+        Iterator<Map.Entry<String, JsonNode>> actionIterator = actionsNode.fields();
+        while (actionIterator.hasNext()) {
+            Map.Entry<String, JsonNode> entry = actionIterator.next();
+            String actionName = entry.getKey();
+            JsonNode actionNode = entry.getValue();
+            JsonParser actionParser = codec.treeAsTokens(actionNode);
+            Action action = (Action) actionDeserializer.deserialize(actionParser, ctx);
+            actions.put(actionName, action);
         }
 
         // Deserialize resource providers
@@ -133,6 +111,6 @@ public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
         }
         AgentConfiguration config = new AgentConfiguration(configData);
 
-        return new AgentPlan(actions, actionsByEvent, resourceProviders, config);
+        return new AgentPlan(actions, resourceProviders, config);
     }
 }

@@ -127,6 +127,41 @@ def test_resolve_clazz_default_language_is_python() -> None:
     assert default == explicit
 
 
+def test_resolve_clazz_covers_chat_model_java_gemini_and_azure_openai() -> None:
+    assert resolve_clazz("gemini", ResourceType.CHAT_MODEL_CONNECTION, "java").endswith(
+        "GeminiChatModelConnection"
+    )
+    assert resolve_clazz("gemini", ResourceType.CHAT_MODEL, "java").endswith(
+        "GeminiChatModelSetup"
+    )
+    # `azure_openai` is the only alias whose Java/Python simple names collide
+    # (AzureOpenAIChatModelConnection); pin the package so a Java entry that lost
+    # its `.Java` suffix and resolved to the Python class would fail here.
+    azure_conn = resolve_clazz(
+        "azure_openai", ResourceType.CHAT_MODEL_CONNECTION, "java"
+    )
+    assert azure_conn.startswith("org.apache.flink.agents")
+    assert azure_conn.endswith("AzureOpenAIChatModelConnection")
+    azure_setup = resolve_clazz("azure_openai", ResourceType.CHAT_MODEL, "java")
+    assert azure_setup.startswith("org.apache.flink.agents")
+    assert azure_setup.endswith("AzureOpenAIChatModelSetup")
+
+
+def test_resolve_clazz_covers_vector_store_java_and_python() -> None:
+    assert resolve_clazz("opensearch", ResourceType.VECTOR_STORE, "java").endswith(
+        "OpenSearchVectorStore"
+    )
+    assert resolve_clazz("s3_vectors", ResourceType.VECTOR_STORE, "java").endswith(
+        "S3VectorsVectorStore"
+    )
+    assert resolve_clazz("milvus", ResourceType.VECTOR_STORE, "java").endswith(
+        "MilvusVectorStore"
+    )
+    assert resolve_clazz("mem0", ResourceType.VECTOR_STORE, "python").endswith(
+        "Mem0VectorStore"
+    )
+
+
 def test_java_wrapper_clazz_table_covers_supported_types() -> None:
     # The Python-side wrappers must exist for every cross-language type
     expected = {

@@ -13,6 +13,8 @@ python/.DS_Store
 
 # Build
 target/
+/build/
+/lib/
 **/dependency-reduced-pom.xml
 tools/releasing/release/
 __pycache__

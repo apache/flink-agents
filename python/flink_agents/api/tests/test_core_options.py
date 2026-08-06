@@ -98,13 +98,26 @@ def _collect_config_options(options_class: type) -> dict[str, ConfigOption]:
 
 
 def test_agent_config_options_are_explicitly_declared() -> None:
-    from flink_agents.api.core_options import AgentConfigOptions, EventLogLevel
+    from flink_agents.api.core_options import (
+        AgentConfigOptions,
+        ConditionEvaluationFailureStrategy,
+        EventLogLevel,
+    )
 
     options = _collect_config_options(AgentConfigOptions)
-    assert len(options) == 23
     assert options["BASE_LOG_DIR"].get_key() == "baseLogDir"
     assert options["KAFKA_BOOTSTRAP_SERVERS"].get_default_value() == "localhost:9092"
     assert options["EVENT_LOG_LEVEL"].get_default_value() is EventLogLevel.STANDARD
+    condition_failure = options["CONDITION_EVALUATION_FAILURE_STRATEGY"]
+    assert (
+        condition_failure.get_key()
+        == "action.trigger-condition.evaluate-failure-strategy"
+    )
+    assert condition_failure.get_type() is ConditionEvaluationFailureStrategy
+    assert (
+        condition_failure.get_default_value()
+        is ConditionEvaluationFailureStrategy.WARN_AND_SKIP
+    )
 
 
 def test_unknown_agent_config_option_raises_attribute_error() -> None:

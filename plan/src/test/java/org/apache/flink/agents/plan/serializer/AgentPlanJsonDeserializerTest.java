@@ -18,7 +18,10 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -33,14 +36,31 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class AgentPlanJsonDeserializerTest {
+    @Test
+    public void testActionsMustBePresentObjectButMayBeEmpty() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+
+        for (String json :
+                List.of("{}", "{\"actions\":null}", "{\"actions\":[]}", "{\"actions\":\"bad\"}")) {
+            IOException error =
+                    assertThrows(IOException.class, () -> mapper.readValue(json, AgentPlan.class));
+            assertTrue(error.getMessage().contains("actions"));
+        }
+
+        AgentPlan empty = mapper.readValue("{\"actions\":{}}", AgentPlan.class);
+        assertTrue(empty.getActions().isEmpty());
+    }
+
     @Test
     public void testDeserialize() throws Exception {
         // Read JSON for an Action with JavaFunction from resource file
@@ -52,7 +72,7 @@ public class AgentPlanJsonDeserializerTest {
         assertTrue(agentPlan.getActions().containsKey("first_action"));
         Action firstAction = agentPlan.getActions().get("first_action");
         assertInstanceOf(JavaFunction.class, firstAction.getExec());
-        assertEquals(List.of(InputEvent.EVENT_TYPE), firstAction.getListenEventTypes());
+        assertEquals(List.of(InputEvent.EVENT_TYPE), firstAction.getTriggerConditions());
 
         // Check the second action
         assertTrue(agentPlan.getActions().containsKey("second_action"));
@@ -60,15 +80,7 @@ public class AgentPlanJsonDeserializerTest {
         assertInstanceOf(JavaFunction.class, secondAction.getExec());
         assertEquals(
                 List.of(InputEvent.EVENT_TYPE, MyEvent.EVENT_TYPE),
-                secondAction.getListenEventTypes());
-
-        // Check event trigger actions
-        assertEquals(2, agentPlan.getActionsByEvent().size());
-        assertTrue(agentPlan.getActionsByEvent().containsKey(InputEvent.EVENT_TYPE));
-        assertEquals(
-                List.of(firstAction, secondAction),
-                agentPlan.getActionsByEvent().get(InputEvent.EVENT_TYPE));
-        assertEquals(List.of(secondAction), agentPlan.getActionsByEvent().get(MyEvent.EVENT_TYPE));
+                secondAction.getTriggerConditions());
 
         // Check the flink agent config
         Map<String, Object> configData = agentPlan.getConfigData();
@@ -77,6 +89,25 @@ public class AgentPlanJsonDeserializerTest {
         assertEquals(1.5, configData.get("key2"));
         assertEquals(true, configData.get("key3"));
         assertEquals("v1", configData.get("key4"));
+    }
+
+    @Test
+    public void testInvalidConditionIsJsonMappingError() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode plan = mapper.readTree(Utils.readJsonFromResource("agent_plans/agent_plan.json"));
+        ((ArrayNode) plan.get("actions").get("first_action").get("trigger_conditions"))
+                .removeAll()
+                .add("type ==");
+
+        JsonMappingException error =
+                assertThrows(
+                        JsonMappingException.class,
+                        () -> mapper.readValue(mapper.writeValueAsString(plan), AgentPlan.class));
+
+        assertInstanceOf(IllegalArgumentException.class, error.getCause());
+        assertTrue(error.getOriginalMessage().contains("trigger condition #1"));
+        assertTrue(error.getOriginalMessage().contains("action 'first_action'"));
+        assertTrue(error.getOriginalMessage().contains("\"type ==\""));
     }
 
     @Test
@@ -97,8 +128,6 @@ public class AgentPlanJsonDeserializerTest {
                 mapper.writeValueAsString(
                         Map.of(
                                 "actions",
-                                Map.of(),
-                                "actions_by_event",
                                 Map.of(),
                                 "resource_providers",
                                 Map.of(

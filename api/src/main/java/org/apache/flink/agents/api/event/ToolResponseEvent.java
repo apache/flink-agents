@@ -98,12 +98,7 @@ public class ToolResponseEvent extends Event {
      * @return a typed ToolResponseEvent
      */
     public static ToolResponseEvent fromEvent(Event event) {
-        ToolResponseEvent result =
-                new ToolResponseEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, ToolResponseEvent::new);
     }
 
     @JsonIgnore

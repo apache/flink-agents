@@ -28,6 +28,33 @@ under the License.
     <artifactId>flink-agents-e2e-tests</artifactId>
     <packaging>pom</packaging>
     <name>Flink Agents : E2E Tests: </name>
+
+    <properties>
+        <!-- The default E2E runtime is Flink 2.3. Profiles override this when needed. -->
+        <flink.log4j2.version>2.25.3</flink.log4j2.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>${flink.log4j2.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>${flink.log4j2.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j-impl</artifactId>
+            <version>${flink.log4j2.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
     <modules>
         <module>flink-agents-end-to-end-tests-agent-plan-compatibility</module>
         <module>flink-agents-end-to-end-tests-integration</module>

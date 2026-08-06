@@ -94,6 +94,8 @@ After recovery from a checkpoint, Flink Agents reprocess events that arrived aft
 
 To ensure exactly-once action consistency, you must configure an external action state store. Flink Agents record action state in this store on a per-action basis. After recovering from a checkpoint, Flink Agents consult the external store and will not re-execute actions that were already completed. This guarantees each action is executed exactly once after recovering from a checkpoint.
 
+When a completed Action is reused during recovery, its stored output Events keep their original Event IDs, while their lineage is rebound to the Event that triggers the reused Action in the recovered execution.
+
 The same persisted action state is also used by fine-grained durable execution.
 
 {{< hint info >}}

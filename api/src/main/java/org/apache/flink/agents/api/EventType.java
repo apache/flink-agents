@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.api;
 
+import java.util.Map;
+
 /**
  * Compile-time constants for built-in event types, sourced from each {@code XxxEvent.EVENT_TYPE}.
  *
@@ -39,6 +41,24 @@ public final class EventType {
             org.apache.flink.agents.api.event.ContextRetrievalRequestEvent.EVENT_TYPE;
     public static final String ContextRetrievalResponseEvent =
             org.apache.flink.agents.api.event.ContextRetrievalResponseEvent.EVENT_TYPE;
+
+    private static final Map<String, String> ALL_CONSTANTS =
+            Map.of(
+                    "InputEvent", InputEvent,
+                    "OutputEvent", OutputEvent,
+                    "ChatRequestEvent", ChatRequestEvent,
+                    "ChatResponseEvent", ChatResponseEvent,
+                    "ToolRequestEvent", ToolRequestEvent,
+                    "ToolResponseEvent", ToolResponseEvent,
+                    "ContextRetrievalRequestEvent", ContextRetrievalRequestEvent,
+                    "ContextRetrievalResponseEvent", ContextRetrievalResponseEvent);
+
+    /**
+     * Returns the built-in event type constants as a name-to-value map for condition expressions.
+     */
+    public static Map<String, String> allConstants() {
+        return ALL_CONSTANTS;
+    }
 
     private EventType() {}
 }

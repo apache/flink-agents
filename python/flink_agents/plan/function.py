@@ -108,6 +108,14 @@ class Function(BaseModel, ABC):
     def check_signature(self, *args: Tuple[Any, ...]) -> None:
         """Check function signature is legal or not."""
 
+    def warn_if_returns_value(self, action_name: str) -> None:
+        """Warn if this function declares a non-``None`` return annotation.
+
+        Action return values are discarded by the framework, so declaring a
+        return type is almost always a mistake. Only Python callables can be
+        introspected, so non-Python function types treat this as a no-op.
+        """
+
     @abstractmethod
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute function."""
@@ -190,6 +198,24 @@ class PythonFunction(Function):
                 check_type_match(annotation, args[i])
         except TypeError as e:
             raise TypeError(err_msg) from e
+
+    def warn_if_returns_value(self, action_name: str) -> None:
+        """Warn that an action's return value is ignored by the framework.
+
+        Actions communicate by sending events via ``ctx.send_event(...)``; any
+        value they return is discarded. A non-``None`` return annotation is
+        almost always a mistake, so surface it when the plan is built. The
+        stringized ``"None"`` is accepted for modules that opt into
+        ``from __future__ import annotations``.
+        """
+        return_annotation = inspect.signature(self.__get_func()).return_annotation
+        if return_annotation not in (inspect.Signature.empty, None, type(None), "None"):
+            logger.warning(
+                f"Action '{action_name}' declares return type "
+                f"'{return_annotation}', but action return values are ignored by "
+                f"the framework. Actions should send events via "
+                f"ctx.send_event(...) and return None."
+            )
 
     def __call__(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """Execute the stored function with provided arguments.

@@ -15,7 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Built-in event-type constants, sourced from each ``XxxEvent.EVENT_TYPE``."""
+"""Built-in event-type constants, sourced from each ``XxxEvent.EVENT_TYPE``.
+
+Usage: ``@action(EventType.InputEvent)``, or in a trigger condition:
+``type == EventType.InputEvent``.
+"""
 
 from __future__ import annotations
 

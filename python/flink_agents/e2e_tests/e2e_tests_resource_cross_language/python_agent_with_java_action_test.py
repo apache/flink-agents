@@ -18,6 +18,7 @@
 """E2E mirror of ``JavaAgentWithPythonActionTest``: Python agent + Java action body."""
 
 import os
+import sys
 import sysconfig
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from pyflink.datastream.connectors.file_system import StreamingFileSink
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.e2e_tests.e2e_tests_resource_cross_language.python_agent_with_java_action import (
+    InvalidTriggerConditionAgent,
     PythonAgentWithJavaActionAgent,
     SingleKeySelector,
 )
@@ -46,6 +48,24 @@ _TEST_JAR = (
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
 
+def test_apply_rejects_invalid_condition_via_java() -> None:
+    env = StreamExecutionEnvironment.get_execution_environment()
+    input_stream = env.from_collection([1], type_info=Types.LONG())
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    builder = agents_env.from_datastream(
+        input=input_stream,
+        key_selector=SingleKeySelector(),
+    )
+
+    with pytest.raises(ValueError) as error:
+        builder.apply(InvalidTriggerConditionAgent())
+
+    assert str(error.value).startswith(
+        "Invalid trigger condition #1 for action 'invalid_condition'"
+    )
+    assert '"type =="' in str(error.value)
+
+
 @pytest.mark.skipif(
     not _TEST_JAR.is_file(),
     reason=(
@@ -54,22 +74,21 @@ os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
         "flink-agents-end-to-end-tests-resource-cross-language' first."
     ),
 )
-def test_python_agent_dispatches_java_action_body(tmp_path: Path) -> None:
+def test_overlapping_conditions_run_java_action_once(tmp_path: Path) -> None:
     config = Configuration()
     config.set_string("python.pythonpath", sysconfig.get_paths()["purelib"])
+    config.set_string("python.executable", sys.executable)
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_parallelism(1)
     env.add_jars(f"file://{_TEST_JAR}")
 
-    input_stream = env.from_collection([1, 2, 3, 4, 5], type_info=Types.LONG()).map(
+    input_stream = env.from_collection([1, 3, 5, 7, 9], type_info=Types.LONG()).map(
         lambda x: x
     )
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
     output_datastream = (
-        agents_env.from_datastream(
-            input=input_stream, key_selector=SingleKeySelector()
-        )
+        agents_env.from_datastream(input=input_stream, key_selector=SingleKeySelector())
         .apply(PythonAgentWithJavaActionAgent())
         .to_datastream(Types.LONG())
     )
@@ -96,4 +115,6 @@ def test_python_agent_dispatches_java_action_body(tmp_path: Path) -> None:
                 actual.extend(int(line.strip()) for line in f if line.strip())
 
     actual.sort()
-    assert actual == [2, 4, 6, 8, 10], f"unexpected outputs: {actual}"
+    # 3 is first-only, 5 overlaps (and executes once), 7 is second-only,
+    # while 1 and 9 do not match.
+    assert actual == [6, 10, 14], f"unexpected outputs: {actual}"

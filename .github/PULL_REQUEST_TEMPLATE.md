@@ -25,3 +25,12 @@ Linked issue: #xxx
 - [ ] `doc-needed` <!-- Your PR changes impact docs -->
 - [ ] `doc-not-needed` <!-- Your PR changes do not impact docs -->
 - [ ] `doc-included` <!-- Your PR already contains the necessary documentation updates -->
+
+### Was this patch authored or co-authored using generative AI tooling?
+
+<!-- Do not remove this section. Check the proper box only. -->
+
+- [ ] Yes
+- [ ] No
+
+If yes, include a `Generated-by: <tool name and version>` line in the commit message so it reaches Git history, and repeat it here for reviewer visibility. See the [ASF generative tooling guidance](https://www.apache.org/legal/generative-tooling.html).

@@ -14,9 +14,12 @@ This project bundles the following dependencies under the Apache Software Licens
 - com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.18.2
 - com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2
 - com.fasterxml:classmate:1.7.0
-- org.apache.logging.log4j:log4j-api:2.23.1
-- org.apache.logging.log4j:log4j-core:2.23.1
-- org.apache.logging.log4j:log4j-slf4j-impl:2.23.1
+- dev.cel:cel:0.12.0
+- dev.cel:common:0.12.0
+- dev.cel:compiler:0.12.0
+- dev.cel:protobuf:0.12.0
+- dev.cel:runtime:0.12.0
+- dev.cel:v1alpha1:0.12.0
 - org.apache.kafka:kafka-clients:4.0.0
 - org.lz4:lz4-java:1.8.0
 - org.xerial.snappy:snappy-java:1.1.10.5
@@ -145,7 +148,6 @@ This project bundles the following dependencies under the Apache Software Licens
 This project bundles the following dependencies under the MIT license.
 See bundled license files for details.
 
-- slf4j-api:slf4j-api:1.7.36
 - io.github.ollama4j:ollama4j:1.1.5
 - org.jsoup:jsoup:1.21.2
 - com.anthropic:anthropic-java:2.11.1
@@ -181,8 +183,11 @@ See bundled license files for details.
 This project bundles the following dependencies under the BSD 3-Clause license.
 See bundled license files for details.
 
-- com.google.protobuf:protobuf-java:3.25.5
+- com.google.protobuf:protobuf-java:4.33.5
+- com.google.re2j:re2j:1.8
+- org.antlr:antlr4-runtime:4.13.2
 - org.ow2.asm:asm:9.3
+- org.threeten:threeten-extra:1.8.0
 
 This project bundles the following dependencies under the EPL2 license.
 See bundled license files for details.

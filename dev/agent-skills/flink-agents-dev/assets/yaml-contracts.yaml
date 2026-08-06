@@ -1,0 +1,22 @@
+contracts:
+  "0.3.0":
+    schema: yaml-schemas/release-0.3.0.json
+    source:
+      repository: apache/flink-agents
+      ref: release-0.3.0
+      path: docs/yaml-schema.json
+      blob_sha: 2b21d71db8e7ea93f9a1e98dc4ca11af9298f39f
+
+  main:
+    schema: yaml-schema.json
+    source:
+      repository: apache/flink-agents
+      ref: main
+      path: docs/yaml-schema.json
+      blob_sha: dc593377b5c67be2364f93317c23f1c960cdb39c
+
+versions_without_yaml_api:
+  - "0.2.1"
+  - "0.2.0"
+  - "0.1.1"
+  - "0.1.0"

@@ -506,7 +506,7 @@ Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azur
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | str | Required | Azure OpenAI API key for authentication |
-| `api_version` | str | Required | Azure OpenAI REST API version (e.g., "2024-02-15-preview"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
+| `api_version` | str | Required | Azure OpenAI REST API version (e.g., "2024-10-21"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
 | `azure_endpoint` | str | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) |
 | `timeout` | float | `60.0` | API request timeout in seconds |
 | `max_retries` | int | `3` | Maximum number of API retry attempts |
@@ -518,7 +518,7 @@ Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azur
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | String | Required | Azure OpenAI API key for authentication |
-| `api_version` | String | Required | Azure OpenAI REST API version (e.g., "2024-02-01"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
+| `api_version` | String | Required | Azure OpenAI REST API version (e.g., "2024-10-21"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
 | `azure_endpoint` | String | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) — either a direct Azure resource or a proxy/gateway URL that fronts an Azure OpenAI service |
 | `timeout` | int | None | Timeout in seconds for API requests; must be greater than 0, otherwise ignored (SDK default applies) |
 | `max_retries` | int | None | Maximum number of API retry attempts; must be non-negative, otherwise ignored (SDK default applies) |
@@ -580,7 +580,7 @@ class MyAgent(Agent):
         return ResourceDescriptor(
             clazz=ResourceName.ChatModel.AZURE_OPENAI_CONNECTION,
             api_key="<your-api-key>",
-            api_version="2024-02-15-preview",
+            api_version="2024-10-21",
             azure_endpoint="https://your-resource.openai.azure.com"
         )
 
@@ -606,7 +606,7 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor azureOpenAIConnection() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_OPENAI_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
-                .addInitialArgument("api_version", "2024-02-01")
+                .addInitialArgument("api_version", "2024-10-21")
                 .addInitialArgument("azure_endpoint", "https://your-resource.openai.azure.com")
                 .build();
     }
