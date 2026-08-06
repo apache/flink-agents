@@ -36,6 +36,7 @@ import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.python.env.PythonDependencyInfo;
+import org.apache.flink.util.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pemja.core.PythonInterpreter;
@@ -301,7 +302,7 @@ class PythonBridgeManager implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        CloseableUtils.closeAll(
+        IOUtils.closeAll(
                 longTermMemory,
                 pythonActionExecutor,
                 pythonResourceAdapter,

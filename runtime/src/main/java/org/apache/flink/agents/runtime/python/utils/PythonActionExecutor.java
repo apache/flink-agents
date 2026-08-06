@@ -25,7 +25,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.types.Row;
-import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.IOUtils;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
@@ -211,21 +211,9 @@ public class PythonActionExecutor implements AutoCloseable {
         pythonAsyncThreadPool = null;
         pythonRunnerContext = null;
 
-        Exception exception = null;
-        try {
-            closePythonObject(CLOSE_ASYNC_THREAD_POOL, asyncThreadPool);
-        } catch (Exception e) {
-            exception = ExceptionUtils.firstOrSuppressed(e, exception);
-        }
-        try {
-            closePythonObject(CLOSE_FLINK_RUNNER_CONTEXT, runnerContext);
-        } catch (Exception e) {
-            exception = ExceptionUtils.firstOrSuppressed(e, exception);
-        }
-
-        if (exception != null) {
-            throw exception;
-        }
+        IOUtils.closeAll(
+                () -> closePythonObject(CLOSE_ASYNC_THREAD_POOL, asyncThreadPool),
+                () -> closePythonObject(CLOSE_FLINK_RUNNER_CONTEXT, runnerContext));
     }
 
     private void closePythonObject(String closeFunction, PyObject pythonObject) throws Exception {
