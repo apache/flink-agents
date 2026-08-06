@@ -293,8 +293,7 @@ class EventLogRecordJsonSerdeTest {
         String json = objectMapper.writeValueAsString(originalRecord);
         EventLogRecord deserializedRecord = objectMapper.readValue(json, EventLogRecord.class);
 
-        assertEquals(
-                originalEvent.getType(), deserializedRecord.getEventContext().getEventType());
+        assertEquals(originalEvent.getType(), deserializedRecord.getEventContext().getEventType());
         assertEquals(InputEvent.EVENT_TYPE, deserializedRecord.getEvent().getType());
         InputEvent deserializedEvent = InputEvent.fromEvent(deserializedRecord.getEvent());
         assertEquals(originalEvent.getInput(), deserializedEvent.getInput());

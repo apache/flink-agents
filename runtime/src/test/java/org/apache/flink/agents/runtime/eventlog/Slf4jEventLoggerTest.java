@@ -231,6 +231,35 @@ class Slf4jEventLoggerTest {
     }
 
     @Test
+    void testStandardLevelTruncatesOnlyEventAttributes() throws Exception {
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put(AgentConfigOptions.EVENT_LOG_LEVEL.getKey(), "STANDARD");
+        agentConfig.put(AgentConfigOptions.EVENT_LOG_MAX_STRING_LENGTH.getKey(), 10);
+        EventLoggerConfig config =
+                EventLoggerConfig.builder()
+                        .loggerType(LoggerType.SLF4J)
+                        .property(EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
+                        .build();
+        logger = new Slf4jEventLogger(config);
+        logger.open(openParams);
+
+        InputEvent inputEvent =
+                new InputEvent("this is a very long string that exceeds ten characters");
+        append(inputEvent, null);
+
+        List<String> messages = testAppender.getMessages();
+        assertEquals(1, messages.size());
+        JsonNode jsonNode = objectMapper.readTree(messages.get(0));
+        assertEquals(
+                inputEvent.getId().toString(),
+                jsonNode.get("eventId").asText(),
+                "Top-level Event identity should not be truncated");
+        assertTrue(
+                jsonNode.get("eventAttributes").get("input").has("truncatedString"),
+                "Long Event payload strings should be truncated");
+    }
+
+    @Test
     void testDefaultIsNotPrettyPrinted() throws Exception {
         // Default config should produce single-line JSON, matching AgentConfigOptions.PRETTY_PRINT
         // default (false).

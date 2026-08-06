@@ -236,15 +236,17 @@ def test_event_lineage_reconstructs_trace_trees_from_runtime_logs(
     tmp_path: Path,
 ) -> None:
     """Test a real PyFlink job produces logs consumable by the Trace Tree reader."""
-    event_log_dir = _run_event_logging_pipeline(tmp_path)
+    event_log_dir = _run_event_logging_pipeline(
+        tmp_path, config_overrides={"event-log.trace.enabled": "true"}
+    )
     records = _read_log_records(event_log_dir)
     input_event_ids = {
-        record["event"]["id"]
+        record["eventId"]
         for record in records
         if record["eventType"] == InputEvent.EVENT_TYPE
     }
     output_event_ids = {
-        record["event"]["id"]
+        record["eventId"]
         for record in records
         if record["eventType"] == OutputEvent.EVENT_TYPE
     }
@@ -255,6 +257,7 @@ def test_event_lineage_reconstructs_trace_trees_from_runtime_logs(
 
     assert input_event_ids
     assert len(output_event_ids) == len(input_event_ids)
+    assert any(record["eventType"] == "_execution_started_event" for record in records)
     assert set(trace_forest["roots"]) == input_event_ids
     assert set(trace_forest["nodes"]) == input_event_ids | output_event_ids
     assert trace_forest["warnings"] == []

@@ -113,9 +113,7 @@ class RemoteAgentBuilder(AgentBuilder):
 
         agent_plan_json = AgentPlan.from_agent(
             agent, self.__config, agent_name
-        ).model_dump_json(
-            serialize_as_any=True
-        )
+        ).model_dump_json(serialize_as_any=True)
         self.__validate_agent_plan_json(agent_plan_json)
         self.__agent_plan_json = agent_plan_json
 
