@@ -127,6 +127,21 @@ def test_resolve_clazz_default_language_is_python() -> None:
     assert default == explicit
 
 
+def test_resolve_clazz_covers_chat_model_vllm_in_both_languages() -> None:
+    assert resolve_clazz("vllm", ResourceType.CHAT_MODEL_CONNECTION).endswith(
+        "vllm_chat_model.VLLMChatModelConnection"
+    )
+    assert resolve_clazz("vllm", ResourceType.CHAT_MODEL).endswith(
+        "vllm_chat_model.VLLMChatModelSetup"
+    )
+    assert resolve_clazz("vllm", ResourceType.CHAT_MODEL_CONNECTION, "java").startswith(
+        "org.apache.flink.agents"
+    )
+    assert resolve_clazz("vllm", ResourceType.CHAT_MODEL, "java").endswith(
+        "VLLMChatModelSetup"
+    )
+
+
 def test_resolve_clazz_covers_chat_model_java_gemini_and_azure_openai() -> None:
     assert resolve_clazz("gemini", ResourceType.CHAT_MODEL_CONNECTION, "java").endswith(
         "GeminiChatModelConnection"

@@ -72,6 +72,24 @@ class VLLMChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName("withVLLMDefaults preserves explicit values and injects defaults only when absent")
+    void testWithVLLMDefaultsPreservesExplicitValues() {
+        ResourceDescriptor explicit =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "secret-key")
+                        .addInitialArgument("api_base_url", "http://vllm-host:8000/v1")
+                        .build();
+        assertThat(VLLMChatModelConnection.withVLLMDefaults(explicit).getInitialArguments())
+                .containsEntry("api_key", "secret-key")
+                .containsEntry("api_base_url", "http://vllm-host:8000/v1");
+
+        ResourceDescriptor empty = connectionDescriptor().build();
+        assertThat(VLLMChatModelConnection.withVLLMDefaults(empty).getInitialArguments())
+                .containsEntry("api_key", VLLMChatModelConnection.DEFAULT_VLLM_API_KEY)
+                .containsEntry("api_base_url", VLLMChatModelConnection.DEFAULT_VLLM_API_BASE_URL);
+    }
+
+    @Test
     @DisplayName("Defaults do not leak into the caller's descriptor")
     void testCallerDescriptorNotMutated() {
         ResourceDescriptor desc = connectionDescriptor().build();

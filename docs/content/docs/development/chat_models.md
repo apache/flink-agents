@@ -1225,7 +1225,7 @@ Model availability and specifications may change. Always check the official Dash
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_base_url` | str | `"http://localhost:8000/v1"` | vLLM server URL |
-| `api_key` | str | `"EMPTY"` | Only needed when the server is started with `--api-key`; the placeholder default works for unauthenticated servers |
+| `api_key` | str | `"EMPTY"` | Only needed when the server is started with `--api-key`; the placeholder default works for unauthenticated servers. Unlike the OpenAI connection, the `OPENAI_API_KEY` / `OPENAI_API_BASE_URL` environment variables are not consulted |
 | `timeout` | float | `60.0` | HTTP request timeout in seconds |
 | `max_retries` | int | `3` | Maximum number of API retries |
 
@@ -1237,8 +1237,8 @@ Model availability and specifications may change. Always check the official Dash
 |-----------|------|---------|-------------|
 | `api_base_url` | String | `"http://localhost:8000/v1"` | vLLM server URL |
 | `api_key` | String | `"EMPTY"` | Only needed when the server is started with `--api-key`; the placeholder default works for unauthenticated servers |
-| `timeout` | Number | SDK default | Seconds before an API call times out |
-| `max_retries` | Number | SDK default | Retry attempts on failure |
+| `timeout` | int | SDK default | Seconds before an API call times out |
+| `max_retries` | int | SDK default | Retry attempts on failure |
 
 {{< /tab >}}
 

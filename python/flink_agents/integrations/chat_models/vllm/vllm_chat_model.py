@@ -43,6 +43,13 @@ class VLLMChatModelConnection(OpenAIChatModelConnection):
       ``--api-key`` do not require a credential. Set it explicitly when the
       server is started with ``--api-key``.
 
+    Defaults are applied for ``None``, empty, and whitespace-only values,
+    matching the Java connection. Unlike :class:`OpenAIChatModelConnection`,
+    the ``OPENAI_API_KEY`` / ``OPENAI_API_BASE_URL`` environment variables are
+    **not** consulted: the vLLM defaults deliberately do not depend on the
+    developer's environment, and the Java connection has no environment
+    fallback either.
+
     All other attributes (``timeout``, ``max_retries``, ``default_headers``,
     ``reuse_client``) behave exactly as in :class:`OpenAIChatModelConnection`.
     """
@@ -56,8 +63,12 @@ class VLLMChatModelConnection(OpenAIChatModelConnection):
     ) -> None:
         """Init method."""
         super().__init__(
-            api_key=api_key or DEFAULT_VLLM_API_KEY,
-            api_base_url=api_base_url or DEFAULT_VLLM_API_BASE_URL,
+            api_key=api_key if api_key and api_key.strip() else DEFAULT_VLLM_API_KEY,
+            api_base_url=(
+                api_base_url
+                if api_base_url and api_base_url.strip()
+                else DEFAULT_VLLM_API_BASE_URL
+            ),
             **kwargs,
         )
 
@@ -74,7 +85,7 @@ class VLLMChatModelSetup(OpenAIChatModelSetup):
 
     def __init__(self, *, model: str | None = None, **kwargs: Any) -> None:
         """Init method."""
-        if not model:
+        if not model or not model.strip():
             msg = (
                 "model is required for vLLM: it must match the model name served "
                 "by the vLLM server (see `vllm serve <model>` or GET /v1/models)."

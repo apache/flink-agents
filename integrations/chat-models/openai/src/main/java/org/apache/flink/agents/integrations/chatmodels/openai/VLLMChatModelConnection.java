@@ -69,7 +69,8 @@ public class VLLMChatModelConnection extends OpenAICompletionsConnection {
         super(withVLLMDefaults(descriptor), resourceContext);
     }
 
-    private static ResourceDescriptor withVLLMDefaults(ResourceDescriptor descriptor) {
+    // Package-visible so tests can assert on the descriptor the defaults produce.
+    static ResourceDescriptor withVLLMDefaults(ResourceDescriptor descriptor) {
         Map<String, Object> arguments = new HashMap<>(descriptor.getInitialArguments());
         Object apiBaseUrl = arguments.get("api_base_url");
         if (apiBaseUrl == null

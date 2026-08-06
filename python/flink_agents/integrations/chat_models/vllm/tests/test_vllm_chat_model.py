@@ -54,6 +54,18 @@ def test_setup_requires_model() -> None:
         VLLMChatModelSetup(name="vllm_model", connection="vllm")
 
 
+def test_connection_defaults_whitespace_only_arguments() -> None:
+    # Semantic parity with the Java connection, which treats blank values as absent.
+    connection = VLLMChatModelConnection(name="vllm", api_key=" ", api_base_url="  ")
+    assert connection.api_key == DEFAULT_VLLM_API_KEY
+    assert connection.api_base_url == DEFAULT_VLLM_API_BASE_URL
+
+
+def test_setup_rejects_whitespace_only_model() -> None:
+    with pytest.raises(ValueError, match="model is required for vLLM"):
+        VLLMChatModelSetup(name="vllm_model", connection="vllm", model=" ")
+
+
 def test_setup_rejects_empty_model() -> None:
     with pytest.raises(ValueError, match="model is required for vLLM"):
         VLLMChatModelSetup(name="vllm_model", connection="vllm", model="")
