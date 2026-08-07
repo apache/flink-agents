@@ -300,22 +300,95 @@ class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
 
     def __await__(self) -> Any:
         plan = self._ctx._prepare_batch_execution(self._calls)
-        futures = [
-            self._ctx.tool_call_executor.submit(supplier) for _, supplier in plan.suppliers
-        ]
+        parallelism = self._ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLELISM)
         timeout_ms = self._ctx.config.get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS)
         deadline = time.monotonic() + timeout_ms / 1000 if timeout_ms > 0 else None
-        while any(not future.done() for future in futures):
-            if deadline is not None and time.monotonic() >= deadline:
-                exception = TimeoutError(
-                    f"Async durable batch execution timed out after {timeout_ms} ms"
-                )
-                executed = _collect_outcomes_on_timeout(futures, exception)
-                return self._ctx._finalize_batch_execution(self._calls, plan, executed)
+        suppliers = [supplier for _, supplier in plan.suppliers]
+        batch_futures: list[Any | None] = [None] * len(suppliers)
+        try:
+            executed = yield from _execute_sliding_window_batch(
+                self._ctx.executor,
+                suppliers,
+                parallelism,
+                deadline,
+                timeout_ms,
+                batch_futures,
+            )
+        except _BatchTimeoutError as exception:
+            executed = _collect_sliding_window_outcomes_on_timeout(
+                batch_futures, exception
+            )
+        return self._ctx._finalize_batch_execution(self._calls, plan, executed)
+
+
+class _BatchTimeoutError(TimeoutError):
+    """Raised when a durable batch exceeds its deadline."""
+
+
+def _execute_sliding_window_batch(
+    executor: ThreadPoolExecutor,
+    suppliers: list[Any],
+    parallelism: int,
+    deadline: float | None,
+    timeout_ms: int,
+    futures: list[Any | None],
+) -> Any:
+    batch_size = len(suppliers)
+    if batch_size == 0:
+        return []
+
+    parallelism_limit = min(max(parallelism, 1), batch_size)
+    next_to_submit = 0
+    completed = 0
+    counted = [False] * batch_size
+
+    def in_flight() -> int:
+        return sum(
+            1
+            for i in range(next_to_submit)
+            if futures[i] is not None and not futures[i].done()
+        )
+
+    while completed < batch_size:
+        if deadline is not None and time.monotonic() >= deadline:
+            timeout_message = (
+                f"Async durable batch execution timed out after {timeout_ms} ms"
+            )
+            raise _BatchTimeoutError(timeout_message)
+
+        while next_to_submit < batch_size and in_flight() < parallelism_limit:
+            futures[next_to_submit] = executor.submit(suppliers[next_to_submit])
+            next_to_submit += 1
+
+        for i in range(next_to_submit):
+            if not counted[i] and futures[i].done():
+                counted[i] = True
+                completed += 1
+
+        if completed < batch_size:
             yield
 
-        executed = _collect_outcomes(futures)
-        return self._ctx._finalize_batch_execution(self._calls, plan, executed)
+    return _collect_outcomes(futures)
+
+
+def _collect_sliding_window_outcomes_on_timeout(
+    futures: list[Any | None], timeout_exception: BaseException
+) -> list[Outcome]:
+    outcomes = []
+    for future in futures:
+        if future is None:
+            outcomes.append(Outcome.failure(timeout_exception))
+            continue
+        if not future.done():
+            future.cancel()
+        if future.done() and not future.cancelled():
+            try:
+                outcomes.append(Outcome.success(future.result()))
+            except Exception as e:
+                outcomes.append(Outcome.failure(e))
+        else:
+            outcomes.append(Outcome.failure(timeout_exception))
+    return outcomes
 
 
 def _collect_outcomes(futures: list[Any]) -> list[Outcome]:
@@ -360,7 +433,6 @@ class FlinkRunnerContext(RunnerContext):
         j_runner_context: Any,
         agent_plan_json: str,
         executor: ThreadPoolExecutor,
-        tool_call_executor: ThreadPoolExecutor,
         j_resource_adapter: Any,
     ) -> None:
         """Initialize a flink runner context with the given java runner context.
@@ -380,7 +452,6 @@ class FlinkRunnerContext(RunnerContext):
         self.__resource_cache.set_java_resource_adapter(j_resource_adapter)
         self.__config = self.__agent_plan.config
         self.executor = executor
-        self.tool_call_executor = tool_call_executor
 
     def set_long_term_memory(self, ltm: InternalBaseLongTermMemory) -> None:
         """Set long term memory instance to this context.
@@ -844,11 +915,14 @@ class FlinkRunnerContext(RunnerContext):
         )
 
     def _read_terminal_outcome(self, current: _PersistedCallResult) -> Outcome:
-        if current.exception_payload is not None:
-            return Outcome.failure(cloudpickle.loads(current.exception_payload))
-        if current.result_payload is None:
-            return Outcome.success(None)
-        return Outcome.success(cloudpickle.loads(current.result_payload))
+        try:
+            if current.exception_payload is not None:
+                return Outcome.failure(cloudpickle.loads(current.exception_payload))
+            if current.result_payload is None:
+                return Outcome.success(None)
+            return Outcome.success(cloudpickle.loads(current.result_payload))
+        except Exception as e:
+            return Outcome.failure(e)
 
     def _callable_for_durable_call(self, call: DurableCall) -> Callable[[], Any]:
         kwargs = call.kwargs or {}
@@ -926,17 +1000,20 @@ class FlinkRunnerContext(RunnerContext):
         for (call_index, _), outcome in zip(plan.suppliers, executed, strict=True):
             call = calls[call_index]
             function_id, args_digest = self._durable_identity(call)
-            result_payload, exception_payload = self._serialize_call_payloads(
-                outcome.value,
-                outcome.error,
-            )
-            self._j_runner_context.finalizeCallAt(
-                base + call_index,
-                function_id,
-                args_digest,
-                result_payload,
-                exception_payload,
-            )
+            try:
+                result_payload, exception_payload = self._serialize_call_payloads(
+                    outcome.value,
+                    outcome.error,
+                )
+                self._j_runner_context.finalizeCallAt(
+                    base + call_index,
+                    function_id,
+                    args_digest,
+                    result_payload,
+                    exception_payload,
+                )
+            except Exception as e:
+                outcome = Outcome.failure(e)
             outcomes[call_index] = outcome
         self._j_runner_context.advanceCallIndexBy(len(calls))
         return outcomes
@@ -1069,13 +1146,12 @@ def create_flink_runner_context(
     j_runner_context: Any,
     agent_plan_json: str,
     executor: ThreadPoolExecutor,
-    tool_call_executor: ThreadPoolExecutor,
     j_resource_adapter: Any,
     job_identifier: str,
 ) -> FlinkRunnerContext:
     """Used to create a FlinkRunnerContext Python object in Pemja environment."""
     ctx = FlinkRunnerContext(
-        j_runner_context, agent_plan_json, executor, tool_call_executor, j_resource_adapter
+        j_runner_context, agent_plan_json, executor, j_resource_adapter
     )
     ltm = _init_long_term_memory(ctx, job_identifier)
     if ltm is not None:

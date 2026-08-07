@@ -40,7 +40,6 @@ import java.util.stream.Collectors;
  */
 public class JavaRunnerContextImpl extends RunnerContextImpl {
     private final ContinuationActionExecutor continuationExecutor;
-    private final ContinuationActionExecutor toolCallContinuationExecutor;
     private ContinuationContext continuationContext;
 
     public JavaRunnerContextImpl(
@@ -49,28 +48,9 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             AgentPlan agentPlan,
             ResourceCache resourceCache,
             String jobIdentifier,
-            ContinuationActionExecutor continuationExecutor,
-            ContinuationActionExecutor toolCallContinuationExecutor) {
+            ContinuationActionExecutor continuationExecutor) {
         super(agentMetricGroup, mailboxThreadChecker, agentPlan, resourceCache, jobIdentifier);
         this.continuationExecutor = continuationExecutor;
-        this.toolCallContinuationExecutor = toolCallContinuationExecutor;
-    }
-
-    public JavaRunnerContextImpl(
-            FlinkAgentsMetricGroupImpl agentMetricGroup,
-            Runnable mailboxThreadChecker,
-            AgentPlan agentPlan,
-            ResourceCache resourceCache,
-            String jobIdentifier,
-            ContinuationActionExecutor continuationExecutor) {
-        this(
-                agentMetricGroup,
-                mailboxThreadChecker,
-                agentPlan,
-                resourceCache,
-                jobIdentifier,
-                continuationExecutor,
-                continuationExecutor);
     }
 
     public ContinuationActionExecutor getContinuationExecutor() {
@@ -206,12 +186,16 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             int callIndex = plan.executableCallIndexes.get(i);
             Outcome<T> outcome = executed.get(i);
             DurableCallable<T> callable = callables.get(callIndex);
-            finalizeCallAt(
-                    base + callIndex,
-                    callable.getId(),
-                    argsDigest,
-                    serializeDurableResult(outcome.getValue()),
-                    serializeDurableException(outcome.getError()));
+            try {
+                finalizeCallAt(
+                        base + callIndex,
+                        callable.getId(),
+                        argsDigest,
+                        serializeDurableResult(outcome.getValue()),
+                        serializeDurableException(outcome.getError()));
+            } catch (Exception e) {
+                outcome = Outcome.failure(e);
+            }
             plan.outcomes.set(callIndex, outcome);
         }
     }
@@ -255,8 +239,10 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         Long timeoutMs = getConfig().get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS);
         Duration timeout =
                 timeoutMs == null || timeoutMs <= 0 ? null : Duration.ofMillis(timeoutMs);
-        return toolCallContinuationExecutor.executeAllAsync(
-                continuationContext, suppliers, timeout);
+        Integer parallelism = getConfig().get(AgentExecutionOptions.TOOL_CALL_PARALLELISM);
+        int parallelismCap = parallelism == null ? 1 : Math.max(parallelism, 1);
+        return continuationExecutor.executeAllAsync(
+                continuationContext, suppliers, timeout, parallelismCap);
     }
 
     private <T> T executeAsyncCallable(DurableCallable<T> callable) throws Exception {

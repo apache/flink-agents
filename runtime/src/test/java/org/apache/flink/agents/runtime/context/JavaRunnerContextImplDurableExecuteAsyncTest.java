@@ -333,11 +333,50 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         List<Outcome<String>> outcomes = context.durableExecuteAllAsync(List.of(callable));
 
         assertTrue(outcomes.get(0).isFailure());
+        assertInstanceOf(IllegalStateException.class, outcomes.get(0).getError());
         assertTrue(outcomes.get(0).getError().getMessage().contains("cached failure"));
         assertEquals(0, callable.getCallCount());
         assertEquals(0, executor.getExecuteAllAsyncCallCount());
         assertEquals(0, persistCallCount.get());
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
+    }
+
+    @Test
+    void testDurableExecuteAllAsyncReturnsDeserializeFailureAsOutcome() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        ActionState actionState = new ActionState(null);
+        actionState.addCallResult(
+                new CallResult(
+                        "batch-1",
+                        "",
+                        "not-valid-json".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        null));
+        JavaRunnerContextImpl context = createContext(actionState, executor);
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>(
+                        "batch-1", String.class, () -> fail("cached slot should not execute"));
+
+        List<Outcome<String>> outcomes = context.durableExecuteAllAsync(List.of(callable));
+
+        assertTrue(outcomes.get(0).isFailure());
+        assertInstanceOf(JsonProcessingException.class, outcomes.get(0).getError());
+        assertEquals(0, callable.getCallCount());
+        assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
+    }
+
+    @Test
+    void testDurableExecuteAllAsyncPassesParallelismFromConfig() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        ((Configuration) context.getConfig()).set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4);
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>("batch-1", String.class, () -> "ok");
+
+        List<Outcome<String>> outcomes = context.durableExecuteAllAsync(List.of(callable));
+
+        assertEquals("ok", outcomes.get(0).getValue());
+        assertEquals(4, executor.getLastExecuteAllAsyncMaxParallelism());
+        executor.close();
     }
 
     @Test
@@ -375,7 +414,8 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
-    void testDurableExecuteAllAsyncFinalizeFailureAbortsBatch() throws Exception {
+    void testDurableExecuteAllAsyncFinalizeFailureReturnsOutcomeAndKeepsSlotPending()
+            throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         FailingSerializeOnValueContext context =
                 new FailingSerializeOnValueContext(
@@ -405,16 +445,16 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         TestDurableCallable<String> second =
                 new TestDurableCallable<>("batch-2", String.class, () -> "two");
 
-        JsonProcessingException thrown =
-                assertThrows(
-                        JsonProcessingException.class,
-                        () -> context.durableExecuteAllAsync(List.of(first, second)));
+        List<Outcome<String>> outcomes = context.durableExecuteAllAsync(List.of(first, second));
 
-        assertTrue(thrown.getMessage().contains("serialize failed"));
+        assertEquals("one", outcomes.get(0).getValue());
+        assertTrue(outcomes.get(1).isFailure());
+        assertTrue(outcomes.get(1).getError().getMessage().contains("serialize failed"));
         List<CallResult> persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults();
         assertTrue(persisted.get(0).isSuccess());
-        assertEquals(0, context.getDurableExecutionContext().getCurrentCallIndex());
+        assertTrue(persisted.get(1).isPending());
+        assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
     }
 
     private JavaRunnerContextImpl createContext(
@@ -449,6 +489,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         private Runnable beforeExecute;
         private boolean useTimeoutCollection;
         private Duration lastExecuteAllAsyncTimeout;
+        private int lastExecuteAllAsyncMaxParallelism;
         private int executeAsyncCallCount;
         private int executeAllAsyncCallCount;
         private final List<Integer> executeAllAsyncBatchSizes = new java.util.ArrayList<>();
@@ -468,10 +509,14 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         @Override
         public <T> List<Outcome<T>> executeAllAsync(
-                ContinuationContext context, List<Callable<T>> suppliers, Duration timeout) {
+                ContinuationContext context,
+                List<Callable<T>> suppliers,
+                Duration timeout,
+                int maxParallelism) {
             executeAllAsyncCallCount++;
             executeAllAsyncBatchSizes.add(suppliers.size());
             lastExecuteAllAsyncTimeout = timeout;
+            lastExecuteAllAsyncMaxParallelism = maxParallelism;
             if (useTimeoutCollection) {
                 return executeAllAsyncWithDeadline(suppliers, timeout);
             }
@@ -578,6 +623,10 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         private Duration getLastExecuteAllAsyncTimeout() {
             return lastExecuteAllAsyncTimeout;
+        }
+
+        private int getLastExecuteAllAsyncMaxParallelism() {
+            return lastExecuteAllAsyncMaxParallelism;
         }
     }
 

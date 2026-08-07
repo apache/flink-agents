@@ -77,7 +77,6 @@ public class PythonActionExecutor implements AutoCloseable {
     private final JavaResourceAdapter javaResourceAdapter;
     private final String jobIdentifier;
     private PyObject pythonAsyncThreadPool;
-    private PyObject pythonToolCallAsyncThreadPool;
     private PyObject pythonRunnerContext;
 
     public PythonActionExecutor(
@@ -106,13 +105,6 @@ public class PythonActionExecutor implements AutoCloseable {
                         interpreter.invoke(
                                 CREATE_ASYNC_THREAD_POOL,
                                 agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS));
-        pythonToolCallAsyncThreadPool =
-                (PyObject)
-                        interpreter.invoke(
-                                CREATE_ASYNC_THREAD_POOL,
-                                agentPlan
-                                        .getConfig()
-                                        .get(AgentExecutionOptions.TOOL_CALL_NUM_ASYNC_THREADS));
 
         pythonRunnerContext =
                 (PyObject)
@@ -121,7 +113,6 @@ public class PythonActionExecutor implements AutoCloseable {
                                 runnerContext,
                                 new ObjectMapper().writeValueAsString(agentPlan),
                                 pythonAsyncThreadPool,
-                                pythonToolCallAsyncThreadPool,
                                 javaResourceAdapter,
                                 jobIdentifier);
     }
@@ -225,13 +216,6 @@ public class PythonActionExecutor implements AutoCloseable {
         if (pythonAsyncThreadPool != null) {
             try {
                 interpreter.invoke(CLOSE_ASYNC_THREAD_POOL, pythonAsyncThreadPool);
-            } catch (Throwable t) {
-                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
-            }
-        }
-        if (pythonToolCallAsyncThreadPool != null) {
-            try {
-                interpreter.invoke(CLOSE_ASYNC_THREAD_POOL, pythonToolCallAsyncThreadPool);
             } catch (Throwable t) {
                 firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
             }

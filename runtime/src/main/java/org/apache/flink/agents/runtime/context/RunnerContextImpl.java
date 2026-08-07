@@ -619,6 +619,23 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         }
 
         public Exception toException() {
+            if (exceptionClass == null) {
+                return new RuntimeException(message);
+            }
+            try {
+                Class<?> clazz = Class.forName(exceptionClass);
+                if (Exception.class.isAssignableFrom(clazz)) {
+                    @SuppressWarnings("unchecked")
+                    Class<? extends Exception> exceptionClazz = (Class<? extends Exception>) clazz;
+                    try {
+                        return exceptionClazz.getConstructor(String.class).newInstance(message);
+                    } catch (NoSuchMethodException ignored) {
+                        return exceptionClazz.getConstructor().newInstance();
+                    }
+                }
+            } catch (ReflectiveOperationException ignored) {
+                // Fall back to a generic wrapper below.
+            }
             return new RuntimeException(exceptionClass + ": " + message);
         }
     }
@@ -802,16 +819,21 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                                     + "functionId=%s, argsDigest=%s",
                             index, functionId, argsDigest));
         }
-        if (callResult.getExceptionPayload() != null) {
-            DurableExecutionException exception =
-                    OBJECT_MAPPER.readValue(
-                            callResult.getExceptionPayload(), DurableExecutionException.class);
-            return Outcome.failure(exception.toException());
+        try {
+            if (callResult.getExceptionPayload() != null) {
+                DurableExecutionException exception =
+                        OBJECT_MAPPER.readValue(
+                                callResult.getExceptionPayload(), DurableExecutionException.class);
+                return Outcome.failure(exception.toException());
+            }
+            if (callResult.getResultPayload() == null) {
+                return Outcome.success(null);
+            }
+            return Outcome.success(
+                    OBJECT_MAPPER.readValue(callResult.getResultPayload(), resultClass));
+        } catch (JsonProcessingException e) {
+            return Outcome.failure(e);
         }
-        if (callResult.getResultPayload() == null) {
-            return Outcome.success(null);
-        }
-        return Outcome.success(OBJECT_MAPPER.readValue(callResult.getResultPayload(), resultClass));
     }
 
     protected CallResult getCurrentCallResult() {
@@ -844,7 +866,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             } else if (resultPayload != null) {
                 return Optional.of(OBJECT_MAPPER.readValue(resultPayload, resultClass));
             } else {
-                return Optional.of(null);
+                return Optional.empty();
             }
         }
         return Optional.empty();

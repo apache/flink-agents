@@ -57,7 +57,7 @@ public class ToolCallAction {
     public static void processToolRequest(Event event, RunnerContext ctx) {
         ToolRequestEvent toolRequest = ToolRequestEvent.fromEvent(event);
         boolean toolCallAsync = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_ASYNC);
-        boolean toolCallParallel = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_PARALLEL);
+        int toolCallParallelism = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_PARALLELISM);
 
         Map<String, Boolean> success = new HashMap<>();
         Map<String, String> error = new HashMap<>();
@@ -66,7 +66,7 @@ public class ToolCallAction {
         List<ToolCallExecution> executions =
                 buildToolCallExecutions(toolRequest, ctx, externalIds, success, error, responses);
 
-        if (toolCallAsync && toolCallParallel && executions.size() > 1) {
+        if (toolCallAsync && toolCallParallelism > 1 && executions.size() > 1) {
             executeParallel(executions, ctx, success, error, responses);
         } else {
             executeSequentially(executions, toolCallAsync, ctx, success, error, responses);

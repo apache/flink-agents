@@ -313,16 +313,18 @@ class AgentExecutionOptions:
         default=True,
     )
 
-    TOOL_CALL_PARALLEL = ConfigOption(
-        key="tool-call.parallel",
-        config_type=bool,
-        default=True,
-    )
-
-    TOOL_CALL_NUM_ASYNC_THREADS = ConfigOption(
-        key="tool-call.num-async-threads",
+    # Default is os.cpu_count(), so multi-tool batches run in parallel on most hosts.
+    # Uses the same num-async-threads pool as chat/RAG (one pool per operator subtask,
+    # shared across keys). Built-in actions for one key run sequentially, so chat and
+    # tool batches on the same key do not overlap in the usual chat->tool flow;
+    # contention is mainly across keys on the same subtask. Defaults:
+    # pool=2xcores, parallelism=cores -> one batch can use up to half the pool.
+    # Lower tool-call.parallelism or raise
+    # num-async-threads when hot subtasks mix heavy tool batches with chat/RAG.
+    TOOL_CALL_PARALLELISM = ConfigOption(
+        key="tool-call.parallelism",
         config_type=int,
-        default=os.cpu_count() * 2,
+        default=os.cpu_count() or 1,
     )
 
     # Non-positive disables the batch timeout; positive values are milliseconds.
