@@ -46,7 +46,7 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
     """Built-in action for processing tool call requests."""
     event = ToolRequestEvent.from_event(event)
     tool_call_async = ctx.config.get(AgentExecutionOptions.TOOL_CALL_ASYNC)
-    tool_call_parallel = ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLEL)
+    tool_call_parallelism = ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLELISM)
 
     if tool_call_async:
         # To avoid https://github.com/alibaba/pemja/issues/88, we log a message here.
@@ -65,7 +65,7 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
         external_ids,
     )
 
-    if tool_call_async and tool_call_parallel and len(executions) > 1:
+    if tool_call_async and tool_call_parallelism > 1 and len(executions) > 1:
         await _execute_parallel(executions, ctx, responses, success, error)
     else:
         await _execute_sequentially(
@@ -146,11 +146,15 @@ async def _execute_parallel(
     success: dict,
     error: dict,
 ) -> None:
-    outcomes = await ctx.durable_execute_all_async(
-        [execution.durable_call for execution in executions]
-    )
-    for execution, outcome in zip(executions, outcomes, strict=True):
-        _record_outcome(execution, outcome, responses, success, error)
+    try:
+        outcomes = await ctx.durable_execute_all_async(
+            [execution.durable_call for execution in executions]
+        )
+        for execution, outcome in zip(executions, outcomes, strict=True):
+            _record_outcome(execution, outcome, responses, success, error)
+    except Exception as e:
+        for execution in executions:
+            _record_execution_exception(execution, e, responses, success, error)
 
 
 async def _execute_sequentially(

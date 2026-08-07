@@ -74,7 +74,6 @@ public class PythonActionExecutor {
     private final JavaResourceAdapter javaResourceAdapter;
     private final String jobIdentifier;
     private PyObject pythonAsyncThreadPool;
-    private PyObject pythonToolCallAsyncThreadPool;
     private PyObject pythonRunnerContext;
 
     public PythonActionExecutor(
@@ -103,13 +102,6 @@ public class PythonActionExecutor {
                         interpreter.invoke(
                                 CREATE_ASYNC_THREAD_POOL,
                                 agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS));
-        pythonToolCallAsyncThreadPool =
-                (PyObject)
-                        interpreter.invoke(
-                                CREATE_ASYNC_THREAD_POOL,
-                                agentPlan
-                                        .getConfig()
-                                        .get(AgentExecutionOptions.TOOL_CALL_NUM_ASYNC_THREADS));
 
         pythonRunnerContext =
                 (PyObject)
@@ -118,7 +110,6 @@ public class PythonActionExecutor {
                                 runnerContext,
                                 new ObjectMapper().writeValueAsString(agentPlan),
                                 pythonAsyncThreadPool,
-                                pythonToolCallAsyncThreadPool,
                                 javaResourceAdapter,
                                 jobIdentifier);
     }
@@ -200,9 +191,6 @@ public class PythonActionExecutor {
         if (interpreter != null) {
             if (pythonAsyncThreadPool != null) {
                 interpreter.invoke(CLOSE_ASYNC_THREAD_POOL, pythonAsyncThreadPool);
-            }
-            if (pythonToolCallAsyncThreadPool != null) {
-                interpreter.invoke(CLOSE_ASYNC_THREAD_POOL, pythonToolCallAsyncThreadPool);
             }
 
             if (pythonRunnerContext != null) {

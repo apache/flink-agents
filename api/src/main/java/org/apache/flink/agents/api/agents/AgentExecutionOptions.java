@@ -47,28 +47,30 @@ public class AgentExecutionOptions {
             new ConfigOption<>("tool-call.async", Boolean.class, true);
 
     /**
-     * Whether multiple tool calls from one {@code ToolRequestEvent} run as one parallel durable
-     * batch when {@link #TOOL_CALL_ASYNC} is also enabled (JDK 21+).
+     * In-flight concurrency for tool calls from one {@code ToolRequestEvent} batch
      *
-     * <p>Default is {@code true}. A parallel batch raises the number of in-flight external calls;
-     * after failover, tools whose results were not yet persisted may be submitted again.
-     * Side-effecting tools should be idempotent or provide a {@code reconciler()}. Set to {@code
-     * false} to keep serial async or sync tool execution.
-     */
-    public static final ConfigOption<Boolean> TOOL_CALL_PARALLEL =
-            new ConfigOption<>("tool-call.parallel", Boolean.class, true);
-
-    /**
-     * Size of the dedicated thread pool used for tool-call async and parallel batch execution.
+     * <p>{@code 1} runs tools serially. Values {@code > 1} run a parallel durable batch with a
+     * sliding window of at most that many concurrent tool calls. On **Java**, concurrent in-batch
+     * execution requires **JDK 21+** (Continuation API); below JDK 21 the batch still runs but tool
+     * calls execute serially regardless of this setting.
      *
-     * <p>Separate from {@link #NUM_ASYNC_THREADS} so a large tool batch does not exhaust the global
-     * async pool.
+     * <p><b>Important:</b> the default is {@code availableProcessors()}, so multi-tool batches run
+     * in parallel out of the box on most hosts (JDK 21+). Parallel tool batches use the same {@link
+     * #NUM_ASYNC_THREADS} fixed thread pool as chat and RAG async work. That pool is created once
+     * per operator subtask and shared by every key handled by that subtask — not a separate pool
+     * per key. Built-in actions for one key run one at a time, so a chat async call and a tool
+     * batch on the same key do not overlap in the usual chat → tool flow; contention shows up
+     * mainly across keys on the same subtask (or when several keys each run large parallel
+     * batches). With defaults ({@code num-async-threads = 2 × cores}, {@code tool-call.parallelism
+     * = cores}), one batch can hold up to half of the pool; multiple busy keys can still saturate
+     * it. Lower this value (for example {@code 1} or {@code 2}) or raise {@link #NUM_ASYNC_THREADS}
+     * when mixing heavy tool batches with chat/RAG on hot subtasks.
      */
-    public static final ConfigOption<Integer> TOOL_CALL_NUM_ASYNC_THREADS =
+    public static final ConfigOption<Integer> TOOL_CALL_PARALLELISM =
             new ConfigOption<>(
-                    "tool-call.num-async-threads",
+                    "tool-call.parallelism",
                     Integer.class,
-                    Runtime.getRuntime().availableProcessors() * 2);
+                    Runtime.getRuntime().availableProcessors());
 
     /**
      * Overall timeout for one parallel tool-call batch, in milliseconds.

@@ -24,6 +24,7 @@ import jdk.internal.vm.ContinuationScope;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -172,45 +173,81 @@ public class ContinuationActionExecutor {
      * @param <T> the result type
      * @return outcomes in supplier order
      */
+    @SuppressWarnings("unchecked")
     public <T> List<Outcome<T>> executeAllAsync(
-            ContinuationContext context, List<Callable<T>> suppliers, Duration timeout)
+            ContinuationContext context,
+            List<Callable<T>> suppliers,
+            Duration timeout,
+            int maxParallelism)
             throws Exception {
         context.clearAsyncState();
-
-        List<CompletableFuture<Outcome<T>>> futures = new ArrayList<>(suppliers.size());
-        for (Callable<T> supplier : suppliers) {
-            futures.add(
-                    CompletableFuture.supplyAsync(
-                            () -> {
-                                try {
-                                    return Outcome.success(supplier.call());
-                                } catch (Exception e) {
-                                    return Outcome.<T>failure(e);
-                                }
-                            },
-                            asyncExecutor));
+        if (suppliers.isEmpty()) {
+            return List.of();
         }
 
-        CompletableFuture<Void> barrier =
-                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
-        long deadlineNanos = getDeadlineNanos(timeout);
-        context.setPendingBatchFuture(barrier, deadlineNanos);
+        final int batchSize = suppliers.size();
+        CompletableFuture<Outcome<T>>[] slots = new CompletableFuture[batchSize];
+        boolean[] counted = new boolean[batchSize];
+        int completed = 0;
+        int nextToSubmit = 0;
+        int parallelismLimit = Math.min(Math.max(maxParallelism, 1), batchSize);
 
-        while (!barrier.isDone()) {
+        long deadlineNanos = getDeadlineNanos(timeout);
+        CompletableFuture<Void> batchBarrier = new CompletableFuture<>();
+        context.setPendingBatchFuture(batchBarrier, deadlineNanos);
+
+        while (completed < batchSize) {
             if (System.nanoTime() >= deadlineNanos) {
                 TimeoutException exception =
                         new TimeoutException(
                                 "Async durable batch execution timed out after " + timeout);
-                barrier.cancel(true);
+                batchBarrier.cancel(true);
                 context.setPendingBatchFuture(null);
-                return collectBatchOutcomesOnTimeout(futures, exception);
+                return collectBatchOutcomesOnTimeout(slots, exception);
             }
-            Continuation.yield(SCOPE);
+
+            while (nextToSubmit < batchSize && countInFlight(slots, nextToSubmit) < parallelismLimit) {
+                int index = nextToSubmit++;
+                Callable<T> supplier = suppliers.get(index);
+                slots[index] =
+                        CompletableFuture.supplyAsync(
+                                () -> {
+                                    try {
+                                        return Outcome.success(supplier.call());
+                                    } catch (Exception e) {
+                                        return Outcome.failure(e);
+                                    }
+                                }, asyncExecutor);
+            }
+
+            for (int i = 0; i < nextToSubmit; i++) {
+                if (!counted[i] && slots[i].isDone()) {
+                    counted[i] = true;
+                    completed++;
+                }
+            }
+
+            if (completed < batchSize) {
+                Continuation.yield(SCOPE);
+            }
         }
 
+        batchBarrier.complete(null);
         context.setPendingBatchFuture(null);
-        return collectBatchOutcomes(futures);
+        return collectBatchOutcomes(Arrays.asList(slots));
     }
+
+    private static <T> int countInFlight(
+            CompletableFuture<Outcome<T>>[] slots, int submittedCount) {
+        int inFlight = 0;
+        for (int i = 0; i < submittedCount; i++) {
+            if (!slots[i].isDone()) {
+                inFlight++;
+            }
+        }
+        return inFlight;
+    }
+
 
     /**
      * Collects per-slot outcomes after the batch barrier completes normally.
@@ -236,9 +273,13 @@ public class ContinuationActionExecutor {
      * non-cancelled and is collected as a normal outcome.
      */
     private static <T> List<Outcome<T>> collectBatchOutcomesOnTimeout(
-            List<CompletableFuture<Outcome<T>>> futures, TimeoutException timeoutException) {
-        List<Outcome<T>> results = new ArrayList<>(futures.size());
+            CompletableFuture<Outcome<T>>[] futures, TimeoutException timeoutException) {
+        List<Outcome<T>> results = new ArrayList<>(futures.length);
         for (CompletableFuture<Outcome<T>> future : futures) {
+            if (future == null) {
+                results.add(Outcome.failure(timeoutException));
+                continue;
+            }
             if (!future.isDone()) {
                 future.cancel(true);
             }

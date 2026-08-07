@@ -84,8 +84,6 @@ public class ToolCallActionTest {
                                 "tenant_id",
                                 "tenant-1",
                                 AgentExecutionOptions.TOOL_CALL_ASYNC.getKey(),
-                                true,
-                                AgentExecutionOptions.TOOL_CALL_PARALLEL.getKey(),
                                 true));
         private final List<String> durableExecuteIds = new ArrayList<>();
         private final List<String> durableExecuteAsyncIds = new ArrayList<>();
@@ -106,8 +104,8 @@ public class ToolCallActionTest {
             return this;
         }
 
-        FakeRunnerContext withToolCallParallel(boolean enabled) {
-            config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, enabled);
+        FakeRunnerContext withToolCallParallelism(int parallelism) {
+            config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, parallelism);
             return this;
         }
 
@@ -445,8 +443,8 @@ public class ToolCallActionTest {
     }
 
     @Test
-    void processToolRequestUsesSerialAsyncWhenParallelDisabled() throws Exception {
-        FakeRunnerContext ctx = new FakeRunnerContext().withToolCallParallel(false);
+    void processToolRequestUsesSerialAsyncWhenParallelismIsOne() throws Exception {
+        FakeRunnerContext ctx = new FakeRunnerContext().withToolCallParallelism(1);
 
         ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
 
@@ -524,6 +522,26 @@ public class ToolCallActionTest {
         assertThat(response.getResponses().get("call-2").getError())
                 .isEqualTo("Tool queryOrder execute failed.");
         assertThat(response.getError()).containsEntry("call-2", "boom");
+    }
+
+    @Test
+    void processToolRequestRecordsInfrastructureFailureForAllParallelTools() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext() {
+                    @Override
+                    public <T> List<Outcome<T>> durableExecuteAllAsync(
+                            List<DurableCallable<T>> callables) throws Exception {
+                        throw new IllegalStateException("persist failed");
+                    }
+                };
+
+        ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
+
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess()).containsEntry("call-1", false);
+        assertThat(response.getSuccess()).containsEntry("call-2", false);
+        assertThat(response.getError()).containsEntry("call-1", "persist failed");
+        assertThat(response.getError()).containsEntry("call-2", "persist failed");
     }
 
     private static ToolRequestEvent toolRequest(String toolName) {

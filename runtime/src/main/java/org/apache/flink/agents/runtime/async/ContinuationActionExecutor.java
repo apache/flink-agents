@@ -73,7 +73,10 @@ public class ContinuationActionExecutor {
      * @return outcomes in supplier order
      */
     public <T> List<Outcome<T>> executeAllAsync(
-            ContinuationContext context, List<Callable<T>> suppliers, Duration timeout) {
+            ContinuationContext context,
+            List<Callable<T>> suppliers,
+            Duration timeout,
+            int maxParallelism) {
         return suppliers.stream()
                 .map(
                         supplier -> {

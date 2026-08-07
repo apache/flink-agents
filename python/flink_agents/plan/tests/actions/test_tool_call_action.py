@@ -145,7 +145,7 @@ class _WrongConfig:
     def get(self, option: Any) -> bool:
         assert option in (
             AgentExecutionOptions.TOOL_CALL_ASYNC,
-            AgentExecutionOptions.TOOL_CALL_PARALLEL,
+            AgentExecutionOptions.TOOL_CALL_PARALLELISM,
         )
         return False
 
@@ -324,7 +324,7 @@ def test_tool_call_action_uses_sync_execution_in_test_context() -> None:
 def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
     ctx = _Context(config=config)
 
     asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
@@ -347,10 +347,10 @@ def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
     assert ctx.durable_execute_async_calls == []
 
 
-def test_tool_call_action_uses_serial_async_when_parallel_disabled() -> None:
+def test_tool_call_action_uses_serial_async_when_parallelism_is_one() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, False)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 1)
     ctx = _Context(config=config)
 
     asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
@@ -362,7 +362,7 @@ def test_tool_call_action_uses_serial_async_when_parallel_disabled() -> None:
 def test_tool_call_action_does_not_batch_single_tool() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
     ctx = _Context(config=config)
 
     asyncio.run(process_tool_request(tool_request("call-1"), ctx))
@@ -374,7 +374,7 @@ def test_tool_call_action_does_not_batch_single_tool() -> None:
 def test_tool_call_action_excludes_missing_tool_from_parallel_batch() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
     ctx = _Context(config=config)
 
     asyncio.run(process_tool_request(tool_request("call-1", "missing"), ctx))
@@ -389,7 +389,7 @@ def test_tool_call_action_excludes_missing_tool_from_parallel_batch() -> None:
 def test_tool_call_action_records_parallel_outcome_failure() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLEL, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
     ctx = _Context(config=config)
     ctx.durable_execute_all_async_outcomes = [
         Outcome.success("ok"),
@@ -404,6 +404,56 @@ def test_tool_call_action_records_parallel_outcome_failure() -> None:
     assert response.responses["call-2"] == "Tool `query_order` execute failed."
     assert response.success["call-2"] is False
     assert response.error["call-2"] == "boom"
+
+
+def test_tool_call_action_uses_sync_when_async_disabled_multi_tool() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, False)
+    ctx = _Context(config=config)
+
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
+
+    assert ctx.durable_execute_all_async_calls == []
+    assert ctx.durable_execute_async_calls == []
+    assert len(ctx.durable_execute_calls) == 2
+
+
+def test_tool_call_action_records_tool_execution_exception() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    ctx = _Context(config=config)
+
+    async def failing_async(func: Any, *args: Any, **kwargs: Any) -> Any:
+        msg = "boom"
+        raise ValueError(msg)
+
+    ctx.durable_execute_async = failing_async  # type: ignore[method-assign]
+    asyncio.run(process_tool_request(tool_request("call-1"), ctx))
+
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.success["call-1"] is False
+    assert response.responses["call-1"] == "Tool `query_order` execute failed."
+    assert response.error["call-1"] == "boom"
+
+
+def test_tool_call_action_records_infrastructure_failure_for_all_parallel_tools() -> None:
+    class _FailingBatchContext(_Context):
+        async def durable_execute_all_async(self, callables: list[Any]) -> list[Outcome]:
+            msg = "persist failed"
+            raise RuntimeError(msg)
+
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    ctx = _FailingBatchContext(config=config)
+
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
+
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.success["call-1"] is False
+    assert response.success["call-2"] is False
+    assert response.error["call-1"] == "persist failed"
+    assert response.error["call-2"] == "persist failed"
 
 
 def tool_request(*call_ids: str) -> ToolRequestEvent:

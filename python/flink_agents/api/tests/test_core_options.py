@@ -114,10 +114,8 @@ def test_agent_execution_options_include_parallel_tool_call_options() -> None:
     options = _collect_config_options(AgentExecutionOptions)
     assert options["TOOL_CALL_ASYNC"].get_key() == "tool-call.async"
     assert options["TOOL_CALL_ASYNC"].get_default_value() is True
-    assert options["TOOL_CALL_PARALLEL"].get_key() == "tool-call.parallel"
-    assert options["TOOL_CALL_PARALLEL"].get_default_value() is True
-    assert options["TOOL_CALL_NUM_ASYNC_THREADS"].get_key() == "tool-call.num-async-threads"
-    assert options["TOOL_CALL_NUM_ASYNC_THREADS"].get_default_value() == os.cpu_count() * 2
+    assert options["TOOL_CALL_PARALLELISM"].get_key() == "tool-call.parallelism"
+    assert options["TOOL_CALL_PARALLELISM"].get_default_value() == os.cpu_count()
     assert options["TOOL_CALL_BATCH_TIMEOUT_MS"].get_key() == "tool-call.batch.timeout.ms"
     assert options["TOOL_CALL_BATCH_TIMEOUT_MS"].get_default_value() == -1
 
