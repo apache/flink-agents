@@ -42,8 +42,44 @@ public class AgentExecutionOptions {
     public static final ConfigOption<Boolean> CHAT_ASYNC =
             new ConfigOption<>("chat.async", Boolean.class, true);
 
+    /** Whether the built-in tool-call action runs each tool via durable async execution. */
     public static final ConfigOption<Boolean> TOOL_CALL_ASYNC =
             new ConfigOption<>("tool-call.async", Boolean.class, true);
+
+    /**
+     * In-flight concurrency for tool calls from one {@code ToolRequestEvent} batch
+     *
+     * <p>{@code 1} runs tools serially. Values {@code > 1} run a parallel durable batch with a
+     * sliding window of at most that many concurrent tool calls. On **Java**, concurrent in-batch
+     * execution requires **JDK 21+** (Continuation API); below JDK 21 the batch still runs but tool
+     * calls execute serially regardless of this setting.
+     *
+     * <p><b>Important:</b> the default is {@code availableProcessors()}, so multi-tool batches run
+     * in parallel out of the box on most hosts (JDK 21+). Parallel tool batches use the same {@link
+     * #NUM_ASYNC_THREADS} fixed thread pool as chat and RAG async work. That pool is created once
+     * per operator subtask and shared by every key handled by that subtask — not a separate pool
+     * per key. Built-in actions for one key run one at a time, so a chat async call and a tool
+     * batch on the same key do not overlap in the usual chat → tool flow; contention shows up
+     * mainly across keys on the same subtask (or when several keys each run large parallel
+     * batches). With defaults ({@code num-async-threads = 2 × cores}, {@code tool-call.parallelism
+     * = cores}), one batch can hold up to half of the pool; multiple busy keys can still saturate
+     * it. Lower this value (for example {@code 1} or {@code 2}) or raise {@link #NUM_ASYNC_THREADS}
+     * when mixing heavy tool batches with chat/RAG on hot subtasks.
+     */
+    public static final ConfigOption<Integer> TOOL_CALL_PARALLELISM =
+            new ConfigOption<>(
+                    "tool-call.parallelism",
+                    Integer.class,
+                    Runtime.getRuntime().availableProcessors());
+
+    /**
+     * Overall timeout for one parallel tool-call batch, in milliseconds.
+     *
+     * <p>Non-positive values disable the timeout. When the deadline elapses, unfinished slots are
+     * failed; slots that already completed keep their success or failure outcome.
+     */
+    public static final ConfigOption<Long> TOOL_CALL_BATCH_TIMEOUT_MS =
+            new ConfigOption<>("tool-call.batch.timeout.ms", Long.class, -1L);
 
     public static final ConfigOption<Boolean> RAG_ASYNC =
             new ConfigOption<>("rag.async", Boolean.class, true);

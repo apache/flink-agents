@@ -106,6 +106,19 @@ class DurableExecutionContextTest {
     }
 
     @Test
+    void testMatchNextOrClearSubsequentCallResultPendingTreatedAsMiss() {
+        actionState.addCallResult(CallResult.pending("funcA", "digestA"));
+
+        RunnerContextImpl.DurableExecutionContext context = createContext();
+
+        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA", "digestA");
+
+        assertNull(result);
+        assertEquals(0, context.getCurrentCallIndex());
+        assertTrue(actionState.getCallResults().get(0).isPending());
+    }
+
+    @Test
     void testMatchNextOrClearSubsequentCallResultMismatch() {
         actionState.addCallResult(new CallResult("funcA", "digestA", "result".getBytes()));
         actionState.addCallResult(new CallResult("funcB", "digestB", "result".getBytes()));
@@ -232,6 +245,24 @@ class DurableExecutionContextTest {
     }
 
     @Test
+    void testDurableExecutionExceptionPreservesTimeoutExceptionType() throws Exception {
+        java.util.concurrent.TimeoutException original =
+                new java.util.concurrent.TimeoutException("batch timed out");
+        RunnerContextImpl.DurableExecutionException durableException =
+                RunnerContextImpl.DurableExecutionException.fromException(original);
+
+        ObjectMapper mapper = new ObjectMapper();
+        RunnerContextImpl.DurableExecutionException deserialized =
+                mapper.readValue(
+                        mapper.writeValueAsBytes(durableException),
+                        RunnerContextImpl.DurableExecutionException.class);
+
+        Exception recovered = deserialized.toException();
+        assertInstanceOf(java.util.concurrent.TimeoutException.class, recovered);
+        assertEquals("batch timed out", recovered.getMessage());
+    }
+
+    @Test
     void testDurableExecutionExceptionDeserialization() throws Exception {
         // Create and serialize exception
         IllegalArgumentException original = new IllegalArgumentException("Invalid argument: foo");
@@ -247,12 +278,8 @@ class DurableExecutionContextTest {
 
         // Convert back to exception and verify content
         Exception recovered = deserialized.toException();
-        assertTrue(
-                recovered.getMessage().contains("IllegalArgumentException"),
-                "Recovered exception should contain original class name");
-        assertTrue(
-                recovered.getMessage().contains("Invalid argument: foo"),
-                "Recovered exception should contain original message");
+        assertInstanceOf(IllegalArgumentException.class, recovered);
+        assertEquals("Invalid argument: foo", recovered.getMessage());
     }
 
     @Test
@@ -280,13 +307,9 @@ class DurableExecutionContextTest {
 
             // Verify round-trip
             Exception recovered = deserialized.toException();
-            assertTrue(
-                    recovered.getMessage().contains(original.getClass().getName()),
-                    "Recovered exception should contain class: " + original.getClass().getName());
+            assertInstanceOf(original.getClass(), recovered);
             if (original.getMessage() != null && !original.getMessage().isEmpty()) {
-                assertTrue(
-                        recovered.getMessage().contains(original.getMessage()),
-                        "Recovered exception should contain message: " + original.getMessage());
+                assertEquals(original.getMessage(), recovered.getMessage());
             }
         }
     }
@@ -306,6 +329,7 @@ class DurableExecutionContextTest {
                 mapper.readValue(serialized, RunnerContextImpl.DurableExecutionException.class);
 
         Exception recovered = deserialized.toException();
-        assertTrue(recovered.getMessage().contains("RuntimeException"));
+        assertInstanceOf(RuntimeException.class, recovered);
+        assertNull(recovered.getMessage());
     }
 }
