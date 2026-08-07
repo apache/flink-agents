@@ -184,8 +184,8 @@ class RunnerContextImplDurableExecuteTest {
 
         Exception thrown = assertThrows(Exception.class, () -> context.durableExecute(callable));
 
-        assertTrue(thrown.getMessage().contains("IllegalStateException"));
-        assertTrue(thrown.getMessage().contains("cached failure"));
+        assertInstanceOf(IllegalStateException.class, thrown);
+        assertEquals("cached failure", thrown.getMessage());
         assertEquals(0, callable.getCallCount());
         assertEquals(0, callable.getReconcileCount());
         assertEquals(0, persistCallCount.get());
