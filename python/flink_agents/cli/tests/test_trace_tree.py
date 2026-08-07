@@ -114,6 +114,36 @@ def test_reader_reconstructs_text_and_json_in_log_order(tmp_path: Path) -> None:
     assert text_result.stderr == ""
 
 
+def test_reader_keeps_enabled_run_begin_branch_in_input_trace(tmp_path: Path) -> None:
+    log_path = tmp_path / "events.log"
+    _write_log(
+        log_path,
+        [
+            _record("root", "_input_event"),
+            _record(
+                "run-begin",
+                "_agent_run_begin_event",
+                "root",
+                "agent_run_begin_action",
+            ),
+            _record("output", "_output_event", "run-begin", "on_run_begin"),
+        ],
+    )
+
+    result = _run_reader(log_path, "json")
+    trace_forest = json.loads(result.stdout)
+
+    assert trace_forest["roots"] == ["root"]
+    assert trace_forest["nodes"]["root"]["actions"] == [
+        {"name": "agent_run_begin_action", "children": ["run-begin"]}
+    ]
+    assert trace_forest["nodes"]["run-begin"]["actions"] == [
+        {"name": "on_run_begin", "children": ["output"]}
+    ]
+    assert trace_forest["warnings"] == []
+    assert result.stderr == ""
+
+
 def test_reader_reconstructs_pretty_printed_records(tmp_path: Path) -> None:
     log_path = tmp_path / "events.log"
     _write_pretty_log(

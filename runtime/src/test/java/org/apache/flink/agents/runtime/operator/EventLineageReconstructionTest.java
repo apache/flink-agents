@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.configuration.MemoryEventOptions;
 import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.plan.AgentConfiguration;
@@ -104,6 +105,7 @@ class EventLineageReconstructionTest {
         config.set(AgentConfigOptions.BASE_LOG_DIR, logDir.toString());
         config.set(AgentConfigOptions.EVENT_LOG_LEVEL, EventLogLevel.STANDARD);
         config.set(AgentConfigOptions.EVENT_LOG_MAX_STRING_LENGTH, 3);
+        config.set(MemoryEventOptions.MEMORY_GENERATE_EVENT, false);
         return config;
     }
 

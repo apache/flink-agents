@@ -539,15 +539,13 @@ public static void processEvent(Event event, RunnerContext ctx) throws Exception
 
 ## Context Isolation
 
-Long-Term Memory provides context isolation through Flink's keyed partition model. When each logical key has a stable and unique textual representation, each keyed partition uses an isolated memory context so memories from one user or session do not leak into another.
+Long-Term Memory automatically provides context isolation through Flink's keyed partition model. Each keyed partition normally maintains its own isolated set of memories.
 
 The isolation hierarchy works as follows:
 - **Job-level** (`JOB_IDENTIFIER`): Separates memories between different Flink jobs
 - **Partition-level** (keyed partition key): Separates memories between different keys within the same job
 - **Set-level** (memory set name): Separates memories between different logical categories within the same partition
 
-This means you can reuse the same memory set name across different partitions, and each partition will normally access only its own memories. The partition context uses the textual representation of the logical Flink key: Java and explicitly typed PyFlink keys normally use `String.valueOf`; default pickled PyFlink keys are deserialized and use Python `str`. Explicit PyFlink primitive byte-array keys use Python's bytes representation directly, without pickle deserialization.
+This means you can reuse the same memory set name across different partitions, and each partition will normally access only its own memories.
 
-Keys used for Long-Term Memory should therefore have a stable and unique textual representation within the job. Distinct logical keys that produce the same text share one Mem0 context, so this representation is not a security boundary.
-
-> **Compatibility note:** Earlier experimental versions used `String.valueOf(key.hashCode())` as the Mem0 partition identity. Existing records stored under that hash-derived identity are not migrated automatically and are not visible through the new logical-key identity. Migrate those records explicitly before upgrading if they must remain accessible.
+> **Note:** Partition-level isolation uses a textual identity derived from the logical key instead of `key.hashCode()`. Java keys use `String.valueOf(key)`. Default-serialized PyFlink keys are deserialized and use Python `str`; explicitly typed PyFlink keys use `String.valueOf`, except byte-array keys, which use Python's bytes representation. This avoids hash collisions, but distinct keys may still share a memory context if they produce the same text, for example when custom key types have non-unique `toString()` or `__str__()` implementations. Key representations should therefore be stable and unique, and this isolation should not be treated as a security boundary.

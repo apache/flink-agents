@@ -61,6 +61,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -528,8 +529,10 @@ public class ActionExecutionOperatorTest {
     private static final class RecordingMem0LongTermMemory extends Mem0LongTermMemory {
         private final List<String> recordedKeys = new ArrayList<>();
         private final List<String> pendingObservationKeys = new ArrayList<>();
+        private final List<String> pendingObservationIds = new ArrayList<>();
         private final List<String> drainedObservationKeys = new ArrayList<>();
         private String currentKey;
+        private String currentObservationId;
         private boolean updateObservationConfigured = true;
         private boolean observationSuppressed;
         private int drainCallCount;
@@ -548,8 +551,10 @@ public class ActionExecutionOperatorTest {
         }
 
         @Override
-        public void switchContext(String partitionKey, boolean observationSuppressed) {
+        public void switchContext(
+                String partitionKey, String observationId, boolean observationSuppressed) {
             currentKey = partitionKey;
+            currentObservationId = observationId;
             this.observationSuppressed = observationSuppressed;
         }
 
@@ -570,17 +575,22 @@ public class ActionExecutionOperatorTest {
                 return List.of("memory-id");
             }
             pendingObservationKeys.add(currentKey);
+            pendingObservationIds.add(currentObservationId);
             return List.of("memory-id");
         }
 
         @Override
-        public String drainObservationRecordsJson(String partitionKey) {
+        public String drainObservationRecordsJson(String partitionKey, String observationId) {
             drainCallCount++;
             if (drainFailure != null) {
                 throw drainFailure;
             }
-            while (pendingObservationKeys.remove(partitionKey)) {
-                drainedObservationKeys.add(partitionKey);
+            for (int index = pendingObservationKeys.size() - 1; index >= 0; index--) {
+                if (pendingObservationKeys.get(index).equals(partitionKey)
+                        && pendingObservationIds.get(index).equals(observationId)) {
+                    drainedObservationKeys.add(pendingObservationKeys.remove(index));
+                    pendingObservationIds.remove(index);
+                }
             }
             return "[]";
         }
@@ -2457,10 +2467,7 @@ public class ActionExecutionOperatorTest {
                                         "bestEffortMemoryObservationAction",
                                         new Class<?>[] {Event.class, RunnerContext.class}),
                                 Collections.singletonList(InputEvent.EVENT_TYPE));
-                return new AgentPlan(
-                        Map.of(action.getName(), action),
-                        Map.of(InputEvent.EVENT_TYPE, List.of(action)),
-                        new HashMap<>());
+                return new AgentPlan(Map.of(action.getName(), action));
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -2469,8 +2476,7 @@ public class ActionExecutionOperatorTest {
 
         public static AgentPlan getFailedActionAfterLtmAgentPlan() {
             try {
-                Map<String, List<Action>> actionsByEvent = new HashMap<>();
-                Map<String, Action> actions = new HashMap<>();
+                Map<String, Action> actions = new LinkedHashMap<>();
                 Action failingAction =
                         new Action(
                                 "failingActionAfterLtm",
@@ -2487,11 +2493,10 @@ public class ActionExecutionOperatorTest {
                                         "followingAction",
                                         new Class<?>[] {Event.class, RunnerContext.class}),
                                 Collections.singletonList(InputEvent.EVENT_TYPE));
-                actionsByEvent.put(InputEvent.EVENT_TYPE, List.of(failingAction, followingAction));
                 actions.put(failingAction.getName(), failingAction);
                 actions.put(followingAction.getName(), followingAction);
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+                return new AgentPlan(actions);
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }

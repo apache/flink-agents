@@ -30,7 +30,7 @@ When an action finishes, the framework folds the memory operations performed by 
 
 Memory events use the same event infrastructure as other Flink Agents events. They can be written to the [Event Log]({{< ref "docs/operations/monitoring#event-log" >}}), observed by registered `EventListener`s, and used to trigger actions through normal event routing.
 
-The framework can also emit an **agent-run begin event** (`_agent_run_begin_event`) when an `InputEvent` starts a run for a key. This opt-in event is disabled by default. When enabled, it is emitted before any action in that run executes and carries the key's short-term memory **values** as a flat map. Object nodes and empty-object structure are outside the event contract.
+The framework can also emit an **agent-run begin event** (`_agent_run_begin_event`) when an `InputEvent` starts a run for a key. This opt-in event is disabled by default. When enabled, it is emitted before any action in that run executes and carries the key's short-term memory **values** as a flat map. Its Event Lineage points to the triggering `InputEvent` through the framework virtual Action `agent_run_begin_action`, so the event and any Actions it triggers remain in the same Trace Tree. Object nodes and empty-object structure are outside the event contract.
 
 ## When to Use
 
@@ -242,5 +242,5 @@ Because `agent-run.begin-event` is disabled by default, the Event Log has no bui
 {{< /hint >}}
 
 {{< hint warning >}}
-**Short-term memory TTL.** The default `ON_READ_AND_WRITE` policy refreshes TTL on reads. If you enable `agent-run.begin-event`, its snapshot scan refreshes TTL for visited entries. Use `ON_CREATE_AND_WRITE` when entries should expire based on writes only.
+**Short-term memory TTL.** With the default update type `ON_READ_AND_WRITE`, every read refreshes an entry's TTL. Enabling `agent-run.begin-event` introduces an additional source of reads: each input scans the key's short-term memory to produce the run-begin snapshot, which may extend the lifetime of the scanned entries even though only value nodes are included in the event. Leave `agent-run.begin-event` disabled if the snapshot is not needed. If the snapshot is needed but reads should not extend TTL, use `ON_CREATE_AND_WRITE`.
 {{< /hint >}}

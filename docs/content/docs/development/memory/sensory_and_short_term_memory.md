@@ -295,7 +295,7 @@ Set `short-term-memory.state-ttl.ms` to a value greater than 0 in milliseconds t
 - `short-term-memory.state-ttl.visibility`: controls whether expired memory is never returned or may be returned if it has not been cleaned up yet.
 
 {{< hint warning >}}
-The default `ON_READ_AND_WRITE` update type extends an entry's lifetime whenever it is read. This also applies when producing the run-begin snapshot used by [Memory Events]({{< ref "docs/development/memory/memory_events" >}}): if you opt in through `agent-run.begin-event`, each input scans the key's short-term memory and refreshes TTL for the entries it reads, although only value nodes are included in the event. Choose `ON_CREATE_AND_WRITE` when entries should expire based only on writes.
+With the default update type `ON_READ_AND_WRITE`, every read refreshes an entry's TTL. Enabling `agent-run.begin-event` introduces an additional source of reads: each input scans the key's short-term memory to produce the run-begin snapshot used by [Memory Events]({{< ref "docs/development/memory/memory_events" >}}), which may extend the lifetime of the scanned entries even though only value nodes are included in the event. Leave `agent-run.begin-event` disabled if the snapshot is not needed. If the snapshot is needed but reads should not extend TTL, use `ON_CREATE_AND_WRITE`.
 {{< /hint >}}
 
 {{< tabs "Short-Term Memory TTL Configuration" >}}

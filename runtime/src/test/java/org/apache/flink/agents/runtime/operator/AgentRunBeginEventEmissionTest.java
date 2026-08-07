@@ -189,12 +189,20 @@ public class AgentRunBeginEventEmissionTest {
             testHarness.processElement(new StreamRecord<>(42L, 1234L));
             operator.waitInFlightEventsFinished();
 
+            Event input =
+                    CollectingEventListener.EVENTS.stream()
+                            .filter(event -> InputEvent.EVENT_TYPE.equals(event.getType()))
+                            .findFirst()
+                            .orElseThrow();
             assertThat(collectedRunBeginEvents())
                     .singleElement()
                     .satisfies(
                             event -> {
                                 assertThat(event.hasSourceTimestamp()).isTrue();
                                 assertThat(event.getSourceTimestamp()).isEqualTo(1234L);
+                                assertThat(event.getUpstreamEventId()).isEqualTo(input.getId());
+                                assertThat(event.getUpstreamActionName())
+                                        .isEqualTo("agent_run_begin_action");
                             });
             List<StreamRecord<Object>> output =
                     (List<StreamRecord<Object>>) testHarness.getRecordOutput();
