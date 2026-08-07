@@ -36,12 +36,19 @@ class InternalBaseLongTermMemory(BaseLongTermMemory, ABC):
         """Configure which operations produce observation records."""
 
     @abstractmethod
-    def switch_context(self, key: str, *, observation_suppressed: bool = False) -> None:
+    def switch_context(
+        self,
+        key: str,
+        *,
+        observation_id: str,
+        observation_suppressed: bool = False,
+    ) -> None:
         """Switches the context for the memory operations. This allows
         the same memory instance to be used for different key by isolating
         data based on the provided key.
 
         Args:
             key: The context key.
+            observation_id: Identifier for the current action's observations.
             observation_suppressed: Whether to suppress observation for the action.
         """

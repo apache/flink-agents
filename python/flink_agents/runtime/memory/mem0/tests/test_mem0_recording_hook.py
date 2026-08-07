@@ -38,10 +38,10 @@ def _make_ltm() -> Mem0LongTermMemory:
 
 def test_records_are_versioned_and_search_keeps_set_and_query() -> None:
     ltm = _make_ltm()
-    ltm._record_ltm_op(_LtmObservationOp.ADD, "prefs", "m1", "v", "partition")
-    ltm._record_ltm_search("policies", "refund", [{"id": "p1"}], "partition")
+    ltm._record_ltm_op(_LtmObservationOp.ADD, "prefs", "m1", "v", "partition", "action")
+    ltm._record_ltm_search("policies", "refund", [{"id": "p1"}], "partition", "action")
 
-    assert json.loads(ltm.drain_ltm_observation_records("partition")) == [
+    assert json.loads(ltm.drain_ltm_observation_records("partition", "action")) == [
         {
             "op": "ADD",
             "set": "prefs",
@@ -61,19 +61,65 @@ def test_records_are_versioned_and_search_keeps_set_and_query() -> None:
     ]
 
 
-def test_drain_rebuffers_other_partition_records() -> None:
+def test_drain_matches_partition_and_observation_id() -> None:
     ltm = _make_ltm()
-    ltm._record_ltm_op(_LtmObservationOp.ADD, "s", "a", "va", "partition-a")
-    ltm._record_ltm_op(_LtmObservationOp.ADD, "s", "b", "vb", "partition-b")
+    ltm._record_ltm_op(
+        _LtmObservationOp.ADD,
+        "s",
+        "partition-a-record",
+        "va",
+        "partition-a",
+        "shared-action",
+    )
+    ltm._record_ltm_op(
+        _LtmObservationOp.ADD,
+        "s",
+        "partition-b-record",
+        "vb",
+        "partition-b",
+        "shared-action",
+    )
+    ltm._record_ltm_op(
+        _LtmObservationOp.ADD,
+        "s",
+        "action-a-record",
+        "va",
+        "shared-partition",
+        "action-a",
+    )
+    ltm._record_ltm_op(
+        _LtmObservationOp.ADD,
+        "s",
+        "action-b-record",
+        "vb",
+        "shared-partition",
+        "action-b",
+    )
 
     assert [
         record["id"]
-        for record in json.loads(ltm.drain_ltm_observation_records("partition-a"))
-    ] == ["a"]
+        for record in json.loads(
+            ltm.drain_ltm_observation_records("partition-b", "shared-action")
+        )
+    ] == ["partition-b-record"]
     assert [
         record["id"]
-        for record in json.loads(ltm.drain_ltm_observation_records("partition-b"))
-    ] == ["b"]
+        for record in json.loads(
+            ltm.drain_ltm_observation_records("shared-partition", "action-b")
+        )
+    ] == ["action-b-record"]
+    assert [
+        record["id"]
+        for record in json.loads(
+            ltm.drain_ltm_observation_records("partition-a", "shared-action")
+        )
+    ] == ["partition-a-record"]
+    assert [
+        record["id"]
+        for record in json.loads(
+            ltm.drain_ltm_observation_records("shared-partition", "action-a")
+        )
+    ] == ["action-a-record"]
 
 
 def test_disabled_operation_does_not_enqueue_or_json_encode() -> None:
@@ -84,6 +130,7 @@ def test_disabled_operation_does_not_enqueue_or_json_encode() -> None:
         "m1",
         object(),
         "partition",
+        "action",
         enabled=False,
     )
     assert ltm._ltm_observation_records.empty()
@@ -95,7 +142,12 @@ def test_buffer_is_thread_safe() -> None:
     def worker() -> None:
         for index in range(100):
             ltm._record_ltm_op(
-                _LtmObservationOp.ADD, "s", f"id-{index}", "v", "partition"
+                _LtmObservationOp.ADD,
+                "s",
+                f"id-{index}",
+                "v",
+                "partition",
+                "action",
             )
 
     threads = [threading.Thread(target=worker) for _ in range(2)]
@@ -103,7 +155,9 @@ def test_buffer_is_thread_safe() -> None:
         thread.start()
     for thread in threads:
         thread.join()
-    assert len(json.loads(ltm.drain_ltm_observation_records("partition"))) == 200
+    assert (
+        len(json.loads(ltm.drain_ltm_observation_records("partition", "action"))) == 200
+    )
 
 
 class _RaisingQueue:
@@ -115,4 +169,4 @@ class _RaisingQueue:
 def test_buffering_hook_never_raises() -> None:
     ltm = _make_ltm()
     ltm._ltm_observation_records = _RaisingQueue()
-    ltm._record_ltm_op(_LtmObservationOp.ADD, "s", "m1", "v", "partition")
+    ltm._record_ltm_op(_LtmObservationOp.ADD, "s", "m1", "v", "partition", "action")

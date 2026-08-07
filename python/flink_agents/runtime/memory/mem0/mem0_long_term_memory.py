@@ -167,12 +167,13 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
 
     _mem0: Any = PrivateAttr(default=None)
 
-    _ltm_observation_records: queue.Queue[tuple[str, _LtmObservationRecord]] = (
+    _ltm_observation_records: queue.Queue[tuple[str, str, _LtmObservationRecord]] = (
         PrivateAttr(default_factory=queue.Queue)
     )
     _update_observation_enabled: bool = PrivateAttr(default=False)
     _get_observation_enabled: bool = PrivateAttr(default=False)
     _search_observation_enabled: bool = PrivateAttr(default=False)
+    _observation_id: str = PrivateAttr(default="")
     _observation_suppressed: bool = PrivateAttr(default=False)
 
     def __init__(
@@ -284,7 +285,13 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         self._search_observation_enabled = search_observation_enabled
 
     @override
-    def switch_context(self, key: str, *, observation_suppressed: bool = False) -> None:
+    def switch_context(
+        self,
+        key: str,
+        *,
+        observation_id: str,
+        observation_suppressed: bool = False,
+    ) -> None:
         """Switch the keyed partition context.
 
         This method is called on the mailbox thread before each action.
@@ -293,6 +300,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
 
         Args:
             key: The new key for partition isolation.
+            observation_id: Identifier for the current action's observations.
             observation_suppressed: Whether observation is suppressed for this action.
         """
         # Ensure Mem0 is initialized on the mailbox thread.
@@ -300,6 +308,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         # Ensure report token usage on the mailbox thread
         self._report_token_metrics()
         self.key = key
+        self._observation_id = observation_id
         self._observation_suppressed = observation_suppressed
 
     def _record_ltm_op(
@@ -309,6 +318,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         mem_id: str | None,
         value: Any,
         observation_key: str,
+        observation_id: str,
         *,
         enabled: bool = True,
     ) -> None:
@@ -320,6 +330,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             mem_id: The affected memory id, or None for whole-set ops.
             value: The stored memory content, or None when not applicable.
             observation_key: Partition key captured at operation entry.
+            observation_id: Action identifier captured at operation entry.
             enabled: Whether this operation type is configured for observation.
         """
         try:
@@ -333,6 +344,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             self._ltm_observation_records.put(
                 (
                     observation_key,
+                    observation_id,
                     _LtmObservationRecord(
                         op=operation.value,
                         set=memory_set,
@@ -350,6 +362,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         query: str,
         hits: List[Dict[str, Any]],
         observation_key: str,
+        observation_id: str,
         *,
         enabled: bool = True,
     ) -> None:
@@ -360,6 +373,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             query: The search query string.
             hits: The ordered matched records, each with id, value, and score.
             observation_key: Partition key captured at operation entry.
+            observation_id: Action identifier captured at operation entry.
             enabled: Whether search observation is configured.
         """
         try:
@@ -368,6 +382,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             self._ltm_observation_records.put(
                 (
                     observation_key,
+                    observation_id,
                     _LtmObservationRecord(
                         op=_LtmObservationOp.SEARCH.value,
                         set=memory_set,
@@ -379,29 +394,32 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         except Exception:
             logger.debug("LTM observation buffering failed; skipping", exc_info=True)
 
-    def drain_ltm_observation_records(self, key: str) -> str:
-        """Pop buffered LTM records for one partition key as a JSON array.
+    def drain_ltm_observation_records(self, key: str, observation_id: str) -> str:
+        """Pop buffered LTM records for one action as a JSON array.
 
-        Called from Java on the mailbox thread at action-finish flush. Records for
-        other partition keys are placed back in the shared queue.
+        Called from Java on the mailbox thread at action-finish flush. Records owned
+        by other partition/action pairs are placed back in the shared queue.
 
         Args:
             key: Partition key whose records to drain.
+            observation_id: Action identifier whose records to drain.
 
         Returns:
             JSON array string of the drained records.
         """
         records: List[_LtmObservationRecord] = []
-        other_records: List[tuple[str, _LtmObservationRecord]] = []
+        other_records: List[tuple[str, str, _LtmObservationRecord]] = []
         while True:
             try:
-                owner_key, record = self._ltm_observation_records.get_nowait()
+                owner_key, owner_observation_id, record = (
+                    self._ltm_observation_records.get_nowait()
+                )
             except queue.Empty:
                 break
-            if owner_key == key:
+            if owner_key == key and owner_observation_id == observation_id:
                 records.append(record)
             else:
-                other_records.append((owner_key, record))
+                other_records.append((owner_key, owner_observation_id, record))
         for record in other_records:
             self._ltm_observation_records.put(record)
 
@@ -430,12 +448,13 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             True if the memory set was deleted.
         """
         observation_key = self.key
+        observation_id = self._observation_id
         observation_enabled = (
             self._update_observation_enabled and not self._observation_suppressed
         )
         self._mem0_instance.delete_all(
             user_id=self.job_id,
-            agent_id=self.key,
+            agent_id=observation_key,
             run_id=name,
         )
         self._record_ltm_op(
@@ -444,6 +463,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             None,
             None,
             observation_key,
+            observation_id,
             enabled=observation_enabled,
         )
         return True
@@ -466,6 +486,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             List of IDs of the added memories.
         """
         observation_key = self.key
+        observation_id = self._observation_id
         observation_enabled = (
             self._update_observation_enabled and not self._observation_suppressed
         )
@@ -480,7 +501,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             result = self._mem0_instance.add(
                 messages=item,
                 user_id=self.job_id,
-                agent_id=self.key,
+                agent_id=observation_key,
                 run_id=memory_set.name,
                 metadata=metadata,
             )
@@ -504,6 +525,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
                             if operation == _LtmObservationOp.DELETE
                             else entry.get("memory"),
                             observation_key,
+                            observation_id,
                             enabled=observation_enabled,
                         )
         return all_ids
@@ -529,6 +551,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             List of memory items.
         """
         observation_key = self.key
+        observation_id = self._observation_id
         observation_enabled = (
             self._get_observation_enabled and not self._observation_suppressed
         )
@@ -546,13 +569,14 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
                     item.id,
                     item.value,
                     observation_key,
+                    observation_id,
                     enabled=observation_enabled,
                 )
             return items
 
         result = self._mem0_instance.get_all(
             user_id=self.job_id,
-            agent_id=self.key,
+            agent_id=observation_key,
             run_id=memory_set.name,
             filters=filters,
             limit=limit,
@@ -568,6 +592,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
                 item.id,
                 item.value,
                 observation_key,
+                observation_id,
                 enabled=observation_enabled,
             )
         return items
@@ -581,13 +606,14 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             ids: Optional ID or list of IDs. If None, deletes all items.
         """
         observation_key = self.key
+        observation_id = self._observation_id
         observation_enabled = (
             self._update_observation_enabled and not self._observation_suppressed
         )
         if ids is None:
             self._mem0_instance.delete_all(
                 user_id=self.job_id,
-                agent_id=self.key,
+                agent_id=observation_key,
                 run_id=memory_set.name,
             )
             self._record_ltm_op(
@@ -596,6 +622,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
                 None,
                 None,
                 observation_key,
+                observation_id,
                 enabled=observation_enabled,
             )
             return
@@ -610,6 +637,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
                 memory_id,
                 None,
                 observation_key,
+                observation_id,
                 enabled=observation_enabled,
             )
 
@@ -635,13 +663,14 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             List of matching memory items.
         """
         observation_key = self.key
+        observation_id = self._observation_id
         observation_enabled = (
             self._search_observation_enabled and not self._observation_suppressed
         )
         result = self._mem0_instance.search(
             query=query,
             user_id=self.job_id,
-            agent_id=self.key,
+            agent_id=observation_key,
             run_id=memory_set.name,
             limit=limit,
             filters=filters,
@@ -657,6 +686,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
                 if "id" in e
             ],
             observation_key,
+            observation_id,
             enabled=observation_enabled,
         )
         return [

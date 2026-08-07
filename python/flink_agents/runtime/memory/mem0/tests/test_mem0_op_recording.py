@@ -18,7 +18,9 @@
 """Public Mem0 operations produce correctly typed observations."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from inspect import signature
+from threading import Event
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -35,6 +37,7 @@ def _make_ltm(mem0: Any) -> Mem0LongTermMemory:
         ctx=ctx, job_id="job", key="partition", metric_group=None
     )
     ltm._mem0 = mem0
+    ltm._observation_id = "action"
     ltm.configure_observation(
         update_observation_enabled=True,
         get_observation_enabled=True,
@@ -43,8 +46,12 @@ def _make_ltm(mem0: Any) -> Mem0LongTermMemory:
     return ltm
 
 
-def _drain(ltm: Mem0LongTermMemory, key: str = "partition") -> list[dict]:
-    return json.loads(ltm.drain_ltm_observation_records(key))
+def _drain(
+    ltm: Mem0LongTermMemory,
+    key: str = "partition",
+    observation_id: str = "action",
+) -> list[dict]:
+    return json.loads(ltm.drain_ltm_observation_records(key, observation_id))
 
 
 def test_internal_context_signatures_match_implementation() -> None:
@@ -93,20 +100,48 @@ def test_unknown_mem0_result_is_not_mislabeled_as_add() -> None:
     assert _drain(ltm) == []
 
 
-def test_public_method_captures_partition_key_at_entry() -> None:
+def test_public_method_captures_observation_owner_at_entry() -> None:
     mem0 = MagicMock()
     ltm = _make_ltm(mem0)
     memory_set = ltm.get_memory_set("prefs")
 
     def finish_after_context_switch(**_kwargs: Any) -> dict:
         ltm.key = "partition-2"
+        ltm._observation_id = "action-2"
         return {"results": [{"event": "ADD", "id": "m1", "memory": "v"}]}
 
     mem0.add.side_effect = finish_after_context_switch
     ltm.add(memory_set, "input")
 
     assert [record["id"] for record in _drain(ltm)] == ["m1"]
-    assert _drain(ltm, "partition-2") == []
+    assert _drain(ltm, "partition-2", "action-2") == []
+
+
+def test_add_uses_entry_context_when_another_action_switches_context() -> None:
+    mem0 = MagicMock()
+    mem0.add.return_value = {"results": []}
+    ltm = _make_ltm(mem0)
+    memory_set = ltm.get_memory_set("prefs")
+    observation_config_read = Event()
+    resume_operation = Event()
+
+    class BlockingEnabledFlag:
+        def __bool__(self) -> bool:
+            observation_config_read.set()
+            if not resume_operation.wait(timeout=5):
+                message = "Timed out waiting for the context switch"
+                raise TimeoutError(message)
+            return True
+
+    ltm._update_observation_enabled = BlockingEnabledFlag()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(ltm.add, memory_set, "input")
+        assert observation_config_read.wait(timeout=5)
+        ltm.switch_context("partition-2", observation_id="action-2")
+        resume_operation.set()
+        future.result(timeout=5)
+
+    assert mem0.add.call_args.kwargs["agent_id"] == "partition"
 
 
 def test_get_delete_and_search_keep_structured_identity() -> None:
@@ -131,7 +166,7 @@ def test_get_delete_and_search_keep_structured_identity() -> None:
     assert records[2]["query"] == "refund"
 
 
-def test_context_switch_only_changes_key_and_current_suppression() -> None:
+def test_context_switch_changes_observation_owner_and_current_suppression() -> None:
     mem0 = MagicMock()
     mem0.add.return_value = {
         "results": [{"event": "ADD", "id": "m1", "memory": "value"}]
@@ -139,13 +174,17 @@ def test_context_switch_only_changes_key_and_current_suppression() -> None:
     ltm = _make_ltm(mem0)
     memory_set = ltm.get_memory_set("prefs")
 
-    ltm.switch_context("suppressed", observation_suppressed=True)
+    ltm.switch_context(
+        "suppressed", observation_id="suppressed-action", observation_suppressed=True
+    )
     ltm.add(memory_set, "ignored")
-    assert _drain(ltm, "suppressed") == []
+    assert _drain(ltm, "suppressed", "suppressed-action") == []
 
-    ltm.switch_context("observed")
+    ltm.switch_context("observed", observation_id="observed-action")
     ltm.add(memory_set, "recorded")
-    assert [record["id"] for record in _drain(ltm, "observed")] == ["m1"]
+    assert [record["id"] for record in _drain(ltm, "observed", "observed-action")] == [
+        "m1"
+    ]
     assert ltm._update_observation_enabled is True
     assert ltm._get_observation_enabled is True
     assert ltm._search_observation_enabled is True
@@ -159,7 +198,7 @@ def test_empty_context_key_is_used_consistently_for_mem0_operations() -> None:
     ltm = _make_ltm(mem0)
     memory_set = ltm.get_memory_set("prefs")
 
-    ltm.switch_context("")
+    ltm.switch_context("", observation_id="empty-action")
     ltm.add(memory_set, "input")
     ltm.get(memory_set)
     ltm.search(memory_set, "query", limit=5)
