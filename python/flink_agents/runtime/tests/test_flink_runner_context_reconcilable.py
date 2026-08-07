@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -967,10 +968,19 @@ def test_flink_runner_context_durable_execute_all_async_respects_max_parallelism
         {"tool-call.batch.timeout.ms": -1, "tool-call.parallelism": 2}
     )
     ctx = _create_runner_context(j_runner_context, config=config, executor_workers=4)
-    sleep_seconds = 0.15
+    active_count = 0
+    peak_active = 0
+    counter_lock = threading.Lock()
+    hold_seconds = 0.15
 
     def slow_call(value: str) -> str:
-        time.sleep(sleep_seconds)
+        nonlocal active_count, peak_active
+        with counter_lock:
+            active_count += 1
+            peak_active = max(peak_active, active_count)
+        time.sleep(hold_seconds)
+        with counter_lock:
+            active_count -= 1
         return value
 
     try:
@@ -990,8 +1000,10 @@ def test_flink_runner_context_durable_execute_all_async_respects_max_parallelism
         _close_runner_context(ctx)
 
     assert [outcome.value for outcome in outcomes] == ["one", "two", "three", "four"]
-    assert elapsed >= sleep_seconds * 2 - 0.05
-    assert elapsed < sleep_seconds * 4
+    assert peak_active == 2
+    # parallelism=2 → two waves; allow scheduler slack on shared CI runners
+    assert elapsed >= hold_seconds * 2 - 0.08
+    assert elapsed < hold_seconds * 4 + 0.4
     assert [result.status for result in j_runner_context.call_results] == [
         "SUCCEEDED",
         "SUCCEEDED",
