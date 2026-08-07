@@ -48,8 +48,7 @@ class AgentRunBeginEvent(Event):
         result = AgentRunBeginEvent(
             key=event.attributes.get("key"), value=event.attributes.get("value")
         )
-        result.id = event.id
-        return result
+        return result.reconstruct_from(event)
 
     @property
     def key(self) -> str:

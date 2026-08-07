@@ -92,7 +92,6 @@ public class AgentRunBeginEventEmissionTest {
 
     private static AgentPlan buildPlan(AgentConfiguration config, boolean subscribeRunBegin) {
         try {
-            Map<String, List<Action>> actionsByEvent = new HashMap<>();
             Map<String, Action> actions = new HashMap<>();
             Action inputAction =
                     new Action(
@@ -102,7 +101,6 @@ public class AgentRunBeginEventEmissionTest {
                                     "writeTierAction",
                                     new Class<?>[] {Event.class, RunnerContext.class}),
                             Collections.singletonList(InputEvent.EVENT_TYPE));
-            actionsByEvent.put(InputEvent.EVENT_TYPE, Collections.singletonList(inputAction));
             actions.put(inputAction.getName(), inputAction);
 
             if (subscribeRunBegin) {
@@ -114,11 +112,9 @@ public class AgentRunBeginEventEmissionTest {
                                         "onRunBeginAction",
                                         new Class<?>[] {Event.class, RunnerContext.class}),
                                 Collections.singletonList(EventType.AgentRunBeginEvent));
-                actionsByEvent.put(
-                        EventType.AgentRunBeginEvent, Collections.singletonList(runBeginAction));
                 actions.put(runBeginAction.getName(), runBeginAction);
             }
-            return new AgentPlan(actions, actionsByEvent, new HashMap<>(), config);
+            return new AgentPlan(actions, new HashMap<>(), config);
         } catch (Exception e) {
             ExceptionUtils.rethrow(e);
         }

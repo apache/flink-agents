@@ -86,6 +86,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         implements OneInputStreamOperator<IN, OUT>, BoundedOneInput {
 
     private static final long serialVersionUID = 1L;
+    private static final String AGENT_RUN_BEGIN_ACTION_NAME = "agent_run_begin_action";
 
     private static final Logger LOG = LoggerFactory.getLogger(ActionExecutionOperator.class);
 
@@ -345,6 +346,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (inputEvent.hasSourceTimestamp()) {
             beginEvent.setSourceTimestamp(inputEvent.getSourceTimestamp());
         }
+        beginEvent.setUpstreamEventId(inputEvent.getId());
+        beginEvent.setUpstreamActionName(AGENT_RUN_BEGIN_ACTION_NAME);
         processEvent(key, contextKey, beginEvent);
     }
 

@@ -65,16 +65,12 @@ def test_key_value_in_attributes() -> None:
     assert e.value["user.tier"] == "gold"
 
 
-def test_values_are_normalized_and_deep_copied_before_id_generation() -> None:
+def test_values_are_normalized_and_deep_copied() -> None:
     original = {"nested": {"value": 1}, "bytes": b"\x01\x02\x03"}
     event = ShortTermWriteEvent(key="k", value=original)
-    same_wire = ShortTermWriteEvent(
-        key="k", value={"nested": {"value": 1}, "bytes": "AQID"}
-    )
 
     original["nested"]["value"] = 2
     assert event.value == {"nested": {"value": 1}, "bytes": "AQID"}
-    assert event.id == same_wire.id
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])

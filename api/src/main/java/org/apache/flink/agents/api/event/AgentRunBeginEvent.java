@@ -28,9 +28,9 @@ import java.util.UUID;
 
 /**
  * Lifecycle event marking the begin of one agent run. When enabled, it is emitted after an
- * InputEvent arrives for a String key and before any action of that run executes. Carries the key's
- * short-term VALUE nodes as a dot-key flat map. Object nodes and empty-object structure are
- * intentionally outside this event contract.
+ * InputEvent arrives for a keyed partition and before any action of that run executes. Carries the
+ * textual form of the Flink key and the partition's short-term VALUE nodes as a dot-key flat map.
+ * Object nodes and empty-object structure are intentionally outside this event contract.
  *
  * <p>This event is opt-in through {@code agent-run.begin-event} (default false), independent of the
  * {@code memory.generate-event} master switch. On the wire: {@code {id, type, attributes: {key,
@@ -54,11 +54,7 @@ public class AgentRunBeginEvent extends Event {
 
     /** Converts a generic {@link Event} of this type into the typed view. */
     public static AgentRunBeginEvent fromEvent(Event event) {
-        AgentRunBeginEvent result = new AgentRunBeginEvent(event.getId(), event.getAttributes());
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, AgentRunBeginEvent::new);
     }
 
     @JsonIgnore
