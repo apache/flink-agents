@@ -43,7 +43,7 @@ Guides load on demand, so the general passes here stay short.
 | Python-Java bridge | cross-language parity, type mapping across Pemja | [review-guides/python-java-bridge.md](review-guides/python-java-bridge.md) |
 | `api/` contract | API shape, compatibility policy, deprecation | planned |
 | `dist` and dependency | shading, LICENSE and NOTICE, dist registration | planned |
-| docs-only | facts match their source of truth | planned |
+| docs-only | facts match their source of truth | [review-guides/docs-only.md](review-guides/docs-only.md) |
 
 ## Required Review Passes
 
