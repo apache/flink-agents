@@ -32,6 +32,26 @@ def _record(
     upstream_action_name: str | None = None,
     attributes: dict | None = None,
 ) -> dict:
+    record = {
+        "timestamp": "2026-07-17T10:00:00Z",
+        "eventId": event_id,
+        "eventType": event_type,
+        "eventAttributes": attributes or {},
+    }
+    if upstream_event_id is not None:
+        record["upstreamEventId"] = upstream_event_id
+    if upstream_action_name is not None:
+        record["upstreamActionName"] = upstream_action_name
+    return record
+
+
+def _legacy_record(
+    event_id: str,
+    event_type: str,
+    upstream_event_id: str | None = None,
+    upstream_action_name: str | None = None,
+    attributes: dict | None = None,
+) -> dict:
     event = {
         "id": event_id,
         "eventType": event_type,
@@ -143,6 +163,63 @@ def test_reader_reconstructs_pretty_printed_records(tmp_path: Path) -> None:
     assert text_result.stderr == ""
 
 
+def test_reader_merges_flat_and_legacy_records(tmp_path: Path) -> None:
+    log_path = tmp_path / "events.log"
+    _write_log(
+        log_path,
+        [
+            _record("root", "_input_event"),
+            _legacy_record(
+                "child",
+                "ChildEvent",
+                "root",
+                "child_action",
+                {"value": 1},
+            ),
+            _record(
+                "child",
+                "ChildEvent",
+                "root",
+                "child_action",
+                {"value": 1},
+            ),
+        ],
+    )
+
+    result = _run_reader(log_path, "json")
+    trace_forest = json.loads(result.stdout)
+
+    assert trace_forest["roots"] == ["root"]
+    assert trace_forest["nodes"]["root"]["actions"] == [
+        {"name": "child_action", "children": ["child"]}
+    ]
+    assert trace_forest["nodes"]["child"]["observationCount"] == 2
+    assert trace_forest["warnings"] == []
+    assert result.stderr == ""
+
+
+def test_reader_ignores_execution_lifecycle_records(tmp_path: Path) -> None:
+    log_path = tmp_path / "events.log"
+    _write_log(
+        log_path,
+        [
+            _record("root", "_input_event"),
+            _record("started", "_execution_started_event"),
+            _record("finished", "_execution_finished_event"),
+            _record("failed", "_execution_failed_event"),
+            _record("reused", "_execution_reused_event"),
+            _record("child", "ChildEvent", "root", "child_action"),
+        ],
+    )
+
+    result = _run_reader(log_path, "json")
+    trace_forest = json.loads(result.stdout)
+
+    assert set(trace_forest["nodes"]) == {"root", "child"}
+    assert trace_forest["warnings"] == []
+    assert result.stderr == ""
+
+
 def test_reader_warns_on_truncated_tail_and_keeps_valid_records(
     tmp_path: Path,
 ) -> None:
@@ -213,7 +290,11 @@ def test_reader_resynchronizes_after_malformed_pretty_record(
         (
             {
                 "eventType": "BadEvent",
-                "event": {"id": "bad", "upstreamEventId": []},
+                "event": {
+                    "id": "bad",
+                    "attributes": {},
+                    "upstreamEventId": [],
+                },
             },
             "bad",
         ),

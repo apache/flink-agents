@@ -108,6 +108,7 @@ def test_agent_config_options_are_explicitly_declared() -> None:
     assert options["BASE_LOG_DIR"].get_key() == "baseLogDir"
     assert options["KAFKA_BOOTSTRAP_SERVERS"].get_default_value() == "localhost:9092"
     assert options["EVENT_LOG_LEVEL"].get_default_value() is EventLogLevel.STANDARD
+    assert options["EVENT_LOG_TRACE_ENABLED"].get_default_value() is False
     condition_failure = options["CONDITION_EVALUATION_FAILURE_STRATEGY"]
     assert (
         condition_failure.get_key()

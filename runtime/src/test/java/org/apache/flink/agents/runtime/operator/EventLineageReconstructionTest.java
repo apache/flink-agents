@@ -71,12 +71,10 @@ class EventLineageReconstructionTest {
                 MAPPER.treeToValue(recordsByType.get(InputEvent.EVENT_TYPE), EventLogRecord.class);
         EventLogRecord outputRecord =
                 MAPPER.treeToValue(recordsByType.get(OutputEvent.EVENT_TYPE), EventLogRecord.class);
-        JsonNode input = recordsByType.get(InputEvent.EVENT_TYPE).get("event");
+        JsonNode input = recordsByType.get(InputEvent.EVENT_TYPE);
         JsonNode middle =
-                recordsByType
-                        .get(ActionExecutionOperatorTest.TestAgent.MiddleEvent.EVENT_TYPE)
-                        .get("event");
-        JsonNode output = recordsByType.get(OutputEvent.EVENT_TYPE).get("event");
+                recordsByType.get(ActionExecutionOperatorTest.TestAgent.MiddleEvent.EVENT_TYPE);
+        JsonNode output = recordsByType.get(OutputEvent.EVENT_TYPE);
 
         assertThat(recordsByType).hasSize(3);
         assertThat(inputRecord.getEvent().getType()).isEqualTo(InputEvent.EVENT_TYPE);
@@ -86,16 +84,17 @@ class EventLineageReconstructionTest {
 
         assertThat(middle.get("upstreamEventId").isTextual()).isTrue();
         assertThat(middle.get("upstreamActionName").isTextual()).isTrue();
-        assertThat(middle.get("upstreamEventId").asText()).isEqualTo(input.get("id").asText());
+        assertThat(middle.get("upstreamEventId").asText()).isEqualTo(input.get("eventId").asText());
         assertThat(middle.get("upstreamActionName").asText()).isEqualTo("action1");
 
         assertThat(output.get("upstreamEventId").isTextual()).isTrue();
         assertThat(output.get("upstreamActionName").isTextual()).isTrue();
-        assertThat(output.get("upstreamEventId").asText()).isEqualTo(middle.get("id").asText());
+        assertThat(output.get("upstreamEventId").asText())
+                .isEqualTo(middle.get("eventId").asText());
         assertThat(output.get("upstreamActionName").asText()).isEqualTo("action2");
 
-        assertThat(middle.get("attributes").has("upstreamEventId")).isFalse();
-        assertThat(middle.get("attributes").has("upstreamActionName")).isFalse();
+        assertThat(middle.get("eventAttributes").has("upstreamEventId")).isFalse();
+        assertThat(middle.get("eventAttributes").has("upstreamActionName")).isFalse();
     }
 
     private static AgentConfiguration fileLoggerConfig(Path logDir) {
