@@ -69,9 +69,10 @@ import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
  * <ol>
  *   <li><b>Decide</b> — {@code resolveRouter} runs the router's strategy and normalizes the result
  *       (abstain → default model; non-candidate → fail).
- *   <li><b>Durably</b> — the strategy runs inside a durable call ({@code "route:<requestId>:
- *       <router>"}), so recovery replays the persisted decision instead of re-running a possibly
- *       non-deterministic strategy.
+ *   <li><b>Durably</b> — the strategy runs inside a durable call ({@code "route:<router>"};
+ *       per-request uniqueness comes from the store's (key, sequence, event, action) scoping, and
+ *       the id must stay deterministic across recovery re-processing), so recovery replays the
+ *       persisted decision instead of re-running a possibly non-deterministic strategy.
  *   <li><b>Once per reasoning loop</b> — the selected concrete model and its routing metadata are
  *       saved in the tool-request context; tool rounds re-enter {@code chat} via {@code
  *       RoutingSelection.carried} with no re-routing.
@@ -844,7 +845,12 @@ public class ChatModelAction {
                 new DurableCallable<>() {
                     @Override
                     public String getId() {
-                        return "route:" + requestId + ":" + model;
+                        // Deterministic across recovery re-processing: the durable store already
+                        // scopes call results by (key, sequence number, event, action), so the id
+                        // must NOT embed the request id — event ids are regenerated when Flink
+                        // rolls back and re-processes, and a non-deterministic id turns every
+                        // replay lookup into a miss (measured: 0/138 decisions replayed).
+                        return "route:" + model;
                     }
 
                     @Override
