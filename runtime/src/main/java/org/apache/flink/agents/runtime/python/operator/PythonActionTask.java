@@ -39,6 +39,11 @@ public class PythonActionTask extends ActionTask {
         checkState(action.getExec() instanceof PythonFunction);
     }
 
+    protected PythonActionTask(Object key, Event event, Action action, String observationId) {
+        super(key, event, action, observationId);
+        checkState(action.getExec() instanceof PythonFunction);
+    }
+
     public ActionTaskResult invoke(ClassLoader userCodeClassLoader, PythonActionExecutor executor)
             throws Exception {
         LOG.debug(
@@ -57,7 +62,8 @@ public class PythonActionTask extends ActionTask {
             // The Python action generates an awaitable. We need to execute it once, which will
             // submit an asynchronous task and return whether the action has been completed.
             ((PythonRunnerContextImpl) runnerContext).setPythonAwaitableRef(pythonAwaitableRef);
-            ActionTask tempGeneratedActionTask = new PythonGeneratorActionTask(key, event, action);
+            ActionTask tempGeneratedActionTask =
+                    new PythonGeneratorActionTask(key, event, action, getObservationId());
             tempGeneratedActionTask.setRunnerContext(runnerContext);
             return tempGeneratedActionTask.invoke(userCodeClassLoader, executor);
         }

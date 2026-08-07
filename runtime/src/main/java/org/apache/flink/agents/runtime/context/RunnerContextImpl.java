@@ -129,6 +129,9 @@ public class RunnerContextImpl implements RunnerContext {
     /** Textual key shared by long-term-memory isolation and framework observation events. */
     protected String contextKey;
 
+    /** Stable identifier that isolates observations for one logical action execution. */
+    protected String observationId;
+
     /** True when the current action was triggered by a memory event: suppress observation. */
     protected boolean observationSuppressed;
 
@@ -170,14 +173,16 @@ public class RunnerContextImpl implements RunnerContext {
             String actionName,
             MemoryContext memoryContext,
             String contextKey,
+            String observationId,
             boolean observationSuppressed) {
         this.actionName = actionName;
         this.memoryContext = memoryContext;
         this.contextKey = contextKey;
+        this.observationId = observationId;
         this.observationSuppressed = observationSuppressed;
         this.ltmObservationEnabled = !observationSuppressed && ltmObservationConfigured;
         if (ltm != null) {
-            ltm.switchContext(contextKey, observationSuppressed);
+            ltm.switchContext(contextKey, observationId, observationSuppressed);
         }
     }
 
@@ -232,7 +237,7 @@ public class RunnerContextImpl implements RunnerContext {
         if (ltm == null || !ltmObservationEnabled) {
             return;
         }
-        ltm.drainObservationRecordsJson(contextKey);
+        ltm.drainObservationRecordsJson(contextKey, observationId);
     }
 
     private List<Event> drainPendingEvents(Long timestamp) {
@@ -261,7 +266,7 @@ public class RunnerContextImpl implements RunnerContext {
             try {
                 ltmRecords =
                         MemoryEventBuilder.parseLtmObservationRecords(
-                                ltm.drainObservationRecordsJson(contextKey));
+                                ltm.drainObservationRecordsJson(contextKey, observationId));
             } catch (Exception | LinkageError e) {
                 LOG.warn(
                         "LTM observation drain failed for action '{}' and partition key '{}' ({}); skipping records",

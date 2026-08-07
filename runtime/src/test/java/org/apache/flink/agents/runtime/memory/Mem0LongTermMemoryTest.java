@@ -185,8 +185,8 @@ public class Mem0LongTermMemoryTest {
     @Test
     void testSwitchContextAndCloseForward() {
         ltm.configureObservation(true, false, true);
-        ltm.switchContext("k1", true);
-        ltm.drainObservationRecordsJson("k1");
+        ltm.switchContext("k1", "observation-1", true);
+        ltm.drainObservationRecordsJson("k1", "observation-1");
         ltm.close();
 
         verify(mockAdapter)
@@ -205,12 +205,19 @@ public class Mem0LongTermMemoryTest {
                 .callMethod(
                         eq(mockPyMem0),
                         eq("switch_context"),
-                        eq(Map.of("key", "k1", "observation_suppressed", true)));
+                        eq(
+                                Map.of(
+                                        "key",
+                                        "k1",
+                                        "observation_id",
+                                        "observation-1",
+                                        "observation_suppressed",
+                                        true)));
         verify(mockAdapter)
                 .callMethod(
                         eq(mockPyMem0),
                         eq("drain_ltm_observation_records"),
-                        eq(Map.of("key", "k1")));
+                        eq(Map.of("key", "k1", "observation_id", "observation-1")));
         verify(mockAdapter).callMethod(eq(mockPyMem0), eq("close"), eq(Map.of()));
     }
 }

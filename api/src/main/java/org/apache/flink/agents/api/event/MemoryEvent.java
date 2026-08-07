@@ -35,9 +35,9 @@ import java.util.function.BiFunction;
  * at the action finish boundary; each concrete subclass pins one of the seven operation kinds as
  * its {@code type}.
  *
- * <p>Attributes: {@code key} — the String Flink key the operation belongs to; {@code value} — the
- * operation's folded JSON value map. Framework observation events are skipped for non-String keyed
- * streams. On the wire the event serializes as {@code {id, type, attributes: {key, value}}}.
+ * <p>Attributes: {@code key} — the textual form of the Flink key the operation belongs to; {@code
+ * value} — the operation's folded JSON value map. On the wire the event serializes as {@code {id,
+ * type, attributes: {key, value}}}.
  */
 public abstract class MemoryEvent extends Event {
 
@@ -118,11 +118,7 @@ public abstract class MemoryEvent extends Event {
         if (factory == null) {
             throw new IllegalArgumentException("Not a memory event type: " + event.getType());
         }
-        MemoryEvent result = factory.apply(event.getId(), event.getAttributes());
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, factory);
     }
 
     @JsonIgnore

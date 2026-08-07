@@ -99,8 +99,7 @@ class MemoryEvent(Event):
         if subclass is LongTermUpdateEvent:
             kwargs["cleared_sets"] = event.attributes.get("cleared_sets", [])
         result = subclass(**kwargs)
-        result.id = event.id
-        return result
+        return result.reconstruct_from(event)
 
     @property
     def key(self) -> str:

@@ -62,7 +62,6 @@ class TestMemoryObservationFlush {
                 new AgentPlan(
                         new HashMap<>(),
                         new HashMap<>(),
-                        new HashMap<>(),
                         new org.apache.flink.agents.plan.AgentConfiguration(conf));
         RunnerContextImpl context =
                 new RunnerContextImpl(
@@ -86,6 +85,7 @@ class TestMemoryObservationFlush {
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
                 contextKey,
+                "observation-1",
                 suppressed);
         return context;
     }
@@ -223,11 +223,13 @@ class TestMemoryObservationFlush {
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
                 "user-43",
+                "observation-2",
                 true);
 
         assertThat(ltm.configureCallCount).isEqualTo(1);
         assertThat(ltm.switchCallCount).isEqualTo(2);
         assertThat(ltm.partitionKey).isEqualTo("user-43");
+        assertThat(ltm.observationId).isEqualTo("observation-2");
         assertThat(ltm.observationSuppressed).isTrue();
     }
 
@@ -241,6 +243,43 @@ class TestMemoryObservationFlush {
         LongTermUpdateEvent event =
                 (LongTermUpdateEvent) context.drainEventsAtActionFinish(null).get(0);
         assertThat(event.getValue()).containsEntry("a.b", Map.of("m.1", "v"));
+    }
+
+    @Test
+    void interleavedSameKeyActionsKeepLtmEventsWithTheirOwningExecution() throws Exception {
+        ActionScopedStubLtm ltm = new ActionScopedStubLtm();
+        RunnerContextImpl context = createContext(new HashMap<>(), false, "user-42", ltm);
+
+        // Action A records an LTM update and suspends.
+        ltm.record("user-42", "observation-1", "a", "from-a");
+
+        // Action B starts on the same key and finishes before A's continuation.
+        context.switchActionContext(
+                "action-b",
+                new RunnerContextImpl.MemoryContext(
+                        new CachedMemoryStore(new ForTestMemoryMapState<>()),
+                        new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                "user-42",
+                "observation-2",
+                false);
+        ltm.record("user-42", "observation-2", "b", "from-b");
+
+        LongTermUpdateEvent bEvent =
+                (LongTermUpdateEvent) context.drainEventsAtActionFinish(null).get(0);
+        assertThat(bEvent.getValue()).containsExactly(Map.entry("test", Map.of("b", "from-b")));
+
+        // A resumes and fails: discarding A must not emit its record or affect B's event.
+        context.switchActionContext(
+                "action-a",
+                new RunnerContextImpl.MemoryContext(
+                        new CachedMemoryStore(new ForTestMemoryMapState<>()),
+                        new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                "user-42",
+                "observation-1",
+                false);
+        context.discardMemoryObservation();
+        assertThat(context.drainEventsAtActionFinish(null)).isEmpty();
+        assertThat(ltm.pendingRecords).isEmpty();
     }
 
     @Test
@@ -275,6 +314,7 @@ class TestMemoryObservationFlush {
         private boolean getEnabled;
         private boolean searchEnabled;
         private String partitionKey;
+        private String observationId;
         private boolean observationSuppressed;
         private int configureCallCount;
         private int switchCallCount;
@@ -293,14 +333,16 @@ class TestMemoryObservationFlush {
         }
 
         @Override
-        public void switchContext(String partitionKey, boolean observationSuppressed) {
+        public void switchContext(
+                String partitionKey, String observationId, boolean observationSuppressed) {
             this.partitionKey = partitionKey;
+            this.observationId = observationId;
             this.observationSuppressed = observationSuppressed;
             switchCallCount++;
         }
 
         @Override
-        public String drainObservationRecordsJson(String partitionKey) {
+        public String drainObservationRecordsJson(String partitionKey, String observationId) {
             drainCallCount++;
             if (drainLinkageError != null) {
                 throw drainLinkageError;
@@ -352,5 +394,25 @@ class TestMemoryObservationFlush {
 
         @Override
         public void close() {}
+    }
+
+    private static final class ActionScopedStubLtm extends StubLtm {
+        private final Map<String, String> pendingRecords = new HashMap<>();
+
+        private void record(String partitionKey, String observationId, String id, String value) {
+            pendingRecords.put(
+                    partitionKey + "\u0000" + observationId,
+                    "[{\"version\":1,\"op\":\"ADD\",\"set\":\"test\",\"id\":\""
+                            + id
+                            + "\",\"value\":\""
+                            + value
+                            + "\"}]");
+        }
+
+        @Override
+        public String drainObservationRecordsJson(String partitionKey, String observationId) {
+            String payload = pendingRecords.remove(partitionKey + "\u0000" + observationId);
+            return payload == null ? "[]" : payload;
+        }
     }
 }

@@ -26,8 +26,8 @@ import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 /** An {@link ActionTask} wrapper a Python awaitable to represent a code block in Python action. */
 public class PythonGeneratorActionTask extends PythonActionTask {
 
-    public PythonGeneratorActionTask(Object key, Event event, Action action) {
-        super(key, event, action);
+    public PythonGeneratorActionTask(Object key, Event event, Action action, String observationId) {
+        super(key, event, action, observationId);
     }
 
     @Override
@@ -47,7 +47,8 @@ public class PythonGeneratorActionTask extends PythonActionTask {
                     "Python awaitable ref is null for action {} (likely restored from checkpoint), "
                             + "re-executing from beginning.",
                     action.getName());
-            PythonActionTask freshTask = new PythonActionTask(key, event, action);
+            PythonActionTask freshTask =
+                    new PythonActionTask(key, event, action, getObservationId());
             freshTask.setRunnerContext(runnerContext);
             return freshTask.invoke(userCodeClassLoader, executor);
         }

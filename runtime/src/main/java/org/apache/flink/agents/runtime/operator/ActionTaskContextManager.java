@@ -222,6 +222,7 @@ class ActionTaskContextManager implements AutoCloseable {
                 actionTask.action.getName(),
                 memoryContext,
                 contextKey,
+                actionTask.getObservationId(),
                 MemoryEvent.isMemoryType(actionTask.event.getType()));
 
         if (context instanceof JavaRunnerContextImpl) {
