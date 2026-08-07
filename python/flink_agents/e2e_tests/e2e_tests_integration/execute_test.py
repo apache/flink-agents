@@ -56,7 +56,7 @@ def test_durable_execute_basic_flink(tmp_path: Path) -> None:
     """Test basic synchronous durable_execute() functionality in Flink environment."""
     config = Configuration()
     config.set_string("state.backend.type", "rocksdb")
-    config.set_string("checkpointing.interval", "1s")
+    config.set_string("execution.checkpointing.interval", "1s")
     config.set_string("restart-strategy.type", "disable")
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
@@ -108,7 +108,7 @@ def test_durable_execute_multiple_calls_flink(tmp_path: Path) -> None:
     """Test multiple durable_execute() calls in Flink environment."""
     config = Configuration()
     config.set_string("state.backend.type", "rocksdb")
-    config.set_string("checkpointing.interval", "1s")
+    config.set_string("execution.checkpointing.interval", "1s")
     config.set_string("restart-strategy.type", "disable")
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
@@ -160,7 +160,7 @@ def test_durable_execute_with_async_flink(tmp_path: Path) -> None:
     """Test durable_execute() and durable_execute_async() in Flink environment."""
     config = Configuration()
     config.set_string("state.backend.type", "rocksdb")
-    config.set_string("checkpointing.interval", "1s")
+    config.set_string("execution.checkpointing.interval", "1s")
     config.set_string("restart-strategy.type", "disable")
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
@@ -212,7 +212,7 @@ def test_durable_execute_async_exception_flink(tmp_path: Path) -> None:
     """Test durable_execute_async() exception handling in Flink environment."""
     config = Configuration()
     config.set_string("state.backend.type", "rocksdb")
-    config.set_string("checkpointing.interval", "1s")
+    config.set_string("execution.checkpointing.interval", "1s")
     config.set_string("restart-strategy.type", "disable")
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
@@ -264,7 +264,7 @@ def test_durable_execute_sync_exception_flink(tmp_path: Path) -> None:
     """Test synchronous durable_execute() exception handling in Flink environment."""
     config = Configuration()
     config.set_string("state.backend.type", "rocksdb")
-    config.set_string("checkpointing.interval", "1s")
+    config.set_string("execution.checkpointing.interval", "1s")
     config.set_string("restart-strategy.type", "disable")
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
@@ -316,7 +316,7 @@ def test_durable_execute_with_kwargs_flink(tmp_path: Path) -> None:
     """Test durable_execute() with keyword arguments in Flink environment."""
     config = Configuration()
     config.set_string("state.backend.type", "rocksdb")
-    config.set_string("checkpointing.interval", "1s")
+    config.set_string("execution.checkpointing.interval", "1s")
     config.set_string("restart-strategy.type", "disable")
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)

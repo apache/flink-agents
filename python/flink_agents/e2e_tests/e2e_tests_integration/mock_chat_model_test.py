@@ -57,7 +57,7 @@ def test_built_in_chat_tool_action_content(tmp_path: Path) -> None:
     """
     config = Configuration()
     config.set_string("state.backend.type", "rocksdb")
-    config.set_string("checkpointing.interval", "1s")
+    config.set_string("execution.checkpointing.interval", "1s")
     config.set_string("restart-strategy.type", "disable")
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
@@ -115,7 +115,7 @@ def test_chat_model_get_resource_in_action(tmp_path: Path) -> None:
     """
     config = Configuration()
     config.set_string("state.backend.type", "rocksdb")
-    config.set_string("checkpointing.interval", "1s")
+    config.set_string("execution.checkpointing.interval", "1s")
     config.set_string("restart-strategy.type", "disable")
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
