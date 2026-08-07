@@ -19,6 +19,7 @@ package org.apache.flink.agents.integrations.chatmodels.anthropic;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
+import com.anthropic.core.JsonSchemaLocalValidation;
 import com.anthropic.core.JsonValue;
 import com.anthropic.models.messages.ContentBlock;
 import com.anthropic.models.messages.ContentBlockParam;
@@ -26,6 +27,7 @@ import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
+import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.Tool;
 import com.anthropic.models.messages.ToolResultBlockParam;
@@ -48,6 +50,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -114,24 +117,120 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         this.client.close();
     }
 
+    // Models Anthropic documents native structured-output support for. Source of truth:
+    // https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+    //
+    // The documented rule is generational rather than a per-snapshot list: structured outputs are
+    // generally available for Claude 4.5 and later models, and for Claude Mythos Preview. Names
+    // from the 4.6 generation onward carry no date and are pinned, so the name is itself the
+    // snapshot and is matched exactly.
+    //
+    // The three 4.5-generation names are aliases that front a dated snapshot, so a request may
+    // carry either the alias or the snapshot behind it and both have to match. Those are matched
+    // by prefix instead, and the prefix has to retain the minor version: "claude-opus-4" would
+    // also capture claude-opus-4-1-20250805, which predates the cutoff and is not capable.
+    //
+    // A name outside both sets reports not-capable and degrades to the prompt-engineering
+    // fallback rather than failing at the provider.
+    private static final Set<String> NATIVE_STRUCTURED_OUTPUT_MODELS =
+            Set.of(
+                    "claude-opus-4-6",
+                    "claude-opus-4-7",
+                    "claude-opus-4-8",
+                    "claude-opus-5",
+                    "claude-sonnet-4-6",
+                    "claude-sonnet-5",
+                    "claude-fable-5",
+                    "claude-mythos-5",
+                    "claude-mythos-preview");
+
+    private static final Set<String> NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES =
+            Set.of("claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5");
+
+    /**
+     * Whether Anthropic documents native structured-output support for {@code effectiveModel}.
+     *
+     * <p>See the allowlists above for the source of truth and for why the 4.5-generation aliases
+     * are matched by prefix while every other name is matched exactly. An unrecognized name reports
+     * {@code false} so that it degrades to the prompt-engineering fallback rather than failing at
+     * the provider.
+     *
+     * <p>Reads no instance state, so capability stays answerable independently of how the
+     * connection was configured.
+     */
+    @Override
+    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+        // Load-bearing: the allowlist is an immutable Set, whose contains(null) throws rather than
+        // reporting absence.
+        if (effectiveModel == null) {
+            return false;
+        }
+        return NATIVE_STRUCTURED_OUTPUT_MODELS.contains(effectiveModel)
+                || NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES.stream()
+                        .anyMatch(effectiveModel::startsWith);
+    }
+
+    /**
+     * Derives the native {@code output_config} for a POJO class through the SDK's typed
+     * structured-output builder.
+     *
+     * <p>The Kotlin facade {@code StructuredOutputsKt.outputFormatFromClass} would produce this
+     * directly, but it is compiled {@code ACC_SYNTHETIC} and so cannot be named from Java. The
+     * typed builder generates the same schema; the config is extracted from the throwaway request
+     * it produces and reattached to the real one, which also avoids that overload's side effect of
+     * retyping the request and the response as {@code StructuredMessageCreateParams} and {@code
+     * StructuredMessage}. The throwaway request is never sent, so its placeholder model, message
+     * and token limit only have to satisfy the builder's required-field check.
+     *
+     * <p>Local schema validation is off so that the provider, not the client, is the authority on
+     * which schemas it accepts.
+     */
+    private static <T> OutputConfig toNativeOutputConfig(Class<T> schemaClass) {
+        return MessageCreateParams.builder()
+                .model(Model.of(""))
+                .addUserMessage("")
+                .maxTokens(1)
+                .outputConfig(schemaClass, JsonSchemaLocalValidation.NO)
+                .build()
+                .rawParams()
+                .outputConfig()
+                .orElseThrow(
+                        () ->
+                                new IllegalStateException(
+                                        "Anthropic SDK did not produce an output_config for schema "
+                                                + schemaClass.getName()));
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams) {
-        try {
-            // Check if JSON prefill is requested before building request (modelParams may be
-            // modified).
-            boolean jsonPrefillRequested =
-                    modelParams != null && Boolean.TRUE.equals(modelParams.get("json_prefill"));
-            // JSON prefill is automatically disabled when tools are passed in the request,
-            // because it interferes with native tool calling.
-            boolean hasToolsInRequest = tools != null && !tools.isEmpty();
-            boolean jsonPrefillApplied = jsonPrefillRequested && !hasToolsInRequest;
+        return chat(messages, tools, modelParams, null);
+    }
 
-            MessageCreateParams params = buildRequest(messages, tools, modelParams);
-            Message response = client.messages().create(params);
-            ChatMessage result = convertResponse(response, jsonPrefillApplied);
+    /**
+     * Translates {@code outputSchema} into Anthropic's native {@code output_config.format} when it
+     * is a POJO {@link Class}, the effective model is one Anthropic documents structured-output
+     * support for, and the caller has not already supplied its own {@code output_config}. Any other
+     * combination sends no derived schema, so the request carries only the output configuration the
+     * caller supplied, if any, and a schema that cannot be sent natively degrades to the
+     * prompt-engineering fallback rather than failing at the provider.
+     *
+     * <p>A schema applied natively also suppresses the {@code json_prefill} parameter, since the
+     * provider then enforces the JSON document itself and the prefilled {@code "{"} would be
+     * redundant.
+     */
+    @Override
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            List<org.apache.flink.agents.api.tools.Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
+        try {
+            BuiltRequest built = buildRequest(messages, tools, modelParams, outputSchema);
+            Message response = client.messages().create(built.params);
+            ChatMessage result = convertResponse(built, response);
 
             // Stash token usage
             String modelName = null;
@@ -153,10 +252,19 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         }
     }
 
-    private MessageCreateParams buildRequest(
+    /**
+     * Builds the request and reports the JSON prefill decision it made.
+     *
+     * <p>Whether the prefilled assistant {@code "{"} message was appended cannot be recomputed from
+     * the request alone, and {@link #convertResponse} must know it to reconstruct the full JSON
+     * document. Deciding once here and carrying the answer out keeps the request and the response
+     * conversion from disagreeing.
+     */
+    BuiltRequest buildRequest(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
-            Map<String, Object> rawModelParams) {
+            Map<String, Object> rawModelParams,
+            Object outputSchema) {
         Map<String, Object> modelParams =
                 rawModelParams != null ? new HashMap<>(rawModelParams) : new HashMap<>();
 
@@ -216,19 +324,62 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             applyAdditionalKwargs(builder, additionalKwargs);
         }
 
+        // Native structured output applies only for a POJO Class schema on a model Anthropic
+        // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
+        // the prompt-engineering fallback.
+        //
+        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
+        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
+        // for NATIVE on a model this predicate rejects therefore degrades silently to the
+        // prompt-engineering fallback instead of getting an error. Once strategy resolution is
+        // wired up, NATIVE must either bypass this capability re-check or fail explicitly.
+        boolean nativeSchemaApplied = false;
+        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+            // Only the branch that would send a schema inspects additional_kwargs for one; every
+            // path that skipped it leaves the caller's value untouched. An output_config already
+            // supplied there is the caller being explicit about the exact parameter this branch
+            // writes, so it wins and the schema falls back to prompt engineering rather than the
+            // two competing on the same request.
+            if (additionalKwargs == null || !additionalKwargs.containsKey("output_config")) {
+                builder.outputConfig(toNativeOutputConfig((Class<?>) outputSchema));
+                nativeSchemaApplied = true;
+            }
+        }
+
         // Handle JSON prefill - append a prefilled assistant message with "{" to enforce JSON
         // output. Note: JSON prefill is incompatible with tool use as it forces the model to output
         // JSON text instead of using native tool_use content blocks. Automatically disable
         // json_prefill when tools are actually passed in the request.
+        //
+        // A natively applied schema also disables it: the provider then enforces the JSON document
+        // itself, so the prefilled "{" adds nothing and several capable models reject it outright.
+        // The condition keys on whether the schema was actually applied rather than on whether one
+        // was supplied, because a schema that fell back to prompt engineering still wants the
+        // prefill it would have had.
         Object jsonPrefill = modelParams.remove("json_prefill");
         boolean hasToolsInRequest = tools != null && !tools.isEmpty();
-        if (Boolean.TRUE.equals(jsonPrefill) && !hasToolsInRequest) {
+        boolean jsonPrefillApplied =
+                Boolean.TRUE.equals(jsonPrefill) && !hasToolsInRequest && !nativeSchemaApplied;
+        if (jsonPrefillApplied) {
             anthropicMessages.add(
                     MessageParam.builder().role(MessageParam.Role.ASSISTANT).content("{").build());
+            // The builder copies the list it is given, so appending to the local list after the
+            // earlier messages(...) call is not enough - the list has to be handed over again.
             builder.messages(anthropicMessages);
         }
 
-        return builder.build();
+        return new BuiltRequest(builder.build(), jsonPrefillApplied);
+    }
+
+    /** A built request together with the JSON prefill decision applied while building it. */
+    static final class BuiltRequest {
+        final MessageCreateParams params;
+        final boolean jsonPrefillApplied;
+
+        BuiltRequest(MessageCreateParams params, boolean jsonPrefillApplied) {
+            this.params = params;
+            this.jsonPrefillApplied = jsonPrefillApplied;
+        }
     }
 
     private List<TextBlockParam> extractSystemMessages(List<ChatMessage> messages) {
@@ -362,7 +513,17 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         }
     }
 
-    private ChatMessage convertResponse(Message response, boolean jsonPrefillApplied) {
+    /**
+     * Converts a response into a {@link ChatMessage}, reconstructing the leading {@code "{"} when
+     * the request carried the JSON prefill.
+     *
+     * <p>Takes the whole {@link BuiltRequest} rather than the prefill flag on its own so the flag
+     * travels with the request it was derived from, instead of being computed separately at the call
+     * site where the two can drift apart. A flag that disagrees with the request either prepends a
+     * stray {@code "{"} or drops a required one, and the resulting JSON is malformed in a way the
+     * response itself gives no sign of.
+     */
+    ChatMessage convertResponse(BuiltRequest built, Message response) {
         List<ContentBlock> contentBlocks = response.content();
         if (contentBlocks.isEmpty()) {
             throw new IllegalStateException("Anthropic response did not contain any content.");
@@ -370,7 +531,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
 
         StringBuilder textContent = new StringBuilder();
         // If JSON prefill was used, prepend "{" since the response only contains the continuation
-        if (jsonPrefillApplied) {
+        if (built.jsonPrefillApplied) {
             textContent.append("{");
         }
         List<Map<String, Object>> toolCalls = new ArrayList<>();
