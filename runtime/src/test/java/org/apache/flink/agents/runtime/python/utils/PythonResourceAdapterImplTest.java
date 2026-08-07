@@ -93,6 +93,20 @@ public class PythonResourceAdapterImplTest {
     }
 
     @Test
+    void testCloseReleasesPythonResourceContextOnce() throws Exception {
+        PyObject pythonResourceContext = mock(PyObject.class);
+        when(mockInterpreter.invoke(
+                        PythonResourceAdapterImpl.GET_RESOURCE_CONTEXT, pythonResourceAdapter))
+                .thenReturn(pythonResourceContext);
+        pythonResourceAdapter.open();
+
+        pythonResourceAdapter.close();
+        pythonResourceAdapter.close();
+
+        verify(pythonResourceContext).close();
+    }
+
+    @Test
     void testGetResourceWithPythonResourceWrapper() throws Exception {
         String resourceName = "test_resource";
         String resourceType = "chat_model";

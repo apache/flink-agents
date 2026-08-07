@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.util.IOUtils;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
@@ -33,7 +34,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /** Execute the corresponding Python action in the agent. */
-public class PythonActionExecutor {
+public class PythonActionExecutor implements AutoCloseable {
 
     private static final String PYTHON_IMPORTS =
             "from flink_agents.plan import function\n"
@@ -187,18 +188,24 @@ public class PythonActionExecutor {
         return (boolean) ((Object[]) invokeResult)[0];
     }
 
+    @Override
     public void close() throws Exception {
-        if (interpreter != null) {
-            if (pythonAsyncThreadPool != null) {
-                interpreter.invoke(CLOSE_ASYNC_THREAD_POOL, pythonAsyncThreadPool);
-            }
+        // Clear the fields before releasing: PyObject.close() performs an unguarded native decRef,
+        // so a repeated close() must not reach the same handle twice.
+        PyObject asyncThreadPool = pythonAsyncThreadPool;
+        PyObject runnerContext = pythonRunnerContext;
+        pythonAsyncThreadPool = null;
+        pythonRunnerContext = null;
 
-            if (pythonRunnerContext != null) {
-                try {
-                    interpreter.invoke(CLOSE_FLINK_RUNNER_CONTEXT, pythonRunnerContext);
-                } finally {
-                    pythonRunnerContext = null;
-                }
+        IOUtils.closeAll(
+                () -> closePythonObject(CLOSE_ASYNC_THREAD_POOL, asyncThreadPool),
+                () -> closePythonObject(CLOSE_FLINK_RUNNER_CONTEXT, runnerContext));
+    }
+
+    private void closePythonObject(String closeFunction, PyObject pythonObject) throws Exception {
+        if (pythonObject != null) {
+            try (pythonObject) {
+                interpreter.invoke(closeFunction, pythonObject);
             }
         }
     }

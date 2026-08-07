@@ -34,8 +34,10 @@ import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
+import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
@@ -51,6 +53,7 @@ import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -67,6 +70,9 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 
 /** Tests for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorTest {
@@ -77,6 +83,48 @@ public class ActionExecutionOperatorTest {
     void resetReconcilableFixtures() {
         TestAgent.resetReconcilableRecoveryFixture();
         TestAgent.resetMixedRecoveryFixture();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void closeAttemptsAllResourcesAndSuppressesLaterFailures() throws Exception {
+        AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
+        ActionStateStore actionStateStore = mock(ActionStateStore.class);
+        ActionExecutionOperator<Object, Object> operator =
+                new ActionExecutionOperator<>(plan, true, null, null, actionStateStore);
+        ResourceCache resourceCache = mock(ResourceCache.class);
+        ActionTaskContextManager contextManager = mock(ActionTaskContextManager.class);
+        PythonBridgeManager pythonBridge = mock(PythonBridgeManager.class);
+        EventRouter<Object, Object> eventRouter = mock(EventRouter.class);
+        RuntimeException resourceFailure = new RuntimeException("resource cache close failed");
+        RuntimeException contextFailure = new RuntimeException("context manager close failed");
+        RuntimeException bridgeFailure = new RuntimeException("python bridge close failed");
+        RuntimeException eventRouterFailure = new RuntimeException("event router close failed");
+        RuntimeException durableFailure = new RuntimeException("durable manager close failed");
+
+        doThrow(resourceFailure).when(resourceCache).close();
+        doThrow(contextFailure).when(contextManager).close();
+        doThrow(bridgeFailure).when(pythonBridge).close();
+        doThrow(eventRouterFailure).when(eventRouter).close();
+        doThrow(durableFailure).when(actionStateStore).close();
+        setPrivateField(operator, "resourceCache", resourceCache);
+        setPrivateField(operator, "contextManager", contextManager);
+        setPrivateField(operator, "pythonBridge", pythonBridge);
+        setPrivateField(operator, "eventRouter", eventRouter);
+
+        assertThatThrownBy(operator::close)
+                .isSameAs(resourceFailure)
+                .hasSuppressedException(contextFailure)
+                .hasSuppressedException(bridgeFailure)
+                .hasSuppressedException(eventRouterFailure)
+                .hasSuppressedException(durableFailure);
+        InOrder closeOrder =
+                inOrder(resourceCache, contextManager, pythonBridge, eventRouter, actionStateStore);
+        closeOrder.verify(resourceCache).close();
+        closeOrder.verify(contextManager).close();
+        closeOrder.verify(pythonBridge).close();
+        closeOrder.verify(eventRouter).close();
+        closeOrder.verify(actionStateStore).close();
     }
 
     @Test
@@ -2350,5 +2398,12 @@ public class ActionExecutionOperatorTest {
         for (int i = 0; i < expectedSize; i++) {
             mailbox.take(TaskMailbox.MIN_PRIORITY).run();
         }
+    }
+
+    private static void setPrivateField(Object target, String fieldName, Object value)
+            throws ReflectiveOperationException {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 }

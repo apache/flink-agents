@@ -31,6 +31,7 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.util.IOUtils;
 
 import javax.annotation.Nullable;
 
@@ -317,15 +318,15 @@ class ActionTaskContextManager implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        if (runnerContext != null) {
-            try {
-                runnerContext.close();
-            } finally {
-                runnerContext = null;
-            }
-        }
-        if (continuationActionExecutor != null) {
-            continuationActionExecutor.close();
-        }
+        RunnerContextImpl runnerContextToClose = runnerContext;
+        ContinuationActionExecutor continuationActionExecutorToClose = continuationActionExecutor;
+        runnerContext = null;
+        continuationActionExecutor = null;
+
+        IOUtils.closeAll(
+                runnerContextToClose == null ? null : runnerContextToClose::close,
+                continuationActionExecutorToClose == null
+                        ? null
+                        : continuationActionExecutorToClose::close);
     }
 }
