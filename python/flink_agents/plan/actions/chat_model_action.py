@@ -290,6 +290,7 @@ async def chat(
     chat_model = cast(
         "BaseChatModelSetup", ctx.get_resource(model, ResourceType.CHAT_MODEL)
     )
+    request_metric_group = ctx.action_metric_group
 
     chat_async = ctx.config.get(AgentExecutionOptions.CHAT_ASYNC)
 
@@ -326,7 +327,8 @@ async def chat(
                 )
 
             if (
-                response.extra_args.get("model_name")
+                request_metric_group is not None
+                and response.extra_args.get("model_name")
                 and response.extra_args.get("promptTokens")
                 and response.extra_args.get("completionTokens")
             ):
@@ -334,6 +336,7 @@ async def chat(
                     response.extra_args["model_name"],
                     response.extra_args["promptTokens"],
                     response.extra_args["completionTokens"],
+                    request_metric_group,
                 )
             if output_schema is not None and len(response.tool_calls) == 0:
                 response = _generate_structured_output(response, output_schema)

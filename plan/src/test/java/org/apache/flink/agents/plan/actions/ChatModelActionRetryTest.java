@@ -128,6 +128,35 @@ class ChatModelActionRetryTest {
     }
 
     @Test
+    void chatRecordsTokenMetricsWithRequestScopedMetricGroup() throws Exception {
+        configureRetryStrategy(0, 0);
+        FlinkAgentsMetricGroup actionA = mock(FlinkAgentsMetricGroup.class);
+        FlinkAgentsMetricGroup actionB = mock(FlinkAgentsMetricGroup.class);
+        when(mockCtx.getActionMetricGroup()).thenReturn(actionA, actionB);
+
+        ChatMessage response =
+                new ChatMessage(
+                        MessageRole.ASSISTANT,
+                        "hello",
+                        Map.of(
+                                "model_name", "provider-model",
+                                "promptTokens", 100L,
+                                "completionTokens", 50L));
+        when(mockChatModel.chat(any(), any(), any())).thenReturn(response);
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                mockCtx);
+
+        verify(mockChatModel).recordTokenMetrics(actionA, "provider-model", 100L, 50L);
+        verify(mockChatModel, never()).recordTokenMetrics(actionB, "provider-model", 100L, 50L);
+    }
+
+    @Test
     void chatRetriesWithExponentialBackoff() throws Exception {
         // 1 second base interval; fail once then succeed -> wait 1s (1 * 2^0)
         configureRetryStrategy(3, 1);
