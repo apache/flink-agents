@@ -36,6 +36,7 @@ import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
@@ -74,6 +75,9 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /** Tests for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorTest {
@@ -523,6 +527,65 @@ public class ActionExecutionOperatorTest {
         Field ltmField = ActionExecutionOperator.class.getDeclaredField("ltm");
         ltmField.setAccessible(true);
         ltmField.set(operator, ltm);
+    }
+
+    private static void replaceOperatorField(
+            ActionExecutionOperator<?, ?> operator, String name, Object value) throws Exception {
+        Field field = ActionExecutionOperator.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(operator, value);
+    }
+
+    /**
+     * A failing component must not strand the ones behind it. This matters most for {@code
+     * resourceCache}, which closes first and aggregates its own failures, and for {@code
+     * pythonBridge}, which releases the embedded Python interpreter.
+     */
+    @Test
+    void closeClosesEveryComponentWhenAnEarlierCloseFails() throws Exception {
+        KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class));
+        testHarness.open();
+        ActionExecutionOperator<Long, Object> operator =
+                (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+        ResourceCache resourceCache = mock(ResourceCache.class);
+        ActionTaskContextManager contextManager = mock(ActionTaskContextManager.class);
+        PythonBridgeManager pythonBridge = mock(PythonBridgeManager.class);
+        EventRouter<Long, Object> eventRouter = mock(EventRouter.class);
+        DurableExecutionManager durableExecManager = mock(DurableExecutionManager.class);
+        doThrow(new IllegalStateException("resource cache close failed"))
+                .when(resourceCache)
+                .close();
+
+        replaceOperatorField(operator, "resourceCache", resourceCache);
+        replaceOperatorField(operator, "contextManager", contextManager);
+        replaceOperatorField(operator, "pythonBridge", pythonBridge);
+        replaceOperatorField(operator, "eventRouter", eventRouter);
+        replaceOperatorField(operator, "durableExecManager", durableExecManager);
+
+        try {
+            assertThatThrownBy(operator::close)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("resource cache close failed");
+
+            // The components behind the failing one are still released.
+            verify(contextManager).close();
+            verify(pythonBridge).close();
+            verify(eventRouter).close();
+            verify(durableExecManager).close();
+        } finally {
+            // Detach the mocks so the harness teardown does not re-trigger the failure.
+            replaceOperatorField(operator, "resourceCache", null);
+            replaceOperatorField(operator, "contextManager", null);
+            replaceOperatorField(operator, "pythonBridge", null);
+            replaceOperatorField(operator, "eventRouter", null);
+            replaceOperatorField(operator, "durableExecManager", null);
+            testHarness.close();
+        }
     }
 
     /** Java-side stand-in for the Python-backed LTM wrapper used to observe the failure path. */

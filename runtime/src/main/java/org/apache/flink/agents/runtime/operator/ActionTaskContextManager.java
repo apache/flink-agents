@@ -32,6 +32,7 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.util.ExceptionUtils;
 
 import javax.annotation.Nullable;
 
@@ -322,15 +323,31 @@ class ActionTaskContextManager implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
+        // Close the continuation executor even when the runner context fails to close. The first
+        // failure is rethrown with the later one suppressed.
+        //
+        // The ladder catches Throwable, not Exception, so a non-Exception Throwable from the
+        // runner context cannot strand the executor's thread pool. Neither type implements
+        // AutoCloseable, so the aggregation is spelled out rather than delegated.
+        Throwable firstFailure = null;
         if (runnerContext != null) {
             try {
                 runnerContext.close();
+            } catch (Throwable t) {
+                firstFailure = t;
             } finally {
                 runnerContext = null;
             }
         }
         if (continuationActionExecutor != null) {
-            continuationActionExecutor.close();
+            try {
+                continuationActionExecutor.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
+        }
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
         }
     }
 }
