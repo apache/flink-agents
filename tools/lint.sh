@@ -74,10 +74,10 @@ install_python_deps() {
     # Try modern pyproject.toml first, then fallback to requirements.txt
     if [ -f "python/pyproject.toml" ]; then
       echo "Using pyproject.toml dependency groups"
-      pip install -e "python[lint]"
+      python3 -m pip install -e "python[lint]"
     else
       echo "Using legacy requirements.txt"
-      pip install -r python/requirements/linter_requirements.txt
+      python3 -m pip install -r python/requirements/linter_requirements.txt
     fi
   fi
 }

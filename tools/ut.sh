@@ -272,8 +272,8 @@ python_tests() {
                 if $verbose; then
                     echo "Using pyproject.toml dependency groups"
                 fi
-                pip install -e ".[test]"
-                pip install apache-flink~=${version}.0
+                python3 -m pip install -e ".[test]"
+                python3 -m pip install apache-flink~=${version}.0
             fi
             if $verbose; then
                 echo "Running tests with pytest..."
