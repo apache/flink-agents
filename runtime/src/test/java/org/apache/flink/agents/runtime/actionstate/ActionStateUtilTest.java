@@ -21,7 +21,9 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.actions.Action;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -114,6 +116,43 @@ public class ActionStateUtilTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> ActionStateUtil.generateKey(key, 1, action, inputEvent, -1));
+    }
+
+    /**
+     * The action-UUID key segment must be derived from the plan-unique action NAME, never from
+     * {@code Action.hashCode()}: the hash folds in {@code Class.hashCode()} (a per-JVM identity
+     * hash), so a hash-derived segment silently changes across process restarts and recovery
+     * lookups can never hit. This pins the derivation so any future change to the key format is a
+     * conscious, reviewed break of cross-restart state compatibility.
+     */
+    @Test
+    public void testActionUUIDSegmentDerivesFromActionName() throws Exception {
+        Action action = new NoOpAction("test-action");
+        String generatedKey =
+                ActionStateUtil.generateKey(
+                        "test-key", 1, action, new InputEvent("test-input"), MAX_PARALLELISM);
+
+        String actionUUIDSegment = ActionStateUtil.parseKey(generatedKey).get(3);
+        assertEquals(
+                UUID.nameUUIDFromBytes("test-action".getBytes(StandardCharsets.UTF_8)).toString(),
+                actionUUIDSegment);
+    }
+
+    /**
+     * Two separately constructed Action instances with the same name — which is what "the same
+     * action, after a JVM restart" looks like — must produce identical state keys, or recovery can
+     * never replay.
+     */
+    @Test
+    public void testSameActionNameYieldsSameKeyAcrossInstances() throws Exception {
+        InputEvent event = new InputEvent("test-input");
+        String first =
+                ActionStateUtil.generateKey(
+                        "test-key", 7, new NoOpAction("stable-name"), event, MAX_PARALLELISM);
+        String second =
+                ActionStateUtil.generateKey(
+                        "test-key", 7, new NoOpAction("stable-name"), event, MAX_PARALLELISM);
+        assertEquals(first, second);
     }
 
     @Test

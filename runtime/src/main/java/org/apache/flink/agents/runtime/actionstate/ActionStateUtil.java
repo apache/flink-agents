@@ -222,8 +222,11 @@ public class ActionStateUtil {
     }
 
     private static String generateUUIDForAction(Action action) throws IOException {
+        // Action.hashCode() folds in JavaFunction's Class[] parameterTypes, and Class.hashCode()
+        // is the per-JVM identity hash — so the hash-derived UUID changes on every process
+        // restart and recovery lookups can never hit. Derive from the plan-unique action name,
+        // which is stable across restarts.
         return String.valueOf(
-                UUID.nameUUIDFromBytes(
-                        String.valueOf(action.hashCode()).getBytes(StandardCharsets.UTF_8)));
+                UUID.nameUUIDFromBytes(action.getName().getBytes(StandardCharsets.UTF_8)));
     }
 }
