@@ -74,10 +74,10 @@ install_python_deps() {
     # Try modern pyproject.toml first, then fallback to requirements.txt
     if [ -f "python/pyproject.toml" ]; then
       echo "Using pyproject.toml dependency groups"
-      pip install -e "python[lint]"
+      python3 -m pip install -e "python[lint]"
     else
       echo "Using legacy requirements.txt"
-      pip install -r python/requirements/linter_requirements.txt
+      python3 -m pip install -r python/requirements/linter_requirements.txt
     fi
   fi
 }
@@ -103,10 +103,10 @@ run_python_lint() {
     # Use traditional approach
     if [[ "$action" == "format" ]]; then
       echo "Executing Python format"
-      ruff check --fix python
+      python3 -m ruff check --fix python
     else
       echo "Executing Python format check"
-      ruff check --no-fix python
+      python3 -m ruff check --no-fix python
     fi
     return $?
   fi

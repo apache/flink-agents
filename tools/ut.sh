@@ -272,17 +272,17 @@ python_tests() {
                 if $verbose; then
                     echo "Using pyproject.toml dependency groups"
                 fi
-                pip install -e ".[test]"
-                pip install apache-flink~=${version}.0
+                python3 -m pip install -e ".[test]"
+                python3 -m pip install apache-flink~=${version}.0
             fi
             if $verbose; then
                 echo "Running tests with pytest..."
             fi
             if $run_e2e; then
-                pytest flink_agents -k "e2e_tests_integration" --reruns 2 --reruns-delay 5 -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                python3 -m pytest flink_agents -k "e2e_tests_integration" --reruns 2 --reruns-delay 5 -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
                 rc1=$?
                 # Arm 2: integration-marked tests; trap exit code 5 as failure.
-                pytest flink_agents -m "integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                python3 -m pytest flink_agents -m "integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
                 rc2=$?
                 if [ $rc2 -eq 5 ]; then rc2=1; fi
                 # Logical-OR aggregation: any nonzero exit on either arm yields testcode=1.
@@ -291,7 +291,7 @@ python_tests() {
                 # on either arm indicates a selector regression).
                 testcode=$((rc1 || rc2))
             else
-                pytest flink_agents -k "not e2e_tests" -m "not integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                python3 -m pytest flink_agents -k "not e2e_tests" -m "not integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
                 testcode=$?
             fi
         fi
