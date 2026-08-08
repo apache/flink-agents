@@ -303,13 +303,35 @@ def check_result(*, result_dir: Path) -> None:
     for record in actual_result:
         records[f"{record.name}.{record.count}"] = record
 
+    assert "alice.2" in records, f"missing alice.2; got {sorted(records)}"
     items = records["alice.2"].items
-    # LLMs may treat different review comments as updates to the same
-    # fact or as distinct facts.
-    assert len(items) == 1
-    item: MemorySetItem = items[-1]
-    assert item.created_at < item.updated_at
-    assert "bananas" in item.value
+    # The extraction model decides whether alice's two facts collapse into a
+    # single item or stay separate, so the item count is not fixed. bob's set
+    # is reported alongside a failure to tell a per-key miss from a store-wide
+    # one.
+    bob_items = records["bob.2"].items if "bob.2" in records else None
+    bob_values = None if bob_items is None else [item.value for item in bob_items]
+    assert items, f"alice's memory set is empty (bob's set: {bob_values})"
+
+    values = [item.value for item in items]
+    # The stored text is the model's paraphrase of the input, so match loosely.
+    assert any("bananas" in value.lower() for value in values), (
+        f"no stored item carries the updated fact: {values}"
+    )
+    # Each partition key is scoped to its own memories, so bob's facts must
+    # never surface in alice's set.
+    leaked = [
+        value
+        for value in values
+        if "swimming" in value.lower() or "vegetarian" in value.lower()
+    ]
+    assert not leaked, f"alice's set contains bob's facts: {values}"
+    # Both timestamps are populated whether an item was created or updated, and
+    # the parser turns an unrecognized format into None rather than raising.
+    assert all(item.created_at and item.updated_at for item in items), (
+        f"stored items are missing timestamps: "
+        f"{[(item.created_at, item.updated_at) for item in items]}"
+    )
 
     # verify async add doesn't block process other key
     assert datetime.fromisoformat(
