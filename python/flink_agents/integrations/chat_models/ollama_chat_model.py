@@ -19,7 +19,8 @@ import uuid
 from typing import Any, Dict, List, Literal, Sequence
 
 from ollama import Client, Message
-from pydantic import Field
+from pydantic import BaseModel, Field
+from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -32,6 +33,23 @@ from flink_agents.integrations.chat_models.chat_model_utils import to_openai_too
 
 DEFAULT_CONTEXT_WINDOW = 2048
 DEFAULT_REQUEST_TIMEOUT = 30.0
+
+
+def _native_format(output_schema: Any) -> Dict[str, Any] | None:
+    """Build the Ollama ``format`` payload for a native structured-output request.
+
+    Returns ``None`` (leaving the request unconstrained) unless the schema is a
+    ``BaseModel`` subclass. A ``RowTypeInfo`` schema is skipped so it keeps the
+    prompt-engineering fallback.
+    """
+    if output_schema is None:
+        return None
+    model = (
+        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    )
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return model.model_json_schema()
 
 
 class OllamaChatModelConnection(BaseChatModelConnection):
@@ -82,6 +100,30 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             self.__client = Client(host=self.base_url, timeout=self.request_timeout)
         return self.__client
 
+    @override
+    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+        """Whether Ollama can constrain generation to a schema for ``effective_model``.
+
+        Always ``True``, and deliberately independent of the argument:
+        schema-constrained decoding is applied by the Ollama server's sampler rather
+        than by the model, so it holds for every model served by a server at or above
+        v0.5.0. There is also no model-level signal to key on. Ollama's model capability
+        set -- completion, tools, insert, vision, embedding, thinking, image, audio --
+        carries nothing schema-related, ``/api/show`` reports exactly that set, and
+        ``/api/version`` reports only a version string. Since a server runs arbitrary
+        local models, any allowlist would be invented, and would report not-capable for
+        models that do work.
+
+        Three deployments break the guarantee, none of them distinguishable from a model
+        name: a server below v0.5.0 rejects the ``format`` field with HTTP 400; Ollama
+        Cloud accepts the request but does not enforce the schema; and the MLX runner
+        accepts the field and drops it.
+
+        Reads no instance state, so capability stays answerable independently of how the
+        connection was configured.
+        """
+        return True
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -91,12 +133,26 @@ class OllamaChatModelConnection(BaseChatModelConnection):
     ) -> ChatMessage:
         """Process a sequence of messages, and return a response.
 
-        A non-``None`` ``output_schema`` is rejected: this connection has no native
-        structured-output translation, so callers stay on the prompt-engineering
-        fallback. Declaring the parameter keeps a caller-supplied schema out of
-        ``**kwargs``, which is forwarded to the provider SDK.
+        Parameters
+        ----------
+        messages : Sequence[ChatMessage]
+            Input message sequence.
+        tools : Optional[List[Tool]]
+            List of tools that can be called by the model.
+        output_schema : OutputSchema | None
+            The schema the response should conform to, or ``None`` for an unconstrained
+            response. A ``BaseModel`` schema is sent as Ollama's native ``format``
+            argument so the server constrains decoding to it; any other schema form,
+            notably a ``RowTypeInfo``, keeps the prompt-engineering fallback.
+        **kwargs : Any
+            Additional parameters passed to the model service (e.g., temperature,
+            num_ctx, etc.)
+
+        Returns:
+        -------
+        ChatMessage
+            Model response message
         """
-        self._reject_unsupported_output_schema(output_schema)
         ollama_messages = self.__convert_to_ollama_messages(messages)
 
         # Convert tool format
@@ -105,6 +161,26 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             ollama_tools = [to_openai_tool(metadata=tool.metadata) for tool in tools]
 
         model_name = kwargs.pop("model")
+
+        # Native structured output applies only for a BaseModel schema; any other schema
+        # form, such as a RowTypeInfo wrapped in OutputSchema, keeps the
+        # prompt-engineering fallback. The schema is a request field of its own rather
+        # than a sampling option, so it is passed as the format argument, which is
+        # omitted altogether when no native translation applies.
+        #
+        # TODO(#912): the requested strategy is not visible here, so this re-check
+        # cannot tell an explicit NATIVE request apart from one that merely resolved to
+        # native. A caller asking for NATIVE on a schema form this branch skips
+        # therefore gets an unconstrained response instead of an error. Once strategy
+        # resolution is wired up, NATIVE must either bypass this capability re-check or
+        # fail explicitly.
+        native_format = None
+        if output_schema is not None and self.supports_native_structured_output(
+            model_name
+        ):
+            native_format = _native_format(output_schema)
+        format_kwargs = {} if native_format is None else {"format": native_format}
+
         response = self.client.chat(
             model=model_name,
             messages=ollama_messages,
@@ -113,6 +189,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             options=kwargs,
             keep_alive=kwargs.get("keep_alive", False),
             think=kwargs.get("think", True),
+            **format_kwargs,
         )
 
         ollama_tool_calls = response.message.tool_calls
