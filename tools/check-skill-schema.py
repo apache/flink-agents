@@ -27,11 +27,12 @@ longer has, and a stale blob SHA misreports which revision the copy describes.
 Only the unversioned "main" contract is checked. The versioned schemas beside it
 pin released refs, so they are expected to differ from the working tree.
 
-Regex-only and dependency-free so it runs on any Python 3 without a build step.
+Regex-only and stdlib-only, hashing through git, so it runs on any Python 3
+without a build step.
 """
 
-import hashlib
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,9 +44,30 @@ MANIFEST = ASSETS / "yaml-contracts.yaml"
 
 
 def blob_sha(path: Path) -> str:
-    """Return the git blob SHA of a file, matching `git hash-object <path>`."""
-    data = path.read_bytes()
-    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+    """Return the blob SHA git would store for a file.
+
+    Hashing the worktree bytes directly is only correct where no clean filter
+    applies. Under core.autocrlf these JSON files are checked out CRLF, and
+    their hash then never matches the LF blob SHA recorded in the manifest, so
+    the check reports a current pin as stale and prescribes a SHA git would not
+    store. Delegating to git applies whatever filter the path's attributes
+    select.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "hash-object", "--", str(path)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        sys.exit("error: git is required to hash the schema files, but is not on PATH")
+    if result.returncode != 0:
+        sys.exit(
+            f"error: git hash-object failed for {path.relative_to(REPO_ROOT)}: "
+            f"{result.stderr.strip()}"
+        )
+    return result.stdout.strip()
 
 
 def recorded_sha(manifest: str) -> str:
