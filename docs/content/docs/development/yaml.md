@@ -278,24 +278,77 @@ Inline action (map) fields:
 |-------|----------|-------------|
 | `name` | yes | Action name (unique within the agent). |
 | `function` | yes | Fully-qualified callable in the form `<module-or-class>:<qualname>`. See [Function references](#function-references). |
-| `trigger_conditions` | yes | List of event types the action listens to. Built-in [event aliases](#event-aliases) (`input`, `chat_request`, ...) or your own event-type strings. |
+| `trigger_conditions` | yes | Non-empty list of strings containing exact event types or condition expressions that return a Boolean. Each string must contain at least one non-whitespace character. Built-in [event aliases](#event-aliases) (`input`, `chat_request`, ...) may be used as complete entries. All entries use OR semantics. |
 | `type` | no | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
 | `config` | no | Free-form configuration map passed to the action at runtime. |
+
+For built-in exact event types, prefer an alias such as `input`. Custom event types may be bare names
+such as `order.created` or `order-created`; each dot-separated segment must start with an ASCII
+letter or underscore and may then contain ASCII letters, digits, underscores, or hyphens. A bare
+identifier or dotted path is treated as an event type, so Boolean attributes need an explicit check
+such as `ready == true` or `attributes.ready == true`.
+
+Inside a condition expression, compare `type` with a built-in constant, for example
+`type == EventType.InputEvent`. Do not use `EventType.InputEvent` alone: it is a value, not a Boolean
+condition.
+
+Every `trigger_conditions` entry must be a string with at least one non-whitespace character. Empty
+or whitespace-only strings are rejected. Quote condition expressions in YAML, including literals
+such as `- "true"` and predicates such as `- "ready == true"`; otherwise YAML may convert a value
+such as `true`, `false`, or `null` to a non-string value before validation.
+
+Hyphenated event types need no extra quoting layer:
+
+```yaml
+trigger_conditions:
+  - order-created
+```
+
+For event types containing other punctuation, or names such as `true` that would otherwise be
+interpreted as condition expressions, wrap the event type itself in quotes. YAML removes its own
+scalar quotes, so the quotes used by trigger-condition classification must be part of the scalar
+value, for example `- "'order:created'"` or `- "'true'"`. The inner text must be non-empty and cannot
+contain whitespace, quotes, backslashes, or control characters.
+
+An unquoted value that starts with `EventType.` is treated as a condition expression. To use such a
+value as an exact event type, preserve the single quotes inside the YAML string, for example
+`- "'EventType.custom'"`.
 
 ```yaml
 actions:
   - name: action1
     function: my_pkg.actions:action1
-    trigger_conditions: [input]
+    trigger_conditions: [input, custom_event]
     type: python
   - name: action2
     function: my_pkg.actions:action2
-    trigger_conditions: [chat_response]
+    trigger_conditions:
+      - "type == EventType.ChatResponseEvent && response.content != ''"
     type: python
   - action3                       # shared action reference (declared at file level)
 ```
 
 Action method signatures are fixed (`(Event, RunnerContext)`), so there is no `parameter_types` field on actions.
+
+Different matching actions all run (fan-out), while one action runs at most once for an event.
+Separate entries are OR branches. To combine a type restriction with an attribute predicate using
+AND, write both checks in one Boolean expression, as shown by `action2` above. Exact type matches run
+before matches from condition expressions.
+
+Expressions expose the event type as `type`, built-in constants under `EventType`, and the event
+attribute envelope under `attributes`. Referenced top-level entries from `Event.attributes` are also
+available directly. Nested values stay under their top-level attribute path and are never flattened.
+For an input event whose attributes are `{input: {status: "ok"}}`, both `input.status` and
+`attributes.input.status` are valid, while bare `status` is not. Other event payloads follow the same
+rule, for example `response.content`. The framework variables `type`, `id`, `EventType`, and
+`attributes` take precedence over attributes with the same names. Use the `attributes` namespace to
+access colliding attributes.
+
+The Java plan implementation defines how condition expressions, which use Common Expression
+Language (CEL), are validated and evaluated. Java validates them when it builds the plan; a Python
+job sends its serialized plan to the same Java validation during `apply()`.
+For trigger-condition examples, supported macros, and detailed attribute rules, see
+[Action trigger conditions]({{< ref "docs/development/workflow_agent#action" >}}).
 
 ### Declaring multiple agents in one file
 
@@ -498,7 +551,7 @@ When `type:` resolves to the **opposite** language of the loader, the loader bui
 
 ### Provider aliases
 
-For `clazz:` on resource descriptors and for event names in `trigger_conditions:`, you can use a short alias instead of a fully-qualified class path.
+For `clazz:` on resource descriptors and for complete event-type entries in `trigger_conditions:`, you can use a short alias instead of a fully-qualified class path. Event alias replacement is an exact complete-entry lookup: `input` is replaced, while `type == input`, `attributes.kind == 'input'`, and the quoted event type `'input'` remain unchanged.
 
 #### Event aliases
 

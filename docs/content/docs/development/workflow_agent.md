@@ -26,7 +26,12 @@ under the License.
 
 A workflow style agent in Flink-Agents is an agent whose reasoning and behavior are organized as a directed workflow of modular steps, called actions, connected by events. This design is inspired by the need to orchestrate complex, multi-stage tasks in a transparent, extensible, and data-centric way, leveraging Apache Flink's streaming architecture.
 
-In Flink-Agents, a workflow agent is defined as a class that inherits from the `Agent` base class. The agent's logic is expressed as a set of actions, each of which is a function decorated with `@action(EventType.X)` in python (or a method annotated with `@Action(EventType.X)` in java). Actions consume events, perform reasoning or tool calls, and emit new events, which may trigger downstream actions. This event-driven workflow forms a directed cyclic graph of computation, where each node is an action and each edge is an event type.
+In Flink-Agents, a workflow agent is a class that inherits from the `Agent` base class. Its logic is
+a set of actions. In Python, use `@action(...)` on a function; in Java, use `@Action(...)` on a
+method. Each action declares one or more trigger conditions, which may be exact event types or
+condition expressions. Actions consume events, perform reasoning or tool calls, and emit new events
+that may trigger other actions. This event-driven workflow forms a directed graph that may contain
+cycles. Each node is an action, and each edge represents an event flow between actions.
 
 A workflow agent is well-suited for scenarios where the solution requires explicit orchestration, branching, or multi-step reasoning, such as data enrichment, multi-tool pipelines, or complex business logic.
 
@@ -230,12 +235,21 @@ public class ReviewAnalysisAgent extends Agent {
 
 ## Action
 
-An action is a piece of code that can be executed. Each action listens to at least one type of event. When an event of the listening type occurs, the action will be triggered. An action can also generate new events, to trigger other actions.
+Each action has one or more trigger conditions and runs when any of them matches an event. A trigger
+condition is either an exact event type or a condition expression that evaluates to `true` or
+`false`. Condition expressions use [Common Expression Language (CEL)](https://cel.dev/), a safe
+language for checking event data. Multiple trigger conditions use OR semantics. To require both an
+event type and an attribute predicate, put both checks in the same expression.
 
+Every matching action runs (fan-out), but each action runs at most once per event. For each action, an
+exact event-type match takes precedence and skips its condition expressions. For an action without an
+exact match, condition expressions are evaluated in declaration order until one matches.
 
-To declare an action in Agent, user can use `@action` to decorate a function of Agent class in python (or annotate a method of Agent class in java), and declare the listened event types as decorator/annotation parameters. 
-
-The decorated/annotated function signature should be `(Event, RunnerContext) -> None`. In Python, actions can also be defined as `async def` when using async execution (see [Async Execution](#async-execution)).
+Use `@action(*trigger_conditions, target=None)` in Python or `@Action({...})` in Java. The action
+function must accept `(Event, RunnerContext)` and should not return a value (`None` in Python or
+`void` in Java). Use `RunnerContext` to send events instead. A native Java action must be
+`public static`. Python actions can also be defined as `async def` when using async execution (see
+[Async Execution](#async-execution)).
 
 {{< tabs "Action Function" >}}
 
@@ -264,9 +278,142 @@ public class ReviewAnalysisAgent extends Agent {
 
 {{< /tabs >}}
 
-In the function, user can also send new events, to trigger other actions, or output the data.
+### Trigger Condition Syntax
 
-**Trigger another action** — send a built-in or custom event that another action listens to:
+Use `EventType` constants for built-in exact event types. Inside a condition expression, compare
+`type` with the constant, for example `type == EventType.InputEvent`. `EventType.InputEvent` by
+itself is a value, not a condition.
+
+A bare identifier or dotted path is treated as an exact event type, so check an attribute explicitly,
+for example `ready == true` or `attributes.ready == true`. An unquoted value that starts with
+`EventType.` is treated as a condition expression. To use such a value as an exact event type, quote
+the whole name, for example `'EventType.custom'`.
+
+Custom event types may be bare names such as `order.created` or `order-created`. Each dot-separated
+segment must start with an ASCII letter or underscore and may then contain ASCII letters, digits,
+underscores, or hyphens. Quote names that contain other punctuation or would otherwise be treated as
+condition expressions, for example `'order:created'` or `'true'`. A quoted event type must be
+non-empty and cannot contain whitespace, quotes, backslashes, or control characters.
+
+### Trigger Condition Examples
+
+Multiple values use OR semantics. Entries may use `EventType` constants, event-class
+`EVENT_TYPE` constants, custom event strings, or Boolean expressions:
+
+```java
+@Action({
+        EventType.InputEvent,
+        ChatResponseEvent.EVENT_TYPE,
+        "MyCustomEvent",
+        "attributes.urgent == true"})
+public static void handleAnyTrigger(Event event, RunnerContext ctx) {}
+```
+
+In the example above, an input event matches even when `urgent` is false because separate entries
+are OR branches. Put type and attribute checks in one expression when both are required:
+
+```java
+@Action("type == EventType.InputEvent && input.score > 5 && input.ip.name == 'Chinese'")
+public static void handleQualifiedInput(Event event, RunnerContext ctx) {}
+```
+
+Dots and hyphens are valid in a bare exact event type. Quote the event type when its name contains
+other punctuation or would otherwise be interpreted as a condition expression:
+
+```java
+@Action("com.example.order.created")
+public static void handleDottedOrderCreated(Event event, RunnerContext ctx) {}
+
+@Action("order-created")
+public static void handleOrderCreated(Event event, RunnerContext ctx) {}
+
+@Action("'order:created'")
+public static void handleColonOrderCreated(Event event, RunnerContext ctx) {}
+```
+
+Actions can also be registered programmatically:
+
+{{< tabs "Programmatic Action" >}}
+
+{{< tab "Python" >}}
+```python
+agent.add_action(
+    "process_event",
+    [
+        EventType.InputEvent,
+        "type == EventType.ChatResponseEvent && response.content != ''",
+    ],
+    process_event,
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class ProgrammaticAgent extends Agent {
+    public ProgrammaticAgent() throws NoSuchMethodException {
+        addAction(
+                new String[] {
+                    EventType.InputEvent,
+                    "type == EventType.ChatResponseEvent && response.content != ''"
+                },
+                ProgrammaticAgent.class.getMethod(
+                        "processEvent", Event.class, RunnerContext.class));
+    }
+
+    public static void processEvent(Event event, RunnerContext ctx) {
+        // Handle either matching event.
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+### Condition Data
+
+Condition expressions are written in CEL and evaluated by the Java runtime for both Java and Python
+actions. The runtime provides these framework variables:
+
+- `type`: the event type string.
+- `id`: the event ID as a string.
+- `EventType`: the built-in event-type constants.
+- `attributes`: the event's attribute map.
+
+Referenced top-level attributes are also available as bare variables, so `score > 80` and
+`attributes.score > 80` refer to the same field. All four framework variables take precedence over
+attributes with the same names. Use the `attributes` namespace, such as `attributes["type"]` or
+`attributes["id"]`, to access colliding attribute keys.
+
+Nested values are not flattened. For an input event whose attributes are
+`{input: {status: "ok"}}`, use `input.status` or `attributes.input.status`; bare `status` is not
+available. Other event payloads keep their top-level envelope, for example `response.content`.
+
+Use a literal index for top-level keys containing dots, such as `attributes["a.b.c"]`, and test
+static membership with `"a.b.c" in attributes`. Dynamic access at the root, such as
+`attributes[key]`, and expressions over the whole `attributes` map are not supported. Dynamic access
+inside an already selected top-level attribute still uses standard CEL map/list access within a
+condition expression.
+
+A present attribute whose value is `null` remains `null`; a missing attribute remains absent, so use
+`has(attributes.field)` to test presence before reading an optional field. Strings remain strings
+even when they look like JSON. To match nested data, send a structured map/list value instead of a
+JSON-encoded string. Decimal values and integers outside the signed 64-bit range are evaluated as
+doubles and may lose precision.
+
+The only CEL macro supported in condition expressions is `has(...)`. The standard comprehension
+macros `exists`, `exists_one`, `all`, `filter`, and `map` are not supported.
+
+Java validates trigger-condition classification and CEL syntax when it builds the agent plan. Python
+first checks the list shape, then sends the serialized plan to the same Java validation during
+`apply()`. The Java runtime performs the final type check and evaluates conditions, so Java, Python,
+and YAML plans share one contract for condition expressions rather than separate language-specific
+evaluators.
+
+An action can also send events to trigger other actions or emit output downstream.
+
+**Trigger another action** — send a built-in or custom event that matches another action's trigger
+conditions:
 
 {{< tabs "Trigger Another Action" >}}
 
@@ -299,7 +446,7 @@ public static void processInput(Event event, RunnerContext ctx) throws Exception
 
 {{< tab "Python" >}}
 ```python
-@action(ChatResponseEvent.EVENT_TYPE)
+@action(EventType.ChatResponseEvent)
 @staticmethod
 def emit_output(event: Event, ctx: RunnerContext) -> None:
     # output data to downstream
@@ -320,12 +467,14 @@ public static void emitOutput(Event event, RunnerContext ctx) {
 {{< /tabs >}}
 
 {{< hint info >}}
-An `OutputEvent` is collected and emitted to the agent's downstream **immediately**, bypassing
-action routing, while other events (such as `ChatRequestEvent`) are routed to the actions that
-listen for them. Sending a `ChatRequestEvent` and an `OutputEvent` from the same action is valid
-API usage, but it produces both an immediate output and, once the chat response is handled, a
-later model-based output. For the normal chat request/response workflow, emit the `OutputEvent`
-from the action that handles the `ChatResponseEvent`, as shown above.
+After the current action finishes, an `OutputEvent` is emitted directly to the agent's downstream,
+bypassing action routing. Other events (such as `ChatRequestEvent`) go through action matching and
+trigger every action whose trigger conditions match. Although the API accepts `OutputEvent` as a
+trigger condition, runtime dispatch bypasses action matching for this event, so an action using that
+trigger condition does not run. Sending a `ChatRequestEvent` and an `OutputEvent` from the same
+action is valid API usage, but it produces both a direct downstream output and, once the chat
+response is handled, a later model-based output. For the normal chat request/response workflow, emit
+the `OutputEvent` from the action that handles the `ChatResponseEvent`, as shown above.
 {{< /hint >}}
 
 ### Durable Execution
@@ -580,12 +729,17 @@ public class MyAgent extends Agent {
 
 ## Event
 
-Events are JSON-serializable messages passed between actions. Every event has a `type` string used for routing and an `attributes` map that carries the payload. A single event may trigger multiple actions if they are all listening to its type.
+Events are JSON-serializable messages passed between actions. Every event has a `type` string and an
+`attributes` map that carries its payload. Action routing can match the exact event type or evaluate
+a condition expression against the event data. One event may trigger multiple actions.
 
 ### Special Events
 
-* `InputEvent`: Generated by the framework, carrying an input data record that arrives at the agent in its `input` attribute. Actions listening to `InputEvent` are the entry points of the agent.
-* `OutputEvent`: The framework listens to `OutputEvent` and converts its `output` attribute into outputs of the agent.
+* `InputEvent`: Generated by the framework when an input record arrives. The record is available in
+  the event's `input` attribute. Actions whose trigger conditions match an `InputEvent` are the
+  agent's entry points.
+* `OutputEvent`: When an action sends this event, the framework emits its `output` attribute
+  downstream as an agent output. It bypasses action matching.
 
 ### Unified Event
 
