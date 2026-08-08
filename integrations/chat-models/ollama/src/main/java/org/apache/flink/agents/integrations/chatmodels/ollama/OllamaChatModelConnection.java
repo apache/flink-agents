@@ -20,6 +20,13 @@ package org.apache.flink.agents.integrations.chatmodels.ollama;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.victools.jsonschema.generator.Option;
+import com.github.victools.jsonschema.generator.OptionPreset;
+import com.github.victools.jsonschema.generator.SchemaGenerator;
+import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
+import com.github.victools.jsonschema.generator.SchemaVersion;
+import com.github.victools.jsonschema.generator.impl.PropertySortUtils;
 import io.github.ollama4j.exceptions.RoleNotFoundException;
 import io.github.ollama4j.models.chat.*;
 import io.github.ollama4j.models.request.OllamaChatEndpointCaller;
@@ -173,39 +180,62 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         }
     }
 
+    /**
+     * Whether Ollama can constrain generation to a schema for {@code effectiveModel}.
+     *
+     * <p>Always {@code true}, and deliberately independent of the argument: schema-constrained
+     * decoding is applied by the Ollama server's sampler rather than by the model, so it holds for
+     * every model served by a server at or above v0.5.0. There is also no model-level signal to key
+     * on. Ollama's model capability set — completion, tools, insert, vision, embedding, thinking,
+     * image, audio — carries nothing schema-related, {@code /api/show} reports exactly that set,
+     * and {@code /api/version} reports only a version string. Since a server runs arbitrary local
+     * models, any allowlist would be invented, and would report not-capable for models that do
+     * work.
+     *
+     * <p>Three deployments break the guarantee, none of them distinguishable from a model name: a
+     * server below v0.5.0 rejects the {@code format} field with HTTP 400; Ollama Cloud accepts the
+     * request but does not enforce the schema; and the MLX runner accepts the field and drops it.
+     *
+     * <p>Reads no instance state, so capability stays answerable independently of how the
+     * connection was configured.
+     */
+    @Override
+    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+        return true;
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
-        try {
-            // convert think to think mode.
-            final Object think = modelParams.getOrDefault("think", true);
-            ThinkMode thinkMode = ThinkMode.ENABLED;
-            for (ThinkMode mode : ThinkMode.values()) {
-                if (mode.getValue().equals(think)) {
-                    thinkMode = mode;
-                    break;
-                }
-            }
+        return doChat(messages, tools, modelParams, null);
+    }
 
+    /**
+     * Translates {@code outputSchema} into Ollama's native {@code format} field when it is a POJO
+     * {@link Class}. Any other schema form — notably a {@code RowTypeInfo} wrapped in {@code
+     * OutputSchema} — has no native translation here and leaves the request unconstrained, so that
+     * the prompt-engineering fallback still governs the response.
+     */
+    @Override
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
+        return doChat(messages, tools, modelParams, outputSchema);
+    }
+
+    private ChatMessage doChat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
+        try {
             final boolean extractReasoning =
                     (boolean) modelParams.getOrDefault("extract_reasoning", true);
 
-            final List<Tools.Tool> ollamaTools = this.convertToOllamaTools(tools);
-            final List<OllamaChatMessage> ollamaChatMessages =
-                    messages.stream()
-                            .map(this::convertToOllamaChatMessages)
-                            .collect(Collectors.toList());
-
-            final String modelName = (String) modelParams.get("model");
             final OllamaChatRequest chatRequest =
-                    OllamaChatRequest.builder()
-                            .withMessages(ollamaChatMessages)
-                            .withModel(modelName)
-                            .withThinking(thinkMode)
-                            .withUseTools(false)
-                            .build();
-
-            chatRequest.setTools(ollamaTools);
+                    buildRequest(messages, tools, modelParams, outputSchema);
             final OllamaChatResult ollamaChatResult = this.caller.callSync(chatRequest);
             final OllamaChatResponseModel ollamaChatResponse = ollamaChatResult.getResponseModel();
             final OllamaChatMessage ollamaChatMessage = ollamaChatResponse.getMessage();
@@ -225,6 +255,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
             }
 
             // Stash token usage if model name is available
+            final String modelName = (String) modelParams.get("model");
             if (modelName != null && !modelName.isBlank()) {
                 Integer promptTokens = ollamaChatResponse.getPromptEvalCount();
                 Integer completionTokens = ollamaChatResponse.getEvalCount();
@@ -239,6 +270,100 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    // Package-private so the request body (including the native format) can be asserted without
+    // issuing a live call through the Ollama endpoint caller.
+    OllamaChatRequest buildRequest(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
+        // convert think to think mode.
+        final Object think = modelParams.getOrDefault("think", true);
+        ThinkMode thinkMode = ThinkMode.ENABLED;
+        for (ThinkMode mode : ThinkMode.values()) {
+            if (mode.getValue().equals(think)) {
+                thinkMode = mode;
+                break;
+            }
+        }
+
+        final List<Tools.Tool> ollamaTools = this.convertToOllamaTools(tools);
+        final List<OllamaChatMessage> ollamaChatMessages =
+                messages.stream()
+                        .map(this::convertToOllamaChatMessages)
+                        .collect(Collectors.toList());
+
+        final String modelName = (String) modelParams.get("model");
+        final OllamaChatRequest chatRequest =
+                OllamaChatRequest.builder()
+                        .withMessages(ollamaChatMessages)
+                        .withModel(modelName)
+                        .withThinking(thinkMode)
+                        .withUseTools(false)
+                        .build();
+
+        chatRequest.setTools(ollamaTools);
+
+        // Native structured output applies only for a POJO Class schema; any other schema form,
+        // such as a RowTypeInfo wrapped in OutputSchema, keeps the prompt-engineering fallback.
+        // The schema is a request field of its own rather than a sampling option, so it is set as
+        // the request's format, which is left unset when no native translation applies and is then
+        // omitted from the serialized body rather than serialized as null.
+        //
+        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
+        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
+        // for NATIVE on a schema form this branch skips therefore gets an unconstrained response
+        // instead of an error. Once strategy resolution is wired up, NATIVE must either bypass
+        // this capability re-check or fail explicitly.
+        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+            chatRequest.setFormat(toNativeFormat((Class<?>) outputSchema));
+        }
+
+        return chatRequest;
+    }
+
+    // Derives the JSON schema Ollama's format field expects from a POJO class. Every setting below
+    // addresses a concrete way the generated schema otherwise fails to constrain generation:
+    //
+    //   - DRAFT_2020_12 is the draft pydantic generates on the Python side, so a schema derived
+    //     from a Java class states the same contract in the same dialect.
+    //   - The PLAIN_JSON preset keeps generation to fields. Without a preset, getters surface as
+    //     properties of their own, named after the accessor call, e.g. "getSummary()".
+    //   - MAP_VALUES_AS_ADDITIONAL_PROPERTIES gives a Map its value schema. Without it the map
+    //     admits any value, and a model does emit values that the declared value type then fails
+    //     to deserialize.
+    //   - Sorting fields before methods and applying no further comparison leaves properties in
+    //     declaration order. Ollama's grammar fixes generation order to the order the schema
+    //     declares its properties, so the default alphabetical order would condition generation on
+    //     an order the class does not read in.
+    //   - The required check marks every field required except an Optional one. The default marks
+    //     nothing required, which lets a model omit fields at will, while marking everything
+    //     required would force the fields a caller declared omissible.
+    //
+    // Two settings are deliberately absent:
+    //
+    //   - FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT gains nothing: Ollama's grammar already
+    //     refuses a key the schema does not declare, even one a prompt explicitly asks for, and
+    //     only an explicit additionalProperties: true admits one.
+    //   - DEFINITION_FOR_MAIN_SCHEMA lets a recursive type generate a schema, but when the
+    //     document root is a $ref and one $defs entry references another, the server drops the
+    //     grammar and returns a free-form object. Any nested type used twice is extracted into
+    //     $defs, so enabling it would silently unconstrain a common shape to rescue a rare one. A
+    //     recursive type instead fails loudly, with HTTP 400 from the server.
+    private static ObjectNode toNativeFormat(Class<?> schemaClass) {
+        SchemaGeneratorConfigBuilder configBuilder =
+                new SchemaGeneratorConfigBuilder(
+                                SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
+                        .with(Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES);
+        configBuilder
+                .forTypesInGeneral()
+                .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
+        configBuilder
+                .forFields()
+                .withRequiredCheck(field -> !Optional.class.equals(field.getRawMember().getType()));
+        return new SchemaGenerator(configBuilder.build()).generateSchema(schemaClass);
     }
 
     /**
