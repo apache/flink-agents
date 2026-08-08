@@ -103,10 +103,10 @@ run_python_lint() {
     # Use traditional approach
     if [[ "$action" == "format" ]]; then
       echo "Executing Python format"
-      ruff check --fix python
+      python3 -m ruff check --fix python
     else
       echo "Executing Python format check"
-      ruff check --no-fix python
+      python3 -m ruff check --no-fix python
     fi
     return $?
   fi
