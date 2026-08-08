@@ -641,6 +641,8 @@ Because Pydantic models are easier to author and evolve than raw JSON Schema, th
 python -m flink_agents.api.yaml.specs > docs/yaml-schema.json
 ```
 
+The coding-agent skill under `dev/agent-skills/` bundles a copy of the schema so it can work offline, so refresh that copy in the same change. `python3 tools/check-skill-schema.py` reports whether it is current and prints the two edits needed when it is not.
+
 Continuous tests then verify cross-runtime consistency:
 
 - the JSON Schema exported by the Pydantic specs matches the checked-in `docs/yaml-schema.json`;
