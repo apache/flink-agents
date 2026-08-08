@@ -20,14 +20,22 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.junit.jupiter.api.Test;
+import pemja.core.PythonInterpreter;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /** Contract tests for {@link PythonBridgeManager}. */
 class PythonBridgeManagerTest {
@@ -58,5 +66,93 @@ class PythonBridgeManagerTest {
             assertThat(bridge.getPythonActionExecutor()).isNull();
             assertThat(bridge.getPythonRunnerContext()).isNull();
         }
+    }
+
+    /**
+     * A failing action executor must not strand the interpreter or the environment manager: both
+     * hold native Python state that leaks for the lifetime of the TaskManager if never closed.
+     */
+    @Test
+    void closeReleasesInterpreterAndEnvironmentWhenActionExecutorFails() throws Exception {
+        PythonBridgeManager bridge = new PythonBridgeManager();
+        PythonActionExecutor actionExecutor = mock(PythonActionExecutor.class);
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonEnvironmentManager environmentManager = mock(PythonEnvironmentManager.class);
+        doThrow(new IllegalStateException("action executor close failed"))
+                .when(actionExecutor)
+                .close();
+
+        setField(bridge, "pythonActionExecutor", actionExecutor);
+        setField(bridge, "pythonInterpreter", interpreter);
+        setField(bridge, "pythonEnvironmentManager", environmentManager);
+
+        assertThatThrownBy(bridge::close)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("action executor close failed");
+
+        verify(interpreter).close();
+        verify(environmentManager).close();
+    }
+
+    /** The first failure is rethrown and any later one is attached as suppressed, never dropped. */
+    @Test
+    void closeReportsFirstFailureWithLaterOnesSuppressed() throws Exception {
+        PythonBridgeManager bridge = new PythonBridgeManager();
+        PythonActionExecutor actionExecutor = mock(PythonActionExecutor.class);
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonEnvironmentManager environmentManager = mock(PythonEnvironmentManager.class);
+        doThrow(new IllegalStateException("action executor close failed"))
+                .when(actionExecutor)
+                .close();
+        doThrow(new IllegalStateException("environment manager close failed"))
+                .when(environmentManager)
+                .close();
+
+        setField(bridge, "pythonActionExecutor", actionExecutor);
+        setField(bridge, "pythonInterpreter", interpreter);
+        setField(bridge, "pythonEnvironmentManager", environmentManager);
+
+        assertThatThrownBy(bridge::close)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("action executor close failed")
+                .satisfies(
+                        thrown ->
+                                assertThat(thrown.getSuppressed())
+                                        .extracting(Throwable::getMessage)
+                                        .containsExactly("environment manager close failed"));
+
+        verify(interpreter).close();
+    }
+
+    /**
+     * Pins the handler to {@code Throwable}. A non-{@code Exception} failure from the action
+     * executor must still release the native Python state; a {@code catch (Exception)} ladder or
+     * {@code IOUtils.closeAll} would stop here and leak it.
+     */
+    @Test
+    void closeReleasesInterpreterAndEnvironmentWhenActionExecutorThrowsError() throws Exception {
+        PythonBridgeManager bridge = new PythonBridgeManager();
+        PythonActionExecutor actionExecutor = mock(PythonActionExecutor.class);
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonEnvironmentManager environmentManager = mock(PythonEnvironmentManager.class);
+        OutOfMemoryError failure = new OutOfMemoryError("action executor close failed");
+        doThrow(failure).when(actionExecutor).close();
+
+        setField(bridge, "pythonActionExecutor", actionExecutor);
+        setField(bridge, "pythonInterpreter", interpreter);
+        setField(bridge, "pythonEnvironmentManager", environmentManager);
+
+        // The Error reaches the caller unchanged rather than wrapped in an Exception.
+        assertThatThrownBy(bridge::close).isSameAs(failure);
+
+        verify(interpreter).close();
+        verify(environmentManager).close();
+    }
+
+    private static void setField(PythonBridgeManager bridge, String name, Object value)
+            throws Exception {
+        Field field = PythonBridgeManager.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(bridge, value);
     }
 }

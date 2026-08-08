@@ -25,6 +25,7 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
+import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -40,6 +41,7 @@ import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -50,12 +52,43 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
 /** Contract tests for {@link ActionTaskContextManager}. */
 class ActionTaskContextManagerTest {
+
+    /**
+     * A failing runner context must not strand the continuation executor, which owns the async
+     * thread pool and would otherwise keep non-daemon threads alive after the operator closes.
+     */
+    @Test
+    void closeClosesContinuationExecutorWhenRunnerContextFails() throws Exception {
+        ActionTaskContextManager mgr = new ActionTaskContextManager(1);
+        RunnerContextImpl failingContext = mock(RunnerContextImpl.class);
+        ContinuationActionExecutor continuationExecutor = mock(ContinuationActionExecutor.class);
+        doThrow(new IllegalStateException("runner context close failed"))
+                .when(failingContext)
+                .close();
+
+        setField(mgr, "runnerContext", failingContext);
+        setField(mgr, "continuationActionExecutor", continuationExecutor);
+
+        assertThatThrownBy(mgr::close)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("runner context close failed");
+
+        verify(continuationExecutor).close();
+    }
+
+    private static void setField(ActionTaskContextManager mgr, String name, Object value)
+            throws Exception {
+        Field field = ActionTaskContextManager.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(mgr, value);
+    }
 
     @Test
     void perTaskMapsAreIsolatedAcrossPutGetRemove() throws Exception {

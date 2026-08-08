@@ -48,11 +48,13 @@ import org.apache.flink.agents.plan.actions.ToolCallAction;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
+import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
+import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
@@ -90,6 +92,9 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /** Tests for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorTest {
@@ -613,6 +618,65 @@ public class ActionExecutionOperatorTest {
         Field ltmField = ActionExecutionOperator.class.getDeclaredField("ltm");
         ltmField.setAccessible(true);
         ltmField.set(operator, ltm);
+    }
+
+    private static void replaceOperatorField(
+            ActionExecutionOperator<?, ?> operator, String name, Object value) throws Exception {
+        Field field = ActionExecutionOperator.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(operator, value);
+    }
+
+    /**
+     * A failing component must not strand the ones behind it. This matters most for {@code
+     * resourceCache}, which closes first and aggregates its own failures, and for {@code
+     * pythonBridge}, which releases the embedded Python interpreter.
+     */
+    @Test
+    void closeClosesEveryComponentWhenAnEarlierCloseFails() throws Exception {
+        KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class));
+        testHarness.open();
+        ActionExecutionOperator<Long, Object> operator =
+                (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+        ResourceCache resourceCache = mock(ResourceCache.class);
+        ActionTaskContextManager contextManager = mock(ActionTaskContextManager.class);
+        PythonBridgeManager pythonBridge = mock(PythonBridgeManager.class);
+        EventLogWriter eventLogWriter = mock(EventLogWriter.class);
+        DurableExecutionManager durableExecManager = mock(DurableExecutionManager.class);
+        doThrow(new IllegalStateException("resource cache close failed"))
+                .when(resourceCache)
+                .close();
+
+        replaceOperatorField(operator, "resourceCache", resourceCache);
+        replaceOperatorField(operator, "contextManager", contextManager);
+        replaceOperatorField(operator, "pythonBridge", pythonBridge);
+        replaceOperatorField(operator, "eventLogWriter", eventLogWriter);
+        replaceOperatorField(operator, "durableExecManager", durableExecManager);
+
+        try {
+            assertThatThrownBy(operator::close)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("resource cache close failed");
+
+            // The components behind the failing one are still released.
+            verify(contextManager).close();
+            verify(pythonBridge).close();
+            verify(eventLogWriter).close();
+            verify(durableExecManager).close();
+        } finally {
+            // Detach the mocks so the harness teardown does not re-trigger the failure.
+            replaceOperatorField(operator, "resourceCache", null);
+            replaceOperatorField(operator, "contextManager", null);
+            replaceOperatorField(operator, "pythonBridge", null);
+            replaceOperatorField(operator, "eventLogWriter", null);
+            replaceOperatorField(operator, "durableExecManager", null);
+            testHarness.close();
+        }
     }
 
     /** Java-side stand-in for the Python-backed LTM wrapper used to observe the failure path. */

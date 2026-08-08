@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /** Execute the corresponding Python action in the agent. */
-public class PythonActionExecutor {
+public class PythonActionExecutor implements AutoCloseable {
 
     private static final String PYTHON_IMPORTS =
             "from flink_agents.plan import function\n"
@@ -201,6 +201,7 @@ public class PythonActionExecutor {
         return (boolean) ((Object[]) invokeResult)[0];
     }
 
+    @Override
     public void close() throws Exception {
         if (interpreter != null) {
             if (pythonAsyncThreadPool != null) {

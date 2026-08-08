@@ -36,6 +36,7 @@ import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.python.env.PythonDependencyInfo;
+import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pemja.core.PythonInterpreter;
@@ -315,14 +316,29 @@ class PythonBridgeManager implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        if (pythonActionExecutor != null) {
-            pythonActionExecutor.close();
+        // Close every component even when an earlier one fails, so a failing action executor
+        // cannot leak the interpreter or the environment manager. The first failure is
+        // rethrown with the later ones suppressed.
+        //
+        // The ladder catches Throwable, not Exception, and IOUtils.closeAll is deliberately not
+        // used: both stop at the first non-Exception Throwable without closing what follows, and
+        // what follows here is the native Python state.
+        Throwable firstFailure = null;
+        for (AutoCloseable closeable :
+                new AutoCloseable[] {
+                    pythonActionExecutor, pythonInterpreter, pythonEnvironmentManager
+                }) {
+            if (closeable == null) {
+                continue;
+            }
+            try {
+                closeable.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
         }
-        if (pythonInterpreter != null) {
-            pythonInterpreter.close();
-        }
-        if (pythonEnvironmentManager != null) {
-            pythonEnvironmentManager.close();
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
         }
     }
 }
