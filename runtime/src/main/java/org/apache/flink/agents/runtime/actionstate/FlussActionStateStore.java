@@ -490,14 +490,31 @@ public class FlussActionStateStore implements ActionStateStore {
 
     @Override
     public void close() throws Exception {
+        Exception firstException = null;
         try {
             if (table != null) {
                 table.close();
             }
+        } catch (Exception e) {
+            firstException = e;
         } finally {
+            // Must stay a finally: a Throwable that is not an Exception skips the catch above, and
+            // only a finally still closes the connection on the way out. The rethrow below stays
+            // outside this block so a connection failure cannot displace such a Throwable.
             if (connection != null) {
-                connection.close();
+                try {
+                    connection.close();
+                } catch (Exception e) {
+                    if (firstException == null) {
+                        firstException = e;
+                    } else {
+                        firstException.addSuppressed(e);
+                    }
+                }
             }
+        }
+        if (firstException != null) {
+            throw firstException;
         }
     }
 
