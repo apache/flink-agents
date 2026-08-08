@@ -180,36 +180,16 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
-        try {
-            // convert think to think mode.
-            final Object think = modelParams.getOrDefault("think", true);
-            ThinkMode thinkMode = ThinkMode.ENABLED;
-            for (ThinkMode mode : ThinkMode.values()) {
-                if (mode.getValue().equals(think)) {
-                    thinkMode = mode;
-                    break;
-                }
-            }
+        return doChat(messages, tools, modelParams);
+    }
 
+    private ChatMessage doChat(
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        try {
             final boolean extractReasoning =
                     (boolean) modelParams.getOrDefault("extract_reasoning", true);
 
-            final List<Tools.Tool> ollamaTools = this.convertToOllamaTools(tools);
-            final List<OllamaChatMessage> ollamaChatMessages =
-                    messages.stream()
-                            .map(this::convertToOllamaChatMessages)
-                            .collect(Collectors.toList());
-
-            final String modelName = (String) modelParams.get("model");
-            final OllamaChatRequest chatRequest =
-                    OllamaChatRequest.builder()
-                            .withMessages(ollamaChatMessages)
-                            .withModel(modelName)
-                            .withThinking(thinkMode)
-                            .withUseTools(false)
-                            .build();
-
-            chatRequest.setTools(ollamaTools);
+            final OllamaChatRequest chatRequest = buildRequest(messages, tools, modelParams);
             final OllamaChatResult ollamaChatResult = this.caller.callSync(chatRequest);
             final OllamaChatResponseModel ollamaChatResponse = ollamaChatResult.getResponseModel();
             final OllamaChatMessage ollamaChatMessage = ollamaChatResponse.getMessage();
@@ -229,6 +209,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
             }
 
             // Stash token usage if model name is available
+            final String modelName = (String) modelParams.get("model");
             if (modelName != null && !modelName.isBlank()) {
                 Integer promptTokens = ollamaChatResponse.getPromptEvalCount();
                 Integer completionTokens = ollamaChatResponse.getEvalCount();
@@ -243,6 +224,39 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    // Package-private so the request body can be asserted without issuing a live call through the
+    // Ollama endpoint caller.
+    OllamaChatRequest buildRequest(
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        // convert think to think mode.
+        final Object think = modelParams.getOrDefault("think", true);
+        ThinkMode thinkMode = ThinkMode.ENABLED;
+        for (ThinkMode mode : ThinkMode.values()) {
+            if (mode.getValue().equals(think)) {
+                thinkMode = mode;
+                break;
+            }
+        }
+
+        final List<Tools.Tool> ollamaTools = this.convertToOllamaTools(tools);
+        final List<OllamaChatMessage> ollamaChatMessages =
+                messages.stream()
+                        .map(this::convertToOllamaChatMessages)
+                        .collect(Collectors.toList());
+
+        final String modelName = (String) modelParams.get("model");
+        final OllamaChatRequest chatRequest =
+                OllamaChatRequest.builder()
+                        .withMessages(ollamaChatMessages)
+                        .withModel(modelName)
+                        .withThinking(thinkMode)
+                        .withUseTools(false)
+                        .build();
+
+        chatRequest.setTools(ollamaTools);
+        return chatRequest;
     }
 
     /**
