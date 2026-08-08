@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.Preconditions;
 import org.apache.fluss.client.Connection;
 import org.apache.fluss.client.ConnectionFactory;
@@ -490,31 +491,27 @@ public class FlussActionStateStore implements ActionStateStore {
 
     @Override
     public void close() throws Exception {
-        Exception firstException = null;
-        try {
-            if (table != null) {
+        // Catching Throwable rather than Exception is what keeps the connection close reachable
+        // when the table close fails with an Error, and what keeps that first failure the one the
+        // caller sees — a later connection failure rides along as suppressed instead of replacing
+        // it.
+        Throwable firstException = null;
+        if (table != null) {
+            try {
                 table.close();
+            } catch (Throwable t) {
+                firstException = t;
             }
-        } catch (Exception e) {
-            firstException = e;
-        } finally {
-            // Must stay a finally: a Throwable that is not an Exception skips the catch above, and
-            // only a finally still closes the connection on the way out. The rethrow below stays
-            // outside this block so a connection failure cannot displace such a Throwable.
-            if (connection != null) {
-                try {
-                    connection.close();
-                } catch (Exception e) {
-                    if (firstException == null) {
-                        firstException = e;
-                    } else {
-                        firstException.addSuppressed(e);
-                    }
-                }
+        }
+        if (connection != null) {
+            try {
+                connection.close();
+            } catch (Throwable t) {
+                firstException = ExceptionUtils.firstOrSuppressed(t, firstException);
             }
         }
         if (firstException != null) {
-            throw firstException;
+            ExceptionUtils.rethrowException(firstException);
         }
     }
 

@@ -238,23 +238,51 @@ public class FlussActionStateStoreTest {
 
     /**
      * Contract: when closing the table throws a non-{@code Exception} {@code Throwable} and the
-     * connection close then fails too, the throwable stays the failure the caller sees, and the
-     * connection is still closed.
+     * connection close then fails too, the throwable stays the failure the caller sees, the
+     * connection is still closed, and the connection's failure is attached as suppressed.
      */
     @Test
     void testCloseKeepsTableErrorWhenConnectionCloseAlsoFails() throws Exception {
         Table failingTable = mock(Table.class);
         Connection failingConnection = mock(Connection.class);
         NoClassDefFoundError tableFailure = new NoClassDefFoundError("simulated teardown failure");
+        RuntimeException connectionFailure = new RuntimeException("connection close failed");
         doThrow(tableFailure).when(failingTable).close();
-        doThrow(new RuntimeException("connection close failed")).when(failingConnection).close();
+        doThrow(connectionFailure).when(failingConnection).close();
 
         FlussActionStateStore closeableStore =
                 new FlussActionStateStore(
                         actionStates, failingConnection, failingTable, mockWriter);
 
-        assertThat(catchThrowable(closeableStore::close)).isSameAs(tableFailure);
+        Throwable thrown = catchThrowable(closeableStore::close);
 
+        assertThat(thrown).isSameAs(tableFailure);
+        assertThat(thrown.getSuppressed()).containsExactly(connectionFailure);
         verify(failingConnection).close();
+    }
+
+    /**
+     * Contract: when the table close fails and the connection close then throws a non-{@code
+     * Exception} {@code Throwable}, the table's exception stays the failure the caller sees and the
+     * connection's throwable is attached as suppressed.
+     */
+    @Test
+    void testCloseKeepsTableFailureWhenConnectionCloseThrowsError() throws Exception {
+        Table failingTable = mock(Table.class);
+        Connection failingConnection = mock(Connection.class);
+        IOException tableFailure = new IOException("table close failed");
+        NoClassDefFoundError connectionFailure =
+                new NoClassDefFoundError("simulated teardown failure");
+        doThrow(tableFailure).when(failingTable).close();
+        doThrow(connectionFailure).when(failingConnection).close();
+
+        FlussActionStateStore closeableStore =
+                new FlussActionStateStore(
+                        actionStates, failingConnection, failingTable, mockWriter);
+
+        Throwable thrown = catchThrowable(closeableStore::close);
+
+        assertThat(thrown).isSameAs(tableFailure);
+        assertThat(thrown.getSuppressed()).containsExactly(connectionFailure);
     }
 }
