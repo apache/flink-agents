@@ -69,6 +69,19 @@ public class VLLMChatModelConnection extends OpenAICompletionsConnection {
         super(withVLLMDefaults(descriptor), resourceContext);
     }
 
+    /**
+     * vLLM implements the OpenAI {@code json_schema} response format for whatever model it serves
+     * (via guided decoding), so structured-output capability does not depend on OpenAI model names
+     * — the inherited allowlist would wrongly reject served models such as {@code
+     * Qwen/Qwen2.5-7B-Instruct}. See <a
+     * href="https://docs.vllm.ai/en/stable/features/structured_outputs.html">vLLM structured
+     * outputs</a>.
+     */
+    @Override
+    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+        return effectiveModel != null && !effectiveModel.isBlank();
+    }
+
     // Package-visible so tests can assert on the descriptor the defaults produce.
     static ResourceDescriptor withVLLMDefaults(ResourceDescriptor descriptor) {
         Map<String, Object> arguments = new HashMap<>(descriptor.getInitialArguments());

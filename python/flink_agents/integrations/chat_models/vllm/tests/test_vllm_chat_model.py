@@ -15,8 +15,13 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import pytest
+from unittest.mock import MagicMock
 
+import pytest
+from pydantic import BaseModel
+
+from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
     OpenAIChatModelConnection,
 )
@@ -69,6 +74,47 @@ def test_setup_rejects_whitespace_only_model() -> None:
 def test_setup_rejects_empty_model() -> None:
     with pytest.raises(ValueError, match="model is required for vLLM"):
         VLLMChatModelSetup(name="vllm_model", connection="vllm", model="")
+
+
+class _Person(BaseModel):
+    """A representative BaseModel output schema."""
+
+    name: str
+    age: int
+
+
+def test_supports_native_structured_output_follows_served_model() -> None:
+    connection = VLLMChatModelConnection(name="vllm")
+    assert connection.supports_native_structured_output("Qwen/Qwen2.5-7B-Instruct")
+    assert connection.supports_native_structured_output(
+        "meta-llama/Llama-3.1-8B-Instruct"
+    )
+    assert not connection.supports_native_structured_output(None)
+    assert not connection.supports_native_structured_output(" ")
+
+
+def test_native_response_format_applied_for_qwen_model() -> None:
+    connection = VLLMChatModelConnection(name="vllm")
+    mock_client = MagicMock()
+    mock_message = MagicMock()
+    mock_message.role = "assistant"
+    mock_message.content = "ok"
+    mock_message.tool_calls = None
+    mock_client.chat.completions.create.return_value.choices = [
+        MagicMock(message=mock_message)
+    ]
+    mock_client.chat.completions.create.return_value.usage = None
+    connection._client = mock_client
+
+    connection.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        model="Qwen/Qwen2.5-7B-Instruct",
+        output_schema=OutputSchema(output_schema=_Person),
+    )
+
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert "response_format" in kwargs
+    assert kwargs["response_format"]["type"] == "json_schema"
 
 
 def test_setup_carries_served_model_name() -> None:

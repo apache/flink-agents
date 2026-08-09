@@ -17,10 +17,15 @@
  */
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.openai.models.chat.completions.ChatCompletionCreateParams;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.HashMap;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -87,6 +92,39 @@ class VLLMChatModelConnectionTest {
         assertThat(VLLMChatModelConnection.withVLLMDefaults(empty).getInitialArguments())
                 .containsEntry("api_key", VLLMChatModelConnection.DEFAULT_VLLM_API_KEY)
                 .containsEntry("api_base_url", VLLMChatModelConnection.DEFAULT_VLLM_API_BASE_URL);
+    }
+
+    /** A representative POJO output schema. */
+    public static class Person {
+        public String name;
+        public int age;
+    }
+
+    @Test
+    @DisplayName("Structured-output capability follows the served model, not OpenAI model names")
+    void testSupportsNativeStructuredOutputForServedModels() {
+        VLLMChatModelConnection conn =
+                new VLLMChatModelConnection(connectionDescriptor().build(), NOOP);
+        assertThat(conn.supportsNativeStructuredOutput("Qwen/Qwen2.5-7B-Instruct")).isTrue();
+        assertThat(conn.supportsNativeStructuredOutput("meta-llama/Llama-3.1-8B-Instruct"))
+                .isTrue();
+        assertThat(conn.supportsNativeStructuredOutput(null)).isFalse();
+        assertThat(conn.supportsNativeStructuredOutput(" ")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Native response_format json_schema applied when serving a Qwen model")
+    void testNativeResponseFormatAppliedForQwenModel() {
+        VLLMChatModelConnection conn =
+                new VLLMChatModelConnection(connectionDescriptor().build(), NOOP);
+        java.util.Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("model", "Qwen/Qwen2.5-7B-Instruct");
+
+        ChatCompletionCreateParams params =
+                conn.buildRequest(
+                        List.of(ChatMessage.user("hi")), List.of(), modelParams, Person.class);
+
+        assertThat(params.responseFormat()).isPresent();
     }
 
     @Test

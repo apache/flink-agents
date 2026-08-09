@@ -17,6 +17,8 @@
 #################################################################################
 from typing import Any
 
+from typing_extensions import override
+
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
     OpenAIChatModelConnection,
     OpenAIChatModelSetup,
@@ -71,6 +73,16 @@ class VLLMChatModelConnection(OpenAIChatModelConnection):
             ),
             **kwargs,
         )
+
+    @override
+    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+        """VLLM implements the OpenAI ``json_schema`` response format for whatever
+        model it serves (via guided decoding), so structured-output capability does
+        not depend on OpenAI model names — the inherited allowlist would wrongly
+        reject served models such as ``Qwen/Qwen2.5-7B-Instruct``.
+        See https://docs.vllm.ai/en/stable/features/structured_outputs.html.
+        """
+        return bool(effective_model and effective_model.strip())
 
 
 class VLLMChatModelSetup(OpenAIChatModelSetup):

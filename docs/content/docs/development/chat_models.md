@@ -1213,7 +1213,13 @@ Model availability and specifications may change. Always check the official Dash
 
 #### Prerequisites
 
-1. Install vLLM and start a server: `vllm serve Qwen/Qwen2.5-7B-Instruct`
+1. Install vLLM and start a server. For agent use, enable automatic tool calling — Flink Agents sends tools without a named `tool_choice`, so the server needs `--enable-auto-tool-choice` plus a model-specific `--tool-call-parser` (for Qwen2.5, vLLM recommends `hermes`):
+
+   ```bash
+   vllm serve Qwen/Qwen2.5-7B-Instruct --enable-auto-tool-choice --tool-call-parser hermes
+   ```
+
+   Without these flags the server can chat but tool calls are not parsed into the OpenAI `tool_calls` field, so the model cannot drive an agent's tools. The parser is model-specific; see the [vLLM tool calling docs](https://docs.vllm.ai/en/stable/features/tool_calling/).
 2. By default the server listens on `http://localhost:8000` and requires no API key. If the server is started with `--api-key`, pass the same key in the connection.
 
 #### VLLMChatModelConnection Parameters
