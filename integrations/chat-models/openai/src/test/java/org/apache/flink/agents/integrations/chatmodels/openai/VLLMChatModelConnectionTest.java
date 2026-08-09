@@ -60,6 +60,13 @@ class VLLMChatModelConnectionTest {
                         .addInitialArgument("api_key", "")
                         .addInitialArgument("api_base_url", " ")
                         .build();
+        // Pin the substituted values, not just the absence of an exception: a blank
+        // api_base_url would make the parent silently build against the SDK's default
+        // endpoint rather than throw, so doesNotThrowAnyException() alone cannot catch a
+        // lost isBlank() branch.
+        assertThat(VLLMChatModelConnection.withVLLMDefaults(desc).getInitialArguments())
+                .containsEntry("api_key", VLLMChatModelConnection.DEFAULT_VLLM_API_KEY)
+                .containsEntry("api_base_url", VLLMChatModelConnection.DEFAULT_VLLM_API_BASE_URL);
         assertThatCode(() -> new VLLMChatModelConnection(desc, NOOP)).doesNotThrowAnyException();
     }
 
