@@ -85,8 +85,8 @@ public class Event {
         }
         this.id = id;
         this.type = type;
-        this.attributes = attributes != null ? attributes : new HashMap<>();
-        this.attachments = attachments != null ? attachments : new HashMap<>();
+        this.attributes = attributes != null ? new HashMap<>(attributes) : new HashMap<>();
+        this.attachments = attachments != null ? new HashMap<>(attachments) : new HashMap<>();
     }
 
     public UUID getId() {

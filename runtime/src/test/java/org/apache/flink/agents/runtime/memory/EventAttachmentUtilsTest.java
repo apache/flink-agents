@@ -78,6 +78,19 @@ class EventAttachmentUtilsTest {
     }
 
     @Test
+    void storesAttachmentsFromImmutableMap() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        Map<String, Object> payload = Map.of("value", "original");
+        Map<String, Object> attachments = Map.of("payload", payload);
+        Event event = new Event(eventId, "AttachmentStep", Map.of(), attachments);
+
+        EventAttachmentUtils.storeEventAttachments(event, context);
+
+        assertTrue(event.getAttachment("payload") instanceof MemoryRef);
+        assertEquals(payload, attachments.get("payload"));
+    }
+
+    @Test
     void rejectsOutputEventAttachmentsBeforeStoringThem() throws Exception {
         UUID eventId = UUID.randomUUID();
         Map<String, Object> attachments =
