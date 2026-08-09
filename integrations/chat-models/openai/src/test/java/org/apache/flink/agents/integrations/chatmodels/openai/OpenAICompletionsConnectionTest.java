@@ -100,6 +100,24 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
+    @DisplayName("A request-building failure reaches the caller as its own type, not a wrapper")
+    void testRequestBuildingFailurePropagatesUnwrapped() {
+        List<ChatMessage> toolMessageWithoutExternalId =
+                List.of(new ChatMessage(MessageRole.TOOL, "result", Map.of()));
+
+        assertThatThrownBy(
+                        () ->
+                                connection()
+                                        .chat(
+                                                toolMessageWithoutExternalId,
+                                                List.of(),
+                                                params("gpt-4o"),
+                                                null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("externalId");
+    }
+
+    @Test
     @DisplayName("Native response_format json_schema strict applied for a POJO on a capable model")
     void testNativeAppliedForPojoCapableModel() {
         ChatCompletionCreateParams params =

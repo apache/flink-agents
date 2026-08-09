@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -25,13 +27,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Unit tests for {@link OpenAIResponsesModelConnection} — constructor validation and default
- * resolution only, no network access.
+ * Unit tests for {@link OpenAIResponsesModelConnection} — constructor validation, default
+ * resolution and error propagation, none of which need a live API call.
  */
 class OpenAIResponsesModelConnectionTest {
 
@@ -40,6 +45,21 @@ class OpenAIResponsesModelConnectionTest {
     private static ResourceDescriptor.Builder connectionDescriptor() {
         return ResourceDescriptor.Builder.newBuilder(
                 OpenAIResponsesModelConnection.class.getName());
+    }
+
+    private static OpenAIResponsesModelConnection connection() {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("model", "gpt-4o")
+                        .build();
+        return new OpenAIResponsesModelConnection(desc, NOOP);
+    }
+
+    private static Map<String, Object> params(String model) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("model", model);
+        return params;
     }
 
     @Test
@@ -200,5 +220,22 @@ class OpenAIResponsesModelConnectionTest {
                         .build();
         OpenAIResponsesModelConnection conn = new OpenAIResponsesModelConnection(desc, NOOP);
         assertThat(conn.getMaxRetries()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("A request-building failure reaches the caller as its own type, not a wrapper")
+    void testRequestBuildingFailurePropagatesUnwrapped() {
+        List<ChatMessage> toolMessageWithoutExternalId =
+                List.of(new ChatMessage(MessageRole.TOOL, "result", Map.of()));
+
+        assertThatThrownBy(
+                        () ->
+                                connection()
+                                        .chat(
+                                                toolMessageWithoutExternalId,
+                                                List.of(),
+                                                params("gpt-4o")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("externalId");
     }
 }
