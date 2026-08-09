@@ -530,7 +530,6 @@ Common chat-model aliases:
 | `anthropic`          | Anthropic                   | Anthropic                   |
 | `gemini`             | —                           | Gemini (Java)               |
 | `azure_openai`       | Azure OpenAI (Python)       | Azure OpenAI (Java)         |
-| `azure`              | —                           | Azure AI (Java)             |
 | `bedrock`            | —                           | Bedrock (Java)              |
 | `tongyi`             | Tongyi (Python)             | —                           |
 | `vllm`               | vLLM (Python)               | vLLM (Java)                 |
