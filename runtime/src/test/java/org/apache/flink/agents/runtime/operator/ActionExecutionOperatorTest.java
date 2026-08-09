@@ -62,6 +62,8 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
+import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
+import org.apache.flink.streaming.api.operators.StreamOperatorStateHandler;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.mailbox.TaskMailbox;
@@ -71,6 +73,7 @@ import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -93,8 +96,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 
 /** Tests for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorTest {
@@ -628,53 +631,159 @@ public class ActionExecutionOperatorTest {
     }
 
     /**
-     * A failing component must not strand the ones behind it. This matters most for {@code
-     * resourceCache}, which closes first and aggregates its own failures, and for {@code
-     * pythonBridge}, which releases the embedded Python interpreter.
+     * Swaps the state handler {@link AbstractStreamOperator} inherits, returning the previous one.
+     *
+     * <p>{@code super.close()} compiles to {@code stateHandler.dispose()} and binds statically, so
+     * a subclass cannot intercept the call. Replacing the inherited handler is what makes the super
+     * call observable, and what lets it be made to fail.
      */
-    @Test
-    void closeClosesEveryComponentWhenAnEarlierCloseFails() throws Exception {
+    private static StreamOperatorStateHandler replaceStateHandler(
+            ActionExecutionOperator<?, ?> operator, StreamOperatorStateHandler handler)
+            throws Exception {
+        Field field = AbstractStreamOperator.class.getDeclaredField("stateHandler");
+        field.setAccessible(true);
+        StreamOperatorStateHandler previous = (StreamOperatorStateHandler) field.get(operator);
+        field.set(operator, handler);
+        return previous;
+    }
+
+    private static KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> openCloseTestHarness()
+            throws Exception {
         KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
                         new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class));
         testHarness.open();
+        return testHarness;
+    }
+
+    /** The operator's five closeable components, stubbed so each close is observable. */
+    private static final class CloseComponents {
+        private final ResourceCache resourceCache = mock(ResourceCache.class);
+        private final ActionTaskContextManager contextManager =
+                mock(ActionTaskContextManager.class);
+        private final PythonBridgeManager pythonBridge = mock(PythonBridgeManager.class);
+        private final EventLogWriter eventLogWriter = mock(EventLogWriter.class);
+        private final DurableExecutionManager durableExecManager =
+                mock(DurableExecutionManager.class);
+
+        private void installInto(ActionExecutionOperator<?, ?> operator) throws Exception {
+            replaceOperatorField(operator, "resourceCache", resourceCache);
+            replaceOperatorField(operator, "contextManager", contextManager);
+            replaceOperatorField(operator, "pythonBridge", pythonBridge);
+            replaceOperatorField(operator, "eventLogWriter", eventLogWriter);
+            replaceOperatorField(operator, "durableExecManager", durableExecManager);
+        }
+
+        /** Detaches the mocks so the harness teardown does not re-trigger the failure. */
+        private void detachFrom(ActionExecutionOperator<?, ?> operator) throws Exception {
+            replaceOperatorField(operator, "resourceCache", null);
+            replaceOperatorField(operator, "contextManager", null);
+            replaceOperatorField(operator, "pythonBridge", null);
+            replaceOperatorField(operator, "eventLogWriter", null);
+            replaceOperatorField(operator, "durableExecManager", null);
+        }
+
+        /**
+         * Verifies every component was released, in the documented order, with {@code
+         * super.close()} last.
+         *
+         * <p>Order is load-bearing rather than incidental: {@code resourceCache} must close before
+         * {@code pythonBridge} because cached resources may hold Python references, and {@code
+         * super.close()} disposes the state backends the components run against.
+         */
+        private void verifyClosedInOrder(StreamOperatorStateHandler stateHandler) throws Exception {
+            InOrder inOrder =
+                    inOrder(
+                            resourceCache,
+                            contextManager,
+                            pythonBridge,
+                            eventLogWriter,
+                            durableExecManager,
+                            stateHandler);
+            inOrder.verify(resourceCache).close();
+            inOrder.verify(contextManager).close();
+            inOrder.verify(pythonBridge).close();
+            inOrder.verify(eventLogWriter).close();
+            inOrder.verify(durableExecManager).close();
+            inOrder.verify(stateHandler).dispose();
+        }
+    }
+
+    /**
+     * A failing component must not strand the ones behind it. This matters most for {@code
+     * resourceCache}, which closes first and aggregates its own failures, and for {@code
+     * pythonBridge}, which releases the embedded Python interpreter.
+     *
+     * <p>Also pins that {@code super.close()} still runs. {@link AbstractStreamOperator#close()}
+     * disposes the state handler, so skipping it strands the state backends.
+     */
+    @Test
+    void closeClosesEveryComponentWhenAnEarlierCloseFails() throws Exception {
+        KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                openCloseTestHarness();
         ActionExecutionOperator<Long, Object> operator =
                 (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-        ResourceCache resourceCache = mock(ResourceCache.class);
-        ActionTaskContextManager contextManager = mock(ActionTaskContextManager.class);
-        PythonBridgeManager pythonBridge = mock(PythonBridgeManager.class);
-        EventLogWriter eventLogWriter = mock(EventLogWriter.class);
-        DurableExecutionManager durableExecManager = mock(DurableExecutionManager.class);
+        CloseComponents components = new CloseComponents();
         doThrow(new IllegalStateException("resource cache close failed"))
-                .when(resourceCache)
+                .when(components.resourceCache)
                 .close();
-
-        replaceOperatorField(operator, "resourceCache", resourceCache);
-        replaceOperatorField(operator, "contextManager", contextManager);
-        replaceOperatorField(operator, "pythonBridge", pythonBridge);
-        replaceOperatorField(operator, "eventLogWriter", eventLogWriter);
-        replaceOperatorField(operator, "durableExecManager", durableExecManager);
+        components.installInto(operator);
+        StreamOperatorStateHandler stateHandler = mock(StreamOperatorStateHandler.class);
+        StreamOperatorStateHandler realStateHandler = replaceStateHandler(operator, stateHandler);
 
         try {
             assertThatThrownBy(operator::close)
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("resource cache close failed");
 
-            // The components behind the failing one are still released.
-            verify(contextManager).close();
-            verify(pythonBridge).close();
-            verify(eventLogWriter).close();
-            verify(durableExecManager).close();
+            components.verifyClosedInOrder(stateHandler);
         } finally {
-            // Detach the mocks so the harness teardown does not re-trigger the failure.
-            replaceOperatorField(operator, "resourceCache", null);
-            replaceOperatorField(operator, "contextManager", null);
-            replaceOperatorField(operator, "pythonBridge", null);
-            replaceOperatorField(operator, "eventLogWriter", null);
-            replaceOperatorField(operator, "durableExecManager", null);
+            components.detachFrom(operator);
+            replaceStateHandler(operator, realStateHandler);
+            testHarness.close();
+        }
+    }
+
+    /**
+     * A {@code super.close()} failure must aggregate with the component failures rather than
+     * replace them: the earlier component failure still reaches the caller, with the super failure
+     * attached to it as suppressed.
+     */
+    @Test
+    void closeAggregatesSuperCloseFailureWithComponentFailure() throws Exception {
+        KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                openCloseTestHarness();
+        ActionExecutionOperator<Long, Object> operator =
+                (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+        CloseComponents components = new CloseComponents();
+        doThrow(new IllegalStateException("resource cache close failed"))
+                .when(components.resourceCache)
+                .close();
+        components.installInto(operator);
+        StreamOperatorStateHandler stateHandler = mock(StreamOperatorStateHandler.class);
+        doThrow(new IllegalStateException("state handler dispose failed"))
+                .when(stateHandler)
+                .dispose();
+        StreamOperatorStateHandler realStateHandler = replaceStateHandler(operator, stateHandler);
+
+        try {
+            assertThatThrownBy(operator::close)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("resource cache close failed")
+                    .satisfies(
+                            thrown ->
+                                    assertThat(thrown.getSuppressed())
+                                            .extracting(Throwable::getMessage)
+                                            .containsExactly("state handler dispose failed"));
+
+            components.verifyClosedInOrder(stateHandler);
+        } finally {
+            components.detachFrom(operator);
+            replaceStateHandler(operator, realStateHandler);
             testHarness.close();
         }
     }

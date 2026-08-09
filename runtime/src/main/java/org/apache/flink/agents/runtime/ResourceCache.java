@@ -25,6 +25,7 @@ import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
+import org.apache.flink.util.ExceptionUtils;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -158,32 +159,32 @@ public class ResourceCache implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        Exception firstException = null;
+        // Close every cached resource, then the resource context, even when an earlier close
+        // fails. The first failure is rethrown with the later ones suppressed.
+        //
+        // The ladders catch Throwable, not Exception: ActionExecutionOperator.close() closes this
+        // cache before the Python interpreter because cached resources may hold Python references,
+        // so a non-Exception Throwable escaping here would leave the remaining resources open
+        // while the interpreter behind them is torn down anyway. ExceptionUtils.rethrowException
+        // passes Error and Exception through unchanged, so the caller still sees the original.
+        Throwable firstFailure = null;
         for (Map<String, Resource> resources : cache.values()) {
             for (Resource resource : resources.values()) {
                 try {
                     resource.close();
-                } catch (Exception e) {
-                    if (firstException == null) {
-                        firstException = e;
-                    } else {
-                        firstException.addSuppressed(e);
-                    }
+                } catch (Throwable t) {
+                    firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
                 }
             }
         }
         cache.clear();
         try {
             resourceContext.close();
-        } catch (Exception e) {
-            if (firstException == null) {
-                firstException = e;
-            } else {
-                firstException.addSuppressed(e);
-            }
+        } catch (Throwable t) {
+            firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
         }
-        if (firstException != null) {
-            throw firstException;
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
         }
     }
 }

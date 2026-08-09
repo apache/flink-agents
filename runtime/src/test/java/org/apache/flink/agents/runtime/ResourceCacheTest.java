@@ -38,14 +38,21 @@ import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
+import org.apache.flink.agents.runtime.skill.SkillManager;
 import org.junit.jupiter.api.Test;
 import pemja.core.object.PyObject;
 
+import java.lang.reflect.Field;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /** Tests for {@link ResourceCache}. */
 public class ResourceCacheTest {
@@ -273,5 +280,101 @@ public class ResourceCacheTest {
         // Test that resources are cached (should be the same instance)
         Resource myToolAgain = cache.getResource("myTool", ResourceType.TOOL);
         assertThat(myTool).isSameAs(myToolAgain);
+    }
+
+    /**
+     * A cached resource failing with a non-{@code Exception} {@code Throwable} must not strand the
+     * remaining resources, the cache clear, or the resource context. {@code
+     * ActionExecutionOperator.close()} closes this cache before the Python interpreter precisely
+     * because cached resources may hold Python references, so leaving resources open here while the
+     * interpreter behind them is torn down would break that ordering.
+     */
+    @Test
+    public void closeClosesEveryResourceWhenAnEarlierResourceThrowsError() throws Exception {
+        ResourceCache cache = new ResourceCache(new HashMap<>());
+        OutOfMemoryError failure = new OutOfMemoryError("resource close failed");
+        RecordingResource failing = new RecordingResource(ResourceType.TOOL, failure);
+        RecordingResource surviving = new RecordingResource(ResourceType.CHAT_MODEL, null);
+        cache.put("failing", ResourceType.TOOL, failing);
+        cache.put("surviving", ResourceType.CHAT_MODEL, surviving);
+        // Stands in for the lazily-cached skill manager, so that resourceContext.close() running
+        // is observable rather than merely assumed from its position in the method.
+        SkillManager skillManager = mock(SkillManager.class);
+        setSkillManager(cache.getResourceContext(), skillManager);
+
+        // The Error reaches the caller unchanged rather than wrapped in an Exception.
+        assertThatThrownBy(cache::close).isSameAs(failure);
+
+        assertThat(failing.closed).isTrue();
+        assertThat(surviving.closed).isTrue();
+        // Neither the cache clear nor the resource context is skipped by the Error.
+        assertThat(cachedResources(cache)).isEmpty();
+        verify(skillManager).close();
+    }
+
+    /** The first failure is rethrown and any later one is attached as suppressed, never dropped. */
+    @Test
+    public void closeReportsFirstResourceFailureWithLaterOnesSuppressed() throws Exception {
+        ResourceCache cache = new ResourceCache(new HashMap<>());
+        RecordingResource first =
+                new RecordingResource(ResourceType.TOOL, new IllegalStateException("first"));
+        RecordingResource second =
+                new RecordingResource(ResourceType.TOOL, new IllegalStateException("second"));
+        cache.put("first", ResourceType.TOOL, first);
+        cache.put("second", ResourceType.TOOL, second);
+
+        Throwable thrown = catchThrowable(cache::close);
+
+        // Iteration order over the cache is unspecified, so pin the aggregation rather than which
+        // of the two lands first: one is thrown and the other is suppressed on it.
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        assertThat(thrown.getSuppressed()).hasSize(1);
+        assertThat(new String[] {thrown.getMessage(), thrown.getSuppressed()[0].getMessage()})
+                .containsExactlyInAnyOrder("first", "second");
+        assertThat(first.closed).isTrue();
+        assertThat(second.closed).isTrue();
+    }
+
+    private static void setSkillManager(ResourceContextImpl context, SkillManager skillManager)
+            throws Exception {
+        Field field = ResourceContextImpl.class.getDeclaredField("skillManager");
+        field.setAccessible(true);
+        field.set(context, skillManager);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<ResourceType, Map<String, Resource>> cachedResources(ResourceCache cache)
+            throws Exception {
+        Field field = ResourceCache.class.getDeclaredField("cache");
+        field.setAccessible(true);
+        return (Map<ResourceType, Map<String, Resource>>) field.get(cache);
+    }
+
+    /** Records whether {@code close()} ran, and optionally fails it. */
+    private static final class RecordingResource extends Resource {
+        private final ResourceType type;
+        private final Throwable failure;
+        private boolean closed = false;
+
+        private RecordingResource(ResourceType type, Throwable failure) {
+            this.type = type;
+            this.failure = failure;
+        }
+
+        @Override
+        public ResourceType getResourceType() {
+            return type;
+        }
+
+        @Override
+        public void close() throws Exception {
+            closed = true;
+            if (failure instanceof Error) {
+                throw (Error) failure;
+            }
+            if (failure instanceof Exception) {
+                throw (Exception) failure;
+            }
+        }
     }
 }
