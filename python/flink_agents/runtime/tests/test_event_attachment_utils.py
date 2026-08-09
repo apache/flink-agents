@@ -60,6 +60,21 @@ def test_store_event_attachments() -> None:
     assert sensory_memory.get(attachment) == payload
 
 
+def test_store_offloads_non_utf8_bytes_from_regular_event() -> None:
+    """Test that raw bytes are offloaded before JSON serialization is required."""
+    sensory_memory = LocalMemoryObject(MemoryType.SENSORY, {})
+    ctx = MockRunnerContext(sensory_memory)
+    payload = b"\xff\x00"
+    event = Event(type="AttachmentStep", attachments={"payload": payload})
+
+    store_event_attachments(event, ctx)
+
+    attachment = event.get_attachment("payload")
+    assert isinstance(attachment, MemoryRef)
+    assert sensory_memory.get(attachment) == payload
+    event.model_dump_json()
+
+
 def test_store_rejects_output_event_attachments_before_storing_them() -> None:
     sensory_memory = LocalMemoryObject(MemoryType.SENSORY, {})
     ctx = MockRunnerContext(sensory_memory)

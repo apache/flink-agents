@@ -15,7 +15,6 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import hashlib
 import json
 from typing import Any, ClassVar, Dict
 
@@ -23,7 +22,7 @@ try:
     from typing import override
 except ImportError:
     from typing_extensions import override
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_core import PydanticSerializationError
@@ -68,8 +67,7 @@ class Event(BaseModel, extra="allow"):
     Attributes:
     ----------
     id : UUID
-        Unique identifier for the event, generated deterministically based on
-        event content.
+        Unique identifier for the event, generated randomly when not supplied.
     type : str
         Event type string used for routing. Required for all events.
     attributes : Dict[str, Any]
@@ -78,7 +76,7 @@ class Event(BaseModel, extra="allow"):
         Key-value data passed between actions through sensory memory.
     """
 
-    id: UUID = Field(default=None)
+    id: UUID = Field(default_factory=uuid4)
     type: str
     attributes: Dict[str, Any] = Field(default_factory=dict)
     attachments: Dict[str, Any] = Field(default_factory=dict)
@@ -117,33 +115,17 @@ class Event(BaseModel, extra="allow"):
             kwargs["fallback"] = self.__serialize_unknown
         return super().model_dump_json(**kwargs)
 
-    def _generate_content_based_id(self) -> UUID:
-        """Generate a deterministic UUID based on event content using MD5 hash.
-
-        Similar to Java's UUID.nameUUIDFromBytes(), uses MD5 for version 3 UUID.
-        """
-        # Serialize content excluding 'id' to avoid circular dependency
-        content_json = super().model_dump_json(
-            exclude={"id"}, fallback=self.__serialize_unknown
-        )
-        md5_hash = hashlib.md5(content_json.encode()).digest()
-        return UUID(bytes=md5_hash, version=3)
-
     @model_validator(mode="after")
-    def validate_and_set_id(self) -> "Event":
-        """Validate that fields are serializable and generate content-based ID."""
-        if self.id is None:
-            object.__setattr__(self, "id", self._generate_content_based_id())
-        self.model_dump_json()
+    def validate_serializable_fields(self) -> "Event":
+        """Validate JSON event fields without serializing raw attachments."""
+        self.model_dump_json(exclude={"attachments"})
         return self
 
     def __setattr__(self, name: str, value: Any) -> None:
         super().__setattr__(name, value)
-        # Ensure added property can be serialized.
-        self.model_dump_json()
-        # Regenerate ID if content changed (but not if setting 'id' itself)
-        if name != "id":
-            object.__setattr__(self, "id", self._generate_content_based_id())
+        # Raw attachments are offloaded to sensory memory before sending. Validate every
+        # other field here without serializing those payloads.
+        self.model_dump_json(exclude={"attachments"})
 
     def get_type(self) -> str:
         """Return the event type string used for routing."""
