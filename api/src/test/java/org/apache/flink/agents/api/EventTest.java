@@ -136,7 +136,7 @@ class EventTest {
     @Test
     void testUnifiedEventJsonRoundTripPreservesAttachments() throws Exception {
         Map<String, Object> attachments = new HashMap<>();
-        attachments.put("payload", Map.of("path", "memory.path"));
+        attachments.put("payload", Map.of("memory_type", "sensory", "path", "memory.path"));
         Event original = new Event(UUID.randomUUID(), "MyEvent", new HashMap<>(), attachments);
 
         Event restored =
@@ -157,10 +157,11 @@ class EventTest {
 
         String json = objectMapper.writeValueAsString(original);
         JsonNode attachment = objectMapper.readTree(json).get("attachments").get("payload");
-        Event restored = Event.fromJson(json);
+        Event restored = objectMapper.readValue(json, Event.class);
 
-        assertEquals("sensory", attachment.get(MemoryRef.MEMORY_TYPE_FIELD).asText());
-        assertEquals("memory.path", attachment.get(MemoryRef.PATH_FIELD).asText());
+        assertEquals("memory_ref", attachment.get("@type").asText());
+        assertEquals("sensory", attachment.get("memory_type").asText());
+        assertEquals("memory.path", attachment.get("path").asText());
         assertEquals(reference, restored.getAttachment("payload"));
     }
 

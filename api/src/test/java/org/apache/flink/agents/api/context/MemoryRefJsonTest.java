@@ -37,6 +37,7 @@ class MemoryRefJsonTest {
         JsonNode node = objectMapper.readTree(json);
         MemoryRef restored = objectMapper.readValue(json, MemoryRef.class);
 
+        assertEquals("memory_ref", node.get("@type").asText());
         assertEquals("sensory", node.get("memory_type").asText());
         assertEquals("memory.path", node.get("path").asText());
         assertEquals(original, restored);

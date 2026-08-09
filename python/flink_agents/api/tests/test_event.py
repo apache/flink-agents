@@ -24,6 +24,8 @@ from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.memory_object import MemoryType
+from flink_agents.api.memory_reference import MemoryRef
 
 
 def test_event_init_serializable() -> None:
@@ -218,6 +220,19 @@ def test_unified_event_serialization_roundtrip() -> None:
     restored = Event.model_validate(parsed)
     assert restored.type == "RoundTrip"
     assert restored.attributes == {"a": 1, "b": "two"}
+
+
+def test_unified_event_serialization_roundtrip_with_memory_ref_attachment() -> None:
+    """Test that tagged memory-reference attachments retain their concrete type."""
+    reference = MemoryRef.create(MemoryType.SENSORY, "memory.path")
+    original = Event(type="RoundTrip", attachments={"payload": reference})
+
+    parsed = json.loads(original.model_dump_json())
+    restored = Event.model_validate(parsed)
+
+    assert parsed["attachments"]["payload"][MemoryRef.TYPE_FIELD] == MemoryRef.TYPE_VALUE
+    assert restored.get_attachment("payload") == reference
+    assert isinstance(restored.get_attachment("payload"), MemoryRef)
 
 
 def test_unified_event_serialization_roundtrip_with_row() -> None:

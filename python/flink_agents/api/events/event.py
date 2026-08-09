@@ -25,7 +25,7 @@ except ImportError:
     from typing_extensions import override
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
@@ -82,6 +82,20 @@ class Event(BaseModel, extra="allow"):
     type: str
     attributes: Dict[str, Any] = Field(default_factory=dict)
     attachments: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("attachments", mode="before")
+    @classmethod
+    def _deserialize_memory_ref_attachments(cls, attachments: Any) -> Any:
+        """Restore explicitly tagged memory-reference attachment values."""
+        if not isinstance(attachments, dict):
+            return attachments
+        return {
+            key: MemoryRef.model_validate(value)
+            if isinstance(value, dict)
+            and value.get(MemoryRef.TYPE_FIELD) == MemoryRef.TYPE_VALUE
+            else value
+            for key, value in attachments.items()
+        }
 
     @staticmethod
     def __serialize_unknown(field: Any) -> Dict[str, Any]:
@@ -186,10 +200,6 @@ class Event(BaseModel, extra="allow"):
         event = cls.model_validate(data)
         for key in list(event.attributes):
             event.attributes[key] = _reconstruct_row_if_needed(event.attributes[key])
-        for key in list(event.attachments):
-            value = event.attachments[key]
-            if isinstance(value, dict) and set(value) == {"memory_type", "path"}:
-                event.attachments[key] = MemoryRef.model_validate(value)
         return event
 
 

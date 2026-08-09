@@ -44,6 +44,8 @@ import java.util.Objects;
 public final class MemoryRef implements Serializable {
     private static final long serialVersionUID = 1L;
 
+    public static final String TYPE_FIELD = "@type";
+    public static final String TYPE_VALUE = "memory_ref";
     public static final String MEMORY_TYPE_FIELD = "memory_type";
     public static final String PATH_FIELD = "path";
 
@@ -101,6 +103,7 @@ public final class MemoryRef implements Serializable {
         public void serialize(MemoryRef value, JsonGenerator generator, SerializerProvider provider)
                 throws IOException {
             Map<String, String> serialized = new LinkedHashMap<>();
+            serialized.put(TYPE_FIELD, TYPE_VALUE);
             serialized.put(MEMORY_TYPE_FIELD, value.getType().name().toLowerCase(Locale.ROOT));
             serialized.put(PATH_FIELD, value.getPath());
             generator.writeObject(serialized);
