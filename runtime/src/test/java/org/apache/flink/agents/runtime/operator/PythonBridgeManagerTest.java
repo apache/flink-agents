@@ -25,6 +25,7 @@ import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import pemja.core.PythonInterpreter;
 
 import java.lang.reflect.Field;
@@ -34,6 +35,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
@@ -71,6 +73,10 @@ class PythonBridgeManagerTest {
     /**
      * A failing action executor must not strand the interpreter or the environment manager: both
      * hold native Python state that leaks for the lifetime of the TaskManager if never closed.
+     *
+     * <p>Also pins the close order documented on the class, which is load-bearing rather than
+     * incidental: {@link PythonActionExecutor#close()} calls back into the interpreter, so it has
+     * to run before the interpreter is closed.
      */
     @Test
     void closeReleasesInterpreterAndEnvironmentWhenActionExecutorFails() throws Exception {
@@ -90,8 +96,10 @@ class PythonBridgeManagerTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("action executor close failed");
 
-        verify(interpreter).close();
-        verify(environmentManager).close();
+        InOrder inOrder = inOrder(actionExecutor, interpreter, environmentManager);
+        inOrder.verify(actionExecutor).close();
+        inOrder.verify(interpreter).close();
+        inOrder.verify(environmentManager).close();
     }
 
     /** The first failure is rethrown and any later one is attached as suppressed, never dropped. */
