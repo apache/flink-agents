@@ -404,7 +404,7 @@ On the connection, `AzureAIChatModelConnection` → `OpenAICompletionsConnection
 
 On the setup, `AzureAIChatModelSetup` → `OpenAICompletionsSetup`:
 
-- Set `model` explicitly to your Foundry deployment name. Leaving it out is **not** reported as a configuration error: `OpenAICompletionsSetup` substitutes its own OpenAI default (`gpt-4o-mini`), which does not exist on a Foundry resource, so the problem only surfaces later as a confusing error from the provider.
+- Set `model` explicitly to your Foundry deployment name. Leaving it out is **not** reported as a configuration error: `OpenAICompletionsSetup` substitutes its own OpenAI default (`gpt-4o-mini`), and on the OpenAI v1 route that value is read as a deployment name. If no deployment on the resource carries that name, the request fails later at the provider; if one does, it is used silently in place of the deployment you meant.
 
 In YAML, `clazz: azure` no longer resolves to anything. Use `clazz: openai_completions` with `type: java`, in both `chat_model_connections` and `chat_model_setups`.
 
