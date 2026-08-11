@@ -754,14 +754,29 @@ class FlinkRunnerContext(RunnerContext):
     def close(self) -> None:
         ltm = self.__ltm
         self.__ltm = None
+
+        first_failure: BaseException | None = None
         try:
             if ltm is not None:
                 ltm.close()
-        finally:
-            resource_cache = self.__resource_cache
-            self.__resource_cache = None
+        except BaseException as failure:
+            first_failure = failure
+
+        resource_cache = self.__resource_cache
+        self.__resource_cache = None
+        try:
             if resource_cache is not None:
                 resource_cache.close()
+        except BaseException as failure:
+            if first_failure is None:
+                first_failure = failure
+            else:
+                # Python has no suppressed-exception API; retain the later failure as
+                # context while keeping the first failure primary.
+                first_failure.__context__ = failure
+
+        if first_failure is not None:
+            raise first_failure
 
 
 def create_flink_runner_context(

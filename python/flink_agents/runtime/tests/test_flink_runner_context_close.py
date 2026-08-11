@@ -54,3 +54,21 @@ def test_close_clears_long_term_memory_before_logical_cleanup() -> None:
     ctx.close()
     ltm.close.assert_called_once_with()
     resource_cache.close.assert_called_once_with()
+
+
+def test_close_preserves_first_failure_when_both_cleanups_fail() -> None:
+    ctx, ltm, resource_cache = _create_context()
+    ltm_failure = RuntimeError("logical close failed")
+    resource_cache_failure = RuntimeError("resource cache close failed")
+    ltm.close.side_effect = ltm_failure
+    resource_cache.close.side_effect = resource_cache_failure
+
+    with pytest.raises(RuntimeError, match="logical close failed") as exc_info:
+        ctx.close()
+
+    assert exc_info.value is ltm_failure
+    assert exc_info.value.__context__ is resource_cache_failure
+
+    ctx.close()
+    ltm.close.assert_called_once_with()
+    resource_cache.close.assert_called_once_with()
