@@ -386,8 +386,10 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                 cleaned = rest.toString();
             }
         }
-        final String reasoning =
-                reasoningChunks.isEmpty() ? null : String.join("\n\n", reasoningChunks);
+        if (reasoningChunks.isEmpty()) {
+            return new String[] {content, null};
+        }
+        final String reasoning = String.join("\n\n", reasoningChunks);
         cleaned = cleaned.replaceAll("\\n{3,}", "\n\n").replaceAll(" {2,}", " ").trim();
         return new String[] {cleaned, reasoning};
     }

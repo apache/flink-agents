@@ -510,8 +510,9 @@ class WatsonxChatModelConnectionTest {
     void testExtractReasoning() {
         assertThat(WatsonxChatModelConnection.extractReasoning("<think>Plan</think>\nAnswer"))
                 .containsExactly("Answer", "Plan");
-        assertThat(WatsonxChatModelConnection.extractReasoning("Plain answer"))
-                .containsExactly("Plain answer", null);
+        String plainContent = "| 1  | 2  |\n\n    indented";
+        assertThat(WatsonxChatModelConnection.extractReasoning(plainContent))
+                .containsExactly(plainContent, null);
     }
 
     @Test

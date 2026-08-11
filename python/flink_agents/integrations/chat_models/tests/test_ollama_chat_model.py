@@ -136,7 +136,7 @@ def test_extract_think_tags() -> None:
     assert reasoning == "This is just my thought process."
 
     # Test with no think tags
-    content = "This is a regular response without any thinking tags."
+    content = "| 1  | 2  |\n\n    This is a regular response without thinking tags."
     cleaned, reasoning = OllamaChatModelConnection._extract_reasoning(content)
     assert cleaned == content
     assert reasoning is None

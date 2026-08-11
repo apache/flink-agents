@@ -217,7 +217,10 @@ class BaseChatModelConnection(Resource, ABC):
                 reasoning_chunks.extend(m.strip() for m in matches if m.strip())
                 cleaned = pat.sub("", cleaned)
 
-        reasoning = "\n\n".join(reasoning_chunks) if reasoning_chunks else None
+        if not reasoning_chunks:
+            return content, None
+
+        reasoning = "\n\n".join(reasoning_chunks)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         cleaned = re.sub(r" {2,}", " ", cleaned)
         cleaned = cleaned.strip()
