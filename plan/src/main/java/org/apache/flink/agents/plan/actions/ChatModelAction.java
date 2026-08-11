@@ -367,10 +367,13 @@ public class ChatModelAction {
                         return chatModel.chat(messages, promptArgs, Map.of());
                     }
                 };
+        Map<String, Object> llmMetadata =
+                chatModel.getModel() == null ? Map.of() : Map.of(MODEL, chatModel.getModel());
 
         for (int attempt = 0; attempt < numRetries + 1; attempt++) {
             try {
-                ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.LLM, model);
+                ExecutionReporters.started(
+                        ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
                 try {
                     response =
                             chatAsync
@@ -382,11 +385,13 @@ public class ChatModelAction {
                             ctx,
                             ExecutionReporter.EntityTypes.LLM,
                             model,
+                            llmMetadata,
                             modelError,
                             ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
                     throw modelError;
                 }
-                ExecutionReporters.succeeded(ctx, ExecutionReporter.EntityTypes.LLM, model);
+                ExecutionReporters.succeeded(
+                        ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
                 recordChatTokenMetrics(chatModel, response);
                 if (outputSchema != null && response.getToolCalls().isEmpty()) {
                     response = generateStructuredOutputWithReport(ctx, response, outputSchema);

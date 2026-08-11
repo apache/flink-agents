@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.junit.jupiter.api.Test;
@@ -38,7 +39,8 @@ class RunnerContextImplExecutionReporterTest {
     @Test
     void reportedExecutionReusesChildTraceContextBetweenStartAndFinish() throws Exception {
         List<RecordedReport> reports = new ArrayList<>();
-        RunnerContextImpl runnerContext = new RunnerContextImpl(null, () -> {}, null, null, "job");
+        RunnerContextImpl runnerContext =
+                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
         ExecutionTraceContext actionTraceContext =
                 ExecutionTraceContext.forInputRun("business-key", "agent")
                         .childExecution("action", "chat_model_action");
@@ -76,7 +78,8 @@ class RunnerContextImplExecutionReporterTest {
     @Test
     void reportedExecutionStateFollowsActionContextAcrossSwitches() throws Exception {
         List<RecordedReport> reports = new ArrayList<>();
-        RunnerContextImpl runnerContext = new RunnerContextImpl(null, () -> {}, null, null, "job");
+        RunnerContextImpl runnerContext =
+                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
         runnerContext.setExecutionEventSink(
                 (event, context) -> reports.add(new RecordedReport(event, context)));
 
@@ -121,7 +124,7 @@ class RunnerContextImplExecutionReporterTest {
     void pythonReporterBridgePreservesMetadataAndPythonErrorFields() throws Exception {
         List<RecordedReport> reports = new ArrayList<>();
         PythonRunnerContextImpl runnerContext =
-                new PythonRunnerContextImpl(null, () -> {}, null, null, "job");
+                new PythonRunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
         ExecutionTraceContext actionTraceContext =
                 ExecutionTraceContext.forInputRun("business-key", "agent")
                         .childExecution("action", "tool_call_action");
@@ -156,6 +159,10 @@ class RunnerContextImplExecutionReporterTest {
         assertThat(failed.event.getAttr("errorMessage")).isEqualTo("bad response");
         assertThat(failed.event.getAttr(ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE))
                 .isEqualTo(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+    }
+
+    private static AgentPlan emptyAgentPlan() {
+        return new AgentPlan(new HashMap<>(), new HashMap<>());
     }
 
     private static class RecordedReport {

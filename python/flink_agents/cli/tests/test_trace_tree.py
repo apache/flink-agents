@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from flink_agents.api.trace import ExecutionLifecycleEvents
 from flink_agents.cli.trace_tree import find_log_files
 
 
@@ -65,6 +66,17 @@ def _legacy_record(
         "timestamp": "2026-07-17T10:00:00Z",
         "eventType": event_type,
         "event": event,
+    }
+
+
+def _execution_record(event_id: str, event_type: str, status: str) -> dict:
+    return {
+        **_record(event_id, event_type),
+        "inputRunId": "run-1",
+        "executionId": f"execution-{event_id}",
+        "entityType": "action",
+        "entityName": "test_action",
+        "status": status,
     }
 
 
@@ -234,10 +246,26 @@ def test_reader_ignores_execution_lifecycle_records(tmp_path: Path) -> None:
         log_path,
         [
             _record("root", "_input_event"),
-            _record("started", "_execution_started_event"),
-            _record("finished", "_execution_finished_event"),
-            _record("failed", "_execution_failed_event"),
-            _record("reused", "_execution_reused_event"),
+            _execution_record(
+                "started",
+                ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
+                ExecutionLifecycleEvents.STATUS_STARTED,
+            ),
+            _execution_record(
+                "finished",
+                ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE,
+                ExecutionLifecycleEvents.STATUS_SUCCESS,
+            ),
+            _execution_record(
+                "failed",
+                ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
+                ExecutionLifecycleEvents.STATUS_FAILED,
+            ),
+            _execution_record(
+                "reused",
+                ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE,
+                ExecutionLifecycleEvents.STATUS_REUSED,
+            ),
             _record("child", "ChildEvent", "root", "child_action"),
         ],
     )
@@ -248,6 +276,37 @@ def test_reader_ignores_execution_lifecycle_records(tmp_path: Path) -> None:
     assert set(trace_forest["nodes"]) == {"root", "child"}
     assert trace_forest["warnings"] == []
     assert result.stderr == ""
+
+
+def test_reader_retains_business_event_using_reserved_lifecycle_type(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "events.log"
+    reserved_type = ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE
+    _write_log(
+        log_path,
+        [
+            _record("root", "_input_event"),
+            _record("reserved", reserved_type, "root", "reserved_action"),
+            _record("child", "ChildEvent", "reserved", "child_action"),
+        ],
+    )
+
+    result = _run_reader(log_path, "json")
+    trace_forest = json.loads(result.stdout)
+
+    assert set(trace_forest["nodes"]) == {"root", "reserved", "child"}
+    assert trace_forest["nodes"]["root"]["actions"] == [
+        {"name": "reserved_action", "children": ["reserved"]}
+    ]
+    assert trace_forest["nodes"]["reserved"]["actions"] == [
+        {"name": "child_action", "children": ["child"]}
+    ]
+    assert [item["code"] for item in trace_forest["warnings"]] == [
+        "RESERVED_EVENT_TYPE"
+    ]
+    assert trace_forest["warnings"][0]["eventId"] == "reserved"
+    assert "[RESERVED_EVENT_TYPE]" in result.stderr
 
 
 def test_reader_warns_on_truncated_tail_and_keeps_valid_records(
@@ -316,7 +375,18 @@ def test_reader_resynchronizes_after_malformed_pretty_record(
         ({}, None),
         ({"eventType": "BadEvent", "event": []}, None),
         ({"eventType": "BadEvent", "event": {"attributes": {}}}, None),
-        ({"eventType": 123, "event": {"id": "bad"}}, None),
+        ({"eventType": 123, "event": {"id": "bad"}}, "bad"),
+        (
+            {"eventId": "bad-flat", "eventType": 123, "eventAttributes": {}},
+            "bad-flat",
+        ),
+        (
+            {
+                "eventType": "BadEvent",
+                "event": {"id": "bad-legacy", "attributes": []},
+            },
+            "bad-legacy",
+        ),
         (
             {
                 "eventType": "BadEvent",

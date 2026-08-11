@@ -22,15 +22,24 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterator
 
+from flink_agents.api.trace import ExecutionLifecycleEvents
+
 INPUT_EVENT_TYPE = "_input_event"
-EXECUTION_LIFECYCLE_EVENT_TYPES = frozenset(
-    {
-        "_execution_started_event",
-        "_execution_finished_event",
-        "_execution_failed_event",
-        "_execution_reused_event",
-    }
-)
+
+
+def _is_execution_lifecycle_record(record: Any) -> bool:
+    """Return whether a record has the framework lifecycle Event shape."""
+    if not isinstance(record, dict):
+        return False
+    expected_status = ExecutionLifecycleEvents.expected_status(record.get("eventType"))
+    return (
+        expected_status is not None
+        and record.get("status") == expected_status
+        and all(
+            isinstance(record.get(field), str) and record[field]
+            for field in ("executionId", "entityType", "entityName")
+        )
+    )
 
 
 def _json_fingerprint(value: Any) -> str:
@@ -122,9 +131,13 @@ def _normalize_event_record(
     if not isinstance(event_id_value, str) or not event_id_value:
         return None, None, f"field '{event_id_field}' must be a non-empty string"
     if not isinstance(event_type, str) or not event_type:
-        return None, None, "field 'eventType' must be a non-empty string"
+        return None, event_id_value, "field 'eventType' must be a non-empty string"
     if not isinstance(event_attributes, dict):
-        return None, None, f"field '{attributes_field}' must be a JSON object"
+        return (
+            None,
+            event_id_value,
+            f"field '{attributes_field}' must be a JSON object",
+        )
 
     for field_name, field_value in (
         ("upstreamEventId", upstream_event_id),
@@ -162,12 +175,6 @@ def read_event_records(
 
     for log_file in log_files:
         for record in read_json_objects(log_file, warnings):
-            if (
-                isinstance(record, dict)
-                and record.get("eventType") in EXECUTION_LIFECYCLE_EVENT_TYPES
-            ):
-                continue
-
             normalized_record, event_id, invalid_reason = _normalize_event_record(
                 record
             )
@@ -184,6 +191,19 @@ def read_event_records(
                 continue
 
             assert normalized_record is not None
+            if _is_execution_lifecycle_record(record):
+                continue
+            if normalized_record["eventType"] in ExecutionLifecycleEvents.EVENT_TYPES:
+                warnings.append(
+                    warning(
+                        "RESERVED_EVENT_TYPE",
+                        event_id,
+                        f"Event {event_id} uses reserved execution lifecycle type "
+                        f"{normalized_record['eventType']} without the corresponding "
+                        "execution lifecycle fields; it was retained as a business Event.",
+                        file_path=log_file,
+                    )
+                )
             yield normalized_record
 
 

@@ -199,7 +199,8 @@ Example Trace record:
   "executionId": "9cb3c3df-1d3b-4c45-ae7d-1b28a1b86522",
   "parentExecutionId": "55cc59a8-f4e8-4f15-badf-4833f8a8a97a",
   "entityType": "llm",
-  "entityName": "qwen-max",
+  "entityName": "_default_chat_model",
+  "entityMetadata": {"model": "qwen-max"},
   "eventId": "80f30736-2759-41d8-aa59-9c8ad481ab42",
   "eventType": "_execution_finished_event",
   "status": "success",
@@ -207,11 +208,15 @@ Example Trace record:
 }
 ```
 
+For an LLM execution, `entityName` identifies the configured ChatModel Resource, while
+`entityMetadata.model` identifies the model or deployment configured on that Resource. This value
+is the requested identifier and is not a provider-confirmed model identity.
+
 `upstreamEventId` identifies the Event consumed by the Action that emitted the current Event, and `upstreamActionName` identifies that Action. Both are top-level Event Log fields derived from framework-managed Event lineage and remain outside `eventAttributes`. A root `InputEvent` omits both fields.
 
 ### Trace Tree Reconstruction
 
-The `flink-agents-trace-tree` command is installed with the Flink Agents Python wheel. It rebuilds InputEvent-rooted Trace Trees from business Events in a saved File Event Log and ignores execution lifecycle Events. The reader accepts both the current flat record shape and the previous nested `event` shape, including files that contain both formats. Pass either one log file for text output or a log directory for Trace Tree JSON:
+The `flink-agents-trace-tree` command is installed with the Flink Agents Python wheel. It rebuilds InputEvent-rooted Trace Trees from business Events in a saved File Event Log and ignores execution lifecycle Events. The four lifecycle types `_execution_started_event`, `_execution_finished_event`, `_execution_failed_event`, and `_execution_reused_event` are reserved for the framework. A record is ignored only when its type, status, and execution identity match the corresponding framework lifecycle shape. A business Event that uses a reserved type without that shape is retained and reported with a reconstruction warning. The reader accepts both the current flat record shape and the previous nested `event` shape, including files that contain both formats. Pass either one log file for text output or a log directory for Trace Tree JSON:
 
 ```bash
 flink-agents-trace-tree /path/to/events-job-task-0.log
@@ -331,6 +336,7 @@ consistently in both directions.
 | `MISSING_PARENT`       | An Event references an upstream Event with no valid node in the Event Log. |
 | `CYCLE_DETECTED`       | A lineage edge closes a cycle and is omitted from the reconstructed DAG.   |
 | `MALFORMED_RECORD`     | An Event Log record is invalid or partially written.                       |
+| `RESERVED_EVENT_TYPE`  | A business Event uses a framework-reserved lifecycle Event type.           |
 | `UNREADABLE_FILE`      | An Event Log file could not be read.                                       |
 
 ### Event Log Levels

@@ -124,6 +124,7 @@ def _create_mock_runner_context(
     sent_events = []
     metric_group = _MockMetricGroup()
     sensory_memory = _MockMemoryObject()
+    chat_model.model = "configured-model"
 
     config = MagicMock()
     option_values = {
@@ -189,10 +190,14 @@ class TestChatModelActionRetry:
         # No retry metrics should be recorded
         assert len(metric_group._sub_groups) == 0
         ctx.report_execution_started.assert_called_once_with(
-            ExecutionEntityTypes.LLM, chat_model.connection, {}
+            ExecutionEntityTypes.LLM,
+            chat_model.connection,
+            {"model": "configured-model"},
         )
         ctx.report_execution_succeeded.assert_called_once_with(
-            ExecutionEntityTypes.LLM, chat_model.connection, {}
+            ExecutionEntityTypes.LLM,
+            chat_model.connection,
+            {"model": "configured-model"},
         )
         ctx.report_execution_failed.assert_not_called()
 
@@ -245,9 +250,12 @@ class TestChatModelActionRetry:
         ctx.report_execution_failed.assert_called_once()
         failed_args = ctx.report_execution_failed.call_args.args
         assert failed_args[0] == ExecutionEntityTypes.LLM
+        assert failed_args[2] == {"model": "configured-model"}
         assert failed_args[-1] == ExecutionProblemCategories.MODEL_CALL_FAILED
         ctx.report_execution_succeeded.assert_called_once_with(
-            ExecutionEntityTypes.LLM, "test-model", {}
+            ExecutionEntityTypes.LLM,
+            "test-model",
+            {"model": "configured-model"},
         )
 
     def test_chat_exhausts_retries_and_raises(self) -> None:
@@ -277,6 +285,7 @@ class TestChatModelActionRetry:
         assert ctx.report_execution_failed.call_count == 3
         for failed_call in ctx.report_execution_failed.call_args_list:
             assert failed_call.args[0] == ExecutionEntityTypes.LLM
+            assert failed_call.args[2] == {"model": "configured-model"}
             assert failed_call.args[-1] == ExecutionProblemCategories.MODEL_CALL_FAILED
         ctx.report_execution_succeeded.assert_not_called()
 
@@ -321,7 +330,11 @@ class TestChatModelActionRetry:
         assert ctx.report_execution_succeeded.call_count == 3
         assert (
             ctx.report_execution_succeeded.call_args_list.count(
-                call(ExecutionEntityTypes.LLM, "test-model", {})
+                call(
+                    ExecutionEntityTypes.LLM,
+                    "test-model",
+                    {"model": "configured-model"},
+                )
             )
             == 2
         )

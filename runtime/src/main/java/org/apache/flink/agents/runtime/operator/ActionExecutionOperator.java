@@ -279,15 +279,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 key,
                 contextKey,
                 event,
-                ExecutionTraceContext.forInputRun(
-                        contextKey, agentPlan.getAgentName()));
+                ExecutionTraceContext.forInputRun(contextKey, agentPlan.getAgentName()));
     }
 
     private void processEvent(
-            Object key,
-            String contextKey,
-            Event event,
-            ExecutionTraceContext traceContext)
+            Object key, String contextKey, Event event, ExecutionTraceContext traceContext)
             throws Exception {
         eventRouter.notifyEventProcessed(event, traceContext);
 
@@ -336,10 +332,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
      * that input executes.
      */
     private void tryEmitAgentRunBeginEvent(
-            Object key,
-            String contextKey,
-            Event inputEvent,
-            ExecutionTraceContext traceContext)
+            Object key, String contextKey, Event inputEvent, ExecutionTraceContext traceContext)
             throws Exception {
         if (!agentRunBeginEventEnabled) {
             return;
