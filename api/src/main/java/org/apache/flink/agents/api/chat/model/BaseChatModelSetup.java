@@ -192,7 +192,7 @@ public abstract class BaseChatModelSetup extends Resource {
         return this.connectionName;
     }
 
-    @VisibleForTesting
+    /** Returns the configured model or deployment identifier used by this setup. */
     public String getModel() {
         return model;
     }

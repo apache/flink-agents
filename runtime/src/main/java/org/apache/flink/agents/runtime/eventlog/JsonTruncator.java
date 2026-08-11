@@ -25,7 +25,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Truncates a Jackson {@link JsonNode} tree per configurable thresholds.
@@ -44,21 +43,10 @@ import java.util.Set;
  * <p>Setting any threshold to {@code 0} disables that specific truncation strategy. If all
  * thresholds are {@code 0}, no truncation occurs.
  *
- * <p>Protected fields at the top level of the event node ({@code eventType}, {@code type}, {@code
- * id}, {@code upstreamEventId}, {@code upstreamActionName}, {@code attributes}) are never truncated
- * as structural fields. The {@code attributes} envelope is additionally traversed so user payload
- * stored inside it is truncated like any other field.
+ * <p>The input node is treated entirely as Event payload. Structural Event Log fields are kept
+ * outside this node and are not affected by truncation.
  */
 public class JsonTruncator {
-
-    private static final Set<String> PROTECTED_FIELDS =
-            Set.of(
-                    "eventType",
-                    "type",
-                    "id",
-                    "upstreamEventId",
-                    "upstreamActionName",
-                    "attributes");
 
     private final int maxStringLength;
     private final int maxArrayElements;
@@ -78,53 +66,37 @@ public class JsonTruncator {
     }
 
     /**
-     * Truncates the given event node in place according to configured thresholds.
+     * Truncates the given Event payload in place according to configured thresholds.
      *
-     * <p>Protected fields ({@code eventType}, {@code type}, {@code id}, {@code upstreamEventId},
-     * {@code upstreamActionName}, {@code attributes}) at the top level of the event node are never
-     * truncated as structural fields. The {@code attributes} envelope is additionally traversed so
-     * user payload stored inside it is truncated like any other field.
-     *
-     * @param eventNode the top-level event JSON object to truncate
+     * @param payloadNode the Event payload to truncate
      * @return {@code true} if any field was truncated, {@code false} if the node was unchanged
      */
-    public boolean truncate(ObjectNode eventNode) {
-        if (eventNode == null) {
+    public boolean truncate(ObjectNode payloadNode) {
+        if (payloadNode == null) {
             return false;
         }
-        boolean truncated = truncateObject(eventNode, 1, true);
-        // Traverse the protected attributes envelope so its user payload still gets truncated.
-        JsonNode attributes = eventNode.get("attributes");
-        if (attributes instanceof ObjectNode) {
-            truncated |= truncateObject((ObjectNode) attributes, 1, false);
-        }
-        return truncated;
+        return truncateObject(payloadNode, 1);
     }
 
     /**
      * Recursively truncates an object node.
      *
      * @param node the object node to process
-     * @param depth current depth (1 = top-level event node)
-     * @param isTopLevel whether this is the top-level event node (for protected field checks)
+     * @param depth current depth (1 = payload root)
      * @return true if any truncation occurred
      */
-    private boolean truncateObject(ObjectNode node, int depth, boolean isTopLevel) {
+    private boolean truncateObject(ObjectNode node, int depth) {
         boolean truncated = false;
 
         // At max depth, collapse the entire object to retain only scalars
         if (maxDepth > 0 && depth >= maxDepth) {
-            return collapseAtMaxDepth(node, isTopLevel);
+            return collapseAtMaxDepth(node);
         }
 
         List<String> fieldNames = new ArrayList<>();
         node.fieldNames().forEachRemaining(fieldNames::add);
 
         for (String fieldName : fieldNames) {
-            if (isTopLevel && PROTECTED_FIELDS.contains(fieldName)) {
-                continue;
-            }
-
             JsonNode child = node.get(fieldName);
             if (child == null) {
                 continue;
@@ -149,7 +121,7 @@ public class JsonTruncator {
                     truncated |= truncateArrayContents((ArrayNode) child, depth + 1);
                 }
             } else if (child.isObject()) {
-                truncated |= truncateObject((ObjectNode) child, depth + 1, false);
+                truncated |= truncateObject((ObjectNode) child, depth + 1);
             }
         }
 
@@ -206,7 +178,7 @@ public class JsonTruncator {
                     truncated = true;
                 }
             } else if (element.isObject()) {
-                truncated |= truncateObject((ObjectNode) element, depth, false);
+                truncated |= truncateObject((ObjectNode) element, depth);
             } else if (element.isArray()) {
                 JsonNode replacement = truncateArray((ArrayNode) element);
                 if (replacement != null) {
@@ -228,7 +200,7 @@ public class JsonTruncator {
      *
      * @return true if any fields were dropped
      */
-    private boolean collapseAtMaxDepth(ObjectNode node, boolean isTopLevel) {
+    private boolean collapseAtMaxDepth(ObjectNode node) {
         List<String> fieldNames = new ArrayList<>();
         node.fieldNames().forEachRemaining(fieldNames::add);
 
@@ -237,12 +209,6 @@ public class JsonTruncator {
         boolean hasNonScalar = false;
 
         for (String fieldName : fieldNames) {
-            if (isTopLevel && PROTECTED_FIELDS.contains(fieldName)) {
-                // Protected fields are kept as-is, even if non-scalar
-                scalarFields.set(fieldName, node.get(fieldName));
-                continue;
-            }
-
             JsonNode child = node.get(fieldName);
             if (child.isObject() || child.isArray()) {
                 omittedCount++;
@@ -267,9 +233,6 @@ public class JsonTruncator {
             // Check if any scalar field was replaced
             boolean stringTruncated = false;
             for (String fieldName : fieldNames) {
-                if (isTopLevel && PROTECTED_FIELDS.contains(fieldName)) {
-                    continue;
-                }
                 JsonNode original = node.get(fieldName);
                 if (original.isTextual()) {
                     JsonNode replacement = truncateString(original.textValue());

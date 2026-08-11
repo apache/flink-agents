@@ -110,6 +110,23 @@ public class CompileUtilsTest {
                 .isFalse();
     }
 
+    @Test
+    void testAgentNameUsedAsOperatorName() {
+        AgentPlan namedAgentPlan =
+                new AgentPlan(
+                        TEST_AGENT_PLAN.getActions(),
+                        TEST_AGENT_PLAN.getResourceProviders(),
+                        TEST_AGENT_PLAN.getConfig(),
+                        "test-agent");
+
+        assertThat(compileOperatorName(namedAgentPlan)).isEqualTo("test-agent");
+    }
+
+    @Test
+    void testMissingAgentNameUsesDefaultOperatorName() {
+        assertThat(compileOperatorName(TEST_AGENT_PLAN)).isEqualTo("action-execute-operator");
+    }
+
     private static List<Long> getTestSequence() {
         List<Long> testSequence = new ArrayList<>();
         for (int i = 0; i < TEST_SEQUENCE_REPEAT; i++) {
@@ -118,6 +135,14 @@ public class CompileUtilsTest {
             }
         }
         return testSequence;
+    }
+
+    private static String compileOperatorName(AgentPlan agentPlan) {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        KeyedStream<Long, Long> keyedInputStream = env.fromData(1L).keyBy(value -> value);
+        return CompileUtils.connectToAgent(keyedInputStream, agentPlan)
+                .getTransformation()
+                .getName();
     }
 
     private static void checkResult(List<Long> resultList) {

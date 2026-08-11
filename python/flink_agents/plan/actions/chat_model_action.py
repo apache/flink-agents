@@ -40,6 +40,11 @@ from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEve
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.trace import (
+    ExecutionEntityTypes,
+    ExecutionProblemCategories,
+    ExecutionReporters,
+)
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.utils import support_async
 from flink_agents.plan.function import PythonFunction
@@ -176,16 +181,21 @@ def _get_retry_stats(
 
 
 def _record_retry_metrics(
-    ctx: RunnerContext, model: str, retry_count: int, total_retry_wait_sec: int
+    ctx: RunnerContext,
+    model_resource: str,
+    retry_count: int,
+    total_retry_wait_sec: int,
 ) -> None:
-    """Record retry metrics under the connection name if retries occurred."""
+    """Record retry metrics under the ChatModel resource if retries occurred."""
     if retry_count <= 0:
         return
     metric_group = ctx.action_metric_group
     if metric_group is not None:
-        model_group = metric_group.get_sub_group("model", model)
-        model_group.get_counter("retryCount").inc(retry_count)
-        model_group.get_counter("retryWaitSec").inc(total_retry_wait_sec)
+        model_resource_group = metric_group.get_sub_group(
+            "model_resource", model_resource
+        )
+        model_resource_group.get_counter("retryCount").inc(retry_count)
+        model_resource_group.get_counter("retryWaitSec").inc(total_retry_wait_sec)
 
 
 def _inject_bash_tool_args(
@@ -266,11 +276,41 @@ def _generate_structured_output(
     return response
 
 
+def _generate_structured_output_with_report(
+    ctx: RunnerContext, response: ChatMessage, output_schema: OutputSchema
+) -> ChatMessage:
+    ExecutionReporters.started(ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT)
+    try:
+        structured_response = _generate_structured_output(response, output_schema)
+    except Exception as e:
+        ExecutionReporters.failed(
+            ctx,
+            ExecutionEntityTypes.PARSER,
+            STRUCTURED_OUTPUT,
+            {},
+            e,
+            ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR,
+        )
+        raise
+    else:
+        ExecutionReporters.succeeded(
+            ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT
+        )
+        return structured_response
+
+
 def _clean_llm_response(raw_response: str) -> str:
     trimmed = raw_response.strip()
     if trimmed.startswith("```"):
         return re.sub(r"(?s)^```(?:json)?\s*(.*?)\s*```$", r"\1", trimmed)
     return trimmed
+
+
+def _require_model_response(response: ChatMessage | None) -> ChatMessage:
+    if response is None:
+        error_message = "ChatModel returned a null response."
+        raise ValueError(error_message)
+    return response
 
 
 async def chat(
@@ -313,57 +353,80 @@ async def chat(
     response = None
     actual_retry_count = 0
     total_wait_time_sec = 0
+    llm_metadata = {"model": chat_model.model}
 
-    for attempt in range(num_retries + 1):
-        try:
-            if chat_async:
-                response = await ctx.durable_execute_async(
-                    chat_model.chat, messages, prompt_args=prompt_args
+    try:
+        for attempt in range(num_retries + 1):
+            try:
+                ExecutionReporters.started(
+                    ctx, ExecutionEntityTypes.LLM, model, llm_metadata
                 )
-            else:
-                response = ctx.durable_execute(
-                    chat_model.chat, messages, prompt_args=prompt_args
-                )
-
-            if (
-                response.extra_args.get("model_name")
-                and response.extra_args.get("promptTokens")
-                and response.extra_args.get("completionTokens")
-            ):
-                chat_model._record_token_metrics(
-                    response.extra_args["model_name"],
-                    response.extra_args["promptTokens"],
-                    response.extra_args["completionTokens"],
-                )
-            if output_schema is not None and len(response.tool_calls) == 0:
-                response = _generate_structured_output(response, output_schema)
-            break
-        except Exception as e:
-            if error_handling_strategy == ErrorHandlingStrategy.IGNORE:
-                _logger.warning(
-                    f"Chat request {initial_request_id} failed with error: {e}, ignored."
-                )
-                return
-            elif error_handling_strategy == ErrorHandlingStrategy.RETRY:
-                if attempt == num_retries:
+                try:
+                    if chat_async:
+                        response = await ctx.durable_execute_async(
+                            chat_model.chat, messages, prompt_args=prompt_args
+                        )
+                    else:
+                        response = ctx.durable_execute(
+                            chat_model.chat, messages, prompt_args=prompt_args
+                        )
+                    response = _require_model_response(response)
+                except Exception as model_error:
+                    ExecutionReporters.failed(
+                        ctx,
+                        ExecutionEntityTypes.LLM,
+                        model,
+                        llm_metadata,
+                        model_error,
+                        ExecutionProblemCategories.MODEL_CALL_FAILED,
+                    )
                     raise
-                actual_retry_count = attempt + 1
-                current_wait_sec = retry_wait_interval_sec * (
-                    1 << (actual_retry_count - 1)
+                ExecutionReporters.succeeded(
+                    ctx, ExecutionEntityTypes.LLM, model, llm_metadata
                 )
-                _logger.warning(
-                    f"Chat request {initial_request_id} failed with error: {e}, "
-                    f"retrying {actual_retry_count} / {num_retries}, "
-                    f"waiting {current_wait_sec} s."
-                )
-                if current_wait_sec > 0:
-                    time.sleep(current_wait_sec)
-                    total_wait_time_sec += current_wait_sec
-            else:
-                _logger.debug(
-                    f"Chat request {initial_request_id} failed, the input chat messages are {messages}."
-                )
-                raise
+                if (
+                    response.extra_args.get("model_name")
+                    and response.extra_args.get("promptTokens")
+                    and response.extra_args.get("completionTokens")
+                ):
+                    chat_model._record_token_metrics(
+                        response.extra_args["model_name"],
+                        response.extra_args["promptTokens"],
+                        response.extra_args["completionTokens"],
+                    )
+                if output_schema is not None and len(response.tool_calls) == 0:
+                    response = _generate_structured_output_with_report(
+                        ctx, response, output_schema
+                    )
+                break
+            except Exception as e:
+                if error_handling_strategy == ErrorHandlingStrategy.IGNORE:
+                    _logger.warning(
+                        f"Chat request {initial_request_id} failed with error: {e}, ignored."
+                    )
+                    return
+                elif error_handling_strategy == ErrorHandlingStrategy.RETRY:
+                    if attempt == num_retries:
+                        raise
+                    actual_retry_count = attempt + 1
+                    current_wait_sec = retry_wait_interval_sec * (
+                        1 << (actual_retry_count - 1)
+                    )
+                    _logger.warning(
+                        f"Chat request {initial_request_id} failed with error: {e}, "
+                        f"retrying {actual_retry_count} / {num_retries}, "
+                        f"waiting {current_wait_sec} s."
+                    )
+                    if current_wait_sec > 0:
+                        time.sleep(current_wait_sec)
+                        total_wait_time_sec += current_wait_sec
+                else:
+                    _logger.debug(
+                        f"Chat request {initial_request_id} failed, the input chat messages are {messages}."
+                    )
+                    raise
+    finally:
+        _record_retry_metrics(ctx, model, actual_retry_count, total_wait_time_sec)
 
     if actual_retry_count > 0:
         _accumulate_retry_stats(
@@ -390,10 +453,6 @@ async def chat(
         retry_stats = _get_retry_stats(ctx.sensory_memory, initial_request_id)
         total_retry_count = retry_stats["total_retry_count"]
         total_retry_wait_sec = retry_stats["total_retry_wait_sec"]
-
-        _record_retry_metrics(
-            ctx, chat_model.connection, total_retry_count, total_retry_wait_sec
-        )
 
         ctx.send_event(
             ChatResponseEvent(
