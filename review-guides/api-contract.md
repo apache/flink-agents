@@ -25,12 +25,17 @@ still apply.
   count on the Python side.
 - Treat the public base classes users extend as source-compatibility boundaries.
   A new abstract method breaks every implementation, including ones outside this
-  repo, while a defaulted overload plus a capability probe does not. The Python
+  repo, while a defaulted overload plus a capability probe does not. Compiling
+  is not the same as honoring the new argument: a default that forwards to the
+  older signature drops it in silence, so check that the default rejects what it
+  cannot honor, and that an override gating it behind a capability probe leaves
+  a fallback in force or fails, rather than silently doing neither. The Python
   guard that catches a mis-declared override only sees connections whose module
   is imported by hand at the top of the test.
 - Check that a removal is complete rather than asking whether to deprecate.
   There is no deprecation mechanism in this repo, so an API is either kept or
-  deleted outright.
+  deleted outright. Under the beta policy, prefer deleting unless a concrete
+  compatibility obligation requires keeping it.
 - Name the docs the change invalidates. Config keys, YAML aliases, and whole
   code samples are restated by hand across the doc site, and nothing in pull
   request CI builds or checks them, so a doc that contradicts the code ships
@@ -43,11 +48,12 @@ Run both lanes. A change verified in one language only is untested in the other.
 
 - Java, from the repo root: `mvn --batch-mode test -pl api`.
 - Python, from `python/`: `uv sync --extra test`, then `uv pip install
-  apache-flink`, then `uv run --no-sync pytest flink_agents/api
+  apache-flink~=2.3.0`, then `uv run --no-sync pytest flink_agents/api
   flink_agents/plan`. PyFlink is imported at module scope by the event types but
   is declared in neither the base dependencies nor the `test` extra, so
   collection fails without it. Install it after the sync, not before, because
-  `uv sync` removes it.
+  `uv sync` removes it. The pin matches the root `pom.xml`'s `flink.version`, so
+  both lanes run the same Flink.
 - Resource-name constants, from `python/`: `uv run --no-sync python
   ../e2e-test/test-scripts/check_resource_consistency.py`. This one is a script
   rather than a test, so neither Maven nor pytest reaches it.
