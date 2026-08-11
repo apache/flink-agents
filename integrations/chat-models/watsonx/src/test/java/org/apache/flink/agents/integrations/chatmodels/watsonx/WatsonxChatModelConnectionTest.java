@@ -313,6 +313,8 @@ class WatsonxChatModelConnectionTest {
                                 0.5,
                                 "max_tokens",
                                 256,
+                                "top_p",
+                                0.5,
                                 "extract_reasoning",
                                 true,
                                 "additional_kwargs",
@@ -321,7 +323,7 @@ class WatsonxChatModelConnectionTest {
         assertThat(payload.get("model_id").asText()).isEqualTo("ibm/granite-3-3-8b-instruct");
         assertThat(payload.get("temperature").asDouble()).isEqualTo(0.5);
         assertThat(payload.get("max_tokens").asInt()).isEqualTo(256);
-        assertThat(payload.get("top_p").asDouble()).isEqualTo(0.9);
+        assertThat(payload.get("top_p").asDouble()).isEqualTo(0.5);
         assertThat(payload.get("messages")).hasSize(1);
         // framework control params must not leak into the request
         assertThat(payload.has("model")).isFalse();
@@ -341,6 +343,22 @@ class WatsonxChatModelConnectionTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("additional_kwargs")
                 .hasMessageContaining("temperature");
+
+        for (String requestOwnedField :
+                List.of("model_id", "messages", "tools", "project_id", "space_id")) {
+            assertThatThrownBy(
+                            () ->
+                                    WatsonxChatModelConnection.buildPayload(
+                                            List.of(new ChatMessage(MessageRole.USER, "Hello!")),
+                                            List.of(),
+                                            Map.of(
+                                                    "model",
+                                                    "ibm/granite-3-3-8b-instruct",
+                                                    requestOwnedField,
+                                                    "override")))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(requestOwnedField);
+        }
     }
 
     @Test

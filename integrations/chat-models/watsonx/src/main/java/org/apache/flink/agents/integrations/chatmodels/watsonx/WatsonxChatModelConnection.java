@@ -69,6 +69,8 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                     "tool_choice_option",
                     "extract_reasoning",
                     "additional_kwargs");
+    private static final Set<String> REQUEST_OWNED_PARAMS =
+            Set.of("model_id", "messages", "tools", "project_id", "space_id");
     private static final Set<String> RESERVED_ADDITIONAL_KWARGS =
             Set.of(
                     "model",
@@ -433,6 +435,12 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                     });
         }
 
+        final Set<String> collisions = new java.util.HashSet<>(modelParams.keySet());
+        collisions.retainAll(REQUEST_OWNED_PARAMS);
+        if (!collisions.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "model parameters must not contain framework-owned fields: " + collisions);
+        }
         for (Map.Entry<String, Object> entry : modelParams.entrySet()) {
             if (!CONTROL_PARAMS.contains(entry.getKey()) && entry.getValue() != null) {
                 payload.set(entry.getKey(), MAPPER.valueToTree(entry.getValue()));

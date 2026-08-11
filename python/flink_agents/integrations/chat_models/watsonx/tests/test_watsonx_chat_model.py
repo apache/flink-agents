@@ -114,7 +114,9 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
 
     llm.open()
 
-    response = llm.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
+    response = llm.chat(
+        [ChatMessage(role=MessageRole.USER, content="Hello!")], top_p=0.5
+    )
 
     mock_model.chat.assert_called_once()
     call_kwargs = mock_model.chat.call_args.kwargs
@@ -122,7 +124,7 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     assert call_kwargs["params"] == {
         "temperature": 0.5,
         "max_tokens": 256,
-        "top_p": 0.9,
+        "top_p": 0.5,
     }
 
     assert response.role == MessageRole.ASSISTANT
@@ -382,3 +384,10 @@ def test_additional_kwargs_reject_request_owned_fields(reserved_key: str) -> Non
             model=test_model,
             additional_kwargs={reserved_key: "override"},
         )
+    if reserved_key not in {"messages", "tools"}:
+        with pytest.raises(ValueError, match=reserved_key):
+            _fake_connection().chat(
+                [ChatMessage(role=MessageRole.USER, content="Hello!")],
+                model=test_model,
+                **{reserved_key: "override"},
+            )
