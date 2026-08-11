@@ -46,21 +46,19 @@ DEFAULT_MODEL = "ibm/granite-4-h-small"
 DEFAULT_REQUEST_TIMEOUT = 120.0
 DEFAULT_MAX_RETRIES = 3
 RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+REQUEST_OWNED_PARAMS = frozenset(
+    {"model_id", "messages", "tools", "project_id", "space_id"}
+)
 RESERVED_ADDITIONAL_KWARGS = frozenset(
     {
         "model",
-        "model_id",
-        "messages",
-        "tools",
-        "project_id",
-        "space_id",
         "temperature",
         "max_tokens",
         "extract_reasoning",
         "tool_choice",
         "tool_choice_option",
     }
-)
+) | REQUEST_OWNED_PARAMS
 
 
 def _normalize(value: str | None) -> str | None:
@@ -362,6 +360,15 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
             )
             raise ValueError(msg)
 
+        request_params = {**additional_kwargs, **kwargs}
+        collisions = REQUEST_OWNED_PARAMS & request_params.keys()
+        if collisions:
+            msg = (
+                "request parameters must not contain framework-owned fields: "
+                f"{sorted(collisions)}."
+            )
+            raise ValueError(msg)
+
         tool_specs: List[Dict[str, Any]] | None = (
             [to_openai_tool(metadata=tool.metadata) for tool in tools]
             if tools
@@ -374,7 +381,7 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
             tools=tool_specs,
             tool_choice=tool_choice,
             tool_choice_option=tool_choice_option,
-            params={**kwargs, **additional_kwargs} or None,
+            params=request_params or None,
         )
 
         extra_args: Dict[str, Any] = {}
