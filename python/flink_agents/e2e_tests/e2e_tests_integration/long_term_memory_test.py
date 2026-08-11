@@ -311,6 +311,16 @@ def check_result(*, result_dir: Path) -> None:
     # one.
     bob_items = records["bob.2"].items if "bob.2" in records else None
     bob_values = None if bob_items is None else [item.value for item in bob_items]
+    # A scoping break misattributes in either direction. alice's facts landing
+    # in bob's set leaves alice's set short rather than inflated, so check that
+    # direction ahead of the emptiness assertion below, which would otherwise
+    # report the symptom in place of the cause.
+    bob_leaked = [
+        value
+        for value in (bob_values or [])
+        if "watermelon" in value.lower() or "bananas" in value.lower()
+    ]
+    assert not bob_leaked, f"bob's set contains alice's facts: {bob_values}"
     assert items, f"alice's memory set is empty (bob's set: {bob_values})"
 
     values = [item.value for item in items]
