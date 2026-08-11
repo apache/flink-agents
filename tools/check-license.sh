@@ -20,41 +20,75 @@
 # NOTE: This script is adapted from the Apache Spark project.
 
 
-acquire_rat_jar () {
+validate_rat_jar() {
+  local jar_cmd
 
+  if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/jar" ]; then
+    jar_cmd="$JAVA_HOME/bin/jar"
+  elif command -v jar >/dev/null 2>&1; then
+    jar_cmd="$(command -v jar)"
+  elif command -v unzip >/dev/null 2>&1; then
+    unzip -tq "$JAR" >/dev/null 2>&1
+    return $?
+  else
+    printf "Cannot validate Apache RAT: install a JDK with 'jar' or install 'unzip'.\n" >&2
+    return 2
+  fi
+
+  "$jar_cmd" tf "$JAR" >/dev/null 2>&1
+}
+
+acquire_rat_jar() {
   URL="https://repo.maven.apache.org/maven2/org/apache/rat/apache-rat/${RAT_VERSION}/apache-rat-${RAT_VERSION}.jar"
-
   JAR="$rat_jar"
 
-  # Download rat launch jar if it hasn't been downloaded yet
   if [ ! -f "$JAR" ]; then
-    # Download
     printf "Attempting to fetch rat\n"
     JAR_DL="${JAR}.part"
-    if [ $(command -v curl) ]; then
-      curl -L --silent "${URL}" > "$JAR_DL" && mv "$JAR_DL" "$JAR"
-    elif [ $(command -v wget) ]; then
-      wget --quiet ${URL} -O "$JAR_DL" && mv "$JAR_DL" "$JAR"
+    rm -f "$JAR_DL"
+    if command -v curl >/dev/null 2>&1; then
+      if ! curl --fail --show-error --location --output "$JAR_DL" "$URL"; then
+        rm -f "$JAR_DL"
+        printf "Failed to download Apache RAT from %s.\n" "$URL" >&2
+        return 1
+      fi
+    elif command -v wget >/dev/null 2>&1; then
+      if ! wget --quiet --output-document="$JAR_DL" "$URL"; then
+        rm -f "$JAR_DL"
+        printf "Failed to download Apache RAT from %s.\n" "$URL" >&2
+        return 1
+      fi
     else
-      printf "You do not have curl or wget installed, please install rat manually.\n"
-      exit -1
+      printf "Cannot download Apache RAT: install 'curl' or 'wget'.\n" >&2
+      return 1
+    fi
+    if ! mv "$JAR_DL" "$JAR"; then
+      rm -f "$JAR_DL"
+      printf "Failed to store the downloaded Apache RAT JAR at %s.\n" "$JAR" >&2
+      return 1
     fi
   fi
 
-  unzip -tq "$JAR" &> /dev/null
-  if [ $? -ne 0 ]; then
-    # We failed to download
-    rm "$JAR"
-    printf "Our attempt to download rat locally to ${JAR} failed. Please install rat manually.\n"
-    exit -1
+  validate_rat_jar
+  validation_status=$?
+  if [ "$validation_status" -eq 2 ]; then
+    return 1
+  elif [ "$validation_status" -ne 0 ]; then
+    rm -f "$JAR"
+    printf "The Apache RAT JAR at %s is invalid.\n" "$JAR" >&2
+    return 1
   fi
 }
+
+if [[ "${CHECK_LICENSE_SOURCE_ONLY:-}" == "1" ]]; then
+  return 0
+fi
 
 # Go to the project root directory
 FWDIR="$(cd "`dirname "$0"`"/..; pwd)"
 cd "$FWDIR"
 
-if test -x "$JAVA_HOME/bin/java"; then
+if [ -n "${JAVA_HOME:-}" ] && test -x "$JAVA_HOME/bin/java"; then
     declare java_cmd="$JAVA_HOME/bin/java"
 else
     declare java_cmd=java
@@ -64,8 +98,8 @@ export RAT_VERSION=0.16.1
 export rat_jar="$FWDIR"/lib/apache-rat-${RAT_VERSION}.jar
 mkdir -p "$FWDIR"/lib
 
-[[ -f "$rat_jar" ]] || acquire_rat_jar || {
-    echo "Download failed. Obtain the rat jar manually and place it at $rat_jar"
+acquire_rat_jar || {
+    echo "Unable to acquire a valid RAT JAR at $rat_jar"
     exit 1
 }
 
