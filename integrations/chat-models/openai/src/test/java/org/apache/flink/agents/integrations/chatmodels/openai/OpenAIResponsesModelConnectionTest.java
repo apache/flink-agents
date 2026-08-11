@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.openai.errors.BadRequestException;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
@@ -26,6 +27,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -56,10 +58,25 @@ class OpenAIResponsesModelConnectionTest {
         return new OpenAIResponsesModelConnection(desc, NOOP);
     }
 
+    private static OpenAIResponsesModelConnection connection(String apiBaseUrl) {
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(
+                                OpenAIResponsesModelConnection.class.getName())
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_base_url", apiBaseUrl)
+                        .addInitialArgument("model", "gpt-4o")
+                        .build();
+        return new OpenAIResponsesModelConnection(desc, NOOP);
+    }
+
     private static Map<String, Object> params(String model) {
         Map<String, Object> params = new HashMap<>();
         params.put("model", model);
         return params;
+    }
+
+    private static List<ChatMessage> userMessage() {
+        return List.of(new ChatMessage(MessageRole.USER, "hi"));
     }
 
     @Test
@@ -237,5 +254,22 @@ class OpenAIResponsesModelConnectionTest {
                                                 params("gpt-4o")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("externalId");
+    }
+
+    @Test
+    @DisplayName("A provider error reaches the caller as the SDK exception carrying its payload")
+    void testProviderErrorPropagatesUnwrapped() throws IOException {
+        try (FakeOpenAIErrorEndpoint endpoint = FakeOpenAIErrorEndpoint.rejectingWith400()) {
+            OpenAIResponsesModelConnection connection = connection(endpoint.baseUrl());
+
+            assertThatThrownBy(() -> connection.chat(userMessage(), List.of(), params("gpt-4o")))
+                    .isInstanceOfSatisfying(
+                            BadRequestException.class,
+                            e -> {
+                                assertThat(e.statusCode()).isEqualTo(400);
+                                assertThat(e.code()).contains(FakeOpenAIErrorEndpoint.ERROR_CODE);
+                            })
+                    .hasMessageContaining(FakeOpenAIErrorEndpoint.ERROR_MESSAGE);
+        }
     }
 }

@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.openai.errors.BadRequestException;
 import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -33,6 +34,7 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -60,6 +62,16 @@ class OpenAICompletionsConnectionTest {
         ResourceDescriptor desc =
                 ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
                         .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("model", "gpt-4o")
+                        .build();
+        return new OpenAICompletionsConnection(desc, NOOP);
+    }
+
+    private static OpenAICompletionsConnection connection(String apiBaseUrl) {
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_base_url", apiBaseUrl)
                         .addInitialArgument("model", "gpt-4o")
                         .build();
         return new OpenAICompletionsConnection(desc, NOOP);
@@ -115,6 +127,24 @@ class OpenAICompletionsConnectionTest {
                                                 null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("externalId");
+    }
+
+    @Test
+    @DisplayName("A provider error reaches the caller as the SDK exception carrying its payload")
+    void testProviderErrorPropagatesUnwrapped() throws IOException {
+        try (FakeOpenAIErrorEndpoint endpoint = FakeOpenAIErrorEndpoint.rejectingWith400()) {
+            OpenAICompletionsConnection connection = connection(endpoint.baseUrl());
+
+            assertThatThrownBy(
+                            () -> connection.chat(userMessage(), List.of(), params("gpt-4o"), null))
+                    .isInstanceOfSatisfying(
+                            BadRequestException.class,
+                            e -> {
+                                assertThat(e.statusCode()).isEqualTo(400);
+                                assertThat(e.code()).contains(FakeOpenAIErrorEndpoint.ERROR_CODE);
+                            })
+                    .hasMessageContaining(FakeOpenAIErrorEndpoint.ERROR_MESSAGE);
+        }
     }
 
     @Test
