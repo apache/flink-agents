@@ -349,10 +349,13 @@ async def chat(
     response = None
     actual_retry_count = 0
     total_wait_time_sec = 0
+    llm_metadata = {"model": chat_model.model}
 
     for attempt in range(num_retries + 1):
         try:
-            ExecutionReporters.started(ctx, ExecutionEntityTypes.LLM, model)
+            ExecutionReporters.started(
+                ctx, ExecutionEntityTypes.LLM, model, llm_metadata
+            )
             try:
                 if chat_async:
                     response = await ctx.durable_execute_async(
@@ -368,12 +371,14 @@ async def chat(
                     ctx,
                     ExecutionEntityTypes.LLM,
                     model,
-                    {},
+                    llm_metadata,
                     model_error,
                     ExecutionProblemCategories.MODEL_CALL_FAILED,
                 )
                 raise
-            ExecutionReporters.succeeded(ctx, ExecutionEntityTypes.LLM, model)
+            ExecutionReporters.succeeded(
+                ctx, ExecutionEntityTypes.LLM, model, llm_metadata
+            )
 
             if (
                 request_metric_group is not None

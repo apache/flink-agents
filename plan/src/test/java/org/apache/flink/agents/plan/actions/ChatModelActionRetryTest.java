@@ -56,6 +56,8 @@ import static org.mockito.Mockito.*;
 /** Tests for retry behavior in {@link ChatModelAction}. */
 class ChatModelActionRetryTest {
 
+    private static final Map<String, Object> LLM_METADATA = Map.of("model", "configured-model");
+
     @Mock private RunnerContext mockCtx;
 
     @Mock private BaseChatModelSetup mockChatModel;
@@ -174,10 +176,11 @@ class ChatModelActionRetryTest {
 
         ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
         verify(reporter)
-                .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+                .reportExecutionStarted(
+                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
         verify(reporter)
                 .reportExecutionSucceeded(
-                        ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
     }
 
     @Test
@@ -227,10 +230,11 @@ class ChatModelActionRetryTest {
 
         ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
         verify(reporter, times(2))
-                .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+                .reportExecutionStarted(
+                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
         verify(reporter, times(2))
                 .reportExecutionSucceeded(
-                        ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
         verify(reporter)
                 .reportExecutionFailed(
                         eq(ExecutionReporter.EntityTypes.PARSER),
@@ -242,7 +246,7 @@ class ChatModelActionRetryTest {
                 .reportExecutionFailed(
                         eq(ExecutionReporter.EntityTypes.LLM),
                         eq("test-model"),
-                        eq(Map.of()),
+                        eq(LLM_METADATA),
                         any(Throwable.class),
                         any());
     }
@@ -267,17 +271,18 @@ class ChatModelActionRetryTest {
 
         ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
         verify(reporter, times(2))
-                .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+                .reportExecutionStarted(
+                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
         verify(reporter)
                 .reportExecutionFailed(
                         eq(ExecutionReporter.EntityTypes.LLM),
                         eq("test-model"),
-                        eq(Map.of()),
+                        eq(LLM_METADATA),
                         any(RuntimeException.class),
                         eq(ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED));
         verify(reporter)
                 .reportExecutionSucceeded(
-                        ExecutionReporter.EntityTypes.LLM, "test-model", Map.of());
+                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
     }
 
     @Test
@@ -490,6 +495,7 @@ class ChatModelActionRetryTest {
         MemoryObject memory = createStatefulMemoryObject();
 
         when(chatModel.getConnectionName()).thenReturn("test-connection");
+        when(chatModel.getModel()).thenReturn("configured-model");
         when(reportingCtx.getResource(anyString(), eq(ResourceType.CHAT_MODEL)))
                 .thenReturn(chatModel);
         when(reportingCtx.getSensoryMemory()).thenReturn(memory);
