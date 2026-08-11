@@ -86,11 +86,15 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_model.chat.return_value = _mock_chat_response(
         {"role": "assistant", "content": "Hello there!"}
     )
+    model_inference = MagicMock(return_value=mock_model)
     monkeypatch.setattr(
-        WatsonxChatModelConnection, "_get_model", lambda self, model: mock_model
+        "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.ModelInference",
+        model_inference,
     )
 
     connection = _fake_connection()
+    api_client = MagicMock()
+    connection._client = api_client
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         return connection
@@ -126,6 +130,13 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.extra_args["model_name"] == test_model
     assert response.extra_args["promptTokens"] == 100
     assert response.extra_args["completionTokens"] == 50
+    model_inference.assert_called_once_with(
+        model_id=test_model,
+        api_client=api_client,
+        project_id="fake-project",
+        space_id=None,
+        max_retries=0,
+    )
 
 
 def test_watsonx_tool_call_response_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -357,4 +368,17 @@ def test_configuration_contract(monkeypatch: pytest.MonkeyPatch) -> None:
             [ChatMessage(role=MessageRole.USER, content="Hello!")],
             model=test_model,
             additional_kwargs={"temperature": 5.0},
+        )
+
+
+@pytest.mark.parametrize(
+    "reserved_key", ["model_id", "messages", "tools", "project_id", "space_id"]
+)
+def test_additional_kwargs_reject_request_owned_fields(reserved_key: str) -> None:
+    """Framework-owned request fields cannot be replaced by static configuration."""
+    with pytest.raises(ValueError, match=reserved_key):
+        _fake_connection().chat(
+            [ChatMessage(role=MessageRole.USER, content="Hello!")],
+            model=test_model,
+            additional_kwargs={reserved_key: "override"},
         )
