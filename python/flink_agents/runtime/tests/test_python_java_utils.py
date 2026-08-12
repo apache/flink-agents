@@ -30,6 +30,7 @@ from flink_agents.runtime.python_java_utils import (
     call_embedding_with_usage,
     convert_to_python_key_text,
     get_python_tool_metadata,
+    to_python_memory_set,
     wrap_to_input_event,
 )
 
@@ -99,3 +100,12 @@ def test_convert_to_python_key_text_uses_python_str() -> None:
 def test_convert_to_python_key_text_does_not_unpickle_explicit_bytes() -> None:
     assert convert_to_python_key_text(b"N.", "explicit") == "b'N.'"
     assert convert_to_python_key_text(b"\x80\x04N.", "explicit") == "b'\\x80\\x04N.'"
+
+
+def test_to_python_memory_set_carries_the_action_context() -> None:
+    memory_set = to_python_memory_set("prefs", "owner", "owner-action", True)
+
+    assert memory_set.name == "prefs"
+    assert memory_set.partition_key == "owner"
+    assert memory_set.observation_id == "owner-action"
+    assert memory_set.observation_suppressed is True
