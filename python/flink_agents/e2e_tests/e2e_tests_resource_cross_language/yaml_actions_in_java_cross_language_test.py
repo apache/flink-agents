@@ -57,7 +57,7 @@ _TEST_JAR = (
     / "e2e-test"
     / "flink-agents-end-to-end-tests-resource-cross-language"
     / "target"
-    / "flink-agents-end-to-end-tests-resource-cross-language-0.3-SNAPSHOT-tests.jar"
+    / "flink-agents-end-to-end-tests-resource-cross-language-0.4-SNAPSHOT-tests.jar"
 )
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]

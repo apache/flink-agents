@@ -85,9 +85,7 @@ class Agent(ABC):
                     )
     """
 
-    _actions: Dict[
-        str, Tuple[List[str], Function, Dict[str, Any] | None]
-    ]
+    _actions: Dict[str, Tuple[List[str], Function, Dict[str, Any] | None]]
     _resources: Dict[ResourceType, Dict[str, Any]]
 
     def __init__(self) -> None:
@@ -123,8 +121,8 @@ class Agent(ABC):
         name : str
             The name of the action, should be unique in the same Agent.
         trigger_conditions : list[str]
-            Trigger condition strings — each is either an event-type name
-            or a future condition-expression form (see ``@action``).
+            Raw event-type names or Boolean condition expressions combined with
+            OR semantics. Expression validation occurs when the plan is applied.
         func : Callable | Function
             Either a raw Python callable (it will be wrapped as a
             ``PythonFunction``) or a pre-built flink-agents ``Function``

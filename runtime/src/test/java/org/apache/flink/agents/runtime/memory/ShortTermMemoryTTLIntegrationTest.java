@@ -45,13 +45,21 @@ class ShortTermMemoryTTLIntegrationTest {
 
     private static final class TestInput {
         public String eventKey;
+        public long delayBeforeMs;
         public long sleepMs;
+        public boolean write;
 
         private TestInput() {}
 
         private TestInput(String eventKey, long sleepMs) {
+            this(eventKey, 0L, sleepMs, true);
+        }
+
+        private TestInput(String eventKey, long delayBeforeMs, long sleepMs, boolean write) {
             this.eventKey = eventKey;
+            this.delayBeforeMs = delayBeforeMs;
             this.sleepMs = sleepMs;
+            this.write = write;
         }
     }
 
@@ -63,6 +71,7 @@ class ShortTermMemoryTTLIntegrationTest {
             InputEvent inputEvent = (InputEvent) event;
             TestInput input = (TestInput) inputEvent.getInput();
 
+            Thread.sleep(input.delayBeforeMs);
             MemoryObject shortTermMemory = ctx.getShortTermMemory();
             MemoryObject memoryObject = shortTermMemory.get(input.eventKey);
 
@@ -77,7 +86,9 @@ class ShortTermMemoryTTLIntegrationTest {
                 }
             }
 
-            shortTermMemory.set(input.eventKey, currentCount + 1);
+            if (input.write) {
+                shortTermMemory.set(input.eventKey, currentCount + 1);
+            }
             Thread.sleep(input.sleepMs);
             ctx.sendEvent(
                     new OutputEvent(
@@ -118,6 +129,49 @@ class ShortTermMemoryTTLIntegrationTest {
         List<String> results = runScenario(50L, 200L, true, false);
 
         assertEquals(List.of("event1|NEW", "event2|NEW", "event1|NEW"), results);
+    }
+
+    @Test
+    void testDefaultUpdateTypeRefreshesTtlOnRead() throws Exception {
+        List<String> defaultResults = runReadRefreshScenario(null);
+        List<String> onCreateAndWriteResults =
+                runReadRefreshScenario(ShortTermMemoryTtlUpdate.ON_CREATE_AND_WRITE);
+
+        assertEquals(List.of("event1|NEW", "event1|EXISTING", "event1|EXISTING"), defaultResults);
+        assertEquals(
+                List.of("event1|NEW", "event1|EXISTING", "event1|NEW"), onCreateAndWriteResults);
+    }
+
+    private static List<String> runReadRefreshScenario(ShortTermMemoryTtlUpdate updateType)
+            throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        AgentsExecutionEnvironment agentEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        AgentConfiguration agentsConfig = (AgentConfiguration) agentEnv.getConfig();
+        agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, 3000L);
+        if (updateType != null) {
+            agentsConfig.set(
+                    AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE, updateType);
+        }
+
+        List<TestInput> testData = new ArrayList<>();
+        // Reads occur near t=2s and t=4s. With a 3s TTL, the last read is after the
+        // original expiry but before the first read's refreshed expiry near t=5s.
+        testData.add(new TestInput("event1", 0L, 0L, true));
+        testData.add(new TestInput("event1", 2000L, 0L, false));
+        testData.add(new TestInput("event1", 2000L, 0L, false));
+
+        DataStream<TestInput> inputStream = env.fromCollection(testData);
+        DataStream<Object> outputStream =
+                agentEnv.fromDataStream(inputStream, x -> MEMORY_KEY)
+                        .apply(new TTLTestAgent())
+                        .toDataStream();
+
+        List<String> results = new ArrayList<>();
+        outputStream.map(Object::toString).executeAndCollect().forEachRemaining(results::add);
+        return results;
     }
 
     private static List<String> runScenario(

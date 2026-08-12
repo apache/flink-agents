@@ -22,11 +22,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.core.JsonSchemaLocalValidation;
 import com.openai.core.JsonValue;
 import com.openai.models.ChatModel;
 import com.openai.models.FunctionDefinition;
 import com.openai.models.FunctionParameters;
 import com.openai.models.ReasoningEffort;
+import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionFunctionTool;
@@ -43,6 +45,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * A chat model integration for the OpenAI Chat Completions service using the official Java SDK.
@@ -53,8 +56,8 @@ import java.util.Map;
  *   <li><b>api_key</b> (required): OpenAI API key
  *   <li><b>api_base_url</b> (optional): Base URL for OpenAI API (defaults to
  *       https://api.openai.com/v1)
- *   <li><b>timeout</b> (optional): Timeout in seconds for API requests (default: 60)
- *   <li><b>max_retries</b> (optional): Maximum number of retry attempts (default: 3)
+ *   <li><b>timeout</b> (optional): Timeout in seconds for API requests
+ *   <li><b>max_retries</b> (optional): Maximum number of retry attempts (default: 2)
  *   <li><b>default_headers</b> (optional): Map of default headers to include in all requests
  *   <li><b>model</b> (optional): Default model to use if not specified in setup
  * </ul>
@@ -127,11 +130,70 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         return maxRetries;
     }
 
+    // Models for which OpenAI documents json_schema strict Structured Outputs support.
+    // Source of truth: https://platform.openai.com/docs/guides/structured-outputs
+    //
+    // A name carrying a non-text modality marker is rejected before anything else. Audio, realtime,
+    // speech and transcription variants expose no json_schema response format even though they
+    // share the name prefix of a capable text family, so the marker check has to win over a prefix
+    // match rather than merely coexist with it.
+    //
+    // A text family whose entire lifetime post-dates the Structured Outputs cutoff is matched by
+    // name prefix, so its dated snapshots and size variants resolve without enumerating each one.
+    //
+    // Two cases cannot use a prefix and are matched exactly instead. The gpt-4o family straddles
+    // the cutoff — gpt-4o-2024-05-13 predates it and is not capable — so the boundary there is
+    // temporal rather than nominal. The o1 family is not uniform: o1 is capable while o1-mini is
+    // not, so an "o1" prefix would admit an incapable sibling.
+    //
+    // A name outside every listed family reports not-capable and degrades to the prompt fallback
+    // rather than failing at the provider. Within a listed family the prefix assumes capability,
+    // so a family variant that ships without json_schema support has to be excluded explicitly,
+    // either by a marker that appears in no capable name or by replacing the family prefix with
+    // exact names.
+    private static final Set<String> NON_TEXT_MODALITY_MARKERS =
+            Set.of("-audio", "-realtime", "-tts", "-transcribe");
+    private static final Set<String> NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES =
+            Set.of("gpt-4o-mini", "gpt-4o-search-preview", "gpt-4.1", "gpt-5", "o3", "o4-mini");
+    private static final Set<String> NATIVE_STRUCTURED_OUTPUT_MODELS =
+            Set.of("gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "o1", "o1-2024-12-17");
+
+    @Override
+    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+        if (effectiveModel == null) {
+            return false;
+        }
+        if (NON_TEXT_MODALITY_MARKERS.stream().anyMatch(effectiveModel::contains)) {
+            return false;
+        }
+        return NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES.stream()
+                        .anyMatch(effectiveModel::startsWith)
+                || NATIVE_STRUCTURED_OUTPUT_MODELS.contains(effectiveModel);
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        return doChat(messages, tools, modelParams, null);
+    }
+
+    @Override
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
+        return doChat(messages, tools, modelParams, outputSchema);
+    }
+
+    private ChatMessage doChat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
         try {
-            ChatCompletionCreateParams params = buildRequest(messages, tools, modelParams);
+            ChatCompletionCreateParams params =
+                    buildRequest(messages, tools, modelParams, outputSchema);
             ChatCompletion completion = client.chat().completions().create(params);
             ChatMessage response =
                     OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
@@ -158,8 +220,13 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         }
     }
 
-    private ChatCompletionCreateParams buildRequest(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> rawModelParams) {
+    // Package-private so the request body (including the native response_format) can be asserted
+    // without issuing a live API call through the final OpenAI client.
+    ChatCompletionCreateParams buildRequest(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> rawModelParams,
+            Object outputSchema) {
         Map<String, Object> modelParams =
                 rawModelParams != null ? new HashMap<>(rawModelParams) : new HashMap<>();
 
@@ -176,6 +243,19 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
 
         if (tools != null && !tools.isEmpty()) {
             builder.tools(convertTools(tools, strictMode));
+        }
+
+        // Native structured output applies only for a POJO Class schema on a model the provider
+        // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
+        // the prompt-engineering fallback.
+        //
+        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
+        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
+        // for NATIVE on a model this predicate rejects therefore gets an unconstrained response
+        // instead of an error. Once strategy resolution is wired up, NATIVE must either bypass
+        // this capability re-check or fail explicitly.
+        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+            builder.responseFormat(toNativeResponseFormat((Class<?>) outputSchema));
         }
 
         Object temperature = modelParams.remove("temperature");
@@ -214,6 +294,26 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         }
 
         return builder.build();
+    }
+
+    // Derives the strict json_schema response format from a POJO class via the SDK's typed
+    // structured-output builder. The Kotlin-facade StructuredOutputsKt.responseFormatFromClass is
+    // not callable from Java, so the response format is extracted through the typed builder, which
+    // generates the same strict draft-2020-12 schema, and then reattached to the standard builder.
+    private static <T> ResponseFormatJsonSchema toNativeResponseFormat(Class<T> schemaClass) {
+        return ChatCompletionCreateParams.builder()
+                .model(ChatModel.of(""))
+                .addUserMessage("")
+                .responseFormat(schemaClass, JsonSchemaLocalValidation.NO)
+                .build()
+                .rawParams()
+                .responseFormat()
+                .orElseThrow(
+                        () ->
+                                new IllegalStateException(
+                                        "OpenAI SDK did not produce a response_format for schema "
+                                                + schemaClass.getName()))
+                .asJsonSchema();
     }
 
     private List<ChatCompletionTool> convertTools(List<Tool> tools, boolean strictMode) {

@@ -23,10 +23,13 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.MemoryEvent;
+import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.tools.ToolResponse;
@@ -37,6 +40,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -318,6 +322,187 @@ public class ActionStateSerdeTest {
         assertTrue(legacyFailure.isFailure());
         assertArrayEquals(
                 "exception".getBytes(StandardCharsets.UTF_8), legacyFailure.getExceptionPayload());
+    }
+
+    @Test
+    public void testByteArrayMemoryValuePreserved() throws Exception {
+        byte[] value = new byte[] {1, 2, 3, 4, 5};
+        ActionState originalState = new ActionState(new InputEvent("in"));
+        originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.bytes", value));
+
+        ActionState deserializedState =
+                ActionStateSerde.deserialize(ActionStateSerde.serialize(originalState));
+
+        Object recovered = deserializedState.getShortTermMemoryUpdates().get(0).getValue();
+        assertInstanceOf(byte[].class, recovered);
+        assertArrayEquals(value, (byte[]) recovered);
+    }
+
+    @Test
+    public void testLongMemoryValuePreserved() throws Exception {
+        Long value = 42L;
+        ActionState originalState = new ActionState(new InputEvent("in"));
+        originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.long", value));
+
+        ActionState deserializedState =
+                ActionStateSerde.deserialize(ActionStateSerde.serialize(originalState));
+
+        Object recovered = deserializedState.getShortTermMemoryUpdates().get(0).getValue();
+        assertInstanceOf(Long.class, recovered);
+        assertEquals(42L, recovered);
+    }
+
+    @Test
+    public void testNestedCollectionMemoryValuePreserved() throws Exception {
+        byte[] nestedBytes = new byte[] {9, 8, 7};
+        List<Object> innerList = new ArrayList<>();
+        innerList.add(nestedBytes);
+        innerList.add(7L);
+        Map<String, Object> value = new HashMap<>();
+        value.put("items", innerList);
+
+        ActionState originalState = new ActionState(new InputEvent("in"));
+        originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.nested", value));
+
+        ActionState deserializedState =
+                ActionStateSerde.deserialize(ActionStateSerde.serialize(originalState));
+
+        Object recovered = deserializedState.getShortTermMemoryUpdates().get(0).getValue();
+        assertInstanceOf(Map.class, recovered);
+        @SuppressWarnings("unchecked")
+        List<Object> recoveredList = (List<Object>) ((Map<String, Object>) recovered).get("items");
+        assertInstanceOf(byte[].class, recoveredList.get(0));
+        assertArrayEquals(nestedBytes, (byte[]) recoveredList.get(0));
+        assertInstanceOf(Long.class, recoveredList.get(1));
+        assertEquals(7L, recoveredList.get(1));
+    }
+
+    @Test
+    public void testPojoMemoryValuePreserved() throws Exception {
+        MemoryValuePojo value = new MemoryValuePojo("hello", 99);
+        ActionState originalState = new ActionState(new InputEvent("in"));
+        originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.pojo", value));
+
+        ActionState deserializedState =
+                ActionStateSerde.deserialize(ActionStateSerde.serialize(originalState));
+
+        Object recovered = deserializedState.getShortTermMemoryUpdates().get(0).getValue();
+        assertInstanceOf(MemoryValuePojo.class, recovered);
+        assertEquals(value, recovered);
+    }
+
+    @Test
+    public void testNullMemoryValuePreserved() throws Exception {
+        ActionState originalState = new ActionState(new InputEvent("in"));
+        originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.null", null));
+
+        ActionState deserializedState =
+                ActionStateSerde.deserialize(ActionStateSerde.serialize(originalState));
+
+        assertEquals(1, deserializedState.getShortTermMemoryUpdates().size());
+        assertNull(deserializedState.getShortTermMemoryUpdates().get(0).getValue());
+    }
+
+    @Test
+    public void testNonEnvelopeMemoryValueRejected() throws Exception {
+        ActionState originalState = new ActionState(new InputEvent("in"));
+        originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.raw", "some value"));
+
+        byte[] serialized = ActionStateSerde.serialize(originalState);
+        String json = new String(serialized, StandardCharsets.UTF_8);
+        // Replace the whole envelope object with a bare JSON value, as a legacy pre-envelope
+        // journal would have stored it.
+        int start = json.indexOf("{\"serde\":");
+        int end = json.indexOf('}', start) + 1;
+        byte[] patched =
+                (json.substring(0, start) + "\"some value\"" + json.substring(end))
+                        .getBytes(StandardCharsets.UTF_8);
+
+        assertThrows(RuntimeException.class, () -> ActionStateSerde.deserialize(patched));
+    }
+
+    @Test
+    public void testUnknownEnvelopeVersionRejected() throws Exception {
+        ActionState originalState = new ActionState(new InputEvent("in"));
+        originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.version", "some value"));
+
+        byte[] serialized = ActionStateSerde.serialize(originalState);
+        String json = new String(serialized, StandardCharsets.UTF_8);
+        assertTrue(json.contains("\"version\":1"));
+        byte[] patched =
+                json.replace("\"version\":1", "\"version\":2").getBytes(StandardCharsets.UTF_8);
+
+        assertThrows(RuntimeException.class, () -> ActionStateSerde.deserialize(patched));
+    }
+
+    @Test
+    public void testMemoryEventsSurviveActionStateRoundTrip() throws Exception {
+        ActionState state = new ActionState(new InputEvent("test input"));
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("bytes", new byte[] {1, 2, 3});
+        value.put("pojo", new ObservationValuePojo("hello", 7));
+        state.addEvent(new ShortTermWriteEvent("user-42", value));
+        state.addEvent(new AgentRunBeginEvent("user-42", value));
+
+        MemoryEvent liveMemory = (MemoryEvent) state.getOutputEvents().get(0);
+        AgentRunBeginEvent liveRunBegin = (AgentRunBeginEvent) state.getOutputEvents().get(1);
+
+        ActionState restored = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+
+        assertEquals(2, restored.getOutputEvents().size());
+        MemoryEvent memory = (MemoryEvent) restored.getOutputEvents().get(0);
+        AgentRunBeginEvent runBegin = (AgentRunBeginEvent) restored.getOutputEvents().get(1);
+
+        assertEquals(liveMemory.getValue(), memory.getValue());
+        assertEquals(liveRunBegin.getValue(), runBegin.getValue());
+        assertEquals("AQID", memory.getValue().get("bytes"));
+        assertEquals(Map.of("name", "hello", "count", 7), memory.getValue().get("pojo"));
+        assertEquals("AQID", runBegin.getValue().get("bytes"));
+        assertEquals(Map.of("name", "hello", "count", 7), runBegin.getValue().get("pojo"));
+    }
+
+    public static class ObservationValuePojo {
+        private final String name;
+        private final int count;
+
+        public ObservationValuePojo(String name, int count) {
+            this.name = name;
+            this.count = count;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public int getCount() {
+            return count;
+        }
+    }
+
+    /** Serializable POJO used to verify Kryo preserves user types across durable recovery. */
+    public static class MemoryValuePojo implements java.io.Serializable {
+        private String name;
+        private int count;
+
+        public MemoryValuePojo() {}
+
+        public MemoryValuePojo(String name, int count) {
+            this.name = name;
+            this.count = count;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof MemoryValuePojo)) return false;
+            MemoryValuePojo that = (MemoryValuePojo) o;
+            return count == that.count && java.util.Objects.equals(name, that.name);
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(name, count);
+        }
     }
 
     @Test

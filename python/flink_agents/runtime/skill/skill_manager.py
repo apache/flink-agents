@@ -137,37 +137,24 @@ class SkillManager:
         repo = self._repos.get(skill_name)
         return None if repo is None else repo.get_skill_dir(skill_name)
 
-    def resolve_resource_path(self, skill_name: str, resource_path: str) -> Path | None:
-        """Resolve a skill resource's relative path to an absolute filesystem path.
-
-        Returns None if the skill's repository doesn't support path resolution.
-        """
-        repo = self._repos.get(skill_name)
-        if repo is None:
-            return None
-        dir_path = repo.get_skill_dir(skill_name)
-        if dir_path is None:
-            return None
-        resolved = dir_path / resource_path
-        return resolved if resolved.is_file() else None
-
     def _load_skills(self) -> None:
-        for spec in self._config.sources:
-            try:
-                handler = skill_source_registry.get(spec.scheme)
-                repo = handler.open(spec.params)
-                self._opened_repos.append(repo)
-            except (OSError, ValueError) as e:
-                # Release repos opened by earlier iterations — the caller never
-                # receives a SkillManager reference to clean them up via close()
-                # itself, so without this their temp dirs / atexit handlers leak
-                # until interpreter exit.
-                self.close()
-                msg = (
-                    f"Failed to load skills from {spec.scheme}:{spec.params}"
-                )
-                raise RuntimeError(msg) from e
-            self._register_repo(repo, _origin_of(spec))
+        try:
+            for spec in self._config.sources:
+                try:
+                    handler = skill_source_registry.get(spec.scheme)
+                    repo = handler.open(spec.params)
+                    self._opened_repos.append(repo)
+                except (OSError, ValueError) as e:
+                    msg = f"Failed to load skills from {spec.scheme}:{spec.params}"
+                    raise RuntimeError(msg) from e
+                self._register_repo(repo, _origin_of(spec))
+        except BaseException:
+            # Release every repo opened so far — the caller never receives a
+            # SkillManager reference to clean them up via close() itself, so
+            # without this their temp dirs / atexit handlers leak until
+            # interpreter exit.
+            self.close()
+            raise
 
     def _register_repo(self, repo: "SkillRepository", origin: SkillOrigin) -> None:
         for skill in repo.get_skills():

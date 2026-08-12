@@ -47,6 +47,11 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Check code style
         run: ./tools/lint.sh -c
+      - name: Check AGENTS.md freshness
+        run: python3 tools/check-agents-md.py
+      - name: Check bundled YAML schema freshness
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+        run: python3 tools/check-skill-schema.py
 
   install_sh_tests:
     name: install.sh tests (${{ matrix.os }})
@@ -153,6 +158,7 @@ jobs:
   python_it_tests:
     name: it-python [${{ matrix.os }}] [java-17] [python-${{ matrix.python-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env:
       SKIP_SPOTLESS_CHECK: true
     strategy:
@@ -201,6 +207,7 @@ jobs:
   java_it_tests:
     name: it-java [${{ matrix.os }}] [java-${{ matrix.java-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     env:
       SKIP_SPOTLESS_CHECK: true
     strategy:
@@ -241,6 +248,7 @@ jobs:
   cross_language_tests:
     name: cross-language [${{ matrix.os }}] [python-${{ matrix.python-version}}] [java-${{ matrix.java-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env:
       SKIP_SPOTLESS_CHECK: true
     strategy:

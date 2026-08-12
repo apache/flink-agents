@@ -4,7 +4,11 @@
     "func_type": "InvalidFunction",
     "qualname": "org.apache.flink.agents.plan.TestAction",
     "method_name": "legal",
-    "parameter_types": ["org.apache.flink.agents.api.Event"]
+    "parameter_types": [
+      "org.apache.flink.agents.api.Event"
+    ]
   },
-  "trigger_conditions": ["org.apache.flink.agents.api.InputEvent"]
+  "trigger_conditions": [
+    "_input_event"
+  ]
 }

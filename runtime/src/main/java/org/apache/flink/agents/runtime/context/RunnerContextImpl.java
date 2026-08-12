@@ -38,7 +38,10 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
+import org.apache.flink.agents.runtime.memory.MemoryEventBuilder;
+import org.apache.flink.agents.runtime.memory.MemoryEventSettings;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.memory.MemoryValueObservation;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
@@ -47,6 +50,7 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -67,6 +71,8 @@ public class RunnerContextImpl implements RunnerContext {
         private final CachedMemoryStore shortTermMemStore;
         private final List<MemoryUpdate> sensoryMemoryUpdates;
         private final List<MemoryUpdate> shortTermMemoryUpdates;
+        private final List<MemoryValueObservation> sensoryMemoryReads;
+        private final List<MemoryValueObservation> shortTermMemoryReads;
 
         public MemoryContext(
                 CachedMemoryStore sensoryMemStore, CachedMemoryStore shortTermMemStore) {
@@ -74,6 +80,8 @@ public class RunnerContextImpl implements RunnerContext {
             this.shortTermMemStore = shortTermMemStore;
             this.sensoryMemoryUpdates = new LinkedList<>();
             this.shortTermMemoryUpdates = new LinkedList<>();
+            this.sensoryMemoryReads = new LinkedList<>();
+            this.shortTermMemoryReads = new LinkedList<>();
         }
 
         public List<MemoryUpdate> getShortTermMemoryUpdates() {
@@ -82,6 +90,19 @@ public class RunnerContextImpl implements RunnerContext {
 
         public List<MemoryUpdate> getSensoryMemoryUpdates() {
             return sensoryMemoryUpdates;
+        }
+
+        public List<MemoryValueObservation> getSensoryMemoryReads() {
+            return sensoryMemoryReads;
+        }
+
+        public List<MemoryValueObservation> getShortTermMemoryReads() {
+            return shortTermMemoryReads;
+        }
+
+        private void clearReadObservations() {
+            sensoryMemoryReads.clear();
+            shortTermMemoryReads.clear();
         }
 
         public CachedMemoryStore getShortTermMemStore() {
@@ -105,6 +126,24 @@ public class RunnerContextImpl implements RunnerContext {
     protected String actionName;
     protected InteranlBaseLongTermMemory ltm;
 
+    /** Textual key shared by long-term-memory isolation and framework observation events. */
+    protected String contextKey;
+
+    /** Stable identifier that isolates observations for one logical action execution. */
+    protected String observationId;
+
+    /** True when the current action was triggered by a memory event: suppress observation. */
+    protected boolean observationSuppressed;
+
+    /** True when at least one LTM operation records observations for the current action. */
+    protected boolean ltmObservationEnabled;
+
+    /** Resolved per-operation memory-event switches; config is fixed per agent plan. */
+    private final MemoryEventSettings memoryEventSettings;
+
+    /** Whether the fixed job-level configuration enables any LTM observation. */
+    private final boolean ltmObservationConfigured;
+
     /** Context for fine-grained durable execution, may be null if not enabled. */
     @Nullable protected DurableExecutionContext durableExecutionContext;
 
@@ -118,17 +157,32 @@ public class RunnerContextImpl implements RunnerContext {
         this.mailboxThreadChecker = mailboxThreadChecker;
         this.agentPlan = agentPlan;
         this.resourceCache = resourceCache;
+        this.memoryEventSettings = MemoryEventSettings.from(agentPlan.getConfigData());
+        this.ltmObservationConfigured =
+                memoryEventSettings.generate(MemoryEventSettings.MemoryOp.LONG_TERM_UPDATE)
+                        || memoryEventSettings.generate(MemoryEventSettings.MemoryOp.LONG_TERM_GET)
+                        || memoryEventSettings.generate(
+                                MemoryEventSettings.MemoryOp.LONG_TERM_SEARCH);
     }
 
     public void setLongTermMemory(InteranlBaseLongTermMemory ltm) {
         this.ltm = ltm;
     }
 
-    public void switchActionContext(String actionName, MemoryContext memoryContext, String key) {
+    public void switchActionContext(
+            String actionName,
+            MemoryContext memoryContext,
+            String contextKey,
+            String observationId,
+            boolean observationSuppressed) {
         this.actionName = actionName;
         this.memoryContext = memoryContext;
+        this.contextKey = contextKey;
+        this.observationId = observationId;
+        this.observationSuppressed = observationSuppressed;
+        this.ltmObservationEnabled = !observationSuppressed && ltmObservationConfigured;
         if (ltm != null) {
-            ltm.switchContext(key);
+            ltm.switchContext(contextKey, observationId, observationSuppressed);
         }
     }
 
@@ -161,12 +215,84 @@ public class RunnerContextImpl implements RunnerContext {
 
     public List<Event> drainEvents(Long timestamp) {
         mailboxThreadChecker.run();
+        return drainPendingEvents(timestamp);
+    }
+
+    /** Converts this action's memory records into events and drains all action output events. */
+    public List<Event> drainEventsAtActionFinish(Long timestamp) {
+        mailboxThreadChecker.run();
+        flushMemoryObservation();
+        return drainPendingEvents(timestamp);
+    }
+
+    /**
+     * Discards pending LTM observation records for the current key without rolling back written
+     * data.
+     */
+    public void discardMemoryObservation() {
+        mailboxThreadChecker.run();
+        if (memoryContext != null) {
+            memoryContext.clearReadObservations();
+        }
+        if (ltm == null || !ltmObservationEnabled) {
+            return;
+        }
+        ltm.drainObservationRecordsJson(contextKey, observationId);
+    }
+
+    private List<Event> drainPendingEvents(Long timestamp) {
         List<Event> list = new ArrayList<>(this.pendingEvents);
         if (timestamp != null) {
             list.forEach(event -> event.setSourceTimestamp(timestamp));
         }
         this.pendingEvents.clear();
         return list;
+    }
+
+    private void flushMemoryObservation() {
+        if (memoryContext == null) {
+            return;
+        }
+        List<MemoryValueObservation> sensoryReads =
+                new ArrayList<>(memoryContext.getSensoryMemoryReads());
+        List<MemoryValueObservation> shortTermReads =
+                new ArrayList<>(memoryContext.getShortTermMemoryReads());
+        memoryContext.clearReadObservations();
+        if (observationSuppressed || !memoryEventSettings.anyEnabled()) {
+            return;
+        }
+        List<Map<String, Object>> ltmRecords = Collections.emptyList();
+        if (ltm != null && ltmObservationEnabled) {
+            try {
+                ltmRecords =
+                        MemoryEventBuilder.parseLtmObservationRecords(
+                                ltm.drainObservationRecordsJson(contextKey, observationId));
+            } catch (Exception | LinkageError e) {
+                LOG.warn(
+                        "LTM observation drain failed for action '{}' and partition key '{}' ({}); skipping records",
+                        actionName,
+                        contextKey,
+                        e.getClass().getSimpleName());
+            }
+        }
+        try {
+            pendingEvents.addAll(
+                    MemoryEventBuilder.buildWriteEvents(
+                            contextKey,
+                            memoryContext.getSensoryMemoryUpdates(),
+                            memoryContext.getShortTermMemoryUpdates(),
+                            memoryEventSettings));
+            pendingEvents.addAll(
+                    MemoryEventBuilder.buildReadEvents(
+                            contextKey, sensoryReads, shortTermReads, memoryEventSettings));
+            pendingEvents.addAll(
+                    MemoryEventBuilder.buildLtmEvents(contextKey, ltmRecords, memoryEventSettings));
+        } catch (RuntimeException | LinkageError e) {
+            LOG.warn(
+                    "Skipping framework memory observation for action '{}' ({})",
+                    actionName,
+                    e.getClass().getSimpleName());
+        }
     }
 
     public void checkNoPendingEvents() {
@@ -194,23 +320,35 @@ public class RunnerContextImpl implements RunnerContext {
     @Override
     public MemoryObject getSensoryMemory() throws Exception {
         mailboxThreadChecker.run();
+        List<MemoryValueObservation> memoryReads = null;
+        if (!observationSuppressed
+                && memoryEventSettings.generate(MemoryEventSettings.MemoryOp.SENSORY_READ)) {
+            memoryReads = memoryContext.getSensoryMemoryReads();
+        }
         return new MemoryObjectImpl(
                 MemoryObject.MemoryType.SENSORY,
                 memoryContext.getSensoryMemStore(),
                 MemoryObjectImpl.ROOT_KEY,
                 mailboxThreadChecker,
-                memoryContext.getSensoryMemoryUpdates());
+                memoryContext.getSensoryMemoryUpdates(),
+                memoryReads);
     }
 
     @Override
     public MemoryObject getShortTermMemory() throws Exception {
         mailboxThreadChecker.run();
+        List<MemoryValueObservation> memoryReads = null;
+        if (!observationSuppressed
+                && memoryEventSettings.generate(MemoryEventSettings.MemoryOp.SHORT_TERM_READ)) {
+            memoryReads = memoryContext.getShortTermMemoryReads();
+        }
         return new MemoryObjectImpl(
                 MemoryObject.MemoryType.SHORT_TERM,
                 memoryContext.getShortTermMemStore(),
                 MemoryObjectImpl.ROOT_KEY,
                 mailboxThreadChecker,
-                memoryContext.getShortTermMemoryUpdates());
+                memoryContext.getShortTermMemoryUpdates(),
+                memoryReads);
     }
 
     @Override

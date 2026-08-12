@@ -16,6 +16,7 @@
 #  limitations under the License.
 ################################################################################
 import uuid
+from threading import Lock
 from typing import Any, Dict, Generator, List
 
 import chromadb
@@ -36,6 +37,11 @@ DEFAULT_COLLECTION = "flink_agents_chroma_collection"
 # ChromaDB's collection.add() has a hard per-call record-count ceiling;
 # anything larger must be split.
 _MAX_CHUNK_SIZE = 41665
+
+# Chroma's embedded clients share a process-wide System cache whose initial
+# startup is not synchronized. Serialize client construction so concurrent
+# first access cannot observe a RustBindingsAPI before its bindings are ready.
+_CHROMA_CLIENT_CREATION_LOCK = Lock()
 
 
 class ChromaVectorStore(CollectionManageableVectorStore):
@@ -167,33 +173,37 @@ class ChromaVectorStore(CollectionManageableVectorStore):
         if self.__client is not None:
             return self.__client
 
-        if self.api_key is not None:
-            self.__client = CloudClient(
-                tenant=self.tenant,
-                database=self.database,
-                api_key=self.api_key,
-            )
-        elif self.host is not None:
-            self.__client = chromadb.HttpClient(
-                host=self.host,
-                port=self.port,
-                settings=self.client_settings,
-                tenant=self.tenant,
-                database=self.database,
-            )
-        elif self.persist_directory is not None:
-            self.__client = chromadb.PersistentClient(
-                path=self.persist_directory,
-                settings=self.client_settings,
-                tenant=self.tenant,
-                database=self.database,
-            )
-        else:
-            self.__client = chromadb.EphemeralClient(
-                settings=self.client_settings,
-                tenant=self.tenant,
-                database=self.database,
-            )
+        with _CHROMA_CLIENT_CREATION_LOCK:
+            if self.__client is not None:
+                return self.__client
+
+            if self.api_key is not None:
+                self.__client = CloudClient(
+                    tenant=self.tenant,
+                    database=self.database,
+                    api_key=self.api_key,
+                )
+            elif self.host is not None:
+                self.__client = chromadb.HttpClient(
+                    host=self.host,
+                    port=self.port,
+                    settings=self.client_settings,
+                    tenant=self.tenant,
+                    database=self.database,
+                )
+            elif self.persist_directory is not None:
+                self.__client = chromadb.PersistentClient(
+                    path=self.persist_directory,
+                    settings=self.client_settings,
+                    tenant=self.tenant,
+                    database=self.database,
+                )
+            else:
+                self.__client = chromadb.EphemeralClient(
+                    settings=self.client_settings,
+                    tenant=self.tenant,
+                    database=self.database,
+                )
         return self.__client
 
     @property

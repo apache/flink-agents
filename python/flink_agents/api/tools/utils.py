@@ -193,7 +193,7 @@ def create_model_from_java_tool_schema_str(
 
     fields = {}
     for param_name in properties:
-        description = properties[param_name]["description"]
+        description = properties[param_name].get("description")
         if description is None:
             description = f"Parameter: {param_name}"
         type = TYPE_MAPPING.get(properties[param_name]["type"])

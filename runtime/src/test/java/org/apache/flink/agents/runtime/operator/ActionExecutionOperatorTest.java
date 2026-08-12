@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
@@ -26,17 +27,21 @@ import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.LoggerType;
+import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
+import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
@@ -50,11 +55,16 @@ import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.Serializable;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -63,6 +73,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 /** Tests for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorTest {
@@ -73,6 +84,7 @@ public class ActionExecutionOperatorTest {
     void resetReconcilableFixtures() {
         TestAgent.resetReconcilableRecoveryFixture();
         TestAgent.resetMixedRecoveryFixture();
+        TestAgent.FOLLOWING_ACTION_EXECUTED.set(false);
     }
 
     @Test
@@ -271,6 +283,93 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
+    void pendingActionConfigSurvivesRestore() throws Exception {
+        final long key = 7L;
+        Action configuredAction =
+                new Action(
+                        "configuredAction",
+                        new JavaFunction(
+                                TestAgent.class,
+                                "action1",
+                                new Class<?>[] {Event.class, RunnerContext.class}),
+                        Collections.singletonList(InputEvent.EVENT_TYPE),
+                        Collections.singletonMap("mode", "strict"));
+        AgentPlan agentPlan =
+                new AgentPlan(
+                        Collections.singletonMap(configuredAction.getName(), configuredAction));
+
+        OperatorSubtaskState snapshot;
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            testHarness.processElement(new StreamRecord<>(key));
+            assertThat(testHarness.getTaskMailbox().size()).isEqualTo(1);
+            snapshot = testHarness.snapshot(1L, 1L);
+        }
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restoredHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            restoredHarness.initializeState(snapshot);
+            restoredHarness.open();
+
+            ActionExecutionOperator<Long, Object> restoredOperator =
+                    (ActionExecutionOperator<Long, Object>) restoredHarness.getOperator();
+            restoredOperator.setCurrentKey(key);
+            ActionTask restoredTask =
+                    restoredOperator.getOperatorStateManager().pollNextActionTask();
+
+            assertThat(restoredTask).isNotNull();
+            assertThat(restoredTask.action.getConfig()).containsEntry("mode", "strict");
+        }
+    }
+
+    @Test
+    void testRestoredActionUsesSameTextualContextKeyForLtmWriteAndCleanup() throws Exception {
+        AgentPlan agentPlan = TestAgent.getFailedActionAfterLtmAgentPlan();
+        OperatorSubtaskState snapshot;
+        long key = 1L << 32;
+        String expectedContextKey = "4294967296";
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            testHarness.processElement(new StreamRecord<>(key));
+            assertThat(testHarness.getTaskMailbox().size()).isEqualTo(1);
+            snapshot = testHarness.snapshot(1L, 1L);
+        }
+
+        RecordingMem0LongTermMemory ltm = new RecordingMem0LongTermMemory();
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restoredHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            restoredHarness.initializeState(snapshot);
+            restoredHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) restoredHarness.getOperator();
+            replaceOperatorLtm(operator, ltm);
+
+            assertThatThrownBy(operator::waitInFlightEventsFinished)
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
+                    .rootCause()
+                    .hasMessageContaining("first action failed after LTM");
+
+            assertThat(ltm.recordedKeys()).containsExactly(expectedContextKey);
+            assertThat(ltm.drainedObservationKeys()).containsExactly(expectedContextKey);
+        }
+    }
+
+    @Test
     void testMemoryAccessProhibitedOutsideMailboxThread() throws Exception {
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -286,6 +385,237 @@ public class ActionExecutionOperatorTest {
                     .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
                     .rootCause()
                     .hasMessageContaining("Expected to be running on the task mailbox thread");
+        }
+    }
+
+    @Test
+    void testMailboxSubmittedActionTaskPropagatesError() throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getLinkageErrorAgentPlan(), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(0L));
+            assertThatThrownBy(() -> operator.waitInFlightEventsFinished())
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
+                    .rootCause()
+                    .isInstanceOf(NoClassDefFoundError.class)
+                    .hasMessageContaining("synthetic missing runtime dependency");
+        }
+    }
+
+    @Test
+    void testUnsupportedObservationValueIsSkippedWithoutChangingActionSuccess() throws Exception {
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        AgentPlan agentPlan = TestAgent.getBestEffortMemoryObservationPlan();
+        try (KeyedOneInputStreamOperatorTestHarness<String, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, String>) String::valueOf,
+                        TypeInformation.of(String.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> output =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(output).singleElement().extracting(StreamRecord::getValue).isEqualTo(7L);
+
+            ActionState actionState =
+                    actionStateStore.get(
+                            "7",
+                            0L,
+                            agentPlan.getActions().get("bestEffortMemoryObservationAction"),
+                            new InputEvent(7L));
+            assertThat(actionState).isNotNull();
+            assertThat(actionState.getOutputEvents())
+                    .filteredOn(ShortTermWriteEvent.class::isInstance)
+                    .singleElement()
+                    .extracting(event -> ((ShortTermWriteEvent) event).getValue())
+                    .isEqualTo(Map.of("valid", 7));
+        }
+    }
+
+    @Test
+    void testFailedActionAfterLtmDiscardsCurrentKeyBeforeRethrowing() throws Exception {
+        RecordingMem0LongTermMemory ltm = new RecordingMem0LongTermMemory();
+        try (KeyedOneInputStreamOperatorTestHarness<String, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getFailedActionAfterLtmAgentPlan(), true),
+                        (KeySelector<Long, String>) String::valueOf,
+                        TypeInformation.of(String.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            replaceOperatorLtm(operator, ltm);
+
+            testHarness.processElement(new StreamRecord<>(0L));
+
+            assertThatThrownBy(() -> operator.waitInFlightEventsFinished())
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
+                    .rootCause()
+                    .hasMessageContaining("first action failed after LTM");
+            // The public LTM operation ran before the action failed.
+            assertThat(ltm.recordedKeys()).containsExactly("0");
+            // The common failure boundary explicitly drains this key before rethrowing. Check the
+            // same buffer directly rather than duplicating the Python LTM record schema here.
+            assertThat(ltm.pendingObservationKeys()).isEmpty();
+            assertThat(ltm.drainedObservationKeys()).containsExactly("0");
+            assertThat(ltm.drainCallCount()).isEqualTo(1);
+            // The failed mailbox task cannot continue to the following action in this operator.
+            assertThat(TestAgent.FOLLOWING_ACTION_EXECUTED).isFalse();
+        }
+    }
+
+    @Test
+    void testDiscardFailureDoesNotReplaceActionFailure() throws Exception {
+        RecordingMem0LongTermMemory ltm = new RecordingMem0LongTermMemory();
+        RuntimeException discardFailure = new RuntimeException("discard failed");
+        ltm.failDrainWith(discardFailure);
+
+        try (KeyedOneInputStreamOperatorTestHarness<String, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getFailedActionAfterLtmAgentPlan(), true),
+                        (KeySelector<Long, String>) String::valueOf,
+                        TypeInformation.of(String.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            replaceOperatorLtm(operator, ltm);
+
+            testHarness.processElement(new StreamRecord<>(0L));
+            Throwable thrown = catchThrowable(operator::waitInFlightEventsFinished);
+
+            assertThat(thrown)
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
+                    .rootCause()
+                    .hasMessageContaining("first action failed after LTM");
+            assertThat(findSuppressedFailure(thrown, discardFailure)).isSameAs(discardFailure);
+            assertThat(ltm.recordedKeys()).containsExactly("0");
+            assertThat(ltm.drainCallCount()).isEqualTo(1);
+            assertThat(TestAgent.FOLLOWING_ACTION_EXECUTED).isFalse();
+        }
+    }
+
+    private static Throwable findSuppressedFailure(Throwable failure, Throwable expected) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            for (Throwable suppressed : current.getSuppressed()) {
+                if (suppressed == expected) {
+                    return suppressed;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static void replaceOperatorLtm(
+            ActionExecutionOperator<?, ?> operator, Mem0LongTermMemory ltm) throws Exception {
+        Field ltmField = ActionExecutionOperator.class.getDeclaredField("ltm");
+        ltmField.setAccessible(true);
+        ltmField.set(operator, ltm);
+    }
+
+    /** Java-side stand-in for the Python-backed LTM wrapper used to observe the failure path. */
+    private static final class RecordingMem0LongTermMemory extends Mem0LongTermMemory {
+        private final List<String> recordedKeys = new ArrayList<>();
+        private final List<String> pendingObservationKeys = new ArrayList<>();
+        private final List<String> pendingObservationIds = new ArrayList<>();
+        private final List<String> drainedObservationKeys = new ArrayList<>();
+        private String currentKey;
+        private String currentObservationId;
+        private boolean updateObservationConfigured = true;
+        private boolean observationSuppressed;
+        private int drainCallCount;
+        private RuntimeException drainFailure;
+
+        private RecordingMem0LongTermMemory() {
+            super(null, null);
+        }
+
+        @Override
+        public void configureObservation(
+                boolean updateObservationEnabled,
+                boolean getObservationEnabled,
+                boolean searchObservationEnabled) {
+            updateObservationConfigured = updateObservationEnabled;
+        }
+
+        @Override
+        public void switchContext(
+                String partitionKey, String observationId, boolean observationSuppressed) {
+            currentKey = partitionKey;
+            currentObservationId = observationId;
+            this.observationSuppressed = observationSuppressed;
+        }
+
+        @Override
+        public MemorySet getMemorySet(String name) {
+            MemorySet memorySet = new MemorySet(name);
+            memorySet.setLtm(this);
+            return memorySet;
+        }
+
+        @Override
+        public List<String> add(
+                MemorySet memorySet,
+                List<String> memoryItems,
+                @javax.annotation.Nullable List<Map<String, Object>> metadatas) {
+            recordedKeys.add(currentKey);
+            if (!updateObservationConfigured || observationSuppressed) {
+                return List.of("memory-id");
+            }
+            pendingObservationKeys.add(currentKey);
+            pendingObservationIds.add(currentObservationId);
+            return List.of("memory-id");
+        }
+
+        @Override
+        public String drainObservationRecordsJson(String partitionKey, String observationId) {
+            drainCallCount++;
+            if (drainFailure != null) {
+                throw drainFailure;
+            }
+            for (int index = pendingObservationKeys.size() - 1; index >= 0; index--) {
+                if (pendingObservationKeys.get(index).equals(partitionKey)
+                        && pendingObservationIds.get(index).equals(observationId)) {
+                    drainedObservationKeys.add(pendingObservationKeys.remove(index));
+                    pendingObservationIds.remove(index);
+                }
+            }
+            return "[]";
+        }
+
+        @Override
+        public void close() {}
+
+        private List<String> recordedKeys() {
+            return recordedKeys;
+        }
+
+        private int drainCallCount() {
+            return drainCallCount;
+        }
+
+        private List<String> pendingObservationKeys() {
+            return pendingObservationKeys;
+        }
+
+        private List<String> drainedObservationKeys() {
+            return drainedObservationKeys;
+        }
+
+        private void failDrainWith(RuntimeException failure) {
+            drainFailure = failure;
         }
     }
 
@@ -353,6 +683,28 @@ public class ActionExecutionOperatorTest {
         public void onEventProcessed(EventContext context, Event event) {
             this.called = true;
         }
+    }
+
+    private static final class EventSnapshot {
+        private final UUID id;
+        private final UUID upstreamEventId;
+        private final String upstreamActionName;
+
+        private EventSnapshot(Event event) {
+            this.id = event.getId();
+            this.upstreamEventId = event.getUpstreamEventId();
+            this.upstreamActionName = event.getUpstreamActionName();
+        }
+    }
+
+    private static Map<String, EventSnapshot> recordEventSnapshotsByType(
+            ActionExecutionOperator<Long, Object> operator) {
+        Map<String, EventSnapshot> snapshotsByType = new HashMap<>();
+        operator.getEventRouter()
+                .addEventListener(
+                        (context, event) ->
+                                snapshotsByType.put(event.getType(), new EventSnapshot(event)));
+        return snapshotsByType;
     }
 
     @Test
@@ -561,6 +913,36 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
+    void testCompletedActionStatePersistsOutputEventLineage() throws Exception {
+        AgentPlan agentPlan = TestAgent.getAgentPlan(false);
+        SerializingActionStateStore actionStateStore = new SerializingActionStateStore();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(3L));
+            operator.waitInFlightEventsFinished();
+        }
+
+        assertThat(actionStateStore.getCompletedStateBytes()).hasSize(2);
+        for (Map.Entry<String, byte[]> entry :
+                actionStateStore.getCompletedStateBytes().entrySet()) {
+            JsonNode state = OBJECT_MAPPER.readTree(entry.getValue());
+            JsonNode outputEvent = state.path("outputEvents").get(0);
+
+            assertThat(outputEvent.path("upstreamEventId").asText())
+                    .isEqualTo(state.path("taskEvent").path("id").asText());
+            assertThat(outputEvent.path("upstreamActionName").asText()).isEqualTo(entry.getKey());
+        }
+    }
+
+    @Test
     void testActionStateStoreStateManagement() throws Exception {
         AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
 
@@ -704,54 +1086,113 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
-    void testActionStateStoreReplayIncurNoFunctionCall() throws Exception {
-        AgentPlan agentPlanWithStateStore = TestAgent.getAgentPlan(false);
-        InMemoryActionStateStore actionStateStore;
+    void testReplaySkipsCompletedActions() throws Exception {
+        AgentPlan agentPlan = TestAgent.getAgentPlan(false);
+        long inputValue = 7L;
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        TestAgent.ACTION1_CALL_COUNTER.set(0);
+        TestAgent.ACTION2_CALL_COUNTER.set(0);
+
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory<>(
-                                agentPlanWithStateStore, true, new InMemoryActionStateStore(false)),
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            actionStateStore =
-                    (InMemoryActionStateStore)
-                            operator.getDurableExecutionManager().getActionStateStore();
-
-            Long inputValue = 7L;
-
-            // First processing - this will execute the actual functions and store state
             testHarness.processElement(new StreamRecord<>(inputValue));
             operator.waitInFlightEventsFinished();
+
+            assertThat(TestAgent.ACTION1_CALL_COUNTER.get()).isEqualTo(1);
+            assertThat(TestAgent.ACTION2_CALL_COUNTER.get()).isEqualTo(1);
         }
+
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory<>(
-                                agentPlanWithStateStore, true, actionStateStore),
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             testHarness.open();
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            Long inputValue = 7L;
-
-            // First processing - this will execute the actual functions and store state
             testHarness.processElement(new StreamRecord<>(inputValue));
             operator.waitInFlightEventsFinished();
-            // Verify first output is correct
-            List<StreamRecord<Object>> recordOutput =
+
+            List<StreamRecord<Object>> outputRecords =
                     (List<StreamRecord<Object>>) testHarness.getRecordOutput();
-            assertThat(recordOutput.size()).isEqualTo(1);
-            assertThat(recordOutput.get(0).getValue()).isEqualTo((inputValue + 1) * 2);
-
-            // The action state store should only have one entry
-            assertThat(actionStateStore.getKeyedActionStates().get(String.valueOf(inputValue)))
-                    .hasSize(2);
+            assertThat(outputRecords).hasSize(1);
+            assertThat(outputRecords.get(0).getValue()).isEqualTo((inputValue + 1) * 2);
+            assertThat(TestAgent.ACTION1_CALL_COUNTER.get())
+                    .as("Completed action1 must not be re-executed during replay")
+                    .isEqualTo(1);
+            assertThat(TestAgent.ACTION2_CALL_COUNTER.get())
+                    .as("Completed action2 must not be re-executed during replay")
+                    .isEqualTo(1);
         }
+    }
+
+    @Test
+    void testReplayRebindsOutputLineage() throws Exception {
+        AgentPlan agentPlan = TestAgent.getAgentPlan(false);
+        long inputValue = 7L;
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        Map<String, EventSnapshot> firstSnapshots;
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            firstSnapshots = recordEventSnapshotsByType(operator);
+
+            // Execute the actions and persist their completed states.
+            testHarness.processElement(new StreamRecord<>(inputValue));
+            operator.waitInFlightEventsFinished();
+        }
+
+        Map<String, EventSnapshot> replaySnapshots;
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            replaySnapshots = recordEventSnapshotsByType(operator);
+
+            // Replay the same input and reuse the completed action states.
+            testHarness.processElement(new StreamRecord<>(inputValue));
+            operator.waitInFlightEventsFinished();
+        }
+
+        EventSnapshot firstInput = firstSnapshots.get(InputEvent.EVENT_TYPE);
+        EventSnapshot replayInput = replaySnapshots.get(InputEvent.EVENT_TYPE);
+        EventSnapshot firstMiddle = firstSnapshots.get(TestAgent.MiddleEvent.EVENT_TYPE);
+        EventSnapshot replayMiddle = replaySnapshots.get(TestAgent.MiddleEvent.EVENT_TYPE);
+        EventSnapshot firstOutput = firstSnapshots.get(OutputEvent.EVENT_TYPE);
+        EventSnapshot replayOutput = replaySnapshots.get(OutputEvent.EVENT_TYPE);
+
+        assertThat(firstInput.id).isNotEqualTo(replayInput.id);
+
+        assertThat(replayMiddle.id).isEqualTo(firstMiddle.id);
+        assertThat(firstMiddle.upstreamEventId).isEqualTo(firstInput.id);
+        assertThat(replayMiddle.upstreamEventId).isEqualTo(replayInput.id);
+        assertThat(firstMiddle.upstreamEventId).isNotEqualTo(replayMiddle.upstreamEventId);
+        assertThat(firstMiddle.upstreamActionName).isEqualTo("action1");
+        assertThat(replayMiddle.upstreamActionName).isEqualTo("action1");
+
+        assertThat(replayOutput.id).isEqualTo(firstOutput.id);
+        assertThat(firstOutput.upstreamEventId).isEqualTo(firstMiddle.id);
+        assertThat(replayOutput.upstreamEventId).isEqualTo(replayMiddle.id);
+        assertThat(firstOutput.upstreamActionName).isEqualTo("action2");
+        assertThat(replayOutput.upstreamActionName).isEqualTo("action2");
     }
 
     @Test
@@ -1418,6 +1859,16 @@ public class ActionExecutionOperatorTest {
         public static final java.util.concurrent.atomic.AtomicInteger DURABLE_CALL_COUNTER =
                 new java.util.concurrent.atomic.AtomicInteger(0);
 
+        /** Counters used to verify that completed Actions are not re-executed during replay. */
+        public static final java.util.concurrent.atomic.AtomicInteger ACTION1_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+
+        public static final java.util.concurrent.atomic.AtomicInteger ACTION2_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+
+        public static final java.util.concurrent.atomic.AtomicBoolean FOLLOWING_ACTION_EXECUTED =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+
         public static class MiddleEvent extends Event {
             public static final String EVENT_TYPE = "MiddleEvent";
 
@@ -1434,6 +1885,7 @@ public class ActionExecutionOperatorTest {
         }
 
         public static void action1(Event event, RunnerContext context) {
+            ACTION1_CALL_COUNTER.incrementAndGet();
             Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
                 MemoryObject mem = context.getShortTermMemory();
@@ -1445,6 +1897,7 @@ public class ActionExecutionOperatorTest {
         }
 
         public static void action2(MiddleEvent event, RunnerContext context) {
+            ACTION2_CALL_COUNTER.incrementAndGet();
             try {
                 MemoryObject mem = context.getShortTermMemory();
                 Long tmp = (Long) mem.get("tmp").getValue();
@@ -1466,6 +1919,23 @@ public class ActionExecutionOperatorTest {
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
+        }
+
+        public static void bestEffortMemoryObservationAction(Event event, RunnerContext context) {
+            Long input = (Long) InputEvent.fromEvent(event).getInput();
+            try {
+                context.getShortTermMemory().set("valid", input);
+                context.getShortTermMemory().set("kryo-only", new KryoOnlyObservationValue());
+                context.getShortTermMemory().set("non-finite", Double.NaN);
+                context.sendEvent(new OutputEvent(input));
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+        }
+
+        private static final class KryoOnlyObservationValue implements Serializable {
+            private static final long serialVersionUID = 1L;
+            private final Object value = new Object();
         }
 
         private static <T> DurableCallable<T> durableCallable(
@@ -1711,6 +2181,35 @@ public class ActionExecutionOperatorTest {
             }
         }
 
+        public static class LinkageErrorAction {
+            static {
+                if (shouldThrowLinkageError()) {
+                    throw new NoClassDefFoundError("synthetic missing runtime dependency");
+                }
+            }
+
+            private static boolean shouldThrowLinkageError() {
+                return true;
+            }
+
+            public static void action(Event event, RunnerContext context) {}
+        }
+
+        public static void failingActionAfterLtm(Event event, RunnerContext context) {
+            try {
+                context.getLongTermMemory()
+                        .getMemorySet("notes")
+                        .add(List.of("previous action"), null);
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            throw new IllegalStateException("first action failed after LTM");
+        }
+
+        public static void followingAction(Event event, RunnerContext context) {
+            FOLLOWING_ACTION_EXECUTED.set(true);
+        }
+
         public static void resetReconcilableRecoveryFixture() {
             RECONCILABLE_CALL_COUNTER.set(0);
             RECONCILABLE_RECONCILE_COUNTER.set(0);
@@ -1776,7 +2275,7 @@ public class ActionExecutionOperatorTest {
                     actions.put(action3.getName(), action3);
                 }
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>(), config);
+                return new AgentPlan(actions, new HashMap<>(), config);
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -1834,7 +2333,7 @@ public class ActionExecutionOperatorTest {
                     actions.put(action2.getName(), action2);
                 }
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+                return new AgentPlan(actions, new HashMap<>());
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -1858,7 +2357,7 @@ public class ActionExecutionOperatorTest {
                         InputEvent.EVENT_TYPE, Collections.singletonList(durableSyncAction));
                 actions.put(durableSyncAction.getName(), durableSyncAction);
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+                return new AgentPlan(actions, new HashMap<>());
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -1882,7 +2381,7 @@ public class ActionExecutionOperatorTest {
                         InputEvent.EVENT_TYPE, Collections.singletonList(reconcilableAction));
                 actions.put(reconcilableAction.getName(), reconcilableAction);
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+                return new AgentPlan(actions, new HashMap<>());
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -1906,7 +2405,7 @@ public class ActionExecutionOperatorTest {
                         InputEvent.EVENT_TYPE, Collections.singletonList(mixedRecoveryAction));
                 actions.put(mixedRecoveryAction.getName(), mixedRecoveryAction);
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+                return new AgentPlan(actions, new HashMap<>());
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -1930,7 +2429,74 @@ public class ActionExecutionOperatorTest {
                         InputEvent.EVENT_TYPE, Collections.singletonList(exceptionAction));
                 actions.put(exceptionAction.getName(), exceptionAction);
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+                return new AgentPlan(actions, new HashMap<>());
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getLinkageErrorAgentPlan() {
+            try {
+                Map<String, Action> actions = new HashMap<>();
+
+                Action errorAction =
+                        new Action(
+                                "linkageErrorAction",
+                                new JavaFunction(
+                                        LinkageErrorAction.class,
+                                        "action",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                actions.put(errorAction.getName(), errorAction);
+
+                return new AgentPlan(actions);
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getBestEffortMemoryObservationPlan() {
+            try {
+                Action action =
+                        new Action(
+                                "bestEffortMemoryObservationAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "bestEffortMemoryObservationAction",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                return new AgentPlan(Map.of(action.getName(), action));
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getFailedActionAfterLtmAgentPlan() {
+            try {
+                Map<String, Action> actions = new LinkedHashMap<>();
+                Action failingAction =
+                        new Action(
+                                "failingActionAfterLtm",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "failingActionAfterLtm",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                Action followingAction =
+                        new Action(
+                                "followingAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "followingAction",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                actions.put(failingAction.getName(), failingAction);
+                actions.put(followingAction.getName(), followingAction);
+
+                return new AgentPlan(actions);
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -2010,7 +2576,7 @@ public class ActionExecutionOperatorTest {
                         InputEvent.EVENT_TYPE, Collections.singletonList(exceptionAction));
                 actions.put(exceptionAction.getName(), exceptionAction);
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+                return new AgentPlan(actions, new HashMap<>());
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -2034,7 +2600,7 @@ public class ActionExecutionOperatorTest {
                         InputEvent.EVENT_TYPE, Collections.singletonList(exceptionAction));
                 actions.put(exceptionAction.getName(), exceptionAction);
 
-                return new AgentPlan(actions, actionsByEvent, new HashMap<>());
+                return new AgentPlan(actions, new HashMap<>());
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -2093,6 +2659,27 @@ public class ActionExecutionOperatorTest {
 
         private List<Long> getPrunedSeqNums() {
             return prunedSeqNums;
+        }
+    }
+
+    private static class SerializingActionStateStore extends InMemoryActionStateStore {
+        private final Map<String, byte[]> completedStateBytes = new HashMap<>();
+
+        private SerializingActionStateStore() {
+            super(false);
+        }
+
+        @Override
+        public void put(Object key, long seqNum, Action action, Event event, ActionState state)
+                throws IOException {
+            if (state.isCompleted()) {
+                completedStateBytes.put(action.getName(), ActionStateSerde.serialize(state));
+            }
+            super.put(key, seqNum, action, event, state);
+        }
+
+        private Map<String, byte[]> getCompletedStateBytes() {
+            return completedStateBytes;
         }
     }
 

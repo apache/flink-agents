@@ -16,14 +16,31 @@
 # limitations under the License.
 #################################################################################
 import json
-from typing import Any, Type
+from typing import Any, ClassVar, Type
+from uuid import UUID, uuid4
 
 import pytest
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+
+
+class _CustomEvent(Event):
+    EVENT_TYPE: ClassVar[str] = "custom_event"
+
+    def __init__(self, value: str) -> None:
+        super().__init__(type=self.EVENT_TYPE, attributes={"value": value})
+
+    @classmethod
+    def from_event(cls, event: Event) -> "_CustomEvent":
+        result = cls(value=event.attributes["value"])
+        return result.reconstruct_from(event)
+
+
+class _CustomAliasedEvent(Event):
+    custom_value: str = Field(serialization_alias="customValue")
 
 
 def test_event_init_serializable() -> None:
@@ -52,7 +69,11 @@ def test_input_event_ignore_row_unserializable() -> None:
 
 def test_event_row_with_non_serializable_fails() -> None:
     with pytest.raises(ValidationError):
-        Event(type="test", row_field=Row({"a": 1}), non_serializable_field=Type[InputEvent])
+        Event(
+            type="test",
+            row_field=Row({"a": 1}),
+            non_serializable_field=Type[InputEvent],
+        )
 
 
 def test_event_multiple_rows_serializable() -> None:
@@ -62,6 +83,31 @@ def test_event_multiple_rows_serializable() -> None:
 def test_event_setattr_row_serializable() -> None:
     event = Event(type="test", a=1)
     event.row_field = Row({"key": "value"})
+
+
+def test_events_with_same_content_have_distinct_random_ids() -> None:
+    first = OutputEvent(output="same")
+    second = OutputEvent(output="same")
+
+    assert first.id != second.id
+    assert first.id.version == 4
+    assert second.id.version == 4
+
+
+def test_event_id_does_not_change_with_event_content() -> None:
+    event = Event(type="test", a=1)
+    event_id = event.id
+
+    event.a = 2
+
+    assert event.id == event_id
+
+
+def test_event_id_cannot_be_reassigned() -> None:
+    event = Event(type="test")
+
+    with pytest.raises(ValidationError, match="Field is frozen"):
+        event.id = uuid4()
 
 
 def test_event_json_serialization_with_row() -> None:
@@ -191,6 +237,27 @@ def test_unified_event_from_json_missing_type() -> None:
         Event.from_json(json.dumps({"attributes": {}}))
 
 
+def test_lineage_serialization_respects_field_filters() -> None:
+    """Test lineage aliases do not bypass Pydantic include and exclude filters."""
+    event = Event(
+        type="ChildEvent",
+        upstreamEventId=UUID("00000000-0000-0000-0000-000000000001"),
+        upstreamActionName="child_action",
+    )
+
+    assert event.model_dump(include={"type"}) == {"type": "ChildEvent"}
+    assert json.loads(event.model_dump_json(include={"type"})) == {"type": "ChildEvent"}
+
+    excluded_fields = {"upstream_event_id", "upstream_action_name"}
+    dumped = event.model_dump(exclude=excluded_fields)
+    json_dumped = json.loads(event.model_dump_json(exclude=excluded_fields))
+
+    assert "upstreamEventId" not in dumped
+    assert "upstreamActionName" not in dumped
+    assert "upstreamEventId" not in json_dumped
+    assert "upstreamActionName" not in json_dumped
+
+
 def test_unified_event_serialization_roundtrip() -> None:
     """Test that unified events survive JSON serialization/deserialization."""
     original = Event(type="RoundTrip", attributes={"a": 1, "b": "two"})
@@ -201,6 +268,106 @@ def test_unified_event_serialization_roundtrip() -> None:
     restored = Event.model_validate(parsed)
     assert restored.type == "RoundTrip"
     assert restored.attributes == {"a": 1, "b": "two"}
+
+
+def test_event_lineage_json_roundtrip_uses_java_field_names() -> None:
+    """Test framework-managed lineage has a stable cross-language JSON shape."""
+    upstream_event_id = UUID("00000000-0000-0000-0000-000000000001")
+    event = Event(type="ChildEvent")
+    event_id = event.id
+
+    event.upstream_event_id = upstream_event_id
+    event.upstream_action_name = "child_action"
+
+    parsed = json.loads(event.model_dump_json())
+    restored = Event.from_json(json.dumps(parsed))
+
+    assert event.id == event_id
+    assert parsed["upstreamEventId"] == str(upstream_event_id)
+    assert parsed["upstreamActionName"] == "child_action"
+    assert "upstream_event_id" not in parsed
+    assert "upstream_action_name" not in parsed
+    assert restored.upstream_event_id == upstream_event_id
+    assert restored.upstream_action_name == "child_action"
+
+
+def test_event_lineage_aliases_do_not_enable_custom_aliases_by_default() -> None:
+    """Test only lineage uses cross-language aliases unless explicitly requested."""
+    upstream_event_id = UUID("00000000-0000-0000-0000-000000000001")
+    event = _CustomAliasedEvent(
+        type="CustomAliasedEvent",
+        custom_value="value",
+        upstreamEventId=upstream_event_id,
+        upstreamActionName="custom_action",
+    )
+
+    default_json = json.loads(event.model_dump_json())
+    aliased_json = json.loads(event.model_dump_json(by_alias=True))
+
+    assert default_json["custom_value"] == "value"
+    assert "customValue" not in default_json
+    assert default_json["upstreamEventId"] == str(upstream_event_id)
+    assert default_json["upstreamActionName"] == "custom_action"
+    assert aliased_json["customValue"] == "value"
+    assert "custom_value" not in aliased_json
+
+
+def test_root_event_omits_lineage_fields_from_json() -> None:
+    """Test a root Event does not serialize empty lineage fields."""
+    parsed = json.loads(InputEvent(input="root").model_dump_json())
+
+    assert "upstreamEventId" not in parsed
+    assert "upstreamActionName" not in parsed
+
+
+def test_typed_from_event_preserves_lineage() -> None:
+    """Test typed reconstruction keeps framework-managed lineage metadata."""
+    upstream_event_id = UUID("00000000-0000-0000-0000-000000000001")
+    event = Event(
+        type="_output_event",
+        attributes={"output": "result"},
+        upstreamEventId=upstream_event_id,
+        upstreamActionName="output_action",
+    )
+
+    reconstructed = OutputEvent.from_event(event)
+
+    assert reconstructed.upstream_event_id == upstream_event_id
+    assert reconstructed.upstream_action_name == "output_action"
+
+
+def test_custom_typed_from_event_preserves_identity_and_lineage() -> None:
+    """Test custom typed reconstruction follows the framework metadata contract."""
+    upstream_event_id = UUID("00000000-0000-0000-0000-000000000001")
+    event = Event(
+        type=_CustomEvent.EVENT_TYPE,
+        attributes={"value": "result"},
+        upstreamEventId=upstream_event_id,
+        upstreamActionName="custom_action",
+    )
+
+    reconstructed = _CustomEvent.from_event(event)
+
+    assert reconstructed.id == event.id
+    assert reconstructed.upstream_event_id == upstream_event_id
+    assert reconstructed.upstream_action_name == "custom_action"
+
+
+def test_same_occurrence_reconstruction_returns_a_copy() -> None:
+    """Test occurrence reconstruction does not mutate the typed draft."""
+    source = Event(type="_output_event", attributes={"output": "result"})
+    source.upstream_action_name = "output_action"
+    draft = OutputEvent(output="result")
+    draft_id = draft.id
+
+    reconstructed = draft.reconstruct_from(source)
+
+    assert reconstructed is not draft
+    assert reconstructed.id == source.id
+    assert reconstructed.upstream_action_name == "output_action"
+    assert draft.id == draft_id
+    assert draft.id != source.id
+    assert draft.upstream_action_name is None
 
 
 def test_unified_event_serialization_roundtrip_with_row() -> None:

@@ -18,6 +18,7 @@
 package org.apache.flink.agents.api.chat.model.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
@@ -160,5 +161,14 @@ public class PythonChatModelSetupTest {
         assertThat(pythonChatModelSetup)
                 .isInstanceOf(
                         org.apache.flink.agents.api.resource.python.PythonResourceWrapper.class);
+    }
+
+    @Test
+    void testSetMetricGroupPropagatesToPythonResource() {
+        FlinkAgentsMetricGroup metricGroup = mock(FlinkAgentsMetricGroup.class);
+
+        pythonChatModelSetup.setMetricGroup(metricGroup);
+
+        verify(mockAdapter).setMetricGroup(mockChatModelSetup, metricGroup);
     }
 }

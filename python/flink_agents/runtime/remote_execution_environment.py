@@ -18,7 +18,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict
 
 import cloudpickle
 from pyflink.common import TypeInformation
@@ -45,13 +45,15 @@ from flink_agents.plan.configuration import AgentConfiguration
 
 _CONFIG_FILE_NAME = "config.yaml"
 _LEGACY_CONFIG_FILE_NAME = "flink-conf.yaml"
+_AGENT_PLAN_JSON_VALIDATOR_CLASS = "org.apache.flink.agents.plan.AgentPlanJsonValidator"
+_AGENT_PLAN_JSON_VALIDATOR_METHOD = "validateAgentPlan"
 
 
 class RemoteAgentBuilder(AgentBuilder):
     """RemoteAgentBuilder for integrating datastream/table and agent."""
 
     __input: DataStream
-    __agent_plan: AgentPlan = None
+    __agent_plan_json: str | None = None
     __output: DataStream = None
     __t_env: StreamTableEnvironment
     __config: AgentConfiguration
@@ -91,7 +93,7 @@ class RemoteAgentBuilder(AgentBuilder):
             Either an Agent instance, or the name of an agent registered
             on the environment (e.g. by ``load_yaml``).
         """
-        if self.__agent_plan is not None:
+        if self.__agent_plan_json is not None:
             err_msg = "RemoteAgentBuilder doesn't support apply multiple agents yet."
             raise RuntimeError(err_msg)
         if isinstance(agent, str):
@@ -107,9 +109,30 @@ class RemoteAgentBuilder(AgentBuilder):
         for type, name_to_resource in self.__resources.items():
             agent.resources[type] = name_to_resource | agent.resources[type]
 
-        self.__agent_plan = AgentPlan.from_agent(agent, self.__config)
+        agent_plan_json = AgentPlan.from_agent(agent, self.__config).model_dump_json(
+            serialize_as_any=True
+        )
+        self.__validate_agent_plan_json(agent_plan_json)
+        self.__agent_plan_json = agent_plan_json
 
         return self
+
+    @staticmethod
+    def __validate_agent_plan_json(agent_plan_json: str) -> None:
+        try:
+            error_message = invoke_method(
+                None,
+                _AGENT_PLAN_JSON_VALIDATOR_CLASS,
+                _AGENT_PLAN_JSON_VALIDATOR_METHOD,
+                [agent_plan_json],
+                ["java.lang.String"],
+            )
+        except Exception as error:
+            message = "Java AgentPlan JSON validation failed."
+            raise RuntimeError(message) from error
+
+        if error_message is not None:
+            raise ValueError(error_message)
 
     def to_datastream(self, output_type: TypeInformation | None = None) -> DataStream:
         """Get output datastream of agent execution.
@@ -119,7 +142,7 @@ class RemoteAgentBuilder(AgentBuilder):
         DataStream
             Output datastream of agent execution.
         """
-        if self.__agent_plan is None:
+        if self.__agent_plan_json is None:
             err_msg = "Must apply agent before call to_datastream/to_table."
             raise RuntimeError(err_msg)
 
@@ -131,7 +154,7 @@ class RemoteAgentBuilder(AgentBuilder):
                 "connectToAgent",
                 [
                     self.__input._j_data_stream,
-                    self.__agent_plan.model_dump_json(serialize_as_any=True),
+                    self.__agent_plan_json,
                 ],
                 [
                     "org.apache.flink.streaming.api.datastream.KeyedStream",
@@ -160,14 +183,6 @@ class RemoteAgentBuilder(AgentBuilder):
             Output Table of agent execution.
         """
         return self.t_env.from_data_stream(self.to_datastream(output_type), schema)
-
-    def to_list(self) -> List[Dict[str, Any]]:
-        """Get output list of agent execution.
-
-        This method is not supported for remote execution environments.
-        """
-        msg = "RemoteAgentBuilder does not support to_list."
-        raise NotImplementedError(msg)
 
 
 class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
@@ -270,14 +285,6 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
             resources=self.resources,
             agents=self._agents,
         )
-
-    def from_list(self, input: List[Dict[str, Any]]) -> "AgentsExecutionEnvironment":
-        """Set input list of agent execution.
-
-        This method is not supported for remote execution environments.
-        """
-        msg = "RemoteExecutionEnvironment does not support from_list."
-        raise NotImplementedError(msg)
 
     def execute(self, job_name: str | None = None) -> None:
         """Execute agent."""

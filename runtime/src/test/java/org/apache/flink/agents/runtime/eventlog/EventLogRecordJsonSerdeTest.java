@@ -28,7 +28,6 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -161,6 +160,9 @@ class EventLogRecordJsonSerdeTest {
     void testDeserializeCustomEvent() throws Exception {
         // Given
         CustomTestEvent originalEvent = new CustomTestEvent("custom data", 42, true);
+        UUID upstreamEventId = UUID.randomUUID();
+        originalEvent.setUpstreamEventId(upstreamEventId);
+        originalEvent.setUpstreamActionName("custom_action");
         EventContext originalContext = new EventContext(originalEvent);
         EventLogRecord originalRecord = new EventLogRecord(originalContext, originalEvent);
         String json = objectMapper.writeValueAsString(originalRecord);
@@ -175,6 +177,9 @@ class EventLogRecordJsonSerdeTest {
         assertEquals("custom data", customEvent.getCustomData());
         assertEquals(42, customEvent.getCustomNumber());
         assertTrue(customEvent.isCustomFlag());
+        assertEquals(originalEvent.getId(), customEvent.getId());
+        assertEquals(upstreamEventId, customEvent.getUpstreamEventId());
+        assertEquals("custom_action", customEvent.getUpstreamActionName());
     }
 
     @Test
@@ -195,6 +200,25 @@ class EventLogRecordJsonSerdeTest {
 
         InputEvent deserializedEvent = InputEvent.fromEvent(deserializedRecord.getEvent());
         assertEquals(originalEvent.getInput(), deserializedEvent.getInput());
+    }
+
+    @Test
+    void testRoundTripLineageFields() throws Exception {
+        UUID upstreamEventId = UUID.randomUUID();
+        Event originalEvent = new Event("ChildEvent");
+        originalEvent.setUpstreamEventId(upstreamEventId);
+        originalEvent.setUpstreamActionName("child_action");
+        EventLogRecord originalRecord =
+                new EventLogRecord(new EventContext(originalEvent), originalEvent);
+
+        String json = objectMapper.writeValueAsString(originalRecord);
+        EventLogRecord deserializedRecord = objectMapper.readValue(json, EventLogRecord.class);
+
+        JsonNode eventNode = objectMapper.readTree(json).get("event");
+        assertEquals(upstreamEventId.toString(), eventNode.get("upstreamEventId").asText());
+        assertEquals("child_action", eventNode.get("upstreamActionName").asText());
+        assertEquals(upstreamEventId, deserializedRecord.getEvent().getUpstreamEventId());
+        assertEquals("child_action", deserializedRecord.getEvent().getUpstreamActionName());
     }
 
     @Test
@@ -279,12 +303,7 @@ class EventLogRecordJsonSerdeTest {
         }
 
         public static CustomTestEvent fromEvent(Event event) {
-            CustomTestEvent result =
-                    new CustomTestEvent(event.getId(), new HashMap<>(event.getAttributes()));
-            if (event.hasSourceTimestamp()) {
-                result.setSourceTimestamp(event.getSourceTimestamp());
-            }
-            return result;
+            return reconstructFrom(event, CustomTestEvent::new);
         }
 
         @JsonIgnore

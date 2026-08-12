@@ -80,4 +80,13 @@ public abstract class BaseEmbeddingModelConnection extends Resource {
      *     embeddings. The length of each array is determined by the model itself.
      */
     public abstract List<float[]> embed(List<String> texts, Map<String, Object> parameters);
+
+    public EmbeddingResult<float[]> embedWithUsage(String text, Map<String, Object> parameters) {
+        return new EmbeddingResult<>(embed(text, parameters), null);
+    }
+
+    public EmbeddingResult<List<float[]>> embedWithUsage(
+            List<String> texts, Map<String, Object> parameters) {
+        return new EmbeddingResult<>(embed(texts, parameters), null);
+    }
 }

@@ -16,9 +16,11 @@
 # limitations under the License.
 #################################################################################
 import json
+import logging
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
 from flink_agents.api.agents.react_agent import OutputSchema
@@ -36,6 +38,10 @@ def illegal_signature(value: int, ctx: RunnerContext) -> None:
     pass
 
 
+def returns_value(event: Event, ctx: RunnerContext) -> str:
+    return "ignored by the framework"
+
+
 def test_action_signature_legal() -> None:
     Action(
         name="legal",
@@ -51,6 +57,37 @@ def test_action_signature_illegal() -> None:
             exec=PythonFunction.from_callable(illegal_signature),
             trigger_conditions=[InputEvent.EVENT_TYPE],
         )
+
+
+def test_action_warns_when_returns_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        Action(
+            name="returns_value",
+            exec=PythonFunction.from_callable(returns_value),
+            trigger_conditions=[InputEvent.EVENT_TYPE],
+        )
+    assert any(
+        "returns_value" in record.getMessage()
+        and "ignored" in record.getMessage().lower()
+        for record in caplog.records
+    )
+
+
+def test_action_no_warning_when_returns_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        Action(
+            name="legal",
+            exec=PythonFunction.from_callable(legal_signature),
+            trigger_conditions=[InputEvent.EVENT_TYPE],
+        )
+    assert not any(
+        "ignored by the framework" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 @pytest.fixture(scope="module")
@@ -88,7 +125,7 @@ def test_action_deserialize(action: Action) -> None:
         expected_json = f.read()
     action = Action.model_validate_json(expected_json)
     assert action.name == "legal"
-    assert action.trigger_conditions== ["_input_event"]
+    assert action.trigger_conditions == ["_input_event"]
     func = action.exec
     assert func.module == "flink_agents.plan.tests.test_action"
     assert func.qualname == "legal_signature"
@@ -120,3 +157,83 @@ def test_action_deserialize_java_shape_config_unwraps_primitives() -> None:
         "rate": 1.5,
         "label": "fast",
     }
+
+
+def test_action_deserialize_python_config_propagates_reconstruction_error() -> None:
+    """A tagged model whose module is missing must fail loudly.
+
+    The entry is marked as a serialized model, so importing a non-existent
+    module raises instead of being silently swallowed.
+    """
+    json_str = json.dumps(
+        {
+            "name": "legal",
+            "exec": {
+                "func_type": "PythonFunction",
+                "module": "flink_agents.plan.tests.test_action",
+                "qualname": "legal_signature",
+            },
+            "trigger_conditions": ["_input_event"],
+            "config": {
+                "__config_type__": "python",
+                "broken": {
+                    "__pydantic_model__": True,
+                    "module": "nonexistent_module_xyz",
+                    "class": "SomeClass",
+                    "value": {},
+                },
+            },
+        }
+    )
+    with pytest.raises(ModuleNotFoundError):
+        Action.model_validate_json(json_str)
+
+
+def test_action_deserialize_python_config_preserves_plain_list() -> None:
+    """A plain user list must survive untouched, not be mistaken for a model."""
+    json_str = json.dumps(
+        {
+            "name": "legal",
+            "exec": {
+                "func_type": "PythonFunction",
+                "module": "flink_agents.plan.tests.test_action",
+                "qualname": "legal_signature",
+            },
+            "trigger_conditions": ["_input_event"],
+            "config": {
+                "__config_type__": "python",
+                "hosts": ["host-a", "host-b", "host-c"],
+            },
+        }
+    )
+    action = Action.model_validate_json(json_str)
+    assert action.config == {"hosts": ["host-a", "host-b", "host-c"]}
+
+
+@pytest.mark.parametrize(
+    ("trigger_conditions", "message"),
+    [
+        ([], "must have at least one trigger condition"),
+        (["  "], "Invalid trigger condition #1"),
+    ],
+)
+def test_action_rejects_empty_or_blank_trigger_conditions(
+    trigger_conditions: list[str], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        Action(
+            name="invalid",
+            exec=PythonFunction.from_callable(legal_signature),
+            trigger_conditions=trigger_conditions,
+        )
+
+
+def test_action_rejects_non_string_trigger_condition() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        Action(
+            name="invalid",
+            exec=PythonFunction.from_callable(legal_signature),
+            trigger_conditions=[42],  # type: ignore[list-item]
+        )
+
+    assert exc_info.value.errors()[0]["loc"] == ("trigger_conditions", 0)

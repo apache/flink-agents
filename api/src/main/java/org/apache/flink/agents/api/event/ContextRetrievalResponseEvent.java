@@ -26,7 +26,6 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.vectorstores.Document;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -82,13 +81,7 @@ public class ContextRetrievalResponseEvent extends Event {
      * @return a typed ContextRetrievalResponseEvent
      */
     public static ContextRetrievalResponseEvent fromEvent(Event event) {
-        ContextRetrievalResponseEvent result =
-                new ContextRetrievalResponseEvent(
-                        event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, ContextRetrievalResponseEvent::new);
     }
 
     @JsonIgnore

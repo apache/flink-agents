@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.util.ExceptionUtils;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -331,11 +332,26 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     @Override
     public void close() throws Exception {
+        // Catching Throwable rather than Exception is what keeps the consumer close reachable when
+        // the producer close fails with an Error, and what keeps that first failure the one the
+        // caller sees — a later consumer failure rides along as suppressed instead of replacing it.
+        Throwable firstException = null;
         if (producer != null) {
-            producer.close();
+            try {
+                producer.close();
+            } catch (Throwable t) {
+                firstException = t;
+            }
         }
         if (consumer != null) {
-            consumer.close();
+            try {
+                consumer.close();
+            } catch (Throwable t) {
+                firstException = ExceptionUtils.firstOrSuppressed(t, firstException);
+            }
+        }
+        if (firstException != null) {
+            ExceptionUtils.rethrowException(firstException);
         }
     }
 

@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.plan.resource.python;
 
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -82,6 +83,17 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
     @Override
     public Object getPythonResource() {
         return server;
+    }
+
+    @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
+    @Override
+    public void setMetricGroup(FlinkAgentsMetricGroup metricGroup) {
+        super.setMetricGroup(metricGroup);
+        setPythonResourceMetricGroup(metricGroup);
     }
 
     @Override

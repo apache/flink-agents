@@ -18,17 +18,31 @@
 
 package org.apache.flink.agents.integrations.embeddingmodels.bedrock;
 
+import org.apache.flink.agents.api.RetryExecutor;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
+import software.amazon.awssdk.services.bedrockruntime.model.InvokeModelRequest;
+import software.amazon.awssdk.services.bedrockruntime.model.InvokeModelResponse;
 
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** Tests for {@link BedrockEmbeddingModelConnection} and {@link BedrockEmbeddingModelSetup}. */
 class BedrockEmbeddingModelTest {
@@ -93,5 +107,43 @@ class BedrockEmbeddingModelTest {
         BedrockEmbeddingModelSetup setup = new BedrockEmbeddingModelSetup(desc, NOOP);
 
         assertThat(setup.getParameters()).doesNotContainKey("dimensions");
+    }
+
+    @Test
+    @DisplayName("Batch embedding aggregates token usage from worker results")
+    void testBatchEmbeddingAggregatesTokenUsage() throws Exception {
+        BedrockRuntimeClient client = mock(BedrockRuntimeClient.class);
+        when(client.invokeModel(any(InvokeModelRequest.class)))
+                .thenReturn(
+                        InvokeModelResponse.builder()
+                                .body(
+                                        SdkBytes.fromUtf8String(
+                                                "{\"embedding\":[0.1,0.2],\"inputTextTokenCount\":5}"))
+                                .build());
+
+        ExecutorService embedPool = Executors.newFixedThreadPool(2);
+        BedrockEmbeddingModelConnection conn =
+                new BedrockEmbeddingModelConnection(
+                        connDescriptor(null),
+                        NOOP,
+                        client,
+                        embedPool,
+                        RetryExecutor.builder().maxRetries(0).build(),
+                        "mock-model");
+
+        try {
+            EmbeddingResult<List<float[]>> result =
+                    conn.embedWithUsage(List.of("first", "second"), Map.of("model", "mock-model"));
+
+            assertThat(result.getEmbeddings()).hasSize(2);
+            assertThat(result.getEmbeddings().get(0)).containsExactly(0.1f, 0.2f);
+            assertThat(result.getEmbeddings().get(1)).containsExactly(0.1f, 0.2f);
+            assertThat(result.getTokenUsage()).isNotNull();
+            assertThat(result.getTokenUsage().getPromptTokens()).isEqualTo(10L);
+            assertThat(result.getTokenUsage().getTotalTokens()).isEqualTo(10L);
+            verify(client, times(2)).invokeModel(any(InvokeModelRequest.class));
+        } finally {
+            conn.close();
+        }
     }
 }

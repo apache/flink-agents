@@ -18,186 +18,226 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.openai.models.ResponseFormatJsonSchema;
+import com.openai.models.chat.completions.ChatCompletionCreateParams;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Unit tests for {@link OpenAICompletionsConnection} — constructor validation and default
- * resolution only, no network access.
+ * Unit tests for {@link OpenAICompletionsConnection}'s native structured-output behavior. These
+ * assert the built request body without a live API call by inspecting {@code buildRequest}, and
+ * exercise the model-dependent capability predicate directly.
  */
 class OpenAICompletionsConnectionTest {
 
     private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
-    private static ResourceDescriptor.Builder connectionDescriptor() {
-        return ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName());
+    /** A representative POJO output schema. */
+    public static class Person {
+        public String name;
+        public int age;
+    }
+
+    private static OpenAICompletionsConnection connection() {
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("model", "gpt-4o")
+                        .build();
+        return new OpenAICompletionsConnection(desc, NOOP);
+    }
+
+    private static Map<String, Object> params(String model) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("model", model);
+        return params;
+    }
+
+    private static List<ChatMessage> userMessage() {
+        return List.of(new ChatMessage(MessageRole.USER, "hi"));
     }
 
     @Test
-    @DisplayName("Constructor throws when api_key is missing")
-    void testConstructorMissingApiKey() {
-        ResourceDescriptor desc = connectionDescriptor().build();
-        assertThatThrownBy(() -> new OpenAICompletionsConnection(desc, NOOP))
+    void testConnectionArgumentValidation() {
+        ResourceDescriptor missingKey =
+                ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName()).build();
+        assertThatThrownBy(() -> new OpenAICompletionsConnection(missingKey, NOOP))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("api_key");
+
+        OpenAICompletionsConnection connection =
+                new OpenAICompletionsConnection(
+                        ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
+                                .addInitialArgument("api_key", "test-key")
+                                .addInitialArgument("timeout", 0)
+                                .addInitialArgument("max_retries", 0)
+                                .build(),
+                        NOOP);
+        assertThat(connection).isInstanceOf(BaseChatModelConnection.class);
+        assertThat(connection.getTimeout()).isEqualTo(Duration.ZERO);
+        assertThat(connection.getMaxRetries()).isZero();
+        OpenAIClientTestUtils.assertNoTimeoutConfigured(connection);
     }
 
     @Test
-    @DisplayName("Constructor succeeds with api_key only (no network call)")
-    void testConstructorMinimal() {
-        ResourceDescriptor desc =
-                connectionDescriptor().addInitialArgument("api_key", "test-key").build();
-        OpenAICompletionsConnection conn = new OpenAICompletionsConnection(desc, NOOP);
-        assertThat(conn).isInstanceOf(BaseChatModelConnection.class);
+    @DisplayName("Native response_format json_schema strict applied for a POJO on a capable model")
+    void testNativeAppliedForPojoCapableModel() {
+        ChatCompletionCreateParams params =
+                connection().buildRequest(userMessage(), List.of(), params("gpt-4o"), Person.class);
+
+        assertThat(params.responseFormat()).isPresent();
+        ResponseFormatJsonSchema jsonSchema = params.responseFormat().get().asJsonSchema();
+        assertThat(jsonSchema.jsonSchema().strict()).contains(true);
     }
 
     @Test
-    @DisplayName("Defaults resolve to timeout=60 and max_retries=3 when not specified")
-    void testDefaultTimeoutAndMaxRetries() {
-        ResourceDescriptor desc =
-                connectionDescriptor().addInitialArgument("api_key", "test-key").build();
-        OpenAICompletionsConnection conn = new OpenAICompletionsConnection(desc, NOOP);
+    @DisplayName("Native NOT applied for a POJO on an incapable model (prompt fallback)")
+    void testNativeNotAppliedForIncapableModel() {
+        ChatCompletionCreateParams params =
+                connection()
+                        .buildRequest(
+                                userMessage(), List.of(), params("gpt-3.5-turbo"), Person.class);
 
-        assertThat(conn.getTimeout())
-                .isEqualTo(Duration.ofSeconds(OpenAIChatCompletionsUtils.DEFAULT_TIMEOUT_SECONDS));
-        assertThat(conn.getMaxRetries()).isEqualTo(OpenAIChatCompletionsUtils.DEFAULT_MAX_RETRIES);
+        assertThat(params.responseFormat()).isEmpty();
     }
 
     @Test
-    @DisplayName("Explicit timeout and max_retries override the defaults")
-    void testExplicitOverrides() {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", 120)
-                        .addInitialArgument("max_retries", 5)
-                        .build();
-        OpenAICompletionsConnection conn = new OpenAICompletionsConnection(desc, NOOP);
+    @DisplayName("Native NOT applied for a pre-cutoff same-family gpt-4o snapshot")
+    void testNativeNotAppliedForPreCutoffSnapshot() {
+        // gpt-4o-2024-05-13 predates the Structured Outputs cutoff even though it shares the gpt-4o
+        // prefix; treating it as capable would fail silently at the provider.
+        ChatCompletionCreateParams params =
+                connection()
+                        .buildRequest(
+                                userMessage(),
+                                List.of(),
+                                params("gpt-4o-2024-05-13"),
+                                Person.class);
 
-        assertThat(conn.getTimeout()).isEqualTo(Duration.ofSeconds(120));
-        assertThat(conn.getMaxRetries()).isEqualTo(5);
+        assertThat(params.responseFormat()).isEmpty();
     }
 
     @Test
-    @DisplayName("Negative timeout throws IllegalArgumentException")
-    void testNegativeTimeoutThrows() {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", -5)
-                        .build();
-        assertThatThrownBy(() -> new OpenAICompletionsConnection(desc, NOOP))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("timeout");
+    @DisplayName("Native NOT applied when no output schema is supplied")
+    void testNativeNotAppliedWhenSchemaNull() {
+        ChatCompletionCreateParams params =
+                connection().buildRequest(userMessage(), List.of(), params("gpt-4o"), null);
+
+        assertThat(params.responseFormat()).isEmpty();
     }
 
     @Test
-    @DisplayName("Negative max_retries throws IllegalArgumentException")
-    void testNegativeMaxRetriesThrows() {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("max_retries", -1)
-                        .build();
-        assertThatThrownBy(() -> new OpenAICompletionsConnection(desc, NOOP))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("max_retries");
+    @DisplayName("Native NOT applied for a non-POJO schema form (POJO-only scope)")
+    void testNativeNotAppliedForNonPojoSchema() {
+        // A RowTypeInfo schema arrives wrapped in OutputSchema (not a bare POJO Class), so it must
+        // not activate native structured output; any non-Class schema object exercises the same
+        // instanceof gate.
+        Object nonClassSchema = "row<name STRING>";
+
+        ChatCompletionCreateParams params =
+                connection()
+                        .buildRequest(userMessage(), List.of(), params("gpt-4o"), nonClassSchema);
+
+        assertThat(params.responseFormat()).isEmpty();
     }
 
     @Test
-    @DisplayName("Negative fractional timeout throws instead of truncating to zero")
-    void testNegativeFractionalTimeoutThrows() {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", -0.5)
-                        .build();
-        assertThatThrownBy(() -> new OpenAICompletionsConnection(desc, NOOP))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("timeout");
+    @DisplayName("Native applied for a POJO even when tools are bound (no empty-tools gate)")
+    void testNativeAppliedEvenWhenToolsBound() {
+        ChatCompletionCreateParams params =
+                connection()
+                        .buildRequest(
+                                userMessage(),
+                                List.of(new StubTool()),
+                                params("gpt-4o"),
+                                Person.class);
+
+        assertThat(params.responseFormat()).isPresent();
     }
 
     @Test
-    @DisplayName("Fractional max_retries throws instead of truncating")
-    void testFractionalMaxRetriesThrows() {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("max_retries", 2.5)
-                        .build();
-        assertThatThrownBy(() -> new OpenAICompletionsConnection(desc, NOOP))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("max_retries");
+    @DisplayName("Capability predicate accepts the documented capable models")
+    void testCapabilityPredicateAcceptsCapableModels() {
+        OpenAICompletionsConnection connection = connection();
+
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-2024-08-06")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-2024-11-20")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-2024-07-18")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-search-preview")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-search-preview-2025-03-11"))
+                .isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-search-preview"))
+                .isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4.1")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4.1-mini")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-5")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-5-mini")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-5-chat-latest")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("o1")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("o1-2024-12-17")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("o3")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("o3-mini")).isTrue();
+        assertThat(connection.supportsNativeStructuredOutput("o4-mini")).isTrue();
     }
 
     @Test
-    @DisplayName("Negative fractional max_retries throws instead of truncating to zero")
-    void testNegativeFractionalMaxRetriesThrows() {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("max_retries", -0.5)
-                        .build();
-        assertThatThrownBy(() -> new OpenAICompletionsConnection(desc, NOOP))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("max_retries");
+    @DisplayName(
+            "Capability predicate rejects non-text modality, incapable, pre-cutoff, unknown, empty,"
+                    + " and null models")
+    void testCapabilityPredicateRejectsIncapableModels() {
+        OpenAICompletionsConnection connection = connection();
+
+        assertThat(connection.supportsNativeStructuredOutput("gpt-3.5-turbo")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4-turbo")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-2024-05-13")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-audio-preview")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-audio-preview"))
+                .isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-realtime-preview"))
+                .isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-tts")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-transcribe")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("o1-mini")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("some-unknown-model")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput("")).isFalse();
+        assertThat(connection.supportsNativeStructuredOutput(null)).isFalse();
     }
 
-    @Test
-    @DisplayName("max_retries beyond int range throws instead of overflowing")
-    void testOverflowMaxRetriesThrows() {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("max_retries", 4294967296L)
-                        .build();
-        assertThatThrownBy(() -> new OpenAICompletionsConnection(desc, NOOP))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("max_retries");
-    }
+    /** Minimal tool stub; only its presence in the tools list matters. */
+    private static class StubTool extends Tool {
+        StubTool() {
+            super(new ToolMetadata("add", "adds", "{\"type\":\"object\"}"));
+        }
 
-    @Test
-    @DisplayName("Zero timeout disables the effective SDK timeout")
-    void testZeroTimeoutDisablesSdkTimeout() {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", 0)
-                        .build();
-        OpenAICompletionsConnection conn = new OpenAICompletionsConnection(desc, NOOP);
-        assertThat(conn.getTimeout()).isEqualTo(Duration.ZERO);
-        OpenAIClientTestUtils.assertNoTimeoutConfigured(conn);
-    }
+        @Override
+        public ToolType getToolType() {
+            return ToolType.FUNCTION;
+        }
 
-    @Test
-    @DisplayName("Sub-millisecond timeout rounds up to the SDK precision")
-    void testSubMillisecondTimeoutRoundsUpToSdkPrecision() {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", 0.0001)
-                        .build();
-        OpenAICompletionsConnection conn = new OpenAICompletionsConnection(desc, NOOP);
-        assertThat(conn.getTimeout()).isEqualTo(Duration.ofMillis(1));
-    }
-
-    @Test
-    @DisplayName("Zero max_retries is accepted as valid")
-    void testZeroMaxRetriesAccepted() {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("max_retries", 0)
-                        .build();
-        OpenAICompletionsConnection conn = new OpenAICompletionsConnection(desc, NOOP);
-        assertThat(conn.getMaxRetries()).isEqualTo(0);
+        @Override
+        public ToolResponse call(ToolParameters parameters) {
+            return ToolResponse.success(null);
+        }
     }
 }

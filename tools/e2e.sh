@@ -45,7 +45,7 @@ function run_agent_plan_compatibility_test {
     return 1
   fi
 
-  cd "$python_dir" && uv run --no-sync bash ../e2e-test/test-scripts/test_agent_plan_compatibility.sh "$tempdir" "$jar_path"
+  cd "$python_dir" && "${UV[@]}" run --no-sync bash ../e2e-test/test-scripts/test_agent_plan_compatibility.sh "$tempdir" "$jar_path"
 }
 
 function run_cross_language_config_test {
@@ -54,7 +54,7 @@ function run_cross_language_config_test {
     return 1
   fi
 
-  cd "$python_dir" && uv run --no-sync bash ../e2e-test/test-scripts/test_java_config_in_python.sh
+  cd "$python_dir" && "${UV[@]}" run --no-sync bash ../e2e-test/test-scripts/test_java_config_in_python.sh
 }
 
 function run_resource_cross_language_test_in_java {
@@ -66,13 +66,13 @@ function run_resource_cross_language_test_in_java {
   cd "$python_dir"
 
   # Get Python version from uv's virtual environment and set PYTHONPATH
-  local python_version=$(uv run --no-sync python -c "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
+  local python_version=$("${UV[@]}" run --no-sync python -c "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
   if [[ -n "$python_version" ]]; then
     export PYTHONPATH="$python_dir/.venv/lib/$python_version/site-packages:$PYTHONPATH"
     echo "PYTHONPATH set to: $PYTHONPATH"
   fi
 
-  uv run --no-sync bash ../e2e-test/test-scripts/test_resource_cross_language.sh
+  "${UV[@]}" run --no-sync bash ../e2e-test/test-scripts/test_resource_cross_language.sh
 }
 
 function run_resource_cross_language_test_in_python {
@@ -81,7 +81,7 @@ function run_resource_cross_language_test_in_python {
       return 1
     fi
 
-    cd "$python_dir" && uv run --no-sync pytest flink_agents -s -k "e2e_tests_resource_cross_language" --reruns 2 --reruns-delay 5
+    cd "$python_dir" && "${UV[@]}" run --no-sync pytest flink_agents -s -k "e2e_tests_resource_cross_language" --reruns 2 --reruns-delay 5
 }
 
 function run_resource_name_consistency_check {
@@ -90,7 +90,7 @@ function run_resource_name_consistency_check {
     return 1
   fi
 
-  cd "$python_dir" && uv run --no-sync python ../e2e-test/test-scripts/check_resource_consistency.py
+  cd "$python_dir" && "${UV[@]}" run --no-sync python ../e2e-test/test-scripts/check_resource_consistency.py
 }
 
 export TOTAL=0
@@ -120,6 +120,15 @@ if [[ ! -f "uv.lock" ]]; then
 fi
 
 cd ..
+
+if command -v uv >/dev/null 2>&1; then
+  UV=(uv)
+elif python3 -m uv --version >/dev/null 2>&1; then
+  UV=(python3 -m uv)
+else
+  echo "Error: uv not found. Run tools/build.sh first, or install uv." >&2
+  exit 1
+fi
 
 # Create temporary directory with better cross-platform compatibility
 if command -v mktemp >/dev/null 2>&1; then
@@ -153,7 +162,7 @@ if [[ ! -d "$python_dir" ]]; then
 fi
 
 cd "$python_dir"
-uv pip install apache-flink~=${DEFAULT_FLINK_VERSION}.0
+"${UV[@]}" pip install --python .venv apache-flink~=${DEFAULT_FLINK_VERSION}.0
 
 export JVM_ARGS="${JVM_ARGS} --add-exports java.base/jdk.internal.vm=ALL-UNNAMED"
 

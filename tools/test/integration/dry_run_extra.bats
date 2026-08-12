@@ -19,7 +19,7 @@ esac
 @test "dry-run: plan shows Flink Agents version (review #1 — JARs are implicit)" {
     run bash "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --non-interactive
     [ "$status" -eq 0 ]
-    case "$output" in *"Flink Agents version"*"0.2.1"*) ;; *) false ;; esac
+    case "$output" in *"Flink Agents version"*"0.3.0"*) ;; *) false ;; esac
 }
 
 @test "dry-run: existing FLINK_HOME — plan shows detected version, not default (review #2)" {

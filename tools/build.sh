@@ -101,12 +101,12 @@ if $build_python; then
   # build python
   cd python
   rm -rf dist/  # Clean old build artifacts before building
-  pip install uv==0.11.0
-  uv lock
-  uv sync --extra dev
-  uv run python -m ensurepip --default-pip
-  uv run python -m build
-  uv pip install dist/*.whl
+  python3 -m pip install uv==0.11.0
+  python3 -m uv lock
+  python3 -m uv sync --extra dev
+  python3 -m uv run python -m ensurepip --default-pip
+  python3 -m uv run python -m build
+  python3 -m uv pip install --python .venv dist/*.whl
 
   rm -rf ${PYTHON_LIB_DIR}
 fi

@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.api.embedding.model.python;
 
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
@@ -141,6 +142,41 @@ public class PythonEmbeddingModelSetupTest {
 
         assertThat(result).isNotNull();
         assertThat(result).hasSize(2);
+    }
+
+    @Test
+    void testEmbedWithUsageSingleText() {
+        String text = "test text";
+        Map<String, Object> parameters = Map.of("model", "test-model");
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.call_embedding_with_usage"),
+                        eq(mockEmbeddingModelSetup),
+                        any(Map.class)))
+                .thenReturn(
+                        Map.of(
+                                "embeddings",
+                                List.of(0.1, 0.2),
+                                "token_usage",
+                                Map.of("prompt_tokens", 7, "total_tokens", 9)));
+
+        EmbeddingResult<float[]> result =
+                pythonEmbeddingModelSetup.embedWithUsage(text, parameters);
+
+        assertThat(result.getEmbeddings()).containsExactly(0.1f, 0.2f);
+        assertThat(result.getTokenUsage()).isNotNull();
+        assertThat(result.getTokenUsage().getPromptTokens()).isEqualTo(7L);
+        assertThat(result.getTokenUsage().getTotalTokens()).isEqualTo(9L);
+        verify(mockAdapter)
+                .invoke(
+                        eq("python_java_utils.call_embedding_with_usage"),
+                        eq(mockEmbeddingModelSetup),
+                        argThat(
+                                kwargs -> {
+                                    Map<String, Object> values = (Map<String, Object>) kwargs;
+                                    assertThat(values).containsEntry("text", text);
+                                    assertThat(values).containsEntry("model", "test-model");
+                                    return true;
+                                }));
     }
 
     @Test

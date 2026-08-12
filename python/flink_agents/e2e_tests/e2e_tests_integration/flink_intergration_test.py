@@ -51,7 +51,7 @@ os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 def test_from_datastream_to_datastream(tmp_path: Path) -> None:
     config = Configuration()
     config.set_string("state.backend.type", "rocksdb")
-    config.set_string("checkpointing.interval", "1s")
+    config.set_string("execution.checkpointing.interval", "1s")
     config.set_string("restart-strategy.type", "disable")
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)

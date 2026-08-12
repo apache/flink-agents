@@ -17,6 +17,8 @@
 #################################################################################
 
 import os
+import tempfile
+from pathlib import Path
 
 import chromadb
 
@@ -25,6 +27,10 @@ from flink_agents.integrations.embedding_models.local.ollama_embedding_model imp
 )
 
 OLLAMA_EMBEDDING_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+CHROMA_PERSIST_DIRECTORY = os.environ.get(
+    "CHROMA_PERSIST_DIRECTORY",
+    str(Path(tempfile.gettempdir()) / "flink-agents-rag-chroma"),
+)
 
 """Utility for populating ChromaDB with sample knowledge documents for RAG examples."""
 
@@ -35,7 +41,10 @@ def populate_knowledge_base() -> None:
 
     # Create connections directly
     embedding_connection = OllamaEmbeddingModelConnection()
-    chroma_client = chromadb.EphemeralClient()
+    # The Flink client and TaskManager run in separate processes, so an
+    # in-memory Chroma client cannot share the populated collection with the
+    # agent. Persist it on the local filesystem used by the standalone cluster.
+    chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIRECTORY)
 
     # Get collection (create if doesn't exist)
     collection_name = "example_knowledge_base"
@@ -76,7 +85,7 @@ def populate_knowledge_base() -> None:
     }
 
     # Add documents to ChromaDB
-    collection.add(**test_data)
+    collection.upsert(**test_data)
 
     print(
         f"Knowledge base setup complete! Added {len(documents)} documents to ChromaDB."

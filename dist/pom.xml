@@ -22,7 +22,7 @@ under the License.
     <parent>
         <groupId>org.apache.flink</groupId>
         <artifactId>flink-agents</artifactId>
-        <version>0.3-SNAPSHOT</version>
+        <version>0.4-SNAPSHOT</version>
     </parent>
 
     <artifactId>flink-agents-dist</artifactId>
@@ -135,6 +135,35 @@ under the License.
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
+                <configuration>
+                    <artifactSet>
+                        <excludes>
+                            <exclude>org.apache.logging.log4j:*</exclude>
+                            <exclude>org.slf4j:*</exclude>
+                        </excludes>
+                    </artifactSet>
+                    <filters combine.children="append">
+                        <filter>
+                            <artifact>*:*</artifact>
+                            <excludes>
+                                <exclude>META-INF/*.SF</exclude>
+                                <exclude>META-INF/*.DSA</exclude>
+                                <exclude>META-INF/*.RSA</exclude>
+                                <!-- Also remove logging classes and configuration embedded in shaded dependencies. -->
+                                <exclude>org/apache/logging/log4j/**</exclude>
+                                <exclude>org/slf4j/**</exclude>
+                                <exclude>log4j2*.xml</exclude>
+                                <exclude>log4j2*.properties</exclude>
+                                <exclude>log4j2*.json</exclude>
+                                <exclude>log4j2*.yaml</exclude>
+                                <exclude>log4j2*.yml</exclude>
+                                <exclude>META-INF/org/apache/logging/log4j/**</exclude>
+                                <exclude>META-INF/services/org.apache.logging.log4j.*</exclude>
+                                <exclude>META-INF/licenses/LICENSE.slf4j*</exclude>
+                            </excludes>
+                        </filter>
+                    </filters>
+                </configuration>
                 <executions>
                     <execution>
                         <id>shade-flink-agents</id>
@@ -145,16 +174,6 @@ under the License.
                         <configuration>
                             <shadeTestJar>false</shadeTestJar>
                             <shadedArtifactAttached>false</shadedArtifactAttached>
-                            <filters>
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>META-INF/*.SF</exclude>
-                                        <exclude>META-INF/*.DSA</exclude>
-                                        <exclude>META-INF/*.RSA</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <manifestEntries>

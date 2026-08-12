@@ -160,3 +160,37 @@ class ExecuteWithAsyncExceptionTestAgent(Agent):
                     output=ExecuteTestErrorOutput(id=input_data.id, error=str(exc))
                 )
             )
+
+
+class ExecuteWithSyncExceptionTestAgent(Agent):
+    """Agent that tests exception handling in synchronous durable_execute()."""
+
+    @action(EventType.InputEvent)
+    @staticmethod
+    def process(event: Event, ctx: RunnerContext) -> None:
+        """Process an event and capture synchronous durable_execute() exceptions."""
+        input_data = ExecuteTestData.model_validate(InputEvent.from_event(event).input)
+        try:
+            ctx.durable_execute(raise_exception, f"Test error: {input_data.value}")
+        except ValueError as exc:
+            ctx.send_event(
+                OutputEvent(
+                    output=ExecuteTestErrorOutput(
+                        id=input_data.id, error=f"Caught: {exc}"
+                    )
+                )
+            )
+
+
+class ExecuteWithKwargsTestAgent(Agent):
+    """Agent that uses durable_execute() with keyword arguments."""
+
+    @action(EventType.InputEvent)
+    @staticmethod
+    def process(event: Event, ctx: RunnerContext) -> None:
+        """Process an event using durable_execute() with keyword arguments."""
+        input_data = ExecuteTestData.model_validate(InputEvent.from_event(event).input)
+        result = ctx.durable_execute(compute_value, x=input_data.value, y=20)
+        ctx.send_event(
+            OutputEvent(output=ExecuteTestOutput(id=input_data.id, result=result))
+        )

@@ -24,46 +24,31 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks a method as an agent action triggered by matching events.
+ * Marks a Java method as an agent action triggered by event types or condition expressions.
  *
- * <p>Each {@link #value()} entry is an event type name string. Use the {@code EVENT_TYPE} constants
- * on built-in event classes, the {@link org.apache.flink.agents.api.EventType} constants, or plain
- * strings for custom events. Multiple entries combine with OR.
+ * <p>Each {@link #value()} entry is either an exact event-type name or a condition expression that
+ * evaluates to boolean. Multiple entries use OR semantics. An entry matching the event-type syntax
+ * is classified as an event type rather than as a condition expression. To combine an event-type
+ * restriction and an attribute predicate using AND, place both in a single expression, for example
+ * {@code type == EventType.InputEvent && score > 5}.
  *
- * <pre>{@code
- * // Built-in event type via the EventType constant
- * @Action(EventType.InputEvent)
+ * <p>The event-type syntax is a bare or dotted name, such as {@code order.created} or {@code
+ * order-created}; each segment may contain hyphens. Boolean attribute conditions must therefore be
+ * explicit, for example {@code ready == true}.
  *
- * // Equivalent via the legacy class constant
- * @Action(InputEvent.EVENT_TYPE)
+ * <p>The API preserves entries as raw strings. Entries are classified and condition expressions are
+ * validated when the agent plan is built.
  *
- * // User-defined event type
- * @Action("MyCustomEvent")
- *
- * // Multiple types (OR semantics)
- * @Action({EventType.InputEvent, "MyCustomEvent"})
- * }</pre>
- *
- * <p>For a cross-language action, set {@link #target()} to a {@link PythonFunction} with a
- * non-empty {@code module}. The annotated Java body is never invoked — throw {@link
- * UnsupportedOperationException} so direct calls outside the framework fail loud:
- *
- * <pre>{@code
- * @Action(
- *     value = EventType.InputEvent,
- *     target = @PythonFunction(module = "my_pkg.handlers", qualname = "handle_input"))
- * public void handleInput(Event event, RunnerContext ctx) {
- *     throw new UnsupportedOperationException("cross-language stub");
- * }
- * }</pre>
+ * <p>Set {@link #target()} to a {@link PythonFunction} configured with a module for a
+ * cross-language action. The annotated Java method is not invoked for such actions.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Action {
     /**
-     * Event type name strings; multiple entries have OR semantics. Named {@code value} (not {@code
-     * triggerConditions}) to enable the {@code @Action({...})} shorthand (JLS §9.7.3); corresponds
-     * to Python's {@code *trigger_conditions}.
+     * Raw event-type names or explicit Boolean conditions combined with OR semantics. Named {@code
+     * value} to enable the {@code @Action({...})} shorthand (JLS §9.7.3); corresponds to Python's
+     * {@code *trigger_conditions}.
      */
     String[] value();
 

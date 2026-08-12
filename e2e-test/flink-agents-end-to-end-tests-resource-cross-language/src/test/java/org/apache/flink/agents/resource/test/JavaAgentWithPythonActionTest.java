@@ -32,11 +32,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class JavaAgentWithPythonActionTest {
 
     @Test
-    public void javaAgentDispatchesPythonActionBody() throws Exception {
+    public void overlappingConditionsRunPythonActionOnce() throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
-        DataStream<Long> inputStream = env.fromData(1L, 2L, 3L, 4L, 5L);
+        DataStream<Long> inputStream = env.fromData(1L, 3L, 5L, 7L, 9L);
 
         AgentsExecutionEnvironment agentsEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
@@ -57,6 +57,8 @@ public class JavaAgentWithPythonActionTest {
         }
         Collections.sort(actual);
 
-        assertThat(actual).containsExactly(2L, 4L, 6L, 8L, 10L);
+        // 3 is first-only, 5 overlaps (and executes once), 7 is second-only,
+        // while 1 and 9 do not match.
+        assertThat(actual).containsExactly(6L, 10L, 14L);
     }
 }

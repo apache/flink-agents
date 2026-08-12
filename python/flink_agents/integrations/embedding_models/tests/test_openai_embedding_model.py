@@ -16,6 +16,7 @@
 # limitations under the License.
 ################################################################################
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -57,3 +58,34 @@ def test_openai_embedding_model() -> None:
     assert isinstance(response, list)
     assert len(response) > 0
     assert all(isinstance(x, float) for x in response)  #
+
+
+def test_openai_embedding_model_returns_token_usage() -> None:
+    """Test OpenAI embedding usage is returned with the embedding result."""
+    connection = OpenAIEmbeddingModelConnection(name="openai", api_key="fake-key")
+    mock_client = MagicMock()
+    mock_client.embeddings.create.return_value = SimpleNamespace(
+        data=[SimpleNamespace(embedding=[0.1, 0.2, 0.3])],
+        usage=SimpleNamespace(prompt_tokens=5, total_tokens=5),
+    )
+    connection._OpenAIEmbeddingModelConnection__client = mock_client
+
+    def get_resource(name: str, type: ResourceType) -> Resource:
+        if type == ResourceType.EMBEDDING_MODEL_CONNECTION:
+            return connection
+        else:
+            msg = f"Unknown resource type: {type}"
+            raise ValueError(msg)
+
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+    embedding_model = OpenAIEmbeddingModelSetup(
+        name="openai", model=test_model, connection="openai", resource_context=mock_ctx
+    )
+    embedding_model.open()
+
+    result = embedding_model.embed_with_usage("Hello, Flink Agent!")
+    assert result.embeddings == [0.1, 0.2, 0.3]
+    assert result.token_usage is not None
+    assert result.token_usage.prompt_tokens == 5
+    assert result.token_usage.total_tokens == 5

@@ -24,6 +24,7 @@ from anthropic.types import MessageParam, TextBlockParam, ToolParam
 from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -168,9 +169,17 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
-        """Direct communication with Anthropic model service for chat conversation."""
+        """Direct communication with Anthropic model service for chat conversation.
+
+        A non-``None`` ``output_schema`` is rejected: this connection has no native
+        structured-output translation, so callers stay on the prompt-engineering
+        fallback. Declaring the parameter keeps a caller-supplied schema out of
+        ``**kwargs``, which is forwarded to the provider SDK.
+        """
+        self._reject_unsupported_output_schema(output_schema)
         anthropic_tools = None
         if tools is not None:
             anthropic_tools = [
@@ -195,6 +204,13 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             extra_args["promptTokens"] = message.usage.input_tokens
             extra_args["completionTokens"] = message.usage.output_tokens
 
+        # A response may lead with a non-text block (e.g. a tool_use block when
+        # the model calls a tool without any preface), so pick the first text
+        # block instead of assuming content[0] is text.
+        text = next(
+            (block.text for block in message.content if block.type == "text"), ""
+        )
+
         if message.stop_reason == "tool_use":
             tool_calls = [
                 {
@@ -213,7 +229,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             extra_args["anthropic_content_blocks"] = message.content
             return ChatMessage(
                 role=MessageRole(message.role),
-                content=message.content[0].text,
+                content=text,
                 tool_calls=tool_calls,
                 extra_args=extra_args,
             )
@@ -222,7 +238,8 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             #  https://docs.anthropic.com/en/api/messages#response-stop-reason
             return ChatMessage(
                 role=MessageRole(message.role),
-                content=message.content[0].text,
+                content=text,
+                extra_args=extra_args,
             )
 
     @override

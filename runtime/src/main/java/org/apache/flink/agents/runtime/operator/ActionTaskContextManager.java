@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import org.apache.flink.agents.api.event.MemoryEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -156,7 +157,7 @@ class ActionTaskContextManager implements AutoCloseable {
      * </ol>
      *
      * @param actionTask the task to be set up before execution.
-     * @param key the current Flink key.
+     * @param contextKey the textual key shared by LTM isolation and framework observation events.
      * @param agentPlan the agent plan.
      * @param resourceCache the resource cache.
      * @param metricGroup the agent metric group.
@@ -169,7 +170,7 @@ class ActionTaskContextManager implements AutoCloseable {
      */
     void createAndSetRunnerContext(
             ActionTask actionTask,
-            Object key,
+            String contextKey,
             AgentPlan agentPlan,
             ResourceCache resourceCache,
             FlinkAgentsMetricGroupImpl metricGroup,
@@ -218,7 +219,11 @@ class ActionTaskContextManager implements AutoCloseable {
         }
 
         context.switchActionContext(
-                actionTask.action.getName(), memoryContext, String.valueOf(key.hashCode()));
+                actionTask.action.getName(),
+                memoryContext,
+                contextKey,
+                actionTask.getObservationId(),
+                MemoryEvent.isMemoryType(actionTask.event.getType()));
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;

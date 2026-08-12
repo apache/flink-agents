@@ -16,6 +16,9 @@
 #  limitations under the License.
 ################################################################################
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
@@ -25,7 +28,7 @@ from chromadb.errors import NotFoundError
 from flink_agents.api.resource_context import ResourceContext
 
 try:
-    import chromadb  # noqa: F401
+    import chromadb
 
     chromadb_available = True
 except ImportError:
@@ -87,6 +90,42 @@ def _populate_test_data(
     ]
     vector_store.add(documents=documents, collection_name=collection_name)
     return documents
+
+
+def test_client_is_initialized_once_under_concurrent_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent first access must not create multiple Chroma systems."""
+    expected_client = MagicMock()
+    start_barrier = Barrier(2)
+    call_count = 0
+    call_count_lock = Lock()
+
+    def create_client(**kwargs: Any) -> MagicMock:
+        nonlocal call_count
+        with call_count_lock:
+            call_count += 1
+        # Release the GIL long enough for the other accessor to enter the
+        # client factory when lazy initialization is not synchronized.
+        time.sleep(0.1)
+        return expected_client
+
+    monkeypatch.setattr(chromadb, "PersistentClient", create_client)
+    vector_store = ChromaVectorStore(
+        name="chroma_vector_store",
+        embedding_model="mock_embeddings",
+        persist_directory="/tmp/chroma-concurrent-client-test",
+    )
+
+    def get_client() -> Any:
+        start_barrier.wait()
+        return vector_store.client
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        clients = list(executor.map(lambda _: get_client(), range(2)))
+
+    assert all(client is expected_client for client in clients)
+    assert call_count == 1
 
 
 @pytest.mark.skipif(not chromadb_available, reason="ChromaDB is not available")
