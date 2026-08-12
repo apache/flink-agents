@@ -40,7 +40,7 @@ BUILD_SCRIPT="${BATS_TEST_DIRNAME}/../../build.sh"
 @test "build rejects an unknown option with usage" {
     run bash "$BUILD_SCRIPT" --no-such-option
 
-    [ "$status" -ne 0 ]
+    [ "$status" -eq 1 ]
     [[ "$output" == *"Error: Unknown option '--no-such-option'"* ]]
     [[ "$output" == *"Usage:"* ]]
     [[ "$output" != *"show_help: command not found"* ]]
