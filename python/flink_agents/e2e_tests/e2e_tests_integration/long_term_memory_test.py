@@ -304,26 +304,29 @@ def check_result(*, result_dir: Path) -> None:
         records[f"{record.name}.{record.count}"] = record
 
     assert "alice.2" in records, f"missing alice.2; got {sorted(records)}"
+    assert "bob.2" in records, f"missing bob.2; got {sorted(records)}"
+    # The extraction model decides whether each key's two facts collapse into a
+    # single item or stay separate, so the item count is not fixed. Each set is
+    # reported alongside the other's failure to tell a per-key miss from a
+    # store-wide one.
     items = records["alice.2"].items
-    # The extraction model decides whether alice's two facts collapse into a
-    # single item or stay separate, so the item count is not fixed. bob's set
-    # is reported alongside a failure to tell a per-key miss from a store-wide
-    # one.
-    bob_items = records["bob.2"].items if "bob.2" in records else None
-    bob_values = None if bob_items is None else [item.value for item in bob_items]
+    values = [item.value for item in items or []]
+    bob_values = [item.value for item in records["bob.2"].items or []]
     # A scoping break misattributes in either direction. alice's facts landing
     # in bob's set leaves alice's set short rather than inflated, so check that
     # direction ahead of the emptiness assertion below, which would otherwise
-    # report the symptom in place of the cause.
+    # report the symptom in place of the cause. bob's set has to be populated
+    # for that scan to carry any weight, since an empty one satisfies it
+    # without ever being examined.
+    assert bob_values, f"bob's memory set is empty (alice's set: {values})"
     bob_leaked = [
         value
-        for value in (bob_values or [])
+        for value in bob_values
         if "watermelon" in value.lower() or "bananas" in value.lower()
     ]
     assert not bob_leaked, f"bob's set contains alice's facts: {bob_values}"
-    assert items, f"alice's memory set is empty (bob's set: {bob_values})"
+    assert values, f"alice's memory set is empty (bob's set: {bob_values})"
 
-    values = [item.value for item in items]
     # The stored text is the model's paraphrase of the input, so match loosely.
     assert any("bananas" in value.lower() for value in values), (
         f"no stored item carries the updated fact: {values}"
