@@ -341,13 +341,17 @@ public class ElasticsearchVectorStore extends BaseVectorStore
      *
      * <p>Otherwise, {@code filters} provides equality-only matching against document metadata. Each
      * entry is translated to an Elasticsearch {@code term} query on {@code
-     * <metadataField>.<key>.keyword}, and multiple entries are combined with AND semantics. A raw
+     * <metadataField>.<key>.keyword}, and multiple entries are combined with AND semantics. Because
+     * Elasticsearch dynamic mapping creates `.keyword` sub-fields only for strings, filters on
+     * non-string metadata values do not match; use a raw `filter_query` for those values. A raw
      * Elasticsearch JSON query may also be supplied as {@code filter_query} in {@code extraArgs};
      * when both forms are present, they are combined with AND semantics.
      *
      * <p>The {@code limit} parameter takes precedence over a {@code limit} value in {@code
      * extraArgs}. If neither is provided, up to {@link ElasticsearchVectorStore#MAX_RESULT_WINDOW}
-     * documents are returned. {@code extraArgs} may also contain an {@code offset}.
+     * documents are returned. This is the Elasticsearch result-window ceiling: the combined
+     * {@code offset} and {@code limit} must not exceed it; an explicit limit above it is rejected
+     * by Elasticsearch rather than truncated. {@code extraArgs} may also contain an {@code offset}.
      *
      * @param ids The IDs of documents to retrieve directly.
      * @param collection The collection name, or null to use the default collection.
@@ -388,7 +392,9 @@ public class ElasticsearchVectorStore extends BaseVectorStore
      *
      * <p>Otherwise, {@code filters} provides equality-only matching against document metadata. Each
      * entry is translated to an Elasticsearch {@code term} query on {@code
-     * <metadataField>.<key>.keyword}, and multiple entries are combined with AND semantics. A raw
+     * <metadataField>.<key>.keyword}, and multiple entries are combined with AND semantics. Because
+     * Elasticsearch dynamic mapping creates `.keyword` sub-fields only for strings, filters on
+     * non-string metadata values do not match; use a raw `filter_query` for those values. A raw
      * Elasticsearch JSON query may also be supplied as {@code filter_query} in {@code extraArgs};
      * when both forms are present, they are combined with AND semantics. If neither form is
      * supplied, all documents in the collection are deleted.
@@ -548,7 +554,7 @@ public class ElasticsearchVectorStore extends BaseVectorStore
         if (combined != null) {
             builder.query(q -> q.withJson(new StringReader(combined)));
         } else {
-            // No filter at all → delete every document (match_all).
+            // No filter at all 闂?delete every document (match_all).
             builder.query(q -> q.matchAll(ma -> ma));
         }
 
@@ -575,7 +581,10 @@ public class ElasticsearchVectorStore extends BaseVectorStore
      * <p>The method prepares a KNN search request using the supplied {@code embedding} and merges
      * default arguments from the store with the provided {@code args}. {@code filters} provides
      * equality-only matching against metadata fields. Each entry targets {@code
-     * <metadataField>.<key>.keyword}; multiple entries are combined with AND semantics and applied
+     * <metadataField>.<key>.keyword}; multiple entries are combined with AND semantics. Because
+     * Elasticsearch dynamic mapping creates `.keyword` sub-fields only for strings, filters on
+     * non-string metadata values do not match; use a raw {@code filter_query} for those values. The
+     * filters are applied as a post-filter.
      * as a post-filter.
      *
      * <p>A raw Elasticsearch JSON query may also be supplied as {@code filter_query} in {@code
@@ -725,7 +734,7 @@ public class ElasticsearchVectorStore extends BaseVectorStore
             throws JsonProcessingException {
         final List<Document> documents = new ArrayList<>(total);
         for (Hit<Map<String, Object>> hit : searchResponse.hits().hits()) {
-            // hit.score() is a Double — null for plain get-all responses, populated for
+            // hit.score() is a Double 闂?null for plain get-all responses, populated for
             // KNN / scored search; mirror that null-ness on Document.score.
             Double score = hit.score();
             documents.add(
