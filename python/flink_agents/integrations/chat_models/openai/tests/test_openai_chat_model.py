@@ -15,11 +15,13 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import math
 import os
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
@@ -141,3 +143,14 @@ def test_zero_timeout_disables_client_timeout() -> None:
 
     assert conn.client.timeout is None
     assert conn.client._client.timeout == httpx.Timeout(None)
+
+
+@pytest.mark.parametrize("timeout", [math.nan, math.inf])
+def test_connection_rejects_non_finite_timeout(timeout: float) -> None:
+    with pytest.raises(ValidationError, match="finite"):
+        OpenAIChatModelConnection(
+            name="test",
+            api_key="fake",
+            api_base_url="http://localhost",
+            timeout=timeout,
+        )

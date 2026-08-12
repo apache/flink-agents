@@ -71,6 +71,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         default=60.0,
         description="The number of seconds to wait for an API call before it times out. Set to 0 to disable timeouts.",
         ge=0,
+        allow_inf_nan=False,
     )
     max_retries: int = Field(
         default=3,

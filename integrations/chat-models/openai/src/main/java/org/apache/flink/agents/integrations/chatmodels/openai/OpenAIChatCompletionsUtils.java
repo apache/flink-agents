@@ -35,6 +35,9 @@ import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 
 import java.time.Duration;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -73,11 +76,24 @@ final class OpenAIChatCompletionsUtils {
         if (raw == null) {
             return Duration.ofSeconds(DEFAULT_TIMEOUT_SECONDS);
         }
-        double seconds = raw.doubleValue();
-        if (!Double.isFinite(seconds) || seconds < 0) {
+        BigDecimal seconds = toBigDecimal(raw, "timeout");
+        if (seconds.signum() < 0) {
             throw new IllegalArgumentException("timeout must be >= 0, got: " + raw);
         }
-        return Duration.ofMillis(Math.round(seconds * 1000));
+        try {
+            // Duration is precise to nanoseconds. Round positive values up so a valid nonzero
+            // timeout cannot become Duration.ZERO, which disables the SDK timeout.
+            BigInteger nanoseconds =
+                    seconds.multiply(BigDecimal.valueOf(1_000_000_000L))
+                            .setScale(0, RoundingMode.CEILING)
+                            .toBigIntegerExact();
+            BigInteger[] secondsAndNanos =
+                    nanoseconds.divideAndRemainder(BigInteger.valueOf(1_000_000_000L));
+            return Duration.ofSeconds(
+                    secondsAndNanos[0].longValueExact(), secondsAndNanos[1].longValueExact());
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("timeout is outside the supported range, got: " + raw, e);
+        }
     }
 
     /**
@@ -104,15 +120,32 @@ final class OpenAIChatCompletionsUtils {
         if (raw == null) {
             return DEFAULT_MAX_RETRIES;
         }
-        double value = raw.doubleValue();
-        if (!Double.isFinite(value)
-                || value != Math.rint(value)
-                || value < 0
-                || value > Integer.MAX_VALUE) {
+        BigDecimal value = toBigDecimal(raw, "max_retries");
+        try {
+            BigInteger retries = value.toBigIntegerExact();
+            if (retries.signum() < 0
+                    || retries.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0) {
+                throw new IllegalArgumentException(
+                        "max_retries must be a non-negative integer, got: " + raw);
+            }
+            return retries.intValueExact();
+        } catch (ArithmeticException e) {
             throw new IllegalArgumentException(
-                    "max_retries must be a non-negative integer, got: " + raw);
+                    "max_retries must be a non-negative integer, got: " + raw, e);
         }
-        return (int) value;
+    }
+
+    private static BigDecimal toBigDecimal(Number raw, String argumentName) {
+        if ((raw instanceof Double || raw instanceof Float)
+                && !Double.isFinite(raw.doubleValue())) {
+            throw new IllegalArgumentException(argumentName + " must be finite, got: " + raw);
+        }
+        try {
+            return new BigDecimal(raw.toString());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    argumentName + " must be a finite number, got: " + raw, e);
+        }
     }
 
     private static final ObjectMapper mapper = new ObjectMapper();

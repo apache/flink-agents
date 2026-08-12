@@ -68,6 +68,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         default=60.0,
         description="The timeout, in seconds, for API requests. Set to 0 to disable timeouts.",
         ge=0,
+        allow_inf_nan=False,
     )
     default_headers: Dict[str, str] | None = Field(
         default=None, description="The default headers for API requests."
