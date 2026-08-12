@@ -351,13 +351,17 @@ def test_skills_spec_with_urls_classpath_package() -> None:
     spec = SkillsSpec.model_validate(
         {
             "name": "s",
-            "urls": ["https://x/s.zip"],
+            "urls": ["https://x/unpinned.zip"],
+            "url_sources": [{"url": "https://x/s.zip", "sha256": "a" * 64}],
             "classpath": ["com/example/s"],
             "package": [{"package": "my_pkg", "resource": "skills/"}],
         }
     )
     assert spec.paths == []
-    assert spec.urls == ["https://x/s.zip"]
+    assert spec.urls == ["https://x/unpinned.zip"]
+    assert len(spec.url_sources) == 1
+    assert spec.url_sources[0].url == "https://x/s.zip"
+    assert spec.url_sources[0].sha256 == "a" * 64
     assert spec.classpath == ["com/example/s"]
     assert len(spec.package) == 1
     assert spec.package[0].package == "my_pkg"

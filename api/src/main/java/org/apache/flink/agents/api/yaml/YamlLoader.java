@@ -40,6 +40,7 @@ import org.apache.flink.agents.api.yaml.spec.PackageSkillSpec;
 import org.apache.flink.agents.api.yaml.spec.PromptSpec;
 import org.apache.flink.agents.api.yaml.spec.SkillsSpec;
 import org.apache.flink.agents.api.yaml.spec.ToolSpec;
+import org.apache.flink.agents.api.yaml.spec.UrlSkillSpec;
 import org.apache.flink.agents.api.yaml.spec.YamlAgentsDocument;
 
 import java.io.IOException;
@@ -173,8 +174,19 @@ public final class YamlLoader {
         for (String p : spec.getPaths()) {
             sources.add(new SkillSourceSpec("local", Map.of("path", p)));
         }
-        for (String u : spec.getUrls()) {
-            sources.add(new SkillSourceSpec("url", Map.of("url", u)));
+        for (String url : spec.getUrls()) {
+            sources.add(new SkillSourceSpec("url", Map.of("url", url)));
+        }
+        for (UrlSkillSpec urlSpec : spec.getUrlSources()) {
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("url", urlSpec.getUrl());
+            if (urlSpec.getSha256() != null) {
+                params.put("sha256", urlSpec.getSha256());
+            }
+            if (urlSpec.isAllowInsecureHttp()) {
+                params.put("allow_insecure_http", "true");
+            }
+            sources.add(new SkillSourceSpec("url", params));
         }
         for (String r : spec.getClasspath()) {
             sources.add(new SkillSourceSpec("classpath", Map.of("resource", r)));

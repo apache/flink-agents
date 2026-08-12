@@ -204,14 +204,29 @@ class YamlLoaderBuildersTest {
                 M.readValue(
                         "name: s\n"
                                 + "paths: [./a]\n"
-                                + "urls: [https://x/s.zip]\n"
+                                + "urls: [https://x/unpinned.zip]\n"
+                                + "url_sources:\n"
+                                + "  - url: https://x/s.zip\n"
+                                + "    sha256: "
+                                + "a".repeat(64)
+                                + "\n"
+                                + "    allow_insecure_http: true\n"
                                 + "classpath: [com/example/s]\n",
                         SkillsSpec.class);
         Skills s = YamlLoader.buildSkills(spec);
         assertThat(s.getSources())
                 .containsExactly(
                         new SkillSourceSpec("local", Map.of("path", "./a")),
-                        new SkillSourceSpec("url", Map.of("url", "https://x/s.zip")),
+                        new SkillSourceSpec("url", Map.of("url", "https://x/unpinned.zip")),
+                        new SkillSourceSpec(
+                                "url",
+                                Map.of(
+                                        "url",
+                                        "https://x/s.zip",
+                                        "sha256",
+                                        "a".repeat(64),
+                                        "allow_insecure_http",
+                                        "true")),
                         new SkillSourceSpec("classpath", Map.of("resource", "com/example/s")));
     }
 }

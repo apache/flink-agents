@@ -383,7 +383,14 @@ def test_build_skills_merges_all_schemes() -> None:
         {
             "name": "s",
             "paths": ["./a"],
-            "urls": ["https://x/s.zip"],
+            "urls": ["https://x/unpinned.zip"],
+            "url_sources": [
+                {
+                    "url": "https://x/s.zip",
+                    "sha256": "a" * 64,
+                    "allow_insecure_http": True,
+                }
+            ],
             "classpath": ["com/example/s"],
             "package": [{"package": "my_pkg", "resource": "skills/"}],
         }
@@ -391,7 +398,15 @@ def test_build_skills_merges_all_schemes() -> None:
     skills = _build_skills(spec)
     assert skills.sources == [
         SkillSourceSpec(scheme="local", params={"path": "./a"}),
-        SkillSourceSpec(scheme="url", params={"url": "https://x/s.zip"}),
+        SkillSourceSpec(scheme="url", params={"url": "https://x/unpinned.zip"}),
+        SkillSourceSpec(
+            scheme="url",
+            params={
+                "url": "https://x/s.zip",
+                "sha256": "a" * 64,
+                "allow_insecure_http": "true",
+            },
+        ),
         SkillSourceSpec(scheme="classpath", params={"resource": "com/example/s"}),
         SkillSourceSpec(
             scheme="package", params={"package": "my_pkg", "resource": "skills/"}
