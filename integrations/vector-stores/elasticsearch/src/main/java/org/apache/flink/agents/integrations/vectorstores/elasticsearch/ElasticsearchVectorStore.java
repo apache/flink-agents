@@ -349,9 +349,9 @@ public class ElasticsearchVectorStore extends BaseVectorStore
      *
      * <p>The {@code limit} parameter takes precedence over a {@code limit} value in {@code
      * extraArgs}. If neither is provided, up to {@link ElasticsearchVectorStore#MAX_RESULT_WINDOW}
-     * documents are returned. This is the Elasticsearch result-window ceiling: the combined
-     * {@code offset} and {@code limit} must not exceed it; an explicit limit above it is rejected
-     * by Elasticsearch rather than truncated. {@code extraArgs} may also contain an {@code offset}.
+     * documents are returned. This is the Elasticsearch result-window ceiling: the combined {@code
+     * offset} and {@code limit} must not exceed it; an explicit limit above it is rejected by
+     * Elasticsearch rather than truncated. {@code extraArgs} may also contain an {@code offset}.
      *
      * @param ids The IDs of documents to retrieve directly.
      * @param collection The collection name, or null to use the default collection.
@@ -585,7 +585,6 @@ public class ElasticsearchVectorStore extends BaseVectorStore
      * Elasticsearch dynamic mapping creates `.keyword` sub-fields only for strings, filters on
      * non-string metadata values do not match; use a raw {@code filter_query} for those values. The
      * filters are applied as a post-filter.
-     * as a post-filter.
      *
      * <p>A raw Elasticsearch JSON query may also be supplied as {@code filter_query} in {@code
      * args}. When both filter forms are present, they are combined with AND semantics.
