@@ -192,6 +192,48 @@ public class ElasticsearchVectorStoreTest {
     }
 
     @Test
+    public void testQueryEmbeddingFiltersBeforeSelectingNeighbors() throws Exception {
+        // Contract: filters restrict the candidate set of the KNN search itself, so a matching
+        // document is returned even when it is not among the k nearest vectors overall. Applying
+        // the filter after the KNN phase instead would return nothing here, because the k nearest
+        // vectors all belong to the other user.
+        String name = "knn_prefilter";
+        ((CollectionManageableVectorStore) store).createCollectionIfNotExists(name, Map.of());
+
+        List<Document> docs = new ArrayList<>();
+        // Six documents pointing the same way as the query vector, none of them alice's.
+        for (int i = 0; i < 6; i++) {
+            Document bob =
+                    new Document("bob document " + i, Map.of("user_id", "bob"), "doc_bob_" + i);
+            bob.setEmbedding(new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f});
+            docs.add(bob);
+        }
+        // Three alice documents pointing orthogonally, so they never make the unfiltered top k.
+        for (int i = 0; i < 3; i++) {
+            Document alice =
+                    new Document(
+                            "alice document " + i, Map.of("user_id", "alice"), "doc_alice_" + i);
+            alice.setEmbedding(new float[] {0.0f, 0.0f, 0.0f, 0.0f, 1.0f});
+            docs.add(alice);
+        }
+        store.addEmbedding(docs, name, Collections.emptyMap());
+        Thread.sleep(1000);
+
+        List<Document> alice =
+                store.queryEmbedding(
+                        new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+                        5,
+                        name,
+                        Map.of("user_id", "alice"),
+                        Collections.emptyMap());
+
+        Assertions.assertEquals(3, alice.size());
+        Assertions.assertTrue(alice.stream().allMatch(d -> d.getId().startsWith("doc_alice_")));
+
+        ((CollectionManageableVectorStore) store).deleteCollection(name);
+    }
+
+    @Test
     public void testUpdateOverwritesExistingDocument() throws Exception {
         // ES bulk index is upsert by id — update should rewrite the doc in place.
         String name = "update_overwrite";

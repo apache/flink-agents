@@ -82,8 +82,8 @@ import java.util.*;
  *   <li>{@code k} (optional): Number of nearest neighbors to return; can be overridden per query.
  *   <li>{@code num_candidates} (optional): Candidate set size for ANN search; can be overridden per
  *       query.
- *   <li>{@code filter_query} (optional): A raw JSON Elasticsearch filter query (DSL) that is
- *       applied as a post-filter; can be overridden per query.
+ *   <li>{@code filter_query} (optional): A raw JSON Elasticsearch filter query (DSL) restricting
+ *       which documents a KNN query can match; can be overridden per query.
  *   <li>{@code host} or {@code hosts} (optional): Elasticsearch endpoint(s). If omitted, defaults
  *       to {@code localhost:9200}.
  *   <li>Authentication (optional): Either basic auth via {@code username}/{@code password}, or API
@@ -572,7 +572,9 @@ public class ElasticsearchVectorStore extends BaseVectorStore
      *
      * <p>The method prepares a KNN search request using the supplied {@code embedding} and merges
      * default arguments from the store with the provided {@code args}. Optional filter queries
-     * (JSON DSL) are applied as a post filter.
+     * (JSON DSL) restrict the documents the KNN search may match, so the nearest neighbours are
+     * selected from among the matching documents rather than filtered out afterwards. Up to {@code
+     * k} matching documents are returned even when the closest vectors overall do not match.
      *
      * @param embedding The embedding vector to search with
      * @param limit Maximum number of items the caller is interested in; used as a fallback for
@@ -603,20 +605,32 @@ public class ElasticsearchVectorStore extends BaseVectorStore
             List<Float> queryVector = new ArrayList<>(embedding.length);
             for (float v : embedding) queryVector.add(v);
 
+            final String finalCombined = combined;
             SearchRequest.Builder builder =
                     new SearchRequest.Builder()
                             .index(index)
                             .knn(
-                                    kb ->
-                                            kb.field(this.vectorField)
-                                                    .queryVector(queryVector)
-                                                    .k(k)
-                                                    .numCandidates(numCandidates));
+                                    kb -> {
+                                        kb.field(this.vectorField)
+                                                .queryVector(queryVector)
+                                                .k(k)
+                                                .numCandidates(numCandidates);
+                                        // Filter inside the KNN clause rather than after it, so the
+                                        // k nearest neighbours are chosen from the documents that
+                                        // match. A post-filter can only discard hits the vector
+                                        // search already picked, which yields fewer than k results
+                                        // whenever the nearest vectors belong to filtered-out
+                                        // documents.
+                                        if (finalCombined != null) {
+                                            kb.filter(
+                                                    f ->
+                                                            f.withJson(
+                                                                    new StringReader(
+                                                                            finalCombined)));
+                                        }
+                                        return kb;
+                                    });
 
-            if (combined != null) {
-                final String finalCombined = combined;
-                builder = builder.postFilter(f -> f.withJson(new StringReader(finalCombined)));
-            }
             final SearchResponse<Map<String, Object>> searchResponse =
                     (SearchResponse) this.client.search(builder.build(), Map.class);
 
