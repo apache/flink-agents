@@ -47,7 +47,12 @@ public final class SkillSourceRegistry {
                 params -> params.getOrDefault("path", ""));
         register(
                 "url",
-                (params, cl) -> new URLSkillRepository(require(params, "url", "url")),
+                (params, cl) ->
+                        new URLSkillRepository(
+                                require(params, "url", "url"),
+                                params.get("sha256"),
+                                Boolean.parseBoolean(
+                                        params.getOrDefault("allow_insecure_http", "false"))),
                 params -> params.getOrDefault("url", ""));
         register(
                 "classpath",

@@ -134,7 +134,9 @@ def extract_zip_safely(zip_path: Path) -> Materialized:
     return materialized
 
 
-def download_to_tempfile(url: str, timeout: int = 90) -> Path:
+def download_to_tempfile(
+    url: str, timeout: int = 90, *, allow_insecure_http: bool = False
+) -> Path:
     """Download ``url`` to a temp file and return its path.
 
     Uses ``urllib.request`` from the standard library. ``timeout`` is the
@@ -144,13 +146,19 @@ def download_to_tempfile(url: str, timeout: int = 90) -> Path:
     Args:
         url: The URL to download.
         timeout: Socket timeout in seconds.
+        allow_insecure_http: Whether the request may use plain HTTP.
 
     Returns:
         Path to the downloaded temp file (caller is responsible for deletion).
 
     Raises:
+        ValueError: If the request or response uses a disallowed transport, or
+            a redirect changes protocols.
         urllib.error.HTTPError / URLError on HTTP or transport failures.
     """
+    initial_scheme = _require_allowed_transport(
+        url, allow_insecure_http=allow_insecure_http
+    )
     req = Request(url, method="GET")
     # The .zip suffix is load-bearing: FileSystemSkillRepository uses
     # path.suffix == ".zip" to detect zip input. Do not change it.
@@ -159,8 +167,31 @@ def download_to_tempfile(url: str, timeout: int = 90) -> Path:
     tmp_path = Path(tmp_path_str)
     try:
         with urlopen(req, timeout=timeout) as resp, tmp_path.open("wb") as out:
+            final_url = resp.geturl()
+            _require_allowed_transport(
+                final_url,
+                allow_insecure_http=allow_insecure_http,
+                initial_scheme=initial_scheme,
+            )
             shutil.copyfileobj(resp, out)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
     return tmp_path
+
+
+def _require_allowed_transport(
+    final_url: str,
+    *,
+    allow_insecure_http: bool,
+    initial_scheme: str | None = None,
+) -> str:
+    final_scheme = final_url.split(":", 1)[0].lower()
+    allowed_schemes = {"http", "https"} if allow_insecure_http else {"https"}
+    if final_scheme not in allowed_schemes:
+        msg = f"Skill URL used a disallowed transport: {final_url}"
+        raise ValueError(msg)
+    if initial_scheme is not None and final_scheme != initial_scheme:
+        msg = f"Skill URL returned an unsupported redirect to: {final_url}"
+        raise ValueError(msg)
+    return final_scheme

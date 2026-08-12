@@ -110,7 +110,7 @@ class SkillMaterializerTest {
             int port = server.getAddress().getPort();
             String url = "http://127.0.0.1:" + port + "/anything";
 
-            Path file = SkillMaterializer.downloadToTempFile(url, 5_000);
+            Path file = SkillMaterializer.downloadToTempFile(url, 5_000, true);
             try {
                 assertTrue(Files.isRegularFile(file));
                 byte[] read = Files.readAllBytes(file);
@@ -130,7 +130,46 @@ class SkillMaterializerTest {
             int port = server.getAddress().getPort();
             String url = "http://127.0.0.1:" + port + "/missing";
 
-            assertThrows(IOException.class, () -> SkillMaterializer.downloadToTempFile(url, 5_000));
+            assertThrows(
+                    IOException.class,
+                    () -> SkillMaterializer.downloadToTempFile(url, 5_000, true));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void rejectsPlainHttpByDefault() {
+        IOException ex =
+                assertThrows(
+                        IOException.class,
+                        () ->
+                                SkillMaterializer.downloadToTempFile(
+                                        "http://127.0.0.1:1/anything", 5_000));
+        assertTrue(ex.getMessage().contains("disallowed transport"));
+    }
+
+    @Test
+    void unfollowedCrossProtocolRedirectFailsClearly() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext(
+                "/",
+                exchange -> {
+                    exchange.getResponseHeaders().add("Location", "https://example.com/skills.zip");
+                    exchange.sendResponseHeaders(302, -1);
+                    exchange.close();
+                });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            IOException ex =
+                    assertThrows(
+                            IOException.class,
+                            () ->
+                                    SkillMaterializer.downloadToTempFile(
+                                            "http://127.0.0.1:" + port + "/redirect", 5_000, true));
+            assertTrue(ex.getMessage().contains("unsupported redirect"));
+            assertTrue(ex.getMessage().contains("https://example.com/skills.zip"));
         } finally {
             server.stop(0);
         }

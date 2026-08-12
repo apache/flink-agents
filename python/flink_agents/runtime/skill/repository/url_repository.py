@@ -17,11 +17,15 @@
 ################################################################################
 """URL-based :class:`SkillRepository`.
 
-Downloads a zip from an http(s) URL into a temp file, extracts it into a
+Downloads a zip from an HTTPS URL into a temp file, extracts it into a
 process-local temp directory, and reads skills from there.
 """
 
 from __future__ import annotations
+
+import hashlib
+import re
+from urllib.parse import urlparse
 
 from flink_agents.runtime.skill.repository._materialize import (
     download_to_tempfile,
@@ -35,26 +39,73 @@ _REQUEST_TIMEOUT_SEC = 90
 
 
 class URLSkillRepository(MaterializedSkillRepository):
-    """Skill repository backed by an http(s) URL pointing to a zip.
+    """Skill repository backed by an HTTPS URL pointing to a zip.
 
     The zip is downloaded then extracted into a process-local temp directory
-    (released eagerly via :meth:`close` or at process exit).
+    (released eagerly via :meth:`close` or at process exit). Plain HTTP is
+    rejected unless explicitly enabled, and an optional SHA-256 digest is
+    verified before extraction.
     """
 
-    def __init__(self, url: str) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        sha256: str | None = None,
+        allow_insecure_http: bool = False,
+    ) -> None:
         """Download and extract the zip at ``url``.
 
         Raises:
-            ValueError: If the URL is not http(s).
+            ValueError: If the URL transport or SHA-256 value is invalid.
             urllib.error.HTTPError / URLError: On transport/HTTP failures.
         """
-        if not url.startswith(("http://", "https://")):
-            msg = f"Only http(s) URLs are supported: {url}"
+        if not isinstance(url, str):
+            msg = "skill URL must be a string"
+            raise TypeError(msg)
+        parsed_url = urlparse(url)
+        scheme = parsed_url.scheme.lower()
+        if scheme not in {"http", "https"}:
+            msg = f"Only HTTP(S) URLs are supported: {url}"
+            raise ValueError(msg)
+        if scheme == "http" and not allow_insecure_http:
+            msg = (
+                "Plain HTTP skill URLs are disabled by default; use HTTPS or "
+                f"explicitly allow insecure HTTP for this source: {url}"
+            )
+            raise ValueError(msg)
+        if not parsed_url.netloc:
+            msg = f"Skill URL must include a host: {url}"
+            raise ValueError(msg)
+        if sha256 is not None and not isinstance(sha256, str):
+            msg = "sha256 must contain exactly 64 hexadecimal characters"
+            raise ValueError(msg)
+        normalized_sha256 = sha256.lower() if sha256 is not None else None
+        if normalized_sha256 is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", normalized_sha256
+        ):
+            msg = "sha256 must contain exactly 64 hexadecimal characters"
             raise ValueError(msg)
 
         self._url = url
-        tmp_zip = download_to_tempfile(url, timeout=_REQUEST_TIMEOUT_SEC)
+        tmp_zip = download_to_tempfile(
+            url,
+            timeout=_REQUEST_TIMEOUT_SEC,
+            allow_insecure_http=allow_insecure_http,
+        )
         try:
+            if normalized_sha256 is not None:
+                digest = hashlib.sha256()
+                with tmp_zip.open("rb") as archive:
+                    for chunk in iter(lambda: archive.read(8192), b""):
+                        digest.update(chunk)
+                actual = digest.hexdigest()
+                if actual != normalized_sha256:
+                    msg = (
+                        f"SHA-256 mismatch for skill archive {url}: expected "
+                        f"{normalized_sha256}, got {actual}"
+                    )
+                    raise ValueError(msg)
             materialization = extract_zip_safely(tmp_zip)
         finally:
             tmp_zip.unlink(missing_ok=True)

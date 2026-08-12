@@ -20,7 +20,9 @@
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 
 import pytest
@@ -133,7 +135,9 @@ class TestDownloadToTempfile:
         handler.payload = b"hello-zip-bytes"
         handler.status = 200
 
-        path = download_to_tempfile(f"{base_url}/anything", timeout=10)
+        path = download_to_tempfile(
+            f"{base_url}/anything", timeout=10, allow_insecure_http=True
+        )
 
         try:
             assert path.is_file()
@@ -149,4 +153,27 @@ class TestDownloadToTempfile:
         handler.status = 404
 
         with pytest.raises(HTTPError):
-            download_to_tempfile(f"{base_url}/missing", timeout=10)
+            download_to_tempfile(
+                f"{base_url}/missing", timeout=10, allow_insecure_http=True
+            )
+
+    def test_rejects_plain_http_by_default(self) -> None:
+        with pytest.raises(ValueError, match="disallowed transport"):
+            download_to_tempfile("http://127.0.0.1:1/anything", timeout=10)
+
+    def test_cross_protocol_redirect_fails_clearly(self) -> None:
+        class RedirectedResponse(BytesIO):
+            def geturl(self) -> str:
+                return "https://example.com/skills.zip"
+
+        response = RedirectedResponse(b"redirected archive")
+        with (
+            patch(
+                "flink_agents.runtime.skill.repository._materialize.urlopen",
+                return_value=response,
+            ),
+            pytest.raises(ValueError, match=r"unsupported redirect.*https://example\.com"),
+        ):
+            download_to_tempfile(
+                "http://example.com/skills.zip", allow_insecure_http=True
+            )

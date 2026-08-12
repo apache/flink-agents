@@ -118,7 +118,12 @@ register(
 )
 register(
     "url",
-    lambda params: URLSkillRepository(_require(params, "url", "url")),
+    lambda params: URLSkillRepository(
+        _require(params, "url", "url"),
+        sha256=params.get("sha256"),
+        allow_insecure_http=params.get("allow_insecure_http", "false").lower()
+        == "true",
+    ),
     lambda params: params.get("url", ""),
 )
 register(

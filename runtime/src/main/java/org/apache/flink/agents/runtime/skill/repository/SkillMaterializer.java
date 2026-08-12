@@ -254,14 +254,37 @@ public final class SkillMaterializer {
      * @throws IOException on connect / read failures or HTTP error responses.
      */
     public static Path downloadToTempFile(String url, int timeoutMs) throws IOException {
+        return downloadToTempFile(url, timeoutMs, false);
+    }
+
+    /**
+     * Download {@code url}, optionally permitting plain HTTP transport.
+     *
+     * @throws IOException on connect / read failures or HTTP error responses.
+     */
+    public static Path downloadToTempFile(String url, int timeoutMs, boolean allowInsecureHttp)
+            throws IOException {
         URL u = new URL(url);
+        String initialProtocol = u.getProtocol();
+        if (!("https".equalsIgnoreCase(initialProtocol)
+                || (allowInsecureHttp && "http".equalsIgnoreCase(initialProtocol)))) {
+            throw new IOException("Skill URL uses a disallowed transport: " + url);
+        }
         HttpURLConnection conn = (HttpURLConnection) u.openConnection();
         conn.setConnectTimeout(timeoutMs);
         conn.setReadTimeout(timeoutMs);
         conn.setRequestMethod("GET");
         Path tmpZip = Files.createTempFile(TEMP_DIR_PREFIX, ".zip");
-        try (InputStream in = conn.getInputStream()) {
-            Files.copy(in, tmpZip, StandardCopyOption.REPLACE_EXISTING);
+        try {
+            int responseCode = conn.getResponseCode();
+            if (responseCode >= 300 && responseCode < 400) {
+                throw new IOException(
+                        "Skill URL returned an unsupported redirect to: "
+                                + conn.getHeaderField("Location"));
+            }
+            try (InputStream in = conn.getInputStream()) {
+                Files.copy(in, tmpZip, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             Files.deleteIfExists(tmpZip);
             throw e;
