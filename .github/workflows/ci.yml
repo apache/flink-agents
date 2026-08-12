@@ -53,8 +53,8 @@ jobs:
         if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
         run: python3 tools/check-skill-schema.py
 
-  install_sh_tests:
-    name: install.sh tests (${{ matrix.os }})
+  tools_script_tests:
+    name: tools script tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -65,7 +65,7 @@ jobs:
       - name: Install bash 4+ (macOS)
         if: runner.os == 'macOS'
         run: brew install bash
-      - name: Run install.sh tests
+      - name: Run tools script tests
         run: bash tools/test/run.sh
 
   build_backend_tests:
