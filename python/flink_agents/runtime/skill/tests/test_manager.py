@@ -202,7 +202,7 @@ def mixed_sources(tmp_path: Path):
 class TestSkillManagerMixedSources:
     def test_url_only_loads_skills(self, mixed_sources) -> None:
         _dir, url, _pkg, _resource = mixed_sources
-        config = Skills.from_url(url)
+        config = Skills.from_url_unsafe(url)
         manager = SkillManager(config)
         assert set(manager.get_all_skill_names()) == {"github", "nano-banana-pro"}
 
@@ -236,7 +236,7 @@ class TestSkillManagerMixedSources:
 
     def test_close_releases_url_repo_temp_dir(self, mixed_sources) -> None:
         _dir, url, _pkg, _resource = mixed_sources
-        config = Skills.from_url(url)
+        config = Skills.from_url_unsafe(url)
         with SkillManager(config) as manager:
             skill_dir = manager.get_skill_dir("github")
             assert skill_dir is not None

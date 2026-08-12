@@ -147,7 +147,7 @@ class SkillManagerTest {
         HttpServer server = startZipServer(Files.readAllBytes(zip));
         try {
             int port = server.getAddress().getPort();
-            Skills config = Skills.fromUrl("http://127.0.0.1:" + port + "/skills.zip");
+            Skills config = Skills.fromUrlUnsafe("http://127.0.0.1:" + port + "/skills.zip");
             SkillManager manager = new SkillManager(config);
             assertEquals(
                     List.of("github", "nano-banana-pro"),
@@ -231,7 +231,7 @@ class SkillManagerTest {
         HttpServer server = startZipServer(Files.readAllBytes(zip));
         try {
             int port = server.getAddress().getPort();
-            Skills config = Skills.fromUrl("http://127.0.0.1:" + port + "/skills.zip");
+            Skills config = Skills.fromUrlUnsafe("http://127.0.0.1:" + port + "/skills.zip");
             SkillManager manager = new SkillManager(config);
             Path dir = manager.getSkillDir("github");
             assertNotNull(dir);

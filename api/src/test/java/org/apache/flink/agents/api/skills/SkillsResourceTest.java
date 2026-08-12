@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SkillsResourceTest {
 
@@ -49,6 +50,62 @@ class SkillsResourceTest {
     }
 
     @Test
+    void fromUrlWithSha256EmitsIntegrityParam() {
+        String digest = "a".repeat(64);
+        Skills skills = Skills.fromUrlWithSha256("https://example.com/x.zip", digest);
+        assertEquals(
+                List.of(
+                        new SkillSourceSpec(
+                                "url",
+                                Map.of("url", "https://example.com/x.zip", "sha256", digest))),
+                skills.getSources());
+    }
+
+    @Test
+    void fromUrlUnsafeRequiresExplicitParam() {
+        Skills skills = Skills.fromUrlUnsafe("http://example.com/x.zip");
+        assertEquals("true", skills.getSources().get(0).getParams().get("allow_insecure_http"));
+    }
+
+    @Test
+    void fromUrlUnsafeWithSha256EmitsBothParams() {
+        String digest = "a".repeat(64);
+        Skills skills = Skills.fromUrlUnsafeWithSha256("http://example.com/x.zip", digest);
+        assertEquals(
+                Map.of(
+                        "url",
+                        "http://example.com/x.zip",
+                        "sha256",
+                        digest,
+                        "allow_insecure_http",
+                        "true"),
+                skills.getSources().get(0).getParams());
+    }
+
+    @Test
+    void fromUrlRejectsPlainHttpByDefault() {
+        assertThrows(
+                IllegalArgumentException.class, () -> Skills.fromUrl("http://example.com/x.zip"));
+    }
+
+    @Test
+    void fromUrlWithSha256RejectsMalformedDigest() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Skills.fromUrlWithSha256("https://example.com/x.zip", "invalid"));
+    }
+
+    @Test
+    void fromUrlRejectsUnsupportedSchemeClearly() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> Skills.fromUrl("ftp://example.com/x.zip"));
+        assertEquals(
+                "Only HTTP(S) skill URLs are supported: ftp://example.com/x.zip", ex.getMessage());
+    }
+
+    @Test
     void fromClasspathEmitsClasspathScheme() {
         Skills skills = Skills.fromClasspath("skills");
         assertEquals(
@@ -59,6 +116,16 @@ class SkillsResourceTest {
     @Test
     void roundTripsThroughJackson() throws Exception {
         Skills original = Skills.fromLocalDir("/tmp/skill1", "/tmp/skill2");
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(original);
+        Skills restored = mapper.readValue(json, Skills.class);
+        assertEquals(original.getSources(), restored.getSources());
+    }
+
+    @Test
+    void pinnedUrlRoundTripsThroughJackson() throws Exception {
+        Skills original =
+                Skills.fromUrlWithSha256("https://example.com/skills.zip", "a".repeat(64));
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(original);
         Skills restored = mapper.readValue(json, Skills.class);
