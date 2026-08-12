@@ -46,6 +46,12 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
     private final PythonResourceAdapter adapter;
     private PyObject pyMem0;
 
+    // Defaults mirror the Python side's own defaults, so a set obtained before any
+    // context switch forwards the same values Python would have used itself.
+    private String partitionKey = "";
+    private String observationId = "";
+    private boolean observationSuppressed;
+
     public Mem0LongTermMemory(PythonResourceAdapter adapter, PyObject pyMem0) {
         this.adapter = adapter;
         this.pyMem0 = pyMem0;
@@ -54,14 +60,20 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
     @Override
     public MemorySet getMemorySet(String name) {
         // Mirrors Python's `Mem0LongTermMemory.get_memory_set`: a pure factory that
-        // returns a new MemorySet bound to this ltm; no Python call is needed.
+        // returns a new MemorySet bound to this ltm; no Python call is needed. The
+        // current action context is copied onto the set so that operations forwarded
+        // from a worker thread stay scoped to the action that obtained it.
         MemorySet ms = new MemorySet(name);
         ms.setLtm(this);
+        ms.setActionContext(partitionKey, observationId, observationSuppressed);
         return ms;
     }
 
     @Override
     public boolean deleteMemorySet(String name) {
+        // Takes a name rather than a MemorySet, so it has no bound context and the Python
+        // side uses the key currently in scope. It is therefore only correct on the mailbox
+        // thread, and can target a different key than MemorySet.delete on a same-named set.
         return (Boolean) adapter.callMethod(pyMem0, "delete_memory_set", Map.of("name", name));
     }
 
@@ -149,6 +161,9 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
     @Override
     public void switchContext(
             String partitionKey, String observationId, boolean observationSuppressed) {
+        this.partitionKey = partitionKey;
+        this.observationId = observationId;
+        this.observationSuppressed = observationSuppressed;
         adapter.callMethod(
                 pyMem0,
                 "switch_context",
@@ -180,7 +195,23 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
     }
 
     private Object buildPyMemorySet(MemorySet memorySet) {
-        return adapter.invoke(TO_PYTHON_MEMORY_SET, memorySet.getName());
+        // Mem0 ignores a falsy agent_id rather than matching on it, so forwarding an
+        // unbound set would widen the operation to every key sharing the job id and set
+        // name, which for a delete means deleting another key's items.
+        if (memorySet.getPartitionKey() == null) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Memory set '%s' is not bound to a partition key. Obtain it with"
+                                    + " getMemorySet inside the action that uses it, rather than"
+                                    + " constructing it directly or reusing one across actions.",
+                            memorySet.getName()));
+        }
+        return adapter.invoke(
+                TO_PYTHON_MEMORY_SET,
+                memorySet.getName(),
+                memorySet.getPartitionKey(),
+                memorySet.getObservationId(),
+                memorySet.isObservationSuppressed());
     }
 
     @SuppressWarnings("unchecked")

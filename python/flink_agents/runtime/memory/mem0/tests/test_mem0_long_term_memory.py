@@ -330,11 +330,12 @@ def test_switch_context(ltm) -> None:
     memory_set.add(items="Data for key_a")
 
     ltm.switch_context("key_b", observation_id="action-b")
-    # key_b should have no items in the same memory set name
-    items = memory_set.get()
-    # Items from key_a should not be visible under key_b
-    # (They have different agent_id scoping)
-    assert len(items) == 0
+    # The set stays scoped to key_a, so it still reads key_a's item after the
+    # switch rather than following the current context.
+    assert len(memory_set.get()) == 1
+    # A set obtained under key_b is scoped to key_b, so key_a's items in the
+    # same-named set are not visible through it.
+    assert len(ltm.get_memory_set(name="context_set").get()) == 0
 
     # Reset context
     ltm.switch_context("", observation_id="action-empty")

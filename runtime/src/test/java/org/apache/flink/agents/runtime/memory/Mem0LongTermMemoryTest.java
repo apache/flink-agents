@@ -36,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,7 +52,8 @@ public class Mem0LongTermMemoryTest {
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
         ltm = new Mem0LongTermMemory(mockAdapter, mockPyMem0);
-        when(mockAdapter.invoke(eq("python_java_utils.to_python_memory_set"), any()))
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.to_python_memory_set"), any(), any(), any(), any()))
                 .thenReturn(mockPyMemorySet);
     }
 
@@ -235,5 +237,33 @@ public class Mem0LongTermMemoryTest {
 
         verify(mockAdapter).callMethod(mockPyMem0, "close", Map.of());
         verify(mockPyMem0).close();
+    }
+
+    @Test
+    void testUnboundSetIsRefusedRatherThanWidened() {
+        MemorySet unbound = new MemorySet("notes");
+        unbound.setLtm(ltm);
+
+        assertThatThrownBy(() -> ltm.add(unbound, List.of("hello"), null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not bound to a partition key");
+        verify(mockAdapter, never()).callMethod(eq(mockPyMem0), eq("add"), any());
+    }
+
+    @Test
+    void testForwardedSetCarriesTheContextItWasObtainedIn() throws Exception {
+        ltm.switchContext("owner", "owner-action", false);
+        MemorySet ms = ltm.getMemorySet("notes");
+
+        ltm.switchContext("other", "other-action", true);
+        ltm.add(ms, List.of("hello"), null);
+
+        verify(mockAdapter)
+                .invoke(
+                        eq("python_java_utils.to_python_memory_set"),
+                        eq("notes"),
+                        eq("owner"),
+                        eq("owner-action"),
+                        eq(false));
     }
 }
