@@ -32,6 +32,7 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
 import org.apache.flink.metrics.Counter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,7 +57,8 @@ import static org.mockito.Mockito.*;
 /** Tests for retry behavior in {@link ChatModelAction}. */
 class ChatModelActionRetryTest {
 
-    private static final Map<String, Object> LLM_METADATA = Map.of("model", "configured-model");
+    private static final Map<String, Object> LLM_METADATA =
+            Map.of(LLMExecutionMetadataKeys.MODEL, "configured-model");
 
     @Mock private RunnerContext mockCtx;
 

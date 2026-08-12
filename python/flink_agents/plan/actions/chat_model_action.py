@@ -44,6 +44,7 @@ from flink_agents.api.trace import (
     ExecutionEntityTypes,
     ExecutionProblemCategories,
     ExecutionReporters,
+    LLMExecutionMetadataKeys,
 )
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.utils import support_async
@@ -349,7 +350,7 @@ async def chat(
     response = None
     actual_retry_count = 0
     total_wait_time_sec = 0
-    llm_metadata = {"model": chat_model.model}
+    llm_metadata = {LLMExecutionMetadataKeys.MODEL: chat_model.model}
 
     for attempt in range(num_retries + 1):
         try:

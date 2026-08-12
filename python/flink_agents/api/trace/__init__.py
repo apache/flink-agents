@@ -24,6 +24,9 @@ from flink_agents.api.trace.execution_reporter import (
     ExecutionReporter,
     ExecutionReporters,
 )
+from flink_agents.api.trace.llm_execution_metadata_keys import (
+    LLMExecutionMetadataKeys,
+)
 from flink_agents.api.trace.tool_execution_metadata_keys import (
     ToolExecutionMetadataKeys,
 )
@@ -34,5 +37,6 @@ __all__ = [
     "ExecutionProblemCategories",
     "ExecutionReporter",
     "ExecutionReporters",
+    "LLMExecutionMetadataKeys",
     "ToolExecutionMetadataKeys",
 ]

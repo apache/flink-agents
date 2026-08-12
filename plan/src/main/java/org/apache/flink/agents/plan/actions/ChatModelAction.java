@@ -40,6 +40,7 @@ import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
+import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
@@ -376,7 +377,9 @@ public class ChatModelAction {
                     }
                 };
         Map<String, Object> llmMetadata =
-                chatModel.getModel() == null ? Map.of() : Map.of(MODEL, chatModel.getModel());
+                chatModel.getModel() == null
+                        ? Map.of()
+                        : Map.of(LLMExecutionMetadataKeys.MODEL, chatModel.getModel());
 
         for (int attempt = 0; attempt < numRetries + 1; attempt++) {
             try {
