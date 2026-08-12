@@ -48,12 +48,14 @@ Run both lanes. A change verified in one language only is untested in the other.
 
 - Java, from the repo root: `mvn --batch-mode test -pl api`.
 - Python, from `python/`: `uv sync --extra test`, then `uv pip install
-  apache-flink~=2.3.0`, then `uv run --no-sync pytest flink_agents/api
-  flink_agents/plan`. PyFlink is imported at module scope by the event types but
-  is declared in neither the base dependencies nor the `test` extra, so
-  collection fails without it. Install it after the sync, not before, because
-  `uv sync` removes it. The pin matches the root `pom.xml`'s `flink.version`, so
-  both lanes run the same Flink.
+  "apache-flink==$(mvn -q -N --batch-mode -f ../pom.xml help:evaluate
+  -Dexpression=flink.version -DforceStdout)"`, then `uv run --no-sync pytest
+  flink_agents/api flink_agents/plan`. PyFlink is imported at module scope by
+  the event types but is declared in neither the base dependencies nor the
+  `test` extra, so collection fails without it. Install it after the sync, not
+  before, because `uv sync` removes it. Reading the version out of the root
+  `pom.xml` rather than typing it runs this lane on the same Flink the Java
+  bullet resolves, and survives a version bump.
 - Resource-name constants, from `python/`: `uv run --no-sync python
   ../e2e-test/test-scripts/check_resource_consistency.py`. This one is a script
   rather than a test, so neither Maven nor pytest reaches it.
