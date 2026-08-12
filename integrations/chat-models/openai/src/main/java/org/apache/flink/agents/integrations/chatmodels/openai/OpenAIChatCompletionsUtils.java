@@ -21,6 +21,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.core.JsonValue;
+import com.openai.core.Timeout;
 import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
 import com.openai.models.chat.completions.ChatCompletionMessage;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
@@ -29,15 +30,14 @@ import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
 import com.openai.models.chat.completions.ChatCompletionSystemMessageParam;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
-import com.openai.core.Timeout;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 
-import java.time.Duration;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -99,7 +99,8 @@ final class OpenAIChatCompletionsUtils {
                             .toBigIntegerExact();
             return Duration.ofMillis(milliseconds.longValueExact());
         } catch (ArithmeticException e) {
-            throw new IllegalArgumentException("timeout is outside the supported range, got: " + raw, e);
+            throw new IllegalArgumentException(
+                    "timeout is outside the supported range, got: " + raw, e);
         }
     }
 
@@ -118,9 +119,9 @@ final class OpenAIChatCompletionsUtils {
     }
 
     /**
-     * Resolve and validate the {@code max_retries} argument. Requires an exact non-negative
-     * integer within int range, matching Python-side validation (pydantic rejects fractional
-     * values for int fields).
+     * Resolve and validate the {@code max_retries} argument. Requires an exact non-negative integer
+     * within int range, matching Python-side validation (pydantic rejects fractional values for int
+     * fields).
      */
     static int parseMaxRetries(ResourceDescriptor descriptor) {
         Number raw = descriptor.getArgument("max_retries");

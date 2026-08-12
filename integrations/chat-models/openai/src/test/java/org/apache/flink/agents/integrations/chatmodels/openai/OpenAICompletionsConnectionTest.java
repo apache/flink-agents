@@ -33,10 +33,10 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -78,14 +78,16 @@ class OpenAICompletionsConnectionTest {
     @Test
     void testConnectionArgumentValidation() {
         ResourceDescriptor missingKey =
-                ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName()).build();
+                ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
+                        .build();
         assertThatThrownBy(() -> new OpenAICompletionsConnection(missingKey, NOOP))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("api_key");
 
         OpenAICompletionsConnection connection =
                 new OpenAICompletionsConnection(
-                        ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
+                        ResourceDescriptor.Builder.newBuilder(
+                                        OpenAICompletionsConnection.class.getName())
                                 .addInitialArgument("api_key", "test-key")
                                 .addInitialArgument("timeout", 0)
                                 .addInitialArgument("max_retries", 0)

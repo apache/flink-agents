@@ -43,8 +43,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import java.util.HashMap;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -103,7 +103,8 @@ class AzureOpenAIChatModelConnectionTest {
                         connectionDescriptor()
                                 .addInitialArgument("api_key", "test-key")
                                 .addInitialArgument("api_version", "2024-02-01")
-                                .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                                .addInitialArgument(
+                                        "azure_endpoint", "https://example.openai.azure.com")
                                 .addInitialArgument("timeout", 0)
                                 .addInitialArgument("max_retries", 0)
                                 .build(),
