@@ -179,15 +179,15 @@ class OpenAIResponsesModelConnectionTest {
     }
 
     @Test
-    @DisplayName("Fractional timeout is preserved rather than truncated")
-    void testFractionalTimeoutPreserved() {
+    @DisplayName("Sub-millisecond timeout rounds up to the SDK precision")
+    void testSubMillisecondTimeoutRoundsUpToSdkPrecision() {
         ResourceDescriptor desc =
                 connectionDescriptor()
                         .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", 1.5)
+                        .addInitialArgument("timeout", 0.0001)
                         .build();
         OpenAIResponsesModelConnection conn = new OpenAIResponsesModelConnection(desc, NOOP);
-        assertThat(conn.getTimeout()).isEqualTo(Duration.ofMillis(1500));
+        assertThat(conn.getTimeout()).isEqualTo(Duration.ofMillis(1));
     }
 
     @Test

@@ -145,6 +145,22 @@ def test_zero_timeout_disables_client_timeout() -> None:
     assert conn.client._client.timeout == httpx.Timeout(None)
 
 
+def test_zero_timeout_disables_custom_http_client_timeout() -> None:
+    http_client = httpx.Client(timeout=10.0)
+    conn = OpenAIChatModelConnection(
+        name="test",
+        api_key="fake",
+        api_base_url="http://localhost",
+        timeout=0,
+        http_client=http_client,
+    )
+
+    assert conn.client.timeout is None
+    assert http_client.timeout == httpx.Timeout(None)
+
+    http_client.close()
+
+
 @pytest.mark.parametrize("timeout", [math.nan, math.inf])
 def test_connection_rejects_non_finite_timeout(timeout: float) -> None:
     with pytest.raises(ValidationError, match="finite"):

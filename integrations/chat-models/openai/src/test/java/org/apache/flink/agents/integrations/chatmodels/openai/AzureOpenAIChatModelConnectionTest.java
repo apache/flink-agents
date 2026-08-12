@@ -238,17 +238,17 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("Fractional timeout is preserved rather than truncated")
-    void testFractionalTimeoutPreserved() {
+    @DisplayName("Sub-millisecond timeout rounds up to the SDK precision")
+    void testSubMillisecondTimeoutRoundsUpToSdkPrecision() {
         ResourceDescriptor desc =
                 connectionDescriptor()
                         .addInitialArgument("api_key", "test-key")
                         .addInitialArgument("api_version", "2024-02-01")
                         .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
-                        .addInitialArgument("timeout", 1.5)
+                        .addInitialArgument("timeout", 0.0001)
                         .build();
         AzureOpenAIChatModelConnection conn = new AzureOpenAIChatModelConnection(desc, NOOP);
-        assertThat(conn.getTimeout()).isEqualTo(Duration.ofMillis(1500));
+        assertThat(conn.getTimeout()).isEqualTo(Duration.ofMillis(1));
     }
 
     @Test

@@ -57,6 +57,9 @@ import java.util.stream.Collectors;
  */
 final class OpenAIChatCompletionsUtils {
 
+    private static final BigDecimal MAX_TIMEOUT_SECONDS =
+            BigDecimal.valueOf(Integer.MAX_VALUE).movePointLeft(3);
+
     /** Default timeout in seconds for OpenAI API requests (aligned with Python SDK). */
     static final int DEFAULT_TIMEOUT_SECONDS = 60;
 
@@ -68,8 +71,8 @@ final class OpenAIChatCompletionsUtils {
     /**
      * Resolve and validate the {@code timeout} argument (in seconds). The raw value is validated
      * before any numeric conversion so that e.g. {@code -0.5} cannot truncate to {@code 0} and
-     * bypass the non-negative check. Fractional values are preserved (matching the Python side,
-     * where {@code timeout} is a float).
+     * bypass the non-negative check. Fractional values are rounded up to the SDK's millisecond
+     * precision so that a positive value can never become an unlimited timeout.
      */
     static Duration parseTimeout(ResourceDescriptor descriptor) {
         Number raw = descriptor.getArgument("timeout");
@@ -80,17 +83,21 @@ final class OpenAIChatCompletionsUtils {
         if (seconds.signum() < 0) {
             throw new IllegalArgumentException("timeout must be >= 0, got: " + raw);
         }
+        if (seconds.compareTo(MAX_TIMEOUT_SECONDS) > 0) {
+            throw new IllegalArgumentException(
+                    "timeout exceeds the SDK maximum of "
+                            + MAX_TIMEOUT_SECONDS.toPlainString()
+                            + " seconds, got: "
+                            + raw);
+        }
         try {
-            // Duration is precise to nanoseconds. Round positive values up so a valid nonzero
-            // timeout cannot become Duration.ZERO, which disables the SDK timeout.
-            BigInteger nanoseconds =
-                    seconds.multiply(BigDecimal.valueOf(1_000_000_000L))
+            // The SDK's OkHttp transport accepts millisecond precision. Round positive values up
+            // so a valid nonzero timeout cannot become Duration.ZERO, which disables timeouts.
+            BigInteger milliseconds =
+                    seconds.multiply(BigDecimal.valueOf(1_000L))
                             .setScale(0, RoundingMode.CEILING)
                             .toBigIntegerExact();
-            BigInteger[] secondsAndNanos =
-                    nanoseconds.divideAndRemainder(BigInteger.valueOf(1_000_000_000L));
-            return Duration.ofSeconds(
-                    secondsAndNanos[0].longValueExact(), secondsAndNanos[1].longValueExact());
+            return Duration.ofMillis(milliseconds.longValueExact());
         } catch (ArithmeticException e) {
             throw new IllegalArgumentException("timeout is outside the supported range, got: " + raw, e);
         }

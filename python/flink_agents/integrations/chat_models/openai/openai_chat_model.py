@@ -112,6 +112,8 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
 
         self._http_client = http_client
         self._async_http_client = async_http_client
+        if self.timeout == 0 and self._http_client is not None:
+            self._http_client.timeout = httpx.Timeout(None)
 
     @property
     def client(self) -> OpenAI:

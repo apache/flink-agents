@@ -41,11 +41,29 @@ class OpenAIChatCompletionsUtilsTest {
     }
 
     @Test
-    void testPositiveTimeoutBelowNanosecondDoesNotDisableTimeout() {
+    void testPositiveTimeoutBelowMillisecondRoundsUpToSdkPrecision() {
         assertThat(
                         OpenAIChatCompletionsUtils.parseTimeout(
                                 descriptor("timeout", new BigDecimal("0.0000000001"))))
-                .isEqualTo(Duration.ofNanos(1));
+                .isEqualTo(Duration.ofMillis(1));
+    }
+
+    @Test
+    void testTimeoutRejectsValuesBeyondSdkMaximum() {
+        assertThatThrownBy(
+                        () ->
+                                OpenAIChatCompletionsUtils.parseTimeout(
+                                        descriptor("timeout", new BigDecimal("2147483.648"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("SDK maximum");
+    }
+
+    @Test
+    void testTimeoutAcceptsSdkMaximum() {
+        assertThat(
+                        OpenAIChatCompletionsUtils.parseTimeout(
+                                descriptor("timeout", new BigDecimal("2147483.647"))))
+                .isEqualTo(Duration.ofMillis(Integer.MAX_VALUE));
     }
 
     @Test
