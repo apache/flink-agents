@@ -41,19 +41,21 @@ validate_rat_jar() {
 acquire_rat_jar() {
   URL="https://repo.maven.apache.org/maven2/org/apache/rat/apache-rat/${RAT_VERSION}/apache-rat-${RAT_VERSION}.jar"
   JAR="$rat_jar"
+  downloaded=false
 
   if [ ! -f "$JAR" ]; then
+    downloaded=true
     printf "Attempting to fetch rat\n"
     JAR_DL="${JAR}.part"
     rm -f "$JAR_DL"
     if command -v curl >/dev/null 2>&1; then
-      if ! curl --fail --show-error --location --output "$JAR_DL" "$URL"; then
+      if ! curl --fail --silent --show-error --location --output "$JAR_DL" "$URL"; then
         rm -f "$JAR_DL"
         printf "Failed to download Apache RAT from %s.\n" "$URL" >&2
         return 1
       fi
     elif command -v wget >/dev/null 2>&1; then
-      if ! wget --quiet --output-document="$JAR_DL" "$URL"; then
+      if ! wget --no-verbose --output-document="$JAR_DL" "$URL"; then
         rm -f "$JAR_DL"
         printf "Failed to download Apache RAT from %s.\n" "$URL" >&2
         return 1
@@ -72,7 +74,13 @@ acquire_rat_jar() {
   validate_rat_jar
   validation_status=$?
   if [ "$validation_status" -eq 2 ]; then
-    return 1
+    if [ "$downloaded" = true ]; then
+      rm -f "$JAR"
+      printf "Cannot validate the downloaded Apache RAT JAR: install jar or unzip.\n" >&2
+      return 1
+    fi
+    printf "Warning: cannot validate cached Apache RAT JAR at %s; install jar or unzip.\n" "$JAR" >&2
+    return 0
   elif [ "$validation_status" -ne 0 ]; then
     rm -f "$JAR"
     printf "The Apache RAT JAR at %s is invalid.\n" "$JAR" >&2

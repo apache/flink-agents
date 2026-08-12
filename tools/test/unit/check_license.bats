@@ -18,61 +18,13 @@
 # limitations under the License.
 ################################################################################
 
-command() {
-    if [[ "$1" == "-v" ]]; then
-        local missing
-        for missing in "${MISSING_COMMANDS[@]:-}"; do
-            if [[ "$2" == "$missing" ]]; then
-                return 1
-            fi
-        done
-    fi
-    builtin command "$@"
-}
-
-shim_bin() {
-    local name="$1" exit_code="${2:-0}"
-    cat >"$SHIM_DIR/$name" <<EOF
-#!/usr/bin/env bash
-( IFS=\$'\t'; printf '%s\n' "\$*" ) >> "$SHIM_CALLS/$name.log"
-exit $exit_code
-EOF
-    chmod +x "$SHIM_DIR/$name"
-}
-
-shim_bin_script() {
-    local name="$1" body="$2"
-    cat >"$SHIM_DIR/$name" <<EOF
-#!/usr/bin/env bash
-( IFS=\$'\t'; printf '%s\n' "\$*" ) >> "$SHIM_CALLS/$name.log"
-$body
-EOF
-    chmod +x "$SHIM_DIR/$name"
-}
-
-shim_bin_missing() {
-    MISSING_COMMANDS+=("$1")
-}
-
-shim_call_count() {
-    local log="$SHIM_CALLS/$1.log"
-    if [[ ! -f "$log" ]]; then
-        echo 0
-        return
-    fi
-    wc -l <"$log" | tr -d ' '
-}
-
 setup() {
+    load '../helpers/shim'
+    shim_setup
     CHECK_LICENSE_SOURCE_ONLY=1
     source "${BATS_TEST_DIRNAME}/../../check-license.sh"
     unset CHECK_LICENSE_SOURCE_ONLY
 
-    SHIM_DIR="$BATS_TEST_TMPDIR/bin"
-    SHIM_CALLS="$BATS_TEST_TMPDIR/calls"
-    MISSING_COMMANDS=()
-    mkdir -p "$SHIM_DIR" "$SHIM_CALLS"
-    export PATH="$SHIM_DIR:$PATH"
 
     RAT_VERSION="test"
     rat_jar="$BATS_TEST_TMPDIR/apache-rat-test.jar"
@@ -87,8 +39,8 @@ setup() {
 
     run acquire_rat_jar
 
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"install a JDK with 'jar' or install 'unzip'"* ]]
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Warning: cannot validate cached Apache RAT JAR"* ]]
     [ -f "$rat_jar" ]
 }
 
@@ -117,7 +69,7 @@ setup() {
 }
 
 @test "reports a download failure and removes the partial file" {
-    shim_bin curl 22
+    shim_bin_script curl 'prev=""; for arg in "$@"; do [[ "$prev" == "--output" ]] && : > "$arg"; prev="$arg"; done; exit 22'
 
     run acquire_rat_jar
 
