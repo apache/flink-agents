@@ -69,7 +69,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
     )
     timeout: float = Field(
         default=60.0,
-        description="The number of seconds to wait for an API call before it times out.",
+        description="The number of seconds to wait for an API call before it times out. Set to 0 to disable timeouts.",
         ge=0,
     )
     max_retries: int = Field(
@@ -108,7 +108,8 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
                 azure_endpoint=self.azure_endpoint,
                 api_key=self.api_key,
                 api_version=self.api_version,
-                timeout=self.timeout,
+                # Match Java's Duration.ZERO: None avoids an immediate timeout in httpx.
+                timeout=None if self.timeout == 0 else self.timeout,
                 max_retries=self.max_retries,
             )
         return self._client

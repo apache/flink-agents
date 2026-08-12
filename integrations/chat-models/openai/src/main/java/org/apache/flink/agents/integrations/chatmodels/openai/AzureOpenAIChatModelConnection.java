@@ -127,7 +127,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
                         .azureServiceVersion(AzureOpenAIServiceVersion.fromString(apiVersion));
 
         this.timeout = OpenAIChatCompletionsUtils.parseTimeout(descriptor);
-        clientBuilder.timeout(this.timeout);
+        clientBuilder.timeout(OpenAIChatCompletionsUtils.toSdkTimeout(this.timeout));
 
         this.maxRetries = OpenAIChatCompletionsUtils.parseMaxRetries(descriptor);
         clientBuilder.maxRetries(this.maxRetries);

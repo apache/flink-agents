@@ -108,7 +108,7 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
         }
 
         this.timeout = OpenAIChatCompletionsUtils.parseTimeout(descriptor);
-        builder.timeout(this.timeout);
+        builder.timeout(OpenAIChatCompletionsUtils.toSdkTimeout(this.timeout));
 
         this.maxRetries = OpenAIChatCompletionsUtils.parseMaxRetries(descriptor);
         builder.maxRetries(this.maxRetries);

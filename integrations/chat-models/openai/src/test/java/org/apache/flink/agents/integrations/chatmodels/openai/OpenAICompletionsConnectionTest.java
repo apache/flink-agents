@@ -165,8 +165,8 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("Zero timeout is accepted as valid")
-    void testZeroTimeoutAccepted() {
+    @DisplayName("Zero timeout disables the effective SDK timeout")
+    void testZeroTimeoutDisablesSdkTimeout() {
         ResourceDescriptor desc =
                 connectionDescriptor()
                         .addInitialArgument("api_key", "test-key")
@@ -174,6 +174,7 @@ class OpenAICompletionsConnectionTest {
                         .build();
         OpenAICompletionsConnection conn = new OpenAICompletionsConnection(desc, NOOP);
         assertThat(conn.getTimeout()).isEqualTo(Duration.ZERO);
+        OpenAIClientTestUtils.assertNoTimeoutConfigured(conn);
     }
 
     @Test

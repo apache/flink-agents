@@ -18,6 +18,7 @@
 import os
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -130,3 +131,13 @@ def test_connection_default_timeout_and_max_retries() -> None:
     )
     assert conn.timeout == 60.0
     assert conn.max_retries == 3
+
+
+def test_zero_timeout_disables_client_timeout() -> None:
+    """Keep zero-timeout semantics aligned with the Java OpenAI SDK."""
+    conn = OpenAIChatModelConnection(
+        name="test", api_key="fake", api_base_url="http://localhost", timeout=0
+    )
+
+    assert conn.client.timeout is None
+    assert conn.client._client.timeout == httpx.Timeout(None)

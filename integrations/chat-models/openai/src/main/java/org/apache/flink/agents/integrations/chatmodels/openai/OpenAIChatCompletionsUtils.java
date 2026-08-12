@@ -29,6 +29,7 @@ import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
 import com.openai.models.chat.completions.ChatCompletionSystemMessageParam;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
+import com.openai.core.Timeout;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -77,6 +78,20 @@ final class OpenAIChatCompletionsUtils {
             throw new IllegalArgumentException("timeout must be >= 0, got: " + raw);
         }
         return Duration.ofMillis(Math.round(seconds * 1000));
+    }
+
+    /**
+     * Configure every SDK timeout component from the connection timeout. A zero duration means no
+     * timeout in openai-java, so all components must be set explicitly; setting only the request
+     * timeout leaves the SDK's default connection timeout in effect.
+     */
+    static Timeout toSdkTimeout(Duration timeout) {
+        return Timeout.builder()
+                .connect(timeout)
+                .read(timeout)
+                .write(timeout)
+                .request(timeout)
+                .build();
     }
 
     /**

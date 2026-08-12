@@ -66,7 +66,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
     )
     timeout: float = Field(
         default=60.0,
-        description="The timeout, in seconds, for API requests.",
+        description="The timeout, in seconds, for API requests. Set to 0 to disable timeouts.",
         ge=0,
     )
     default_headers: Dict[str, str] | None = Field(
@@ -129,7 +129,9 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             "api_key": self.api_key,
             "base_url": self.api_base_url,
             "max_retries": self.max_retries,
-            "timeout": self.timeout,
+            # Match Java: Duration.ZERO disables timeouts.
+            # None avoids an immediate httpx timeout.
+            "timeout": None if self.timeout == 0 else self.timeout,
             "default_headers": self.default_headers,
             "http_client": self._http_client,
         }

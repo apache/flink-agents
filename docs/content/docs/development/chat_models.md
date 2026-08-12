@@ -520,7 +520,7 @@ Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azur
 | `api_key` | String | Required | Azure OpenAI API key for authentication |
 | `api_version` | String | Required | Azure OpenAI REST API version (e.g., "2024-02-01"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
 | `azure_endpoint` | String | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) — either a direct Azure resource or a proxy/gateway URL that fronts an Azure OpenAI service |
-| `timeout` | int | `60` | Timeout in seconds for API requests; must be non-negative |
+| `timeout` | float | `60` | Timeout in seconds for API requests; `0` disables timeouts; must be non-negative |
 | `max_retries` | int | `3` | Maximum number of API retry attempts; must be non-negative |
 | `azure_url_path_mode` | String | `"AUTO"` | Controls how the SDK constructs Azure OpenAI request URLs. One of `"AUTO"`, `"LEGACY"`, or `"UNIFIED"`. Custom gateways that proxy Azure OpenAI typically need `"LEGACY"` to force the `/openai/deployments/{model}` path |
 
@@ -815,7 +815,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | `api_key` | str | Required | OpenAI API key for authentication |
 | `api_base_url` | str | `"https://api.openai.com/v1"` | Base URL for OpenAI API |
 | `max_retries` | int | `3` | Maximum number of API retry attempts |
-| `timeout` | float | `60.0` | API request timeout in seconds |
+| `timeout` | float | `60.0` | API request timeout in seconds; `0` disables timeouts |
 | `default_headers` | dict | None | Default headers for API requests |
 | `reuse_client` | bool | `True` | Whether to reuse the OpenAI client between requests |
 
@@ -828,7 +828,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | `api_key` | String | Required | OpenAI API key for authentication |
 | `api_base_url` | String | `"https://api.openai.com/v1"` | Base URL for OpenAI API |
 | `max_retries` | int | `3` | Maximum number of API retry attempts; must be non-negative |
-| `timeout` | int | `60` | Timeout in seconds for API requests; must be non-negative |
+| `timeout` | float | `60` | Timeout in seconds for API requests; `0` disables timeouts; must be non-negative |
 | `default_headers` | Map<String, String> | None | Default headers for API requests |
 | `model` | String | None | Default model to use if not specified in setup |
 
@@ -959,7 +959,7 @@ Responses API is only supported in Java currently. To use OpenAI Responses API f
 | `api_key` | String | Required | OpenAI API key for authentication |
 | `api_base_url` | String | None | Base URL for OpenAI API (useful for proxies) |
 | `max_retries` | int | `3` | Maximum number of API retry attempts; must be non-negative |
-| `timeout` | int | `60` | Timeout in seconds for API requests; must be non-negative |
+| `timeout` | float | `60` | Timeout in seconds for API requests; `0` disables timeouts; must be non-negative |
 | `default_headers` | Map<String, String> | None | Default headers for API requests |
 | `model` | String | None | Default model to use if not specified in setup |
 
