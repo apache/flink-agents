@@ -19,7 +19,6 @@ import math
 import os
 from unittest.mock import MagicMock
 
-import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -27,6 +26,8 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.azure.azure_openai_chat_model import (
+    MAX_OPENAI_RETRIES,
+    MAX_OPENAI_TIMEOUT_SECONDS,
     AzureOpenAIChatModelConnection,
     AzureOpenAIChatModelSetup,
 )
@@ -144,7 +145,13 @@ def test_zero_timeout_disables_client_timeout() -> None:
     )
 
     assert conn.client.timeout is None
-    assert conn.client._client.timeout == httpx.Timeout(None)
+    # openai>=3 wraps timeouts in its own Timeout class, so compare
+    # components instead of instances.
+    transport_timeout = conn.client._client.timeout
+    assert transport_timeout.connect is None
+    assert transport_timeout.read is None
+    assert transport_timeout.write is None
+    assert transport_timeout.pool is None
 
 
 @pytest.mark.parametrize("timeout", [math.nan, math.inf])
@@ -155,6 +162,25 @@ def test_connection_rejects_non_finite_timeout(timeout: float) -> None:
             azure_endpoint="https://example.openai.azure.com",
             api_version="2024-02-01",
             timeout=timeout,
+        )
+
+
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [
+        ("timeout", MAX_OPENAI_TIMEOUT_SECONDS + 0.001),
+        ("max_retries", MAX_OPENAI_RETRIES + 1),
+    ],
+)
+def test_connection_rejects_values_beyond_java_sdk_limits(
+    argument: str, value: float | int
+) -> None:
+    with pytest.raises(ValidationError, match="less than or equal"):
+        AzureOpenAIChatModelConnection(
+            api_key="fake-key",
+            azure_endpoint="https://example.openai.azure.com",
+            api_version="2024-02-01",
+            **{argument: value},
         )
 
 

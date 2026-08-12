@@ -36,6 +36,8 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
 )
 
 DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo"
+MAX_OPENAI_TIMEOUT_SECONDS = 2_147_483.647
+MAX_OPENAI_RETRIES = 2_147_483_647
 
 
 class OpenAIChatModelConnection(BaseChatModelConnection):
@@ -63,11 +65,13 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         default=3,
         description="The maximum number of API retries.",
         ge=0,
+        le=MAX_OPENAI_RETRIES,
     )
     timeout: float = Field(
         default=60.0,
         description="The timeout, in seconds, for API requests. Set to 0 to disable timeouts.",
         ge=0,
+        le=MAX_OPENAI_TIMEOUT_SECONDS,
         allow_inf_nan=False,
     )
     default_headers: Dict[str, str] | None = Field(
