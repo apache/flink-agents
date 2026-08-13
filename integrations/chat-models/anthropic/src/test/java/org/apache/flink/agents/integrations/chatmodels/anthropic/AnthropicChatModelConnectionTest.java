@@ -40,6 +40,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.HashMap;
 import java.util.List;
@@ -202,8 +203,16 @@ class AnthropicChatModelConnectionTest {
     // Native structured output
     // ---------------------------------------------------------------------------------------
 
-    /** A model the provider documents native structured-output support for. */
-    private static final String CAPABLE_MODEL = "claude-opus-4-6";
+    /**
+     * A model the provider documents native structured-output support for.
+     *
+     * <p>Deliberately a 4.5-generation name, which is the only generation that is both
+     * structured-output capable and still accepts a JSON prefill. The output_config tests below
+     * assert that a prefill is suppressed; on a 4.6-or-later name the prefill capability guard
+     * would suppress it as well, so those assertions would hold even with the output_config
+     * suppression removed.
+     */
+    private static final String CAPABLE_MODEL = "claude-sonnet-4-5";
 
     /** The connection's own default model, which predates the structured-output cutoff. */
     private static final String INCAPABLE_MODEL = "claude-sonnet-4-20250514";
@@ -282,10 +291,15 @@ class AnthropicChatModelConnectionTest {
                 .orElse(Set.of());
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {"claude-sonnet-4-5", "claude-opus-4-6"})
     @DisplayName("a POJO schema on a capable model is sent as output_config")
-    void testNativeSchemaAppliedOnCapableModel() {
-        AnthropicChatModelConnection.BuiltRequest built = build(CAPABLE_MODEL, Answer.class, null);
+    void testNativeSchemaAppliedOnCapableModel(String model) {
+        // One name from each way the capability check can match: a 4.5-generation alias reached by
+        // prefix, and a 4.6 name reached by exact match. The request-build site consults the check
+        // as a whole, so covering only one branch would let it be narrowed to that branch while
+        // silently dropping native structured output for every model on the other.
+        AnthropicChatModelConnection.BuiltRequest built = build(model, Answer.class, null);
 
         // Asserting the property name rather than mere presence: an output_config built from the
         // wrong class, or from an empty placeholder, would still be present.
@@ -473,6 +487,98 @@ class AnthropicChatModelConnectionTest {
         assertThat(requestCarriesPrefill(built)).isTrue();
         assertThat(connection.convertResponse(built, textResponse(CONTINUATION)).getContent())
                 .isEqualTo(COMPLETED);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // JSON prefill model capability
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * The models the provider documents as rejecting assistant-message prefilling, in the order the
+     * connection lists them. Mirroring that order keeps the two lists comparable side by side, so a
+     * name added to one and not the other stands out.
+     */
+    private static Stream<String> prefillUnsupportedModels() {
+        return Stream.of(
+                "claude-opus-4-6",
+                "claude-opus-4-7",
+                "claude-opus-4-8",
+                "claude-opus-5",
+                "claude-sonnet-4-6",
+                "claude-sonnet-5",
+                "claude-fable-5",
+                "claude-mythos-5",
+                "claude-mythos-preview");
+    }
+
+    /**
+     * Names that accept a prefill. The three 4.5-generation names are the load-bearing ones: they
+     * are documented as structured-output capable, so folding the two rules onto one list would
+     * silently withdraw the prefill from exactly these models.
+     *
+     * <p>{@code claude-sonnet-4-5-20250929} is the dated snapshot behind one of those aliases, and
+     * {@code claude-3-5-sonnet-latest} stands for every name the list does not mention, which keeps
+     * the prefill because only the listed names withdraw it.
+     */
+    private static Stream<String> prefillSupportedModels() {
+        return Stream.of(
+                "claude-opus-4-5",
+                "claude-sonnet-4-5",
+                "claude-haiku-4-5",
+                "claude-sonnet-4-5-20250929",
+                "claude-sonnet-4-20250514",
+                "claude-3-5-sonnet-latest",
+                "");
+    }
+
+    /**
+     * Asserts the prefill decision, the request content and the converted response for a request
+     * that asks for the prefill on {@code model} and gives the decision no other reason to go
+     * either way: no tools and no output configuration.
+     */
+    private static void assertPrefillDecisionForModel(String model, boolean expectedApplied) {
+        AnthropicChatModelConnection connection = connection();
+        AnthropicChatModelConnection.BuiltRequest built =
+                connection.buildRequest(
+                        userMessage(), List.of(), paramsWithModel(model, true), null);
+
+        assertThat(built.jsonPrefillApplied).isEqualTo(expectedApplied);
+        assertThat(requestCarriesPrefill(built)).isEqualTo(expectedApplied);
+        assertThat(connection.convertResponse(built, textResponse(CONTINUATION)).getContent())
+                .isEqualTo(expectedApplied ? COMPLETED : CONTINUATION);
+    }
+
+    @ParameterizedTest
+    @MethodSource("prefillUnsupportedModels")
+    @DisplayName("every model documented as rejecting prefilling reports unsupported")
+    void testPrefillUnsupportedModelsReportUnsupported(String model) {
+        assertThat(AnthropicChatModelConnection.supportsJsonPrefill(model)).isFalse();
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @MethodSource("prefillSupportedModels")
+    @DisplayName("a model outside that list reports prefill supported")
+    void testPrefillSupportedModelsReportSupported(String model) {
+        assertThat(AnthropicChatModelConnection.supportsJsonPrefill(model)).isTrue();
+    }
+
+    @Test
+    @DisplayName("json_prefill is suppressed on a model that rejects prefilling")
+    void testPrefillSuppressedOnUnsupportedModel() {
+        assertPrefillDecisionForModel("claude-opus-4-6", false);
+    }
+
+    @Test
+    @DisplayName("json_prefill is applied on a structured-output capable model that accepts it")
+    void testPrefillAppliedOnStructuredOutputCapableModel() {
+        // The two capability rules draw different lines, and this model sits between them: the
+        // provider documents structured-output support from the 4.5 generation on but withdraws
+        // prefilling only from 4.6 on. Deriving the prefill rule from the structured-output
+        // allowlists would strip the prefill here, where the provider still accepts it.
+        assertThat(connection().supportsNativeStructuredOutput("claude-sonnet-4-5")).isTrue();
+
+        assertPrefillDecisionForModel("claude-sonnet-4-5", true);
     }
 
     /** Minimal tool stub; only its presence in the tools list matters. */

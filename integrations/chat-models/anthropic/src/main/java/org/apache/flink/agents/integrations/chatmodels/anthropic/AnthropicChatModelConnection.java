@@ -170,6 +170,53 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
                         .anyMatch(effectiveModel::startsWith);
     }
 
+    // Models Anthropic documents as rejecting assistant-message prefilling. Source of truth:
+    // https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prefill-claudes-response
+    //
+    // Prefilling is not supported from the Claude 4.6 generation onward, nor on Claude Mythos
+    // Preview, Claude Fable 5 or Claude Mythos 5; a request that prefills one of them is answered
+    // with a 400 rather than a completion. Anthropic publishes no programmatic signal for prefill
+    // support the way it does for structured outputs, so the rule has to be a maintained list of
+    // names. Those names carry no date and are pinned, so the name is itself the snapshot and is
+    // matched exactly, and a name outside the list is treated as accepting the prefill.
+    //
+    // Kept in its own storage rather than derived from the structured-output allowlists above,
+    // whose contents it currently coincides with. The two encode different documented boundaries:
+    // structured output starts at the 4.5 generation while prefill rejection starts at 4.6, so the
+    // three 4.5-generation names are structured-output capable and still accept a prefill. Sharing
+    // one list would hold only until a model moves one boundary without moving the other.
+    private static final Set<String> PREFILL_UNSUPPORTED_MODELS =
+            Set.of(
+                    "claude-opus-4-6",
+                    "claude-opus-4-7",
+                    "claude-opus-4-8",
+                    "claude-opus-5",
+                    "claude-sonnet-4-6",
+                    "claude-sonnet-5",
+                    "claude-fable-5",
+                    "claude-mythos-5",
+                    "claude-mythos-preview");
+
+    /**
+     * Whether {@code effectiveModel} accepts the prefilled assistant {@code "{"} message.
+     *
+     * <p>See the list above for the source of truth and for why it is matched exactly and kept
+     * apart from the structured-output allowlists. An unrecognized name reports {@code true}, which
+     * matches the documented rule: prefilling is the long-standing behaviour and only the listed
+     * names withdraw it. The cost of that default runs the opposite way to {@link
+     * #supportsNativeStructuredOutput}: a rejecting model this list has not caught up with is
+     * prefilled and answered with a 400, where an unrecognized name on the structured-output path
+     * degrades silently to the prompt-engineering fallback instead.
+     */
+    static boolean supportsJsonPrefill(String effectiveModel) {
+        // Load-bearing: the list is an immutable Set, whose contains(null) throws rather than
+        // reporting absence.
+        if (effectiveModel == null) {
+            return true;
+        }
+        return !PREFILL_UNSUPPORTED_MODELS.contains(effectiveModel);
+    }
+
     /**
      * Derives the native {@code output_config} for a POJO class through the SDK's typed
      * structured-output builder.
@@ -350,11 +397,13 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         }
 
         // JSON prefill appends a prefilled assistant "{" message to steer the model into emitting a
-        // JSON document. It applies only when the request carries neither of two features:
+        // JSON document. It applies only when the request carries none of three features:
         //   - tool use, because the prefill forces JSON text instead of native tool_use blocks;
         //   - structured outputs, which Anthropic documents as incompatible with message prefilling
         //     — output_config already has the provider enforcing the very document the prefill
-        //     exists to coax out of the model.
+        //     exists to coax out of the model;
+        //   - a model that rejects prefilling outright, which answers with a 400 rather than a
+        //     completion.
         // The output_config test covers both ways one can reach the request: derived from
         // outputSchema above, or supplied by the caller through additional_kwargs. It keys on what
         // the request ends up carrying rather than on what was supplied, so a schema that could not
@@ -366,7 +415,8 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         boolean jsonPrefillApplied =
                 Boolean.TRUE.equals(jsonPrefill)
                         && !hasToolsInRequest
-                        && !requestCarriesOutputConfig;
+                        && !requestCarriesOutputConfig
+                        && supportsJsonPrefill(modelName);
         if (jsonPrefillApplied) {
             anthropicMessages.add(
                     MessageParam.builder().role(MessageParam.Role.ASSISTANT).content("{").build());
@@ -591,9 +641,10 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * Extracts JSON content from a string that may contain markdown code blocks.
      *
      * <p>Claude often wraps JSON responses in markdown code blocks like {@code ```json ... ```},
-     * especially when tools are configured (since json_prefill is disabled). This method extracts
-     * the JSON content from such responses. If no code block is found, the original content is
-     * returned unchanged.
+     * especially on a response no JSON prefill was applied to, since an assistant turn already
+     * opened with {@code "{"} cannot be continued into a fence. This method extracts the JSON
+     * content from such responses. If no code block is found, the original content is returned
+     * unchanged.
      *
      * @param content The response content that may contain markdown-wrapped JSON
      * @return The extracted JSON string, or the original content if no code block is found

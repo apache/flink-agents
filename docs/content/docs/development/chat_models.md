@@ -306,7 +306,7 @@ Anthropic provides cloud-based chat models featuring the Claude family, known fo
 | `tools` | List<String> | None | List of tool names available to the model |
 | `max_tokens` | long | `1024` | Maximum number of tokens to generate |
 | `temperature` | double | `0.1` | Sampling temperature (0.0 to 1.0) |
-| `json_prefill` | boolean | `true` | Prefill assistant response with "{" to enforce JSON output (disabled when tools are used, or when the request carries an `output_config`) |
+| `json_prefill` | boolean | `false` | Prefill assistant response with "{" to enforce JSON output (applies only on models that accept assistant-message prefilling; disabled when tools are used, or when the request carries an `output_config`) |
 | `strict_tools` | boolean | `false` | Enable strict mode for tool calling schemas |
 | `additional_kwargs` | Map<String, Object> | `{}` | Additional Anthropic API parameters (top_k, top_p, stop_sequences); an `output_config` supplied here takes precedence over one derived from an output schema |
 
