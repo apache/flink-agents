@@ -31,7 +31,7 @@ under the License.
 
     <properties>
         <!-- The default E2E runtime is Flink 2.3. Profiles override this when needed. -->
-        <flink.log4j2.version>2.25.3</flink.log4j2.version>
+        <flink.log4j2.version>2.25.5</flink.log4j2.version>
     </properties>
 
     <dependencies>
