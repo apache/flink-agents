@@ -41,11 +41,14 @@ import java.util.Optional;
  *   <li><b>temperature</b> (optional): Sampling temperature 0.0-1.0 (default: 0.1)
  *   <li><b>max_tokens</b> (optional): Maximum tokens in response (default: 1024)
  *   <li><b>json_prefill</b> (optional): When true, prefills assistant response with "{" to enforce
- *       JSON output. Automatically disabled when tools are passed. (default: true)
+ *       JSON output. Automatically disabled when tools are passed, or when the request carries an
+ *       output_config, whether that was derived from an output schema or supplied through
+ *       additional_kwargs. (default: true)
  *   <li><b>strict_tools</b> (optional): When true, tool calls adhere strictly to the JSON schema.
  *       (default: false)
  *   <li><b>tools</b> (optional): List of tool names available for the model to use
- *   <li><b>additional_kwargs</b> (optional): Additional parameters (top_k, top_p, stop_sequences)
+ *   <li><b>additional_kwargs</b> (optional): Additional parameters (top_k, top_p, stop_sequences).
+ *       An output_config supplied here takes precedence over one derived from an output schema.
  * </ul>
  *
  * <p>Example usage:

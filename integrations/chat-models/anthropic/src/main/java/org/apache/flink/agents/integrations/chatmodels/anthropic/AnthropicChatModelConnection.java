@@ -217,9 +217,9 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * caller supplied, if any, and a schema that cannot be sent natively degrades to the
      * prompt-engineering fallback rather than failing at the provider.
      *
-     * <p>A schema applied natively also suppresses the {@code json_prefill} parameter, since the
-     * provider then enforces the JSON document itself and the prefilled {@code "{"} would be
-     * redundant.
+     * <p>A request that ends up carrying an {@code output_config} — whether derived here or
+     * supplied by the caller — also suppresses the {@code json_prefill} parameter, since Anthropic
+     * documents message prefilling as incompatible with structured outputs.
      */
     @Override
     public ChatMessage chat(
@@ -324,9 +324,17 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             applyAdditionalKwargs(builder, additionalKwargs);
         }
 
+        // Read here rather than inside the native structured-output branch below because it governs
+        // the JSON prefill too, and a caller can supply an output_config without supplying any
+        // output schema for that branch to look at.
+        boolean callerSuppliedOutputConfig =
+                additionalKwargs != null && additionalKwargs.containsKey("output_config");
+
         // Native structured output applies only for a POJO Class schema on a model Anthropic
         // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
-        // the prompt-engineering fallback.
+        // the prompt-engineering fallback. A caller-supplied output_config is the caller being
+        // explicit about the exact parameter this branch writes, so it wins and the schema falls
+        // back to prompt engineering rather than the two competing on the same request.
         //
         // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
         // explicit NATIVE request apart from one that merely resolved to native. A caller asking
@@ -334,32 +342,31 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         // prompt-engineering fallback instead of getting an error. Once strategy resolution is
         // wired up, NATIVE must either bypass this capability re-check or fail explicitly.
         boolean nativeSchemaApplied = false;
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
-            // Only the branch that would send a schema inspects additional_kwargs for one; every
-            // path that skipped it leaves the caller's value untouched. An output_config already
-            // supplied there is the caller being explicit about the exact parameter this branch
-            // writes, so it wins and the schema falls back to prompt engineering rather than the
-            // two competing on the same request.
-            if (additionalKwargs == null || !additionalKwargs.containsKey("output_config")) {
-                builder.outputConfig(toNativeOutputConfig((Class<?>) outputSchema));
-                nativeSchemaApplied = true;
-            }
+        if (outputSchema instanceof Class
+                && supportsNativeStructuredOutput(modelName)
+                && !callerSuppliedOutputConfig) {
+            builder.outputConfig(toNativeOutputConfig((Class<?>) outputSchema));
+            nativeSchemaApplied = true;
         }
 
-        // Handle JSON prefill - append a prefilled assistant message with "{" to enforce JSON
-        // output. Note: JSON prefill is incompatible with tool use as it forces the model to output
-        // JSON text instead of using native tool_use content blocks. Automatically disable
-        // json_prefill when tools are actually passed in the request.
-        //
-        // A natively applied schema also disables it: the provider then enforces the JSON document
-        // itself, so the prefilled "{" adds nothing and several capable models reject it outright.
-        // The condition keys on whether the schema was actually applied rather than on whether one
-        // was supplied, because a schema that fell back to prompt engineering still wants the
-        // prefill it would have had.
+        // JSON prefill appends a prefilled assistant "{" message to steer the model into emitting a
+        // JSON document. It applies only when the request carries neither of two features:
+        //   - tool use, because the prefill forces JSON text instead of native tool_use blocks;
+        //   - structured outputs, which Anthropic documents as incompatible with message prefilling
+        //     — output_config already has the provider enforcing the very document the prefill
+        //     exists to coax out of the model.
+        // The output_config test covers both ways one can reach the request: derived from
+        // outputSchema above, or supplied by the caller through additional_kwargs. It keys on what
+        // the request ends up carrying rather than on what was supplied, so a schema that could not
+        // be sent natively keeps the prefill its prompt-engineering fallback depends on — unless
+        // the caller supplied an output_config of its own.
         Object jsonPrefill = modelParams.remove("json_prefill");
         boolean hasToolsInRequest = tools != null && !tools.isEmpty();
+        boolean requestCarriesOutputConfig = nativeSchemaApplied || callerSuppliedOutputConfig;
         boolean jsonPrefillApplied =
-                Boolean.TRUE.equals(jsonPrefill) && !hasToolsInRequest && !nativeSchemaApplied;
+                Boolean.TRUE.equals(jsonPrefill)
+                        && !hasToolsInRequest
+                        && !requestCarriesOutputConfig;
         if (jsonPrefillApplied) {
             anthropicMessages.add(
                     MessageParam.builder().role(MessageParam.Role.ASSISTANT).content("{").build());

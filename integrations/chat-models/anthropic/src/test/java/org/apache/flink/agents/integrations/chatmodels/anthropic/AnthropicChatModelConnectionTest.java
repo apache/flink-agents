@@ -370,8 +370,29 @@ class AnthropicChatModelConnectionTest {
 
         assertThat(built.params.outputConfig()).isEmpty();
         assertThat(built.params._additionalBodyProperties()).containsKey("output_config");
-        // Native did not apply, so the request stays on the fallback the prefill belongs to.
-        assertThat(built.jsonPrefillApplied).isTrue();
+        // The request still carries an output_config, just the caller's, and a prefill alongside
+        // one is a combination the provider documents as unsupported.
+        assertThat(built.jsonPrefillApplied).isFalse();
+        assertThat(requestCarriesPrefill(built)).isFalse();
+    }
+
+    @Test
+    @DisplayName("a caller-supplied output_config suppresses json_prefill with no schema supplied")
+    void testCallerOutputConfigSuppressesPrefillWithoutSchema() {
+        // No output schema, so nothing derives an output_config and the caller's is the only one on
+        // the request. Asserted on both a capable and an incapable model because suppression has to
+        // follow the config the request carries rather than the model's structured-output
+        // capability, which a check folded in beside the capability test would get wrong.
+        for (String model : List.of(CAPABLE_MODEL, INCAPABLE_MODEL)) {
+            Map<String, Object> params = paramsWithModel(model, true);
+            params.put("additional_kwargs", Map.of("output_config", Map.of("format", Map.of())));
+
+            AnthropicChatModelConnection.BuiltRequest built =
+                    connection().buildRequest(userMessage(), List.of(), params, null);
+
+            assertThat(built.jsonPrefillApplied).as(model).isFalse();
+            assertThat(requestCarriesPrefill(built)).as(model).isFalse();
+        }
     }
 
     @Test
