@@ -191,6 +191,19 @@ under the License.
                 <flink.log4j2.version>2.24.3</flink.log4j2.version>
             </properties>
         </profile>
+
+        <!-- Flink 2.3 Profile -->
+        <!-- No flink.log4j2.version override here: the profile-less build of
+             this module is itself Flink 2.3, so the parent's value is the one
+             this line needs. The older profiles override it only because their
+             Flink lines require an older log4j2. -->
+        <profile>
+            <id>flink-2.3</id>
+            <properties>
+                <flink.version>${flink.2.3.version}</flink.version>
+                <flink.agents.dist.artifactId>flink-agents-dist-flink-2.3</flink.agents.dist.artifactId>
+            </properties>
+        </profile>
     </profiles>
 
 </project>

@@ -2,6 +2,7 @@
 
 setup() {
     load '../helpers/shim'
+    load '../helpers/fake_root'
     shim_setup
     UT_SH="${BATS_TEST_DIRNAME}/../../ut.sh"
     REPO_POM="${BATS_TEST_DIRNAME}/../../../pom.xml"
@@ -12,18 +13,6 @@ repo_flink_minor() {
     local v
     v="$(sed -n 's/.*<flink.version>\(.*\)<\/flink.version>.*/\1/p' "$REPO_POM" | head -1)"
     echo "${v%.*}"
-}
-
-# Builds a throwaway tools/.. tree holding a copy of ut.sh plus a pom.xml whose
-# <properties> block is exactly `$1`, and echoes its root.
-make_fake_root() {
-    local properties="$1"
-    local fake="$BATS_TEST_TMPDIR/fake"
-    mkdir -p "$fake/tools" "$fake/python"
-    cp "$UT_SH" "$fake/tools/ut.sh"
-    printf '<project>\n  <properties>\n%s\n  </properties>\n</project>\n' \
-        "$properties" >"$fake/pom.xml"
-    echo "$fake"
 }
 
 @test "--help does not claim every Flink version is tested by default" {
@@ -58,7 +47,9 @@ make_fake_root() {
 @test "the default Flink version follows the pom rather than a literal" {
     shim_bin uv
     local fake
-    fake="$(make_fake_root '    <flink.version>9.9.9</flink.version>')"
+    # The fake tree carries the dist module its pom pins, so the defaulted
+    # version is a supported one and only the value being read is under test.
+    fake="$(make_fake_root '    <flink.version>9.9.9</flink.version>' 9.9)"
     run bash "$fake/tools/ut.sh" -p
     [ "$status" -eq 0 ]
     case "$(shim_calls uv)" in *"apache-flink~=9.9.0"*) ;; *) false ;; esac
@@ -67,7 +58,7 @@ make_fake_root() {
 @test "a whitespace-padded flink.version is read as the version it pads" {
     shim_bin uv
     local fake
-    fake="$(make_fake_root '    <flink.version> 9.9.9 </flink.version>')"
+    fake="$(make_fake_root '    <flink.version> 9.9.9 </flink.version>' 9.9)"
     run bash "$fake/tools/ut.sh" -p
     [ "$status" -eq 0 ]
     case "$(shim_calls uv)" in *"apache-flink~=9.9.0"*) ;; *) false ;; esac

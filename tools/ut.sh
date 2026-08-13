@@ -38,6 +38,36 @@ if [[ ! "${DEFAULT_FLINK_VERSION}" =~ ^[0-9]+\.[0-9]+$ ]]; then
     exit 1
 fi
 
+# The versions -f accepts are derived from the dist modules rather than listed
+# here, because -f resolves to dist/flink-<version>: a value with no directory
+# names a Maven module that does not exist. Glob expansion is already sorted,
+# so the list is deterministic; the ordering is lexicographic rather than by
+# version precedence, so a two-digit minor sorts ahead of a one-digit one.
+SUPPORTED_FLINK_VERSIONS=()
+for dist_dir in "${ROOT}"/dist/flink-*/; do
+    [[ -d "${dist_dir}" ]] || continue
+    dist_dir="${dist_dir%/}"
+    SUPPORTED_FLINK_VERSIONS+=("${dist_dir##*/flink-}")
+done
+# Checked separately from the per-version validation below: with nothing in the
+# set, every version fails that check, and its messages would blame the version
+# under test for what is really a tree carrying no dist modules at all.
+if [[ ${#SUPPORTED_FLINK_VERSIONS[@]} -eq 0 ]]; then
+    echo "Error: found no dist/flink-* modules under ${ROOT}; the set of supported Flink versions is read from them and cannot be determined" >&2
+    exit 1
+fi
+
+# bash 3.2 has no associative arrays, so membership is a scan.
+is_supported_flink_version() {
+    local candidate="$1" supported
+    for supported in "${SUPPORTED_FLINK_VERSIONS[@]}"; do
+        if [[ "${candidate}" == "${supported}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Default values
 run_java=true
 run_python=true
@@ -62,7 +92,7 @@ Options:
   -e, --e2e         Run e2e tests
   -b, --both        Run both Java and Python tests (default)
   -f, --flink       Specify Flink version to test (can be used multiple times)
-                    Supported versions: 2.3, 2.2, 2.1, 2.0, 1.20
+                    Supported versions: ${SUPPORTED_FLINK_VERSIONS[*]}
                     Examples: -f 2.3, -f 1.20, -f 2.3 -f 1.20
                     Default: ${DEFAULT_FLINK_VERSION}, from flink.version in the root pom.xml
                     Applies to the e2e and Python tests; the Java unit
@@ -133,6 +163,25 @@ done
 if [ ${#flink_versions[@]} -eq 0 ]; then
     flink_versions=("${DEFAULT_FLINK_VERSION}")
 fi
+
+# Validated here rather than as each -f is parsed so that the defaulted value
+# is checked too. The default and the accepted set are derived from different
+# files -- the root pom's <flink.version> and the dist/ modules -- and nothing
+# else makes them agree, so a pom bumped ahead of its dist modules would
+# otherwise let a bare run reach a Maven module that does not exist.
+# Which of the two is at fault decides the message: a value the caller typed
+# is theirs to correct, while a defaulted one means the repo disagrees with
+# itself and no choice of -f is the fix.
+for version in "${flink_versions[@]}"; do
+    if ! is_supported_flink_version "${version}"; then
+        if $flink_explicit; then
+            echo "Error: unsupported Flink version '${version}'; supported versions: ${SUPPORTED_FLINK_VERSIONS[*]}" >&2
+        else
+            echo "Error: the root pom pins <flink.version> ${POM_FLINK_VERSION}, but ${ROOT}/dist carries no flink-${version} module; dist modules exist for: ${SUPPORTED_FLINK_VERSIONS[*]}" >&2
+        fi
+        exit 1
+    fi
+done
 
 # Remove duplicates and sort version numbers
 flink_versions=($(echo "${flink_versions[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
