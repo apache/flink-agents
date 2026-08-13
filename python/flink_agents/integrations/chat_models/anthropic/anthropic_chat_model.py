@@ -148,6 +148,53 @@ _NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES = (
 )
 
 
+# Models Anthropic documents as rejecting assistant-message prefilling. Source of truth:
+# https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prefill-claudes-response
+#
+# Prefilling is not supported from the Claude 4.6 generation onward, nor on Claude
+# Mythos Preview, Claude Fable 5 or Claude Mythos 5; a request that prefills one of
+# them is answered with a 400 rather than a completion. Anthropic publishes no
+# programmatic signal for prefill support the way it does for structured outputs, so
+# the rule has to be a maintained list of names. Those names carry no date and are
+# pinned, so the name is itself the snapshot and is matched exactly, and a name outside
+# the list is treated as accepting the prefill.
+#
+# Kept in its own storage rather than derived from the structured-output allowlists
+# above, whose contents it currently coincides with. The two encode different
+# documented boundaries: structured output starts at the 4.5 generation while prefill
+# rejection starts at 4.6, so the three 4.5-generation names are structured-output
+# capable and still accept a prefill. Sharing one list would hold only until a model
+# moves one boundary without moving the other.
+_PREFILL_UNSUPPORTED_MODELS = frozenset(
+    {
+        "claude-opus-4-6",
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+        "claude-opus-5",
+        "claude-sonnet-4-6",
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-mythos-preview",
+    }
+)
+
+
+def _supports_json_prefill(effective_model: str | None) -> bool:
+    """Whether ``effective_model`` accepts the prefilled assistant ``"{"`` message.
+
+    See the list above for the source of truth and for why it is matched exactly and
+    kept apart from the structured-output allowlists. An unrecognized name reports
+    ``True``, which matches the documented rule: prefilling is the long-standing
+    behaviour and only the listed names withdraw it. The cost of that default runs the
+    opposite way to ``supports_native_structured_output``: a rejecting model this list
+    has not caught up with is prefilled and answered with a 400, where an unrecognized
+    name on the structured-output path degrades silently to the prompt-engineering
+    fallback instead.
+    """
+    return effective_model not in _PREFILL_UNSUPPORTED_MODELS
+
+
 def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     """Build the Anthropic ``output_config`` for a native structured-output request.
 
@@ -264,7 +311,9 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             sends no derived schema and keeps the prompt-engineering fallback.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
-            max_tokens, etc.)
+            max_tokens, etc.). ``json_prefill`` is consumed here rather than
+            forwarded: it selects the prefilled assistant ``"{"`` message described
+            below and is not a request field the provider accepts.
 
         Returns:
         -------
@@ -279,6 +328,10 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
 
         anthropic_system = convert_to_anthropic_system_prompts(messages)
         anthropic_messages = convert_to_anthropic_messages(messages)
+
+        # Removed from kwargs unconditionally: it is a framework parameter, and leaving
+        # it in place would reach messages.create as an unknown request field.
+        json_prefill = kwargs.pop("json_prefill", False)
 
         # TODO(#912): the requested strategy is not visible here, so this check
         # cannot tell an explicit NATIVE request apart from one that merely
@@ -296,6 +349,34 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             # caller's value with no error and no other trace.
             if output_config is not None and "output_config" not in kwargs:
                 kwargs["output_config"] = output_config
+
+        # JSON prefill appends a prefilled assistant "{" message to steer the model
+        # into emitting a JSON document. It applies only when the request carries none
+        # of three features:
+        #   - tool use, because the prefill forces JSON text instead of native tool_use
+        #     blocks;
+        #   - structured outputs, which Anthropic documents as incompatible with message
+        #     prefilling - output_config already has the provider enforcing the very
+        #     document the prefill exists to coax out of the model;
+        #   - a model that rejects prefilling outright, which answers with a 400 rather
+        #     than a completion.
+        # Evaluated after the block above so the output_config test covers both ways one
+        # can reach the request: derived from output_schema there, or supplied by the
+        # caller. It keys on what the request ends up carrying rather than on what was
+        # supplied, so a schema that could not be sent natively keeps the prefill its
+        # prompt-engineering fallback depends on - unless the caller supplied an
+        # output_config of its own.
+        prefill_applied = (
+            json_prefill is True
+            and not anthropic_tools
+            and "output_config" not in kwargs
+            and _supports_json_prefill(kwargs.get("model"))
+        )
+        if prefill_applied:
+            anthropic_messages = [
+                *anthropic_messages,
+                {"role": MessageRole.ASSISTANT.value, "content": "{"},
+            ]
 
         message = self.client.messages.create(
             messages=anthropic_messages,
@@ -318,6 +399,13 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         text = next(
             (block.text for block in message.content if block.type == "text"), ""
         )
+
+        # The response continues the prefilled "{" rather than repeating it, so the
+        # document is only complete once it is put back. Keyed on the decision actually
+        # applied above: reconstructing on any other signal either prepends a stray "{"
+        # or drops a required one, and the response itself gives no sign of either.
+        if prefill_applied:
+            text = "{" + text
 
         if message.stop_reason == "tool_use":
             tool_calls = [
@@ -362,6 +450,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.1
+DEFAULT_JSON_PREFILL = False
 
 
 class AnthropicChatModelSetup(BaseChatModelSetup):
@@ -382,6 +471,12 @@ class AnthropicChatModelSetup(BaseChatModelSetup):
         The maximum number of tokens to generate before stopping. Defaults to 1024.
     temperature : float
         Amount of randomness injected into the response.
+    json_prefill : bool
+        When True, prefills the assistant response with "{" to enforce JSON output.
+        Applies only on models Anthropic documents as accepting assistant-message
+        prefilling, and is automatically disabled when tools are passed, or when the
+        request carries an output_config, whether that was derived from an output
+        schema or supplied by the caller. Defaults to False.
     """
 
     max_tokens: int = Field(
@@ -395,6 +490,13 @@ class AnthropicChatModelSetup(BaseChatModelSetup):
         ge=0.0,
         le=1.0,
     )
+    json_prefill: bool = Field(
+        default=DEFAULT_JSON_PREFILL,
+        description=(
+            'When True, prefills the assistant response with "{" to enforce JSON '
+            "output. Defaults to False."
+        ),
+    )
 
     def __init__(
         self,
@@ -402,6 +504,8 @@ class AnthropicChatModelSetup(BaseChatModelSetup):
         model: str = DEFAULT_ANTHROPIC_MODEL,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
+        *,
+        json_prefill: bool = DEFAULT_JSON_PREFILL,
         **kwargs: Any,
     ) -> None:
         """Init method."""
@@ -410,6 +514,7 @@ class AnthropicChatModelSetup(BaseChatModelSetup):
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
+            json_prefill=json_prefill,
             **kwargs,
         )
 
@@ -420,4 +525,5 @@ class AnthropicChatModelSetup(BaseChatModelSetup):
             "model": self.model,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
+            "json_prefill": self.json_prefill,
         }
