@@ -20,8 +20,23 @@ set -e
 
 ROOT="$(cd "$( dirname "$0" )" && pwd)/.."
 
-# Default Flink version
-DEFAULT_FLINK_VERSION="2.2"
+# Read the default Flink version from the root pom rather than pinning it here,
+# so bumping the project's Flink version cannot leave this script testing an
+# older line. The pom carries x.y.z; the version tokens used below are x.y.
+# Anything that does not end up shaped x.y is fatal, because the value flows
+# unvalidated into dist module paths, -P profile names and the pip requirement.
+# Whitespace is stripped because XML permits padding inside the element and a
+# version token carries none of its own.
+POM_FLINK_VERSION="$(sed -n 's/.*<flink\.version>\([^<]*\)<\/flink\.version>.*/\1/p' "${ROOT}/pom.xml" 2>/dev/null | head -1 | tr -d '[:space:]')"
+DEFAULT_FLINK_VERSION="${POM_FLINK_VERSION%.*}"
+if [[ -z "${POM_FLINK_VERSION}" ]]; then
+    echo "Error: found no usable <flink.version> value in ${ROOT}/pom.xml; the file must exist and pin an x.y.z version" >&2
+    exit 1
+fi
+if [[ ! "${DEFAULT_FLINK_VERSION}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: read '${POM_FLINK_VERSION}' as <flink.version> from ${ROOT}/pom.xml; expected an x.y.z version, not a property reference or a shorter version" >&2
+    exit 1
+fi
 
 # Default values
 run_java=true
@@ -45,12 +60,14 @@ Options:
   -f, --flink       Specify Flink version to test (can be used multiple times)
                     Supported versions: 2.3, 2.2, 2.1, 2.0, 1.20
                     Examples: -f 2.3, -f 1.20, -f 2.3 -f 1.20
-                    Default: run all versions if not specified
+                    Default: ${DEFAULT_FLINK_VERSION}, from flink.version in the root pom.xml
+                    Applies to the e2e and Python tests; the Java unit
+                    tests are unaffected.
   -v, --verbose     Show verbose output
   -h, --help        Display this help message
 
 Examples:
-  $0 --java         # Run only Java tests (all Flink versions)
+  $0 --java         # Run only Java tests
   $0 -p             # Run only Python tests
   $0 -f 2.2         # Run tests only for Flink 2.2
   $0 -f 1.20        # Run tests only for Flink 1.20
