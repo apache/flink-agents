@@ -44,6 +44,10 @@ run_python=true
 run_e2e=false
 verbose=false
 flink_versions=()
+# Whether -f was passed rather than defaulted. Not recoverable from
+# flink_versions afterwards: the default fill makes a defaulted array
+# indistinguishable from an explicit request for the same version.
+flink_explicit=false
 
 # Help information
 show_help() {
@@ -106,6 +110,7 @@ while [[ "$#" -gt 0 ]]; do
                 exit 1
             fi
             flink_versions+=("$2")
+            flink_explicit=true
             shift
             ;;
         -v|--verbose)
@@ -134,6 +139,15 @@ flink_versions=($(echo "${flink_versions[@]}" | tr ' ' '\n' | sort -u | tr '\n' 
 
 if $verbose; then
     echo "Will run tests for Flink versions: ${flink_versions[*]}"
+fi
+
+# The Java unit-test invocations pass no -P and exclude the e2e modules, so an
+# explicitly requested version cannot reach them. Say so before any Maven work
+# starts rather than accepting a value that will be ignored. Only the Java half
+# is claimed to ignore it: a default run also executes the Python tests, which
+# do install against the requested version.
+if $flink_explicit && $run_java && ! $run_e2e; then
+    echo "Warning: -f does not affect the Java unit tests; it applies to the e2e (-e) and Python tests." >&2
 fi
 
 # Skip spotless code-style check when SKIP_SPOTLESS_CHECK is set.
