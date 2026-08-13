@@ -584,7 +584,7 @@ public class ElasticsearchVectorStore extends BaseVectorStore
      * <metadataField>.<key>.keyword}; multiple entries are combined with AND semantics. Because
      * Elasticsearch dynamic mapping creates `.keyword` sub-fields only for strings, filters on
      * non-string metadata values do not match; use a raw {@code filter_query} for those values. The
-     * filters are applied as a post-filter.
+     * filters are applied during KNN candidate selection.
      *
      * <p>A raw Elasticsearch JSON query may also be supplied as {@code filter_query} in {@code
      * args}. When both filter forms are present, they are combined with AND semantics.
