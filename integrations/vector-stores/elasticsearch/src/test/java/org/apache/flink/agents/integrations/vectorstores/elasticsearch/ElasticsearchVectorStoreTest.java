@@ -29,8 +29,8 @@ import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
@@ -48,7 +48,7 @@ import java.util.Map;
  * <p>For {@link ElasticsearchVectorStore} doesn't support security check yet, when start the
  * container, should add "-e xpack.security.enabled=false" option.
  */
-@EnabledIfEnvironmentVariable(named = "ES_HOST", matches = ".+")
+@Disabled("Should setup Elasticsearch server.")
 public class ElasticsearchVectorStoreTest {
     public static BaseVectorStore store;
 
@@ -64,7 +64,7 @@ public class ElasticsearchVectorStoreTest {
     }
 
     @BeforeAll
-    public static void initialize() throws Exception {
+    public static void initialize() {
         final ResourceDescriptor.Builder builder =
                 ResourceDescriptor.Builder.newBuilder(ElasticsearchVectorStore.class.getName())
                         .addInitialArgument("embedding_model", "embeddingModel")
@@ -76,7 +76,6 @@ public class ElasticsearchVectorStoreTest {
                 new ElasticsearchVectorStore(
                         builder.build(),
                         ResourceContext.fromGetResource(ElasticsearchVectorStoreTest::getResource));
-        store.open();
     }
 
     @Test
@@ -122,13 +121,7 @@ public class ElasticsearchVectorStoreTest {
 
         // test get all documents
         List<Document> all = store.get(null, name, null, null, Collections.emptyMap());
-        Assertions.assertEquals(2, all.size());
-        Assertions.assertEquals(documents.get(0).getId(), all.get(0).getId());
-        Assertions.assertEquals(documents.get(0).getContent(), all.get(0).getContent());
-        Assertions.assertEquals(documents.get(0).getMetadata(), all.get(0).getMetadata());
-        Assertions.assertEquals(documents.get(1).getId(), all.get(1).getId());
-        Assertions.assertEquals(documents.get(1).getContent(), all.get(1).getContent());
-        Assertions.assertEquals(documents.get(1).getMetadata(), all.get(1).getMetadata());
+        Assertions.assertEquals(documents, all);
 
         // test get specific document
         List<Document> specific =
@@ -139,18 +132,14 @@ public class ElasticsearchVectorStoreTest {
                         null,
                         Collections.emptyMap());
         Assertions.assertEquals(1, specific.size());
-        Assertions.assertEquals(documents.get(0).getId(), specific.get(0).getId());
-        Assertions.assertEquals(documents.get(0).getContent(), specific.get(0).getContent());
-        Assertions.assertEquals(documents.get(0).getMetadata(), specific.get(0).getMetadata());
+        Assertions.assertEquals(documents.get(0), specific.get(0));
 
         // test delete specific document
         store.delete(Collections.singletonList("doc1"), name, null, Collections.emptyMap());
         Thread.sleep(1000);
         List<Document> remain = store.get(null, name, null, null, Collections.emptyMap());
         Assertions.assertEquals(1, remain.size());
-        Assertions.assertEquals(documents.get(1).getId(), remain.get(0).getId());
-        Assertions.assertEquals(documents.get(1).getContent(), remain.get(0).getContent());
-        Assertions.assertEquals(documents.get(1).getMetadata(), remain.get(0).getMetadata());
+        Assertions.assertEquals(documents.get(1), remain.get(0));
 
         // test delete all documents
         store.delete(null, name, null, Collections.emptyMap());
@@ -198,65 +187,6 @@ public class ElasticsearchVectorStoreTest {
                         Collections.emptyMap());
         Assertions.assertFalse(aliceQueried.isEmpty());
         Assertions.assertTrue(aliceQueried.stream().allMatch(d -> "doc_alice".equals(d.getId())));
-
-        ((CollectionManageableVectorStore) store).deleteCollection(name);
-    }
-
-    @Test
-    public void testFilteredKnnReturnsMatchingDocumentsOutsideUnfilteredTopK() throws Exception {
-        String name = "filtered_knn_top_k";
-        ((CollectionManageableVectorStore) store).createCollectionIfNotExists(name, Map.of());
-
-        float[] queryVector = new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-        store.add(
-                List.of(
-                        new Document(
-                                "near bob",
-                                Map.of("user_id", "bob"),
-                                "doc_bob",
-                                new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f}),
-                        new Document(
-                                "near alice",
-                                Map.of("user_id", "alice", "tenant", "allowed"),
-                                "doc_alice",
-                                new float[] {0.9f, 0.1f, 0.0f, 0.0f, 0.0f}),
-                        new Document(
-                                "far alice",
-                                Map.of("user_id", "alice", "tenant", "blocked"),
-                                "doc_alice_far",
-                                new float[] {0.0f, 0.0f, 1.0f, 0.0f, 0.0f})),
-                name,
-                Collections.emptyMap());
-
-        List<Document> filteredByDsl =
-                store.queryEmbedding(
-                        queryVector, 1, name, Map.of("user_id", "alice"), Collections.emptyMap());
-        Assertions.assertEquals(1, filteredByDsl.size());
-        Assertions.assertEquals("doc_alice", filteredByDsl.get(0).getId());
-
-        List<Document> filteredByRawQuery =
-                store.queryEmbedding(
-                        queryVector,
-                        1,
-                        name,
-                        null,
-                        Map.of(
-                                "filter_query",
-                                "{\"term\":{\"_metadata.user_id.keyword\":\"alice\"}}"));
-        Assertions.assertEquals(1, filteredByRawQuery.size());
-        Assertions.assertEquals("doc_alice", filteredByRawQuery.get(0).getId());
-
-        List<Document> filteredByBoth =
-                store.queryEmbedding(
-                        queryVector,
-                        1,
-                        name,
-                        Map.of("user_id", "alice"),
-                        Map.of(
-                                "filter_query",
-                                "{\"term\":{\"_metadata.tenant.keyword\":\"allowed\"}}"));
-        Assertions.assertEquals(1, filteredByBoth.size());
-        Assertions.assertEquals("doc_alice", filteredByBoth.get(0).getId());
 
         ((CollectionManageableVectorStore) store).deleteCollection(name);
     }

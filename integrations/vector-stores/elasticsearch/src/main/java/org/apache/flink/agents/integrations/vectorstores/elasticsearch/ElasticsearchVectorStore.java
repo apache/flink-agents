@@ -83,7 +83,7 @@ import java.util.*;
  *   <li>{@code num_candidates} (optional): Candidate set size for ANN search; can be overridden per
  *       query.
  *   <li>{@code filter_query} (optional): A raw JSON Elasticsearch filter query (DSL) that is
- *       applied during KNN search; can be overridden per query.
+ *       applied as a post-filter; can be overridden per query.
  *   <li>{@code host} or {@code hosts} (optional): Elasticsearch endpoint(s). If omitted, defaults
  *       to {@code localhost:9200}.
  *   <li>Authentication (optional): Either basic auth via {@code username}/{@code password}, or API
@@ -584,7 +584,7 @@ public class ElasticsearchVectorStore extends BaseVectorStore
      * <metadataField>.<key>.keyword}; multiple entries are combined with AND semantics. Because
      * Elasticsearch dynamic mapping creates `.keyword` sub-fields only for strings, filters on
      * non-string metadata values do not match; use a raw {@code filter_query} for those values. The
-     * filters are applied during KNN candidate selection.
+     * filters are applied as a post-filter.
      *
      * <p>A raw Elasticsearch JSON query may also be supplied as {@code filter_query} in {@code
      * args}. When both filter forms are present, they are combined with AND semantics.
@@ -618,19 +618,20 @@ public class ElasticsearchVectorStore extends BaseVectorStore
             List<Float> queryVector = new ArrayList<>(embedding.length);
             for (float v : embedding) queryVector.add(v);
 
-            SearchRequest.Builder builder = new SearchRequest.Builder().index(index);
-            final String finalCombined = combined;
-            builder.knn(
-                    kb -> {
-                        kb.field(this.vectorField)
-                                .queryVector(queryVector)
-                                .k(k)
-                                .numCandidates(numCandidates);
-                        if (finalCombined != null) {
-                            kb.filter(f -> f.withJson(new StringReader(finalCombined)));
-                        }
-                        return kb;
-                    });
+            SearchRequest.Builder builder =
+                    new SearchRequest.Builder()
+                            .index(index)
+                            .knn(
+                                    kb ->
+                                            kb.field(this.vectorField)
+                                                    .queryVector(queryVector)
+                                                    .k(k)
+                                                    .numCandidates(numCandidates));
+
+            if (combined != null) {
+                final String finalCombined = combined;
+                builder = builder.postFilter(f -> f.withJson(new StringReader(finalCombined)));
+            }
             final SearchResponse<Map<String, Object>> searchResponse =
                     (SearchResponse) this.client.search(builder.build(), Map.class);
 
