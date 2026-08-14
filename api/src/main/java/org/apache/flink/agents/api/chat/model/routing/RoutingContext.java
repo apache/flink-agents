@@ -52,10 +52,13 @@ public final class RoutingContext {
             List<RoutingCandidate> candidates) {
         this.requestId = requestId;
         this.router = router;
+        // Deep copy: the wrapping list is unmodifiable, but ChatMessage is mutable and the
+        // caller passes the same instances that go to the model — a strategy calling
+        // setContent(...) on a shallow copy would silently rewrite the prompt actually sent.
         this.messages =
                 messages == null
                         ? Collections.emptyList()
-                        : Collections.unmodifiableList(new ArrayList<>(messages));
+                        : Collections.unmodifiableList(deepCopy(messages));
         this.promptArgs =
                 promptArgs == null
                         ? Collections.emptyMap()
@@ -64,6 +67,24 @@ public final class RoutingContext {
                 candidates == null
                         ? Collections.emptyList()
                         : Collections.unmodifiableList(new ArrayList<>(candidates));
+    }
+
+    private static List<ChatMessage> deepCopy(List<ChatMessage> messages) {
+        List<ChatMessage> copy = new ArrayList<>(messages.size());
+        for (ChatMessage m : messages) {
+            if (m == null) {
+                continue;
+            }
+            // ChatMessage's constructor copies extraArgs but stores toolCalls by reference, so
+            // copy the list AND each tool-call map — otherwise a strategy could still mutate the
+            // tool calls of the message actually sent.
+            List<Map<String, Object>> toolCalls = new ArrayList<>(m.getToolCalls().size());
+            for (Map<String, Object> call : m.getToolCalls()) {
+                toolCalls.add(call == null ? null : new HashMap<>(call));
+            }
+            copy.add(new ChatMessage(m.getRole(), m.getContent(), toolCalls, m.getExtraArgs()));
+        }
+        return copy;
     }
 
     /**

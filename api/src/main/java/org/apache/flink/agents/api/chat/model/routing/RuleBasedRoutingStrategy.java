@@ -44,10 +44,22 @@ public class RuleBasedRoutingStrategy implements RoutingStrategy {
         if (raw instanceof Map) {
             for (Map.Entry<String, ?> entry : ((Map<String, ?>) raw).entrySet()) {
                 String candidate = entry.getKey();
-                String regex = String.valueOf(entry.getValue());
-                if (candidate != null && !candidate.isEmpty() && regex != null) {
-                    this.rules.put(candidate, Pattern.compile(regex, Pattern.CASE_INSENSITIVE));
+                if (candidate == null || candidate.isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "Routing rule has a null or empty candidate key.");
                 }
+                Object value = entry.getValue();
+                // String.valueOf(null) would silently become the literal pattern "null" (and
+                // non-String values would coerce); reject both instead.
+                if (!(value instanceof String)) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "Routing rule for candidate '%s' must be a regex String, got %s.",
+                                    candidate,
+                                    value == null ? "null" : value.getClass().getSimpleName()));
+                }
+                this.rules.put(
+                        candidate, Pattern.compile((String) value, Pattern.CASE_INSENSITIVE));
             }
         }
     }

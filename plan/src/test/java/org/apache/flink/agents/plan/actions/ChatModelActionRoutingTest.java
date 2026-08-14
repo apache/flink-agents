@@ -18,6 +18,8 @@
 package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
@@ -50,8 +52,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -108,6 +112,7 @@ public class ChatModelActionRoutingTest {
         final List<String> resolvedChatModels = new ArrayList<>();
         final List<String> durableCallIds = new ArrayList<>();
         final Map<String, BaseChatModelSetup> models = new HashMap<>();
+        final Set<String> unresolvable = new HashSet<>();
         private final ModelRouter router;
         private final MemoryObject sensoryMemory = new FakeMemoryObject(new HashMap<>());
         private final AgentConfiguration config = new AgentConfiguration(Map.of());
@@ -118,6 +123,17 @@ public class ChatModelActionRoutingTest {
 
         FakeRunnerContext register(String name, BaseChatModelSetup model) {
             models.put(name, model);
+            return this;
+        }
+
+        /** Marks a chat-model name whose resource lookup fails (e.g. a typo'd candidate). */
+        FakeRunnerContext unresolvable(String name) {
+            unresolvable.add(name);
+            return this;
+        }
+
+        FakeRunnerContext withErrorHandling(Agent.ErrorHandlingStrategy strategy) {
+            config.set(AgentExecutionOptions.ERROR_HANDLING_STRATEGY, strategy);
             return this;
         }
 
@@ -132,6 +148,9 @@ public class ChatModelActionRoutingTest {
                 return router;
             }
             if (type == ResourceType.CHAT_MODEL) {
+                if (unresolvable.contains(name)) {
+                    throw new IllegalArgumentException("resource not found: " + name);
+                }
                 resolvedChatModels.add(name);
                 return models.getOrDefault(name, new FakeChatModel());
             }
@@ -405,10 +424,12 @@ public class ChatModelActionRoutingTest {
                         null);
         FakeRunnerContext ctx =
                 new FakeRunnerContext(router)
-                        .register("big", new FakeChatModel(new RuntimeException("big is down")))
+                        .register("big", new FakeChatModel(new RuntimeException("big-exploded")))
                         .register(
-                                "small", new FakeChatModel(new RuntimeException("small is down")));
+                                "small", new FakeChatModel(new RuntimeException("small-exploded")));
 
+        // Distinct per-candidate markers: exhaustion must surface the LAST candidate's error
+        // with the earlier candidate's error chained as suppressed, not discarded.
         assertThatThrownBy(
                         () ->
                                 ChatModelAction.processChatRequestOrToolResponse(
@@ -416,9 +437,108 @@ public class ChatModelActionRoutingTest {
                                                 "router", List.of(ChatMessage.user("write sql"))),
                                         ctx))
                 .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("down");
+                .hasMessageContaining("small-exploded")
+                .satisfies(
+                        t ->
+                                assertThat(t.getSuppressed())
+                                        .anySatisfy(
+                                                sup ->
+                                                        assertThat(sup)
+                                                                .hasMessageContaining(
+                                                                        "big-exploded")));
         assertThat(ctx.resolvedChatModels).containsExactly("big", "small");
         assertThat(ctx.hasChatResponse()).isFalse();
+    }
+
+    @Test
+    void unresolvableCandidateCountsAsFailedAttemptAndFallsBack() throws Exception {
+        // "big" is selected by the rule but its resource lookup fails (typo'd candidate); the
+        // failure must stay inside the fallback loop so "small" still answers.
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
+                                .defaultModel("small")
+                                .fallback(true)
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .unresolvable("big")
+                        .register("small", new FakeChatModel());
+
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(ChatMessage.user("write sql"))), ctx);
+
+        assertThat(ctx.hasChatResponse()).isTrue();
+        assertThat(ctx.resolvedChatModels).containsExactly("small");
+        // the fallback outcome is recorded as a second routing event
+        long fallbackEvents =
+                ctx.sentEvents.stream()
+                        .filter(e -> e instanceof ModelRoutingEvent)
+                        .map(e -> (ModelRoutingEvent) e)
+                        .filter(
+                                e ->
+                                        ModelRoutingEvent.SOURCE_FALLBACK.equals(
+                                                e.getDecisionSource()))
+                        .count();
+        assertThat(fallbackEvents).isEqualTo(1);
+    }
+
+    /** Strategy that always throws; must be public for reflective construction. */
+    public static class ExplodingStrategy implements RoutingStrategy {
+        private static final long serialVersionUID = 1L;
+
+        public ExplodingStrategy(Map<String, Object> args) {}
+
+        @Override
+        public RoutingDecision route(RoutingContext context) {
+            throw new IllegalStateException("strategy exploded");
+        }
+    }
+
+    @Test
+    void strategyFailureIsIgnoredUnderIgnorePolicy() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.of(ExplodingStrategy.class))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .withErrorHandling(Agent.ErrorHandlingStrategy.IGNORE)
+                        .register("small", new FakeChatModel());
+
+        // Under IGNORE a strategy failure drops the request instead of killing the job.
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(ChatMessage.user("hello"))), ctx);
+
+        assertThat(ctx.hasChatResponse()).isFalse();
+        assertThat(ctx.resolvedChatModels).isEmpty();
+    }
+
+    @Test
+    void strategyFailurePropagatesUnderDefaultPolicy() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.of(ExplodingStrategy.class))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router).register("small", new FakeChatModel());
+
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "router", List.of(ChatMessage.user("hello"))),
+                                        ctx))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("strategy exploded");
     }
 
     @Test

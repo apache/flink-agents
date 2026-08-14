@@ -91,8 +91,9 @@ public final class RoutingDecision implements Serializable {
 
     /**
      * Copy of this decision stamped with the strategy's wall-clock time. Framework-recorded inside
-     * the durable {@code "route"} call, so a replayed decision reports its <em>original</em>
-     * latency, not the replay's.
+     * the durable {@code "route"} call, so — when an action-state store is configured — a replayed
+     * decision reports its <em>original</em> latency, not the replay's. Without a store (the
+     * default) the decision re-executes on recovery and reports fresh timing.
      */
     public RoutingDecision withDecisionMs(double decisionMs) {
         return new RoutingDecision(selectedModel, abstain, reason, score, metadata, decisionMs);

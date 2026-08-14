@@ -205,6 +205,21 @@ public class ModelRouter extends Resource {
             if (strategy == null) {
                 throw new IllegalStateException("ModelRouter requires a strategy(...).");
             }
+            // Rule keys are candidate names; validate here, where both lists are in hand, so a
+            // typo fails at the registration call site instead of throwing per record at runtime.
+            if (RuleBasedRoutingStrategy.class.getName().equals(strategy.getClazz())) {
+                Object rules = strategy.getArguments().get("rules");
+                if (rules instanceof Map) {
+                    for (Object ruleKey : ((Map<?, ?>) rules).keySet()) {
+                        if (!candidates.contains(String.valueOf(ruleKey))) {
+                            throw new IllegalArgumentException(
+                                    String.format(
+                                            "Routing rule key '%s' is not one of the candidates %s.",
+                                            ruleKey, candidates));
+                        }
+                    }
+                }
+            }
             Map<String, Object> args = new HashMap<>();
             args.put("candidates", new ArrayList<>(candidates));
             if (!descriptions.isEmpty()) {

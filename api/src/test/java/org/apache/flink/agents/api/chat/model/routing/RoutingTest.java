@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -260,5 +261,62 @@ class RoutingTest {
                         RoutingDecision.class);
         assertTrue(restored.isAbstain());
         assertNull(restored.getSelectedModel());
+    }
+
+    @Test
+    void builderRejectsRuleKeyThatIsNotACandidate() {
+        // A typo'd rule key must fail at the registration call site, not per record at runtime.
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("bg", "\\bsql\\b")))
+                                .defaultModel("small")
+                                .build());
+    }
+
+    @Test
+    void ruleStrategyRejectsNullRuleValue() {
+        Map<String, Object> rules = new HashMap<>();
+        rules.put("big", null);
+        // String.valueOf(null) would otherwise compile the literal pattern "null".
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new RuleBasedRoutingStrategy(Map.of("rules", rules)));
+    }
+
+    @Test
+    void ruleStrategyRejectsNonStringRuleValue() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new RuleBasedRoutingStrategy(Map.of("rules", Map.of("big", 42))));
+    }
+
+    @Test
+    void routingContextMessagesAreDeepCopied() {
+        ChatMessage original = new ChatMessage(MessageRole.USER, "original prompt");
+        RoutingContext ctx =
+                new RoutingContext(
+                        UUID.randomUUID(), "router", List.of(original), Map.of(), List.of());
+        // A strategy mutating what it sees must not rewrite the message actually sent.
+        ctx.getMessages().get(0).setContent("REWRITTEN BY STRATEGY");
+        assertEquals("original prompt", original.getContent());
+    }
+
+    @Test
+    void routingContextToolCallsAreDeepCopiedToo() {
+        // ChatMessage's constructor stores toolCalls by reference; the context must copy them.
+        List<Map<String, Object>> toolCalls = new ArrayList<>();
+        Map<String, Object> call = new HashMap<>();
+        call.put("name", "originalTool");
+        toolCalls.add(call);
+        ChatMessage original = new ChatMessage(MessageRole.ASSISTANT, "", toolCalls);
+        RoutingContext ctx =
+                new RoutingContext(
+                        UUID.randomUUID(), "router", List.of(original), Map.of(), List.of());
+        ctx.getMessages().get(0).getToolCalls().get(0).put("name", "HIJACKED");
+        ctx.getMessages().get(0).getToolCalls().clear();
+        assertEquals(1, original.getToolCalls().size());
+        assertEquals("originalTool", original.getToolCalls().get(0).get("name"));
     }
 }

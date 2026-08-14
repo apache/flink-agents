@@ -72,7 +72,10 @@ import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
  *   <li><b>Durably</b> — the strategy runs inside a durable call ({@code "route:<router>"};
  *       per-request uniqueness comes from the store's (key, sequence, event, action) scoping, and
  *       the id must stay deterministic across recovery re-processing), so recovery replays the
- *       persisted decision instead of re-running a possibly non-deterministic strategy.
+ *       persisted decision instead of re-running a possibly non-deterministic strategy. This replay
+ *       guarantee requires an action-state store to be configured ({@code
+ *       agent.action-state-store.backend}); without one — the default — the decision and the chat
+ *       call re-execute together on recovery, which is self-consistent but re-derives the decision.
  *   <li><b>Once per reasoning loop</b> — the selected concrete model and its routing metadata are
  *       saved in the tool-request context; tool rounds re-enter {@code chat} via {@code
  *       RoutingSelection.carried} with no re-routing.
@@ -592,15 +595,29 @@ public class ChatModelAction {
             } catch (ChatAttemptFailed e) {
                 recordAttemptRetryStats(
                         ctx, initialRequestId, e.chatModel, e.retryCount, e.totalRetryWaitSec);
+                // Keep every candidate's failure: chain the previous error into the new one so
+                // exhaustion surfaces A's and B's errors as suppressed of C's, not just C's.
+                if (lastError != null && lastError != e.error) {
+                    e.error.addSuppressed(lastError);
+                }
                 lastError = e.error;
                 LOG.debug(
-                        "Chat request {} failed for model {}, the input chat messages are {}.",
+                        "Chat request {} failed for model {} with error: {}. The input chat messages are {}.",
                         initialRequestId,
                         e.model,
+                        e.error.toString(),
                         messages);
             }
         }
 
+        if (selection.isRouter && triedModels.size() > 1) {
+            LOG.warn(
+                    "Chat request {} exhausted all candidates {} of router '{}'; last error: {}.",
+                    initialRequestId,
+                    triedModels,
+                    selection.requestedModel,
+                    lastError == null ? null : lastError.toString());
+        }
         if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
             LOG.warn(
                     "Chat request {} failed with error: {}, ignored.", initialRequestId, lastError);
@@ -621,8 +638,16 @@ public class ChatModelAction {
             int numRetries,
             int retryWaitIntervalSec)
             throws ChatAttemptFailed, Exception {
-        BaseChatModelSetup chatModel =
-                (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
+        BaseChatModelSetup chatModel;
+        try {
+            chatModel = (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
+        } catch (Exception e) {
+            // An unresolvable candidate (e.g. a typo in the router's candidate list) counts as
+            // that candidate failing, so the fallback loop and the error-handling strategy see
+            // it like any other attempt failure instead of it escaping chat() raw and discarding
+            // the previous candidate's real error.
+            throw new ChatAttemptFailed(model, null, e, 0, 0);
+        }
         FlinkAgentsMetricGroup requestMetricGroup = ctx.getActionMetricGroup();
 
         boolean chatAsync = ctx.getConfig().get(AgentExecutionOptions.CHAT_ASYNC);
@@ -708,6 +733,12 @@ public class ChatModelAction {
         throw new IllegalStateException("Unreachable chat retry state.");
     }
 
+    /**
+     * Compatibility note: retry metrics are recorded per attempt (including attempts on the failure
+     * path), where previously they were recorded once with cumulative totals on the final response.
+     * Totals over a completed request are unchanged; requests that ultimately fail now contribute
+     * their retry counts where they previously did not.
+     */
     private static void recordAttemptRetryStats(
             RunnerContext ctx,
             UUID initialRequestId,
@@ -719,7 +750,7 @@ public class ChatModelAction {
             return;
         }
         accumulateRetryStats(ctx.getSensoryMemory(), initialRequestId, retryCount, retryWaitSec);
-        String metricModel = chatModel.getConnectionName();
+        String metricModel = chatModel == null ? null : chatModel.getConnectionName();
         recordRetryMetrics(
                 ctx,
                 metricModel == null || metricModel.isEmpty() ? "unknown" : metricModel,
@@ -800,13 +831,31 @@ public class ChatModelAction {
 
     private static void processChatRequest(ChatRequestEvent event, RunnerContext ctx)
             throws Exception {
-        RoutingSelection selection =
-                resolveRouter(
+        RoutingSelection selection;
+        try {
+            selection =
+                    resolveRouter(
+                            event.getId(),
+                            event.getModel(),
+                            event.getMessages(),
+                            event.getPromptArgs(),
+                            ctx);
+        } catch (Exception e) {
+            // A routing-strategy failure honors the same error-handling strategy as the chat
+            // call itself: under IGNORE the request is dropped with a warning instead of killing
+            // the job. (Retries are not applied to the decision; strategies that perform I/O are
+            // expected to absorb their own transient failures.)
+            if (ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY)
+                    == Agent.ErrorHandlingStrategy.IGNORE) {
+                LOG.warn(
+                        "Routing for chat request {} (model '{}') failed with error: {}, ignored.",
                         event.getId(),
                         event.getModel(),
-                        event.getMessages(),
-                        event.getPromptArgs(),
-                        ctx);
+                        e.toString());
+                return;
+            }
+            throw e;
+        }
         chat(
                 event.getId(),
                 selection,
