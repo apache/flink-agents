@@ -27,10 +27,11 @@ import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
@@ -48,7 +49,7 @@ import java.util.Map;
  * <p>For {@link ElasticsearchVectorStore} doesn't support security check yet, when start the
  * container, should add "-e xpack.security.enabled=false" option.
  */
-@Disabled("Should setup Elasticsearch server.")
+@EnabledIfEnvironmentVariable(named = "ES_HOST", matches = "https?://.+")
 public class ElasticsearchVectorStoreTest {
     public static BaseVectorStore store;
 
@@ -64,11 +65,12 @@ public class ElasticsearchVectorStoreTest {
     }
 
     @BeforeAll
-    public static void initialize() {
+    public static void initialize() throws Exception {
+        String esHost = System.getenv().getOrDefault("ES_HOST", "http://localhost:9200");
         final ResourceDescriptor.Builder builder =
                 ResourceDescriptor.Builder.newBuilder(ElasticsearchVectorStore.class.getName())
                         .addInitialArgument("embedding_model", "embeddingModel")
-                        .addInitialArgument("host", "localhost:9200")
+                        .addInitialArgument("host", esHost)
                         .addInitialArgument("dims", 5)
                         .addInitialArgument("username", "elastic")
                         .addInitialArgument("password", System.getenv("ES_PASSWORD"));
@@ -76,6 +78,14 @@ public class ElasticsearchVectorStoreTest {
                 new ElasticsearchVectorStore(
                         builder.build(),
                         ResourceContext.fromGetResource(ElasticsearchVectorStoreTest::getResource));
+        store.open();
+    }
+
+    @AfterAll
+    public static void cleanup() throws Exception {
+        if (store != null) {
+            store.close();
+        }
     }
 
     @Test
@@ -121,6 +131,7 @@ public class ElasticsearchVectorStoreTest {
 
         // test get all documents
         List<Document> all = store.get(null, name, null, null, Collections.emptyMap());
+        all.forEach(document -> document.setScore(null));
         Assertions.assertEquals(documents, all);
 
         // test get specific document
@@ -138,6 +149,7 @@ public class ElasticsearchVectorStoreTest {
         store.delete(Collections.singletonList("doc1"), name, null, Collections.emptyMap());
         Thread.sleep(1000);
         List<Document> remain = store.get(null, name, null, null, Collections.emptyMap());
+        remain.forEach(document -> document.setScore(null));
         Assertions.assertEquals(1, remain.size());
         Assertions.assertEquals(documents.get(1), remain.get(0));
 

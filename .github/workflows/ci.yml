@@ -238,23 +238,36 @@ jobs:
           distribution: 'temurin'
       - name: Install flink-agents Java
         run: bash tools/build.sh -j
-      - name: Start Elasticsearch
-        run: |
-          docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v
-          docker compose -f tools/docker/elasticsearch/docker-compose.yml up -d
-          timeout 180 bash -c 'until curl -fsS http://localhost:9200/_cluster/health; do sleep 5; done'
-      - name: Run Elasticsearch integration tests
-        env:
-          ES_HOST: http://localhost:9200
-        run: |
-          mvn -B --no-transfer-progress -pl integrations/vector-stores/elasticsearch -am -Dspotless.skip=true -Drat.skip=true -Dtest=ElasticsearchVectorStoreTest -Dsurefire.failIfNoSpecifiedTests=false test
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
       - name: Run Java IT
         env:
           LOG_LEVEL: INFO
-          ES_HOST: http://localhost:9200
         run: tools/ut.sh -j -e -f ${{ matrix.flink-version }}
+
+  elasticsearch_tests:
+    name: Elasticsearch vector-store tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Install flink-agents Java
+        run: bash tools/build.sh -j
+      - name: Start Elasticsearch
+        run: |
+          docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v
+          docker compose -f tools/docker/elasticsearch/docker-compose.yml up -d
+          timeout 180 bash -c 'until curl -fsS http://localhost:9200/_cluster/health; do sleep 5; done'
+      - name: Run Elasticsearch tests
+        env:
+          ES_HOST: http://localhost:9200
+        run: |
+          mvn -B --no-transfer-progress -pl integrations/vector-stores/elasticsearch -am -Dspotless.skip=true -Drat.skip=true -Dtest=ElasticsearchVectorStoreTest -Dsurefire.failIfNoSpecifiedTests=false test
       - name: Stop Elasticsearch
         if: always()
         run: docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v
