@@ -49,7 +49,7 @@ import java.util.Map;
  * <p>For {@link ElasticsearchVectorStore} doesn't support security check yet, when start the
  * container, should add "-e xpack.security.enabled=false" option.
  */
-@EnabledIfEnvironmentVariable(named = "ES_HOST", matches = "https?://.+")
+@EnabledIfEnvironmentVariable(named = "ES_HOST", matches = ".+")
 public class ElasticsearchVectorStoreTest {
     public static BaseVectorStore store;
 
