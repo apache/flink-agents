@@ -282,37 +282,23 @@ Inline action (map) fields:
 | `type` | no | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
 | `config` | no | Free-form configuration map passed to the action at runtime. |
 
-For built-in exact event types, prefer an alias such as `input`. Custom event types may be bare names
-such as `order.created` or `order-created`; each dot-separated segment must start with an ASCII
-letter or underscore and may then contain ASCII letters, digits, underscores, or hyphens. A bare
-identifier or dotted path is treated as an event type, so Boolean attributes need an explicit check
-such as `ready == true` or `attributes.ready == true`.
+For built-in event types, prefer an [event alias](#event-aliases) such as `input`. Trigger-condition
+matching and expression semantics are shared with annotated and programmatically registered actions;
+see [Trigger Conditions]({{< ref "docs/development/workflow_agent#trigger-conditions" >}}).
 
-Inside a condition expression, compare `type` with a built-in constant, for example
-`type == EventType.InputEvent`. Do not use `EventType.InputEvent` alone: it is a value, not a Boolean
-condition.
-
-Every `trigger_conditions` entry must be a string with at least one non-whitespace character. Empty
-or whitespace-only strings are rejected. Quote condition expressions in YAML, including literals
-such as `- "true"` and predicates such as `- "ready == true"`; otherwise YAML may convert a value
-such as `true`, `false`, or `null` to a non-string value before validation.
-
-Hyphenated event types need no extra quoting layer:
+Every entry must remain a non-empty string after YAML parsing. Quote condition expressions, for
+example `"ready == true"`. Quotes are required for literal expressions such as `"true"`; without
+them, YAML parses `true`, `false`, or `null` as a non-string value. When an exact custom event type
+requires quotes, preserve those quotes inside the YAML string:
 
 ```yaml
 trigger_conditions:
   - order-created
+  - "'order:created'"
+  - "'EventType.custom'"
 ```
 
-For event types containing other punctuation, or names such as `true` that would otherwise be
-interpreted as condition expressions, wrap the event type itself in quotes. YAML removes its own
-scalar quotes, so the quotes used by trigger-condition classification must be part of the scalar
-value, for example `- "'order:created'"` or `- "'true'"`. The inner text must be non-empty and cannot
-contain whitespace, quotes, backslashes, or control characters.
-
-An unquoted value that starts with `EventType.` is treated as a condition expression. To use such a
-value as an exact event type, preserve the single quotes inside the YAML string, for example
-`- "'EventType.custom'"`.
+An `actions` list can mix inline actions and shared-action references:
 
 ```yaml
 actions:
@@ -329,26 +315,6 @@ actions:
 ```
 
 Action method signatures are fixed (`(Event, RunnerContext)`), so there is no `parameter_types` field on actions.
-
-Different matching actions all run (fan-out), while one action runs at most once for an event.
-Separate entries are OR branches. To combine a type restriction with an attribute predicate using
-AND, write both checks in one Boolean expression, as shown by `action2` above. Exact type matches run
-before matches from condition expressions.
-
-Expressions expose the event type as `type`, built-in constants under `EventType`, and the event
-attribute envelope under `attributes`. Referenced top-level entries from `Event.attributes` are also
-available directly. Nested values stay under their top-level attribute path and are never flattened.
-For an input event whose attributes are `{input: {status: "ok"}}`, both `input.status` and
-`attributes.input.status` are valid, while bare `status` is not. Other event payloads follow the same
-rule, for example `response.content`. The framework variables `type`, `id`, `EventType`, and
-`attributes` take precedence over attributes with the same names. Use the `attributes` namespace to
-access colliding attributes.
-
-The Java plan implementation defines how condition expressions, which use Common Expression
-Language (CEL), are validated and evaluated. Java validates them when it builds the plan; a Python
-job sends its serialized plan to the same Java validation during `apply()`.
-For trigger-condition examples, supported macros, and detailed attribute rules, see
-[Action trigger conditions]({{< ref "docs/development/workflow_agent#action" >}}).
 
 ### Declaring multiple agents in one file
 
@@ -565,6 +531,12 @@ For `clazz:` on resource descriptors and for complete event-type entries in `tri
 | `tool_response`                | `ToolResponseEvent`              |
 | `context_retrieval_request`    | `ContextRetrievalRequestEvent`   |
 | `context_retrieval_response`   | `ContextRetrievalResponseEvent`  |
+
+{{< hint warning >}}
+`output` resolves to `OutputEvent`, but output events are emitted directly downstream and bypass
+action matching. Therefore, using `output` as a trigger condition never invokes an action. See
+[Sending events]({{< ref "docs/development/workflow_agent#sending-events" >}}).
+{{< /hint >}}
 
 For custom event types defined in your code, write the event's full `EVENT_TYPE` string instead of an alias.
 

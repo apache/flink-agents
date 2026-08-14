@@ -26,12 +26,12 @@ under the License.
 
 A workflow style agent in Flink-Agents is an agent whose reasoning and behavior are organized as a directed workflow of modular steps, called actions, connected by events. This design is inspired by the need to orchestrate complex, multi-stage tasks in a transparent, extensible, and data-centric way, leveraging Apache Flink's streaming architecture.
 
-In Flink-Agents, a workflow agent is a class that inherits from the `Agent` base class. Its logic is
-a set of actions. In Python, use `@action(...)` on a function; in Java, use `@Action(...)` on a
-method. Each action declares one or more trigger conditions, which may be exact event types or
-condition expressions. Actions consume events, perform reasoning or tool calls, and emit new events
-that may trigger other actions. This event-driven workflow forms a directed graph that may contain
-cycles. Each node is an action, and each edge represents an event flow between actions.
+In Flink-Agents, a workflow agent is a class that inherits from the `Agent` base class. Its workflow
+is defined by actions: functions decorated with `@action(...)` in Python or methods annotated with
+`@Action(...)` in Java. Each action declares one or more trigger conditions, which may be exact event
+types or condition expressions. Actions consume events, perform reasoning or tool calls, and emit new
+events that may trigger other actions. This event-driven workflow forms a directed graph that may
+contain cycles. Each node is an action, and each edge represents an event flow between actions.
 
 A workflow agent is well-suited for scenarios where the solution requires explicit orchestration, branching, or multi-step reasoning, such as data enrichment, multi-tool pipelines, or complex business logic.
 
@@ -235,21 +235,14 @@ public class ReviewAnalysisAgent extends Agent {
 
 ## Action
 
-Each action has one or more trigger conditions and runs when any of them matches an event. A trigger
-condition is either an exact event type or a condition expression that evaluates to `true` or
-`false`. Condition expressions use [Common Expression Language (CEL)](https://cel.dev/), a safe
-language for checking event data. Multiple trigger conditions use OR semantics. To require both an
-event type and an attribute predicate, put both checks in the same expression.
+An action is a piece of code that can be executed. It declares one or more trigger conditions and is
+triggered when an event matches one of them.
 
-Every matching action runs (fan-out), but each action runs at most once per event. For each action, an
-exact event-type match takes precedence and skips its condition expressions. For an action without an
-exact match, condition expressions are evaluated in declaration order until one matches.
-
-Use `@action(*trigger_conditions, target=None)` in Python or `@Action({...})` in Java. The action
-function must accept `(Event, RunnerContext)` and should not return a value (`None` in Python or
-`void` in Java). Use `RunnerContext` to send events instead. A native Java action must be
-`public static`. Python actions can also be defined as `async def` when using async execution (see
-[Async Execution](#async-execution)).
+Use `@action(*trigger_conditions, target=None)` to decorate a Python function or `@Action({...})` to
+annotate a Java method. The function or method accepts the triggering `Event` and a `RunnerContext`.
+It sends events through the context rather than returning a result, so declare its return type as
+`None` in Python or `void` in Java. A native Java action must be `public static`. Python actions can
+also be defined as `async def` when using async execution (see [Async Execution](#async-execution)).
 
 {{< tabs "Action Function" >}}
 
@@ -278,60 +271,9 @@ public class ReviewAnalysisAgent extends Agent {
 
 {{< /tabs >}}
 
-### Trigger Condition Syntax
+### Registering Actions Programmatically
 
-Use `EventType` constants for built-in exact event types. Inside a condition expression, compare
-`type` with the constant, for example `type == EventType.InputEvent`. `EventType.InputEvent` by
-itself is a value, not a condition.
-
-A bare identifier or dotted path is treated as an exact event type, so check an attribute explicitly,
-for example `ready == true` or `attributes.ready == true`. An unquoted value that starts with
-`EventType.` is treated as a condition expression. To use such a value as an exact event type, quote
-the whole name, for example `'EventType.custom'`.
-
-Custom event types may be bare names such as `order.created` or `order-created`. Each dot-separated
-segment must start with an ASCII letter or underscore and may then contain ASCII letters, digits,
-underscores, or hyphens. Quote names that contain other punctuation or would otherwise be treated as
-condition expressions, for example `'order:created'` or `'true'`. A quoted event type must be
-non-empty and cannot contain whitespace, quotes, backslashes, or control characters.
-
-### Trigger Condition Examples
-
-Multiple values use OR semantics. Entries may use `EventType` constants, event-class
-`EVENT_TYPE` constants, custom event strings, or Boolean expressions:
-
-```java
-@Action({
-        EventType.InputEvent,
-        ChatResponseEvent.EVENT_TYPE,
-        "MyCustomEvent",
-        "attributes.urgent == true"})
-public static void handleAnyTrigger(Event event, RunnerContext ctx) {}
-```
-
-In the example above, an input event matches even when `urgent` is false because separate entries
-are OR branches. Put type and attribute checks in one expression when both are required:
-
-```java
-@Action("type == EventType.InputEvent && input.score > 5 && input.ip.name == 'Chinese'")
-public static void handleQualifiedInput(Event event, RunnerContext ctx) {}
-```
-
-Dots and hyphens are valid in a bare exact event type. Quote the event type when its name contains
-other punctuation or would otherwise be interpreted as a condition expression:
-
-```java
-@Action("com.example.order.created")
-public static void handleDottedOrderCreated(Event event, RunnerContext ctx) {}
-
-@Action("order-created")
-public static void handleOrderCreated(Event event, RunnerContext ctx) {}
-
-@Action("'order:created'")
-public static void handleColonOrderCreated(Event event, RunnerContext ctx) {}
-```
-
-Actions can also be registered programmatically:
+As an alternative to annotations, register an action through the `Agent` API:
 
 {{< tabs "Programmatic Action" >}}
 
@@ -339,10 +281,7 @@ Actions can also be registered programmatically:
 ```python
 agent.add_action(
     "process_event",
-    [
-        EventType.InputEvent,
-        "type == EventType.ChatResponseEvent && response.content != ''",
-    ],
+    [EventType.InputEvent],
     process_event,
 )
 ```
@@ -353,16 +292,13 @@ agent.add_action(
 public class ProgrammaticAgent extends Agent {
     public ProgrammaticAgent() throws NoSuchMethodException {
         addAction(
-                new String[] {
-                    EventType.InputEvent,
-                    "type == EventType.ChatResponseEvent && response.content != ''"
-                },
+                new String[] {EventType.InputEvent},
                 ProgrammaticAgent.class.getMethod(
                         "processEvent", Event.class, RunnerContext.class));
     }
 
     public static void processEvent(Event event, RunnerContext ctx) {
-        // Handle either matching event.
+        // Handle the input event.
     }
 }
 ```
@@ -370,47 +306,40 @@ public class ProgrammaticAgent extends Agent {
 
 {{< /tabs >}}
 
-### Condition Data
+### Trigger Conditions
 
-Condition expressions are written in CEL and evaluated by the Java runtime for both Java and Python
-actions. The runtime provides these framework variables:
+A trigger condition is either:
 
-- `type`: the event type string.
-- `id`: the event ID as a string.
-- `EventType`: the built-in event-type constants.
-- `attributes`: the event's attribute map.
+- An **exact event type**, such as `EventType.InputEvent` or a custom event's `EVENT_TYPE` constant.
+- A **condition expression** that evaluates event data to `true` or `false`. Expressions are written
+  in [Common Expression Language (CEL)](https://cel.dev/); Flink Agents supports the subset described
+  in [Trigger Condition Reference](#trigger-condition-reference).
 
-Referenced top-level attributes are also available as bare variables, so `score > 80` and
-`attributes.score > 80` refer to the same field. All four framework variables take precedence over
-attributes with the same names. Use the `attributes` namespace, such as `attributes["type"]` or
-`attributes["id"]`, to access colliding attribute keys.
+Conditions on the same action are alternatives (OR). For example, separate conditions for
+`EventType.InputEvent` and `attributes.urgent == true` allow any input event to trigger the action,
+even when `urgent` is false. To require both, combine them in one expression:
 
-Nested values are not flattened. For an input event whose attributes are
-`{input: {status: "ok"}}`, use `input.status` or `attributes.input.status`; bare `status` is not
-available. Other event payloads keep their top-level envelope, for example `response.content`.
+```text
+type == EventType.InputEvent && attributes.urgent == true
+```
 
-Use a literal index for top-level keys containing dots, such as `attributes["a.b.c"]`, and test
-static membership with `"a.b.c" in attributes`. Dynamic access at the root, such as
-`attributes[key]`, and expressions over the whole `attributes` map are not supported. Dynamic access
-inside an already selected top-level attribute still uses standard CEL map/list access within a
-condition expression.
+When passed directly to `@action` or `@Action`, `EventType.InputEvent` declares an exact event-type
+condition. Within an expression, it is a value and must be compared with `type`, as shown above. A
+bare identifier or dotted path is treated as an exact event type, so write attribute checks
+explicitly, for example `ready == true` or `attributes.ready == true`.
 
-A present attribute whose value is `null` remains `null`; a missing attribute remains absent, so use
-`has(attributes.field)` to test presence before reading an optional field. Strings remain strings
-even when they look like JSON. To match nested data, send a structured map/list value instead of a
-JSON-encoded string. Decimal values and integers outside the signed 64-bit range are evaluated as
-doubles and may lose precision.
+#### Matching Behavior
 
-The only CEL macro supported in condition expressions is `has(...)`. The standard comprehension
-macros `exists`, `exists_one`, `all`, `filter`, and `map` are not supported.
+When an event arrives:
 
-Java validates trigger-condition classification and CEL syntax when it builds the agent plan. Python
-first checks the list shape, then sends the serialized plan to the same Java validation during
-`apply()`. The Java runtime performs the final type check and evaluates conditions, so Java, Python,
-and YAML plans share one contract for condition expressions rather than separate language-specific
-evaluators.
+1. The runtime selects every action with an exact event-type condition that matches the event's type.
+2. For each remaining action, it evaluates expressions in declaration order and stops at the first
+   `true` result.
+3. Every selected action is executed once, even if more than one of its conditions matches.
 
-An action can also send events to trigger other actions or emit output downstream.
+### Sending Events
+
+An action can send an event to trigger another action or emit output downstream.
 
 **Trigger another action** — send a built-in or custom event that matches another action's trigger
 conditions:
@@ -422,7 +351,6 @@ conditions:
 @action(EventType.InputEvent)
 @staticmethod
 def process_input(event: Event, ctx: RunnerContext) -> None:
-    # send a ChatRequestEvent to trigger the built-in chat-model action
     ctx.send_event(ChatRequestEvent(model="my_model", messages=messages))
 ```
 {{< /tab >}}
@@ -431,8 +359,6 @@ def process_input(event: Event, ctx: RunnerContext) -> None:
 ```java
 @Action(EventType.InputEvent)
 public static void processInput(Event event, RunnerContext ctx) throws Exception {
-    InputEvent inputEvent = InputEvent.fromEvent(event);
-    // send ChatRequestEvent
     ctx.sendEvent(new ChatRequestEvent("my_model", messages));
 }
 ```
@@ -440,7 +366,7 @@ public static void processInput(Event event, RunnerContext ctx) throws Exception
 
 {{< /tabs >}}
 
-**Emit downstream output** — send an `OutputEvent` to produce an output of the agent:
+**Emit downstream output** — send an `OutputEvent`:
 
 {{< tabs "Emit Output" >}}
 
@@ -449,7 +375,6 @@ public static void processInput(Event event, RunnerContext ctx) throws Exception
 @action(EventType.ChatResponseEvent)
 @staticmethod
 def emit_output(event: Event, ctx: RunnerContext) -> None:
-    # output data to downstream
     ctx.send_event(OutputEvent(output=result))
 ```
 {{< /tab >}}
@@ -458,7 +383,6 @@ def emit_output(event: Event, ctx: RunnerContext) -> None:
 ```java
 @Action(EventType.ChatResponseEvent)
 public static void emitOutput(Event event, RunnerContext ctx) {
-    // output data to downstream
     ctx.sendEvent(new OutputEvent(result));
 }
 ```
@@ -467,15 +391,66 @@ public static void emitOutput(Event event, RunnerContext ctx) {
 {{< /tabs >}}
 
 {{< hint info >}}
-After the current action finishes, an `OutputEvent` is emitted directly to the agent's downstream,
-bypassing action routing. Other events (such as `ChatRequestEvent`) go through action matching and
-trigger every action whose trigger conditions match. Although the API accepts `OutputEvent` as a
-trigger condition, runtime dispatch bypasses action matching for this event, so an action using that
-trigger condition does not run. Sending a `ChatRequestEvent` and an `OutputEvent` from the same
-action is valid API usage, but it produces both a direct downstream output and, once the chat
-response is handled, a later model-based output. For the normal chat request/response workflow, emit
-the `OutputEvent` from the action that handles the `ChatResponseEvent`, as shown above.
+`OutputEvent` is emitted directly downstream and bypasses action matching. Therefore, an
+`OutputEvent` trigger never invokes an action. Other events go through action matching as usual.
 {{< /hint >}}
+
+### Trigger Condition Reference
+
+#### Custom Event-Type Names
+
+A custom event type may be a bare name such as `order.created` or `order-created`. Each dot-separated
+segment must start with an ASCII letter or underscore and may then contain ASCII letters, digits,
+underscores, or hyphens. Quote a name that contains other punctuation or would otherwise be parsed as
+an expression, for example `'order:created'`, `'true'`, or `'EventType.custom'`. A quoted name matches
+the literal event-type string; it does not reference a built-in `EventType` constant. Quoted names
+must be non-empty and cannot contain whitespace, quotes, backslashes, or control characters.
+
+#### Expression Variables
+
+Java and Python actions use the same Java runtime to evaluate condition expressions. Expressions can
+access these framework variables:
+
+| Variable     | Value                                |
+|--------------|--------------------------------------|
+| `type`       | The event type string                |
+| `id`         | The event ID as a string             |
+| `EventType`  | The built-in event-type constants    |
+| `attributes` | The event's top-level attribute map  |
+
+#### Accessing Attributes
+
+- Top-level attributes are also available as bare variables, so `score > 80` and
+  `attributes.score > 80` refer to the same field.
+- Nested values are not flattened. For `{input: {status: "ok"}}`, use `input.status` or
+  `attributes.input.status`; bare `status` does not refer to the nested value. Other event payloads
+  keep their top-level envelope, for example `response.content`.
+- Framework variables take precedence over attributes with the same names. Use `attributes["type"]`
+  or `attributes["id"]` to access a colliding attribute.
+- For a top-level key containing dots, use a literal index such as `attributes["a.b.c"]`. Test its
+  presence with `"a.b.c" in attributes`.
+
+#### Missing Attributes and Value Types
+
+A present attribute whose value is `null` remains `null`, while a missing attribute remains absent.
+Use `has(attributes.field)` before reading an optional attribute. Reading a missing attribute without
+a guard causes an event-time evaluation failure. With the default `WARN_AND_SKIP` strategy, the
+runtime logs a warning, treats that condition as false, and continues with later OR conditions;
+`FAIL` fails the Flink task. See the
+[condition evaluation failure strategy]({{< ref "docs/operations/configuration#core-options" >}}).
+
+Strings remain strings even when they contain JSON. To match nested data, send a structured map or
+list instead of a JSON-encoded string. Decimal values and integers outside the signed 64-bit range are
+evaluated as doubles and may lose precision.
+
+#### Limitations
+
+- `has(...)` is the only supported CEL macro. The comprehension macros `exists`, `exists_one`,
+  `all`, `filter`, and `map` are not supported.
+- Dynamic root access such as `attributes[key]` and operations over the whole `attributes` map are
+  rejected when the runtime compiles the condition. Operator initialization fails, so the job cannot
+  start. This happens before event-time evaluation and is not controlled by the condition evaluation
+  failure strategy. Dynamic access inside a selected top-level attribute remains supported.
 
 ### Durable Execution
 
