@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.ResourceCache;
+import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
@@ -29,6 +30,7 @@ import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
@@ -98,7 +100,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
 
         reservePendingBatchIfNeeded(callables, argsDigest, plan);
 
-        List<Outcome<T>> executed = executeOutcomeSuppliers(plan.suppliers);
+        BatchExecutionResult<T> executed = executeOutcomeSuppliers(plan.suppliers);
         finalizeExecutedOutcomes(callables, base, argsDigest, plan, executed);
 
         advanceCallIndexBy(callables.size());
@@ -180,12 +182,16 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             int base,
             String argsDigest,
             BatchExecutionPlan<T> plan,
-            List<Outcome<T>> executed)
+            BatchExecutionResult<T> executed)
             throws Exception {
-        for (int i = 0; i < executed.size(); i++) {
+        for (int i = 0; i < executed.getOutcomes().size(); i++) {
             int callIndex = plan.executableCallIndexes.get(i);
-            Outcome<T> outcome = executed.get(i);
+            Outcome<T> outcome = executed.getOutcomes().get(i);
             DurableCallable<T> callable = callables.get(callIndex);
+            if (!executed.wasSubmitted(i)) {
+                plan.outcomes.set(callIndex, outcome);
+                continue;
+            }
             try {
                 finalizeCallAt(
                         base + callIndex,
@@ -217,15 +223,16 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         for (DurableCallable<T> callable : callables) {
             suppliers.add(callable::call);
         }
-        return executeOutcomeSuppliers(suppliers);
+        return executeOutcomeSuppliers(suppliers).getOutcomes();
     }
 
-    private <T> List<Outcome<T>> executeOutcomeSuppliers(List<Callable<T>> suppliers) {
+    private <T> BatchExecutionResult<T> executeOutcomeSuppliers(List<Callable<T>> suppliers) {
         if (suppliers.isEmpty()) {
-            return List.of();
+            return new BatchExecutionResult<>(List.of(), new boolean[0]);
         }
         if (continuationExecutor == null || continuationContext == null) {
-            return suppliers.stream()
+            List<Outcome<T>> outcomes =
+                    suppliers.stream()
                     .map(
                             supplier -> {
                                 try {
@@ -235,6 +242,9 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
                                 }
                             })
                     .collect(Collectors.toList());
+            boolean[] submitted = new boolean[suppliers.size()];
+            Arrays.fill(submitted, true);
+            return new BatchExecutionResult<>(outcomes, submitted);
         }
         Long timeoutMs = getConfig().get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS);
         Duration timeout =

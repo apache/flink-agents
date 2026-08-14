@@ -82,6 +82,7 @@ class _ReconcilerExecutionPlan:
 class _BatchExecutionPlan:
     outcomes: list[Outcome]
     suppliers: list[tuple[int, Callable[[], Any]]]
+    submitted: list[bool]
     needs_reservation: bool = False
     execution_start: int = -1
 
@@ -313,10 +314,11 @@ class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
                 deadline,
                 timeout_ms,
                 batch_futures,
+                plan.submitted,
             )
         except _BatchTimeoutError as exception:
             executed = _collect_sliding_window_outcomes_on_timeout(
-                batch_futures, exception
+                batch_futures, plan.submitted, exception
             )
         return self._ctx._finalize_batch_execution(self._calls, plan, executed)
 
@@ -332,6 +334,7 @@ def _execute_sliding_window_batch(
     deadline: float | None,
     timeout_ms: int,
     futures: list[Any | None],
+    submitted: list[bool],
 ) -> Any:
     batch_size = len(suppliers)
     if batch_size == 0:
@@ -358,6 +361,7 @@ def _execute_sliding_window_batch(
 
         while next_to_submit < batch_size and in_flight() < parallelism_limit:
             futures[next_to_submit] = executor.submit(suppliers[next_to_submit])
+            submitted[next_to_submit] = True
             next_to_submit += 1
 
         for i in range(next_to_submit):
@@ -372,11 +376,13 @@ def _execute_sliding_window_batch(
 
 
 def _collect_sliding_window_outcomes_on_timeout(
-    futures: list[Any | None], timeout_exception: BaseException
+    futures: list[Any | None],
+    submitted: list[bool],
+    timeout_exception: BaseException,
 ) -> list[Outcome]:
     outcomes = []
-    for future in futures:
-        if future is None:
+    for is_submitted, future in zip(submitted, futures, strict=True):
+        if not is_submitted or future is None:
             outcomes.append(Outcome.failure(timeout_exception))
             continue
         if not future.done():
@@ -932,6 +938,7 @@ class FlinkRunnerContext(RunnerContext):
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes: list[Outcome | None] = []
         suppliers: list[tuple[int, Callable[[], Any]]] = []
+        submitted: list[bool] = []
         needs_reservation = False
         execution_start = -1
 
@@ -944,6 +951,7 @@ class FlinkRunnerContext(RunnerContext):
                     execution_start = index
                 outcomes.append(None)
                 suppliers.append((index, self._callable_for_durable_call(call)))
+                submitted.append(False)
                 continue
 
             if not self._call_matches(current, call):
@@ -952,6 +960,7 @@ class FlinkRunnerContext(RunnerContext):
                 execution_start = index
                 outcomes.append(None)
                 suppliers.append((index, self._callable_for_durable_call(call)))
+                submitted.append(False)
                 for remaining_index in range(index + 1, len(calls)):
                     outcomes.append(None)
                     suppliers.append(
@@ -960,6 +969,7 @@ class FlinkRunnerContext(RunnerContext):
                             self._callable_for_durable_call(calls[remaining_index]),
                         )
                     )
+                    submitted.append(False)
                 break
 
             if current.status == "PENDING":
@@ -970,6 +980,7 @@ class FlinkRunnerContext(RunnerContext):
                         call.reconciler or self._callable_for_durable_call(call),
                     )
                 )
+                submitted.append(False)
             else:
                 outcomes.append(self._read_terminal_outcome(current))
 
@@ -985,6 +996,7 @@ class FlinkRunnerContext(RunnerContext):
         return _BatchExecutionPlan(
             outcomes=outcomes,
             suppliers=suppliers,
+            submitted=submitted,
             needs_reservation=needs_reservation,
             execution_start=execution_start,
         )
@@ -997,9 +1009,14 @@ class FlinkRunnerContext(RunnerContext):
     ) -> list[Outcome]:
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes = list(plan.outcomes)
-        for (call_index, _), outcome in zip(plan.suppliers, executed, strict=True):
+        for i, ((call_index, _), outcome) in enumerate(
+            zip(plan.suppliers, executed, strict=True)
+        ):
             call = calls[call_index]
             function_id, args_digest = self._durable_identity(call)
+            if not plan.submitted[i]:
+                outcomes[call_index] = outcome
+                continue
             try:
                 result_payload, exception_payload = self._serialize_call_payloads(
                     outcome.value,

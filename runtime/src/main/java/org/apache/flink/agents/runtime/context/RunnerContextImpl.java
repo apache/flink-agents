@@ -356,14 +356,18 @@ public class RunnerContextImpl implements RunnerContext {
                 return new RuntimeException(message);
             }
             try {
-                Class<?> clazz = Class.forName(exceptionClass);
+                ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+                if (classLoader == null) {
+                    classLoader = RunnerContextImpl.class.getClassLoader();
+                }
+                Class<?> clazz = Class.forName(exceptionClass, true, classLoader);
                 if (Exception.class.isAssignableFrom(clazz)) {
                     @SuppressWarnings("unchecked")
                     Class<? extends Exception> exceptionClazz = (Class<? extends Exception>) clazz;
                     try {
                         return exceptionClazz.getConstructor(String.class).newInstance(message);
                     } catch (NoSuchMethodException ignored) {
-                        return exceptionClazz.getConstructor().newInstance();
+                        return new RuntimeException(exceptionClass + ": " + message);
                     }
                 }
             } catch (ReflectiveOperationException ignored) {
@@ -599,7 +603,7 @@ public class RunnerContextImpl implements RunnerContext {
             } else if (resultPayload != null) {
                 return Optional.of(OBJECT_MAPPER.readValue(resultPayload, resultClass));
             } else {
-                return Optional.empty();
+                return Optional.of(null);
             }
         }
         return Optional.empty();

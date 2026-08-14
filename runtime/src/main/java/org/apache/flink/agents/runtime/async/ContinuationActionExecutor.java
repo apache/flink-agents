@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.async;
 import org.apache.flink.agents.api.context.Outcome;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
@@ -72,12 +73,13 @@ public class ContinuationActionExecutor {
      * @param <T> the result type
      * @return outcomes in supplier order
      */
-    public <T> List<Outcome<T>> executeAllAsync(
+    public <T> BatchExecutionResult<T> executeAllAsync(
             ContinuationContext context,
             List<Callable<T>> suppliers,
             Duration timeout,
             int maxParallelism) {
-        return suppliers.stream()
+        List<Outcome<T>> outcomes =
+                suppliers.stream()
                 .map(
                         supplier -> {
                             try {
@@ -87,6 +89,9 @@ public class ContinuationActionExecutor {
                             }
                         })
                 .collect(Collectors.toList());
+        boolean[] submitted = new boolean[suppliers.size()];
+        Arrays.fill(submitted, true);
+        return new BatchExecutionResult<>(outcomes, submitted);
     }
 
     public void close() {}
