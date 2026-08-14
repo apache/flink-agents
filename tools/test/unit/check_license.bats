@@ -69,7 +69,7 @@ setup() {
 }
 
 @test "reports a download failure and removes the partial file" {
-    shim_bin_script curl 'prev=""; for arg in "$@"; do [[ "$prev" == "--output" ]] && : > "$arg"; prev="$arg"; done; exit 22'
+    shim_bin_script curl 'prev=""; for arg in "$@"; do [[ "$prev" == "--output" || "$prev" == "-o" ]] && : > "$arg"; prev="$arg"; done; exit 22'
 
     run acquire_rat_jar
 
@@ -80,7 +80,7 @@ setup() {
 }
 
 @test "downloads with curl safety flags and validates the result" {
-    shim_bin_script curl 'while [[ "$1" != "--output" ]]; do shift; done; touch "$2"'
+    shim_bin_script curl 'prev=""; for arg in "$@"; do if [[ "$prev" == "--output" || "$prev" == "-o" ]]; then touch "$arg"; exit 0; fi; prev="$arg"; done; exit 64'
     shim_bin_missing jar
     shim_bin unzip
 
@@ -92,4 +92,53 @@ setup() {
     [[ "$output" == *"--show-error"* ]]
     [[ "$output" == *"--location"* ]]
     [ "$(shim_call_count unzip)" = "1" ]
+}
+
+@test "fails closed when a downloaded JAR cannot be validated" {
+    shim_bin_script curl 'prev=""; for arg in "$@"; do if [[ "$prev" == "--output" || "$prev" == "-o" ]]; then : > "$arg"; fi; prev="$arg"; done'
+    shim_bin_missing jar
+    shim_bin_missing unzip
+
+    run acquire_rat_jar
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Cannot validate the downloaded Apache RAT JAR"* ]]
+    [ ! -e "$rat_jar" ]
+    [ ! -e "${rat_jar}.part" ]
+}
+
+@test "validates a cached JAR with jar when unzip is unavailable" {
+    touch "$rat_jar"
+    shim_bin_missing unzip
+    shim_bin jar
+
+    run acquire_rat_jar
+
+    [ "$status" -eq 0 ]
+    [ "$(shim_call_count jar)" = "1" ]
+    [ -f "$rat_jar" ]
+}
+
+@test "rejects an invalid cached JAR with jar when unzip is unavailable" {
+    touch "$rat_jar"
+    shim_bin_missing unzip
+    shim_bin jar 1
+
+    run acquire_rat_jar
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"is invalid"* ]]
+    [ ! -f "$rat_jar" ]
+}
+
+@test "prefers unzip when both validation tools are available" {
+    touch "$rat_jar"
+    shim_bin unzip
+    shim_bin jar 1
+
+    run acquire_rat_jar
+
+    [ "$status" -eq 0 ]
+    [ "$(shim_call_count unzip)" = "1" ]
+    [ "$(shim_call_count jar)" = "0" ]
 }

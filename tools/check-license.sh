@@ -23,13 +23,13 @@
 validate_rat_jar() {
   local jar_cmd
 
-  if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/jar" ]; then
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -tq "$JAR" >/dev/null 2>&1
+    return $?
+  elif [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/jar" ]; then
     jar_cmd="$JAVA_HOME/bin/jar"
   elif command -v jar >/dev/null 2>&1; then
     jar_cmd="$(command -v jar)"
-  elif command -v unzip >/dev/null 2>&1; then
-    unzip -tq "$JAR" >/dev/null 2>&1
-    return $?
   else
     printf "Cannot validate Apache RAT: install a JDK with 'jar' or install 'unzip'.\n" >&2
     return 2
@@ -39,9 +39,10 @@ validate_rat_jar() {
 }
 
 acquire_rat_jar() {
+  local downloaded=false validation_status
+
   URL="https://repo.maven.apache.org/maven2/org/apache/rat/apache-rat/${RAT_VERSION}/apache-rat-${RAT_VERSION}.jar"
   JAR="$rat_jar"
-  downloaded=false
 
   if [ ! -f "$JAR" ]; then
     downloaded=true
