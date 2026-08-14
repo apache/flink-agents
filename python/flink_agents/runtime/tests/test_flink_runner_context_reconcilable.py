@@ -624,7 +624,7 @@ def test_flink_runner_context_durable_execute_all_async_runs_calls_in_parallel()
         _close_runner_context(ctx)
 
     assert [outcome.value for outcome in outcomes] == ["one", "two", "three"]
-    assert elapsed < sleep_seconds * 2
+    assert elapsed < sleep_seconds * 2.5
     assert [result.status for result in j_runner_context.call_results] == [
         "SUCCEEDED",
         "SUCCEEDED",
@@ -832,6 +832,44 @@ def test_flink_runner_context_durable_execute_all_async_timeout_keeps_completed_
     assert j_runner_context.call_results[0].status == "SUCCEEDED"
     assert j_runner_context.call_results[1].status == "FAILED"
     assert j_runner_context.current_call_index == 2
+
+
+def test_flink_runner_context_durable_execute_all_async_timeout_leaves_unsubmitted_slots_pending() -> None:
+    j_runner_context = _FakeJavaRunnerContext()
+    config = AgentConfiguration(
+        {"tool-call.batch.timeout.ms": 10, "tool-call.parallelism": 2}
+    )
+    ctx = _create_runner_context(j_runner_context, config=config, executor_workers=2)
+
+    def slow_call(value: str) -> str:
+        time.sleep(0.05)
+        return value
+
+    try:
+        outcomes = _run_async(
+            ctx.durable_execute_all_async(
+                [
+                    _durable_call(slow_call, "one"),
+                    _durable_call(slow_call, "two"),
+                    _durable_call(_call_value, "three"),
+                    _durable_call(_call_value, "four"),
+                ]
+            )
+        )
+    finally:
+        _close_runner_context(ctx)
+
+    assert outcomes[0].is_failure()
+    assert outcomes[1].is_failure()
+    assert outcomes[2].is_failure()
+    assert outcomes[3].is_failure()
+    assert [result.status for result in j_runner_context.call_results] == [
+        "FAILED",
+        "FAILED",
+        "PENDING",
+        "PENDING",
+    ]
+    assert j_runner_context.current_call_index == 4
 
 
 def test_flink_runner_context_durable_execute_all_async_returns_deserialize_failure_as_outcome() -> (

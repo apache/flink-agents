@@ -174,7 +174,7 @@ public class ContinuationActionExecutor {
      * @return outcomes in supplier order
      */
     @SuppressWarnings("unchecked")
-    public <T> List<Outcome<T>> executeAllAsync(
+    public <T> BatchExecutionResult<T> executeAllAsync(
             ContinuationContext context,
             List<Callable<T>> suppliers,
             Duration timeout,
@@ -182,33 +182,32 @@ public class ContinuationActionExecutor {
             throws Exception {
         context.clearAsyncState();
         if (suppliers.isEmpty()) {
-            return List.of();
+            return new BatchExecutionResult<>(List.of(), new boolean[0]);
         }
 
         final int batchSize = suppliers.size();
         CompletableFuture<Outcome<T>>[] slots = new CompletableFuture[batchSize];
+        boolean[] submitted = new boolean[batchSize];
         boolean[] counted = new boolean[batchSize];
         int completed = 0;
         int nextToSubmit = 0;
         int parallelismLimit = Math.min(Math.max(maxParallelism, 1), batchSize);
 
         long deadlineNanos = getDeadlineNanos(timeout);
-        CompletableFuture<Void> batchBarrier = new CompletableFuture<>();
-        context.setPendingBatchFuture(batchBarrier, deadlineNanos);
 
         while (completed < batchSize) {
             if (System.nanoTime() >= deadlineNanos) {
                 TimeoutException exception =
                         new TimeoutException(
                                 "Async durable batch execution timed out after " + timeout);
-                batchBarrier.cancel(true);
                 context.setPendingBatchFuture(null);
-                return collectBatchOutcomesOnTimeout(slots, exception);
+                return collectBatchOutcomesOnTimeout(slots, submitted, exception);
             }
 
             while (nextToSubmit < batchSize && countInFlight(slots, nextToSubmit) < parallelismLimit) {
                 int index = nextToSubmit++;
                 Callable<T> supplier = suppliers.get(index);
+                submitted[index] = true;
                 slots[index] =
                         CompletableFuture.supplyAsync(
                                 () -> {
@@ -220,21 +219,36 @@ public class ContinuationActionExecutor {
                                 }, asyncExecutor);
             }
 
+            List<CompletableFuture<?>> inFlight = new ArrayList<>(parallelismLimit);
             for (int i = 0; i < nextToSubmit; i++) {
-                if (!counted[i] && slots[i].isDone()) {
-                    counted[i] = true;
-                    completed++;
+                if (slots[i].isDone()) {
+                    if (!counted[i]) {
+                        counted[i] = true;
+                        completed++;
+                    }
+                } else {
+                    inFlight.add(slots[i]);
                 }
             }
 
             if (completed < batchSize) {
-                Continuation.yield(SCOPE);
+                if (inFlight.isEmpty()) {
+                    continue;
+                }
+
+                CompletableFuture<Object> progressBarrier =
+                        CompletableFuture.anyOf(
+                                inFlight.toArray(new CompletableFuture<?>[0]));
+                context.setPendingBatchFuture(progressBarrier, deadlineNanos);
+                if (!progressBarrier.isDone()) {
+                    Continuation.yield(SCOPE);
+                }
+                context.setPendingBatchFuture(null);
             }
         }
 
-        batchBarrier.complete(null);
         context.setPendingBatchFuture(null);
-        return collectBatchOutcomes(Arrays.asList(slots));
+        return collectBatchOutcomes(Arrays.asList(slots), submitted);
     }
 
     private static <T> int countInFlight(
@@ -255,13 +269,13 @@ public class ContinuationActionExecutor {
      * <p>Each supplier already wraps success and failure into an {@link Outcome}, so {@code join()}
      * returns that outcome rather than throwing for ordinary tool exceptions.
      */
-    private static <T> List<Outcome<T>> collectBatchOutcomes(
-            List<CompletableFuture<Outcome<T>>> futures) {
+    private static <T> BatchExecutionResult<T> collectBatchOutcomes(
+            List<CompletableFuture<Outcome<T>>> futures, boolean[] submitted) {
         List<Outcome<T>> results = new ArrayList<>(futures.size());
         for (CompletableFuture<Outcome<T>> future : futures) {
             results.add(future.join());
         }
-        return results;
+        return new BatchExecutionResult<>(results, submitted);
     }
 
     /**
@@ -272,11 +286,14 @@ public class ContinuationActionExecutor {
      * only for unfinished futures; a future that completes between the check and cancel stays
      * non-cancelled and is collected as a normal outcome.
      */
-    private static <T> List<Outcome<T>> collectBatchOutcomesOnTimeout(
-            CompletableFuture<Outcome<T>>[] futures, TimeoutException timeoutException) {
+    private static <T> BatchExecutionResult<T> collectBatchOutcomesOnTimeout(
+            CompletableFuture<Outcome<T>>[] futures,
+            boolean[] submitted,
+            TimeoutException timeoutException) {
         List<Outcome<T>> results = new ArrayList<>(futures.length);
-        for (CompletableFuture<Outcome<T>> future : futures) {
-            if (future == null) {
+        for (int i = 0; i < futures.length; i++) {
+            CompletableFuture<Outcome<T>> future = futures[i];
+            if (!submitted[i] || future == null) {
                 results.add(Outcome.failure(timeoutException));
                 continue;
             }
@@ -289,7 +306,7 @@ public class ContinuationActionExecutor {
                 results.add(Outcome.failure(timeoutException));
             }
         }
-        return results;
+        return new BatchExecutionResult<>(results, submitted);
     }
 
     private long getDeadlineNanos(Duration timeout) {

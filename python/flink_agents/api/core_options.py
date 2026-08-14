@@ -328,6 +328,15 @@ class AgentExecutionOptions:
     )
 
     # Non-positive disables the batch timeout; positive values are milliseconds.
+    #
+    # Thread reclamation: the timeout unblocks the action but does not interrupt a
+    # tool that is already running. A running future cannot be cancelled, so a hung
+    # tool keeps its worker thread in the shared num-async-threads pool until it
+    # returns on its own. That thread is not reclaimed by the timeout and stays
+    # unavailable to other keys on the same subtask, so a tool that never returns
+    # permanently reduces pool capacity. Bound blocking work inside the tool itself
+    # (for example an HTTP client read timeout) instead of relying on this batch
+    # timeout to free the thread.
     TOOL_CALL_BATCH_TIMEOUT_MS = ConfigOption(
         key="tool-call.batch.timeout.ms",
         config_type=int,
