@@ -94,7 +94,9 @@ class PythonBridgeManagerTest {
 
         assertThatThrownBy(bridge::close)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("action executor close failed");
+                .hasMessage("action executor close failed")
+                // Contract 3: a lone failure arrives with nothing attached to it.
+                .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
 
         InOrder inOrder = inOrder(actionExecutor, interpreter, environmentManager);
         inOrder.verify(actionExecutor).close();
@@ -150,8 +152,11 @@ class PythonBridgeManagerTest {
         setField(bridge, "pythonInterpreter", interpreter);
         setField(bridge, "pythonEnvironmentManager", environmentManager);
 
-        // The Error reaches the caller unchanged rather than wrapped in an Exception.
-        assertThatThrownBy(bridge::close).isSameAs(failure);
+        // The Error reaches the caller unchanged rather than wrapped in an Exception, and with
+        // nothing attached to it.
+        assertThatThrownBy(bridge::close)
+                .isSameAs(failure)
+                .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
 
         verify(interpreter).close();
         verify(environmentManager).close();
