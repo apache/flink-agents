@@ -73,9 +73,10 @@ import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
  *       per-request uniqueness comes from the store's (key, sequence, event, action) scoping, and
  *       the id must stay deterministic across recovery re-processing), so recovery replays the
  *       persisted decision instead of re-running a possibly non-deterministic strategy. This replay
- *       guarantee requires an action-state store to be configured ({@code
- *       agent.action-state-store.backend}); without one — the default — the decision and the chat
- *       call re-execute together on recovery, which is self-consistent but re-derives the decision.
+ *       guarantee requires an action-state store to be configured ({@code actionStateStoreBackend},
+ *       see {@code AgentConfigOptions#ACTION_STATE_STORE_BACKEND}); without one — the default — the
+ *       decision and the chat call re-execute together on recovery, which is self-consistent but
+ *       re-derives the decision.
  *   <li><b>Once per reasoning loop</b> — the selected concrete model and its routing metadata are
  *       saved in the tool-request context; tool rounds re-enter {@code chat} via {@code
  *       RoutingSelection.carried} with no re-routing.

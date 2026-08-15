@@ -77,10 +77,18 @@ public final class RoutingContext {
             }
             // ChatMessage's constructor copies extraArgs but stores toolCalls by reference, so
             // copy the list AND each tool-call map — otherwise a strategy could still mutate the
-            // tool calls of the message actually sent.
-            List<Map<String, Object>> toolCalls = new ArrayList<>(m.getToolCalls().size());
-            for (Map<String, Object> call : m.getToolCalls()) {
-                toolCalls.add(call == null ? null : new HashMap<>(call));
+            // tool calls of the message actually sent. getToolCalls() can be null despite the
+            // constructor's default: the Jackson setter stores null as-is, so a message
+            // deserialized from JSON with an explicit "tool_calls": null carries null here.
+            List<Map<String, Object>> source = m.getToolCalls();
+            List<Map<String, Object>> toolCalls;
+            if (source == null) {
+                toolCalls = null;
+            } else {
+                toolCalls = new ArrayList<>(source.size());
+                for (Map<String, Object> call : source) {
+                    toolCalls.add(call == null ? null : new HashMap<>(call));
+                }
             }
             copy.add(new ChatMessage(m.getRole(), m.getContent(), toolCalls, m.getExtraArgs()));
         }

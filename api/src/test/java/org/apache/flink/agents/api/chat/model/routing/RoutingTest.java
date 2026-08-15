@@ -319,4 +319,19 @@ class RoutingTest {
         assertEquals(1, original.getToolCalls().size());
         assertEquals("originalTool", original.getToolCalls().get(0).get("name"));
     }
+
+    @Test
+    void routingContextToleratesNullToolCallsFromJsonSetter() {
+        // The constructor defaults toolCalls to an empty list, but Jackson's setToolCalls stores
+        // null as-is — a message deserialized from JSON with "tool_calls": null carries null.
+        ChatMessage fromJson = new ChatMessage(MessageRole.USER, "hello");
+        fromJson.setToolCalls(null);
+        RoutingContext ctx =
+                new RoutingContext(
+                        UUID.randomUUID(), "router", List.of(fromJson), Map.of(), List.of());
+        assertEquals(1, ctx.getMessages().size());
+        assertEquals("hello", ctx.getMessages().get(0).getContent());
+        // The copy re-normalizes through the constructor, so strategies see an empty list.
+        assertEquals(0, ctx.getMessages().get(0).getToolCalls().size());
+    }
 }
