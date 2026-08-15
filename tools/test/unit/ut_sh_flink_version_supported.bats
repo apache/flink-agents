@@ -33,7 +33,7 @@ dist_module_versions() {
 @test "a Flink version with no dist module is rejected before any test runs, on stderr" {
     shim_bin mvn
     shim_bin uv
-    run bash "$UT_SH" -f 9.9
+    run bash "$UT_SH" -e -f 9.9
     [ "$status" -eq 1 ]
     case "$output" in *"Error: unsupported Flink version '9.9'"*) ;; *) false ;; esac
     # The message has to carry the way out of the mistake, not just report it.
@@ -42,7 +42,7 @@ dist_module_versions() {
     # a typo costs no build.
     [ "$(shim_call_count mvn)" -eq 0 ]
     [ "$(shim_call_count uv)" -eq 0 ]
-    run bash -c "bash '$UT_SH' -f 9.9 2>/dev/null"
+    run bash -c "bash '$UT_SH' -e -f 9.9 2>/dev/null"
     case "$output" in *"unsupported Flink version"*) false ;; *) ;; esac
 }
 
@@ -50,7 +50,7 @@ dist_module_versions() {
     shim_bin uv
     local version
     while read -r version; do
-        run bash "$UT_SH" -p -f "$version"
+        run bash "$UT_SH" -p -e -f "$version"
         [ "$status" -eq 0 ]
     done < <(dist_versions)
 }
@@ -72,9 +72,9 @@ dist_module_versions() {
     shim_bin uv
     local fake
     fake="$(make_fake_root_pinning 3.0.0 3.0 4.1)"
-    run bash "$fake/tools/ut.sh" -p -f 4.1
+    run bash "$fake/tools/ut.sh" -p -e -f 4.1
     [ "$status" -eq 0 ]
-    run bash "$fake/tools/ut.sh" -p -f 1.20
+    run bash "$fake/tools/ut.sh" -p -e -f 1.20
     [ "$status" -eq 1 ]
     case "$output" in *"Error: unsupported Flink version '1.20'"*) ;; *) false ;; esac
     case "$output" in *"supported versions: 3.0 4.1"*) ;; *) false ;; esac

@@ -93,18 +93,20 @@ Options:
   -b, --both        Run both Java and Python tests (default)
   -f, --flink       Specify Flink version to test (can be used multiple times)
                     Supported versions: ${SUPPORTED_FLINK_VERSIONS[*]}
-                    Examples: -f 2.3, -f 1.20, -f 2.3 -f 1.20
+                    Examples: -e -f 2.3, -e -f 1.20, -e -f 2.3 -f 1.20
                     Default: ${DEFAULT_FLINK_VERSION}, from flink.version in the root pom.xml
-                    Applies to the e2e and Python tests; the Java unit
-                    tests are unaffected.
+                    Requires -e: it selects the Flink version the e2e tests run
+                    against. The unit tests cannot be retargeted; each Java
+                    module builds against the version its own pom resolves, and
+                    the Python unit tests install apache-flink~=${DEFAULT_FLINK_VERSION}.0.
   -v, --verbose     Show verbose output
   -h, --help        Display this help message
 
 Examples:
   $0 --java         # Run only Java tests
   $0 -p             # Run only Python tests
-  $0 -f 2.2         # Run tests only for Flink 2.2
-  $0 -f 1.20        # Run tests only for Flink 1.20
+  $0 -e -f 2.2      # Run the e2e tests against Flink 2.2
+  $0 -e -f 1.20     # Run the e2e tests against Flink 1.20
   $0 -v             # Run all tests with verbose output
 
 Exit codes:
@@ -135,7 +137,7 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         -f|--flink)
             if [[ -z "$2" || "$2" == -* ]]; then
-                echo "Error: -f requires a version argument (e.g., -f 1.20)" >&2
+                echo "Error: -f requires a version argument (e.g., -e -f 1.20)" >&2
                 show_help
                 exit 1
             fi
@@ -158,6 +160,26 @@ while [[ "$#" -gt 0 ]]; do
     esac
     shift
 done
+
+# -f selects the Flink version the e2e tests run against, and nothing else
+# reads it. Each Java module compiles and tests against the <flink.version> its
+# own pom resolves: most inherit the root's, while most dist/flink-<v> modules
+# override it with the matching flink.<v>.version, and those modules stay in
+# the unit-test reactor because only the e2e modules are excluded from it. The
+# Python unit tests install the requirement built from the default version. So
+# outside -e the flag has nothing left to select.
+# Checked before the version is validated below: when the flag does not apply
+# at all, the value it carries is beside the point, and reporting that value as
+# unsupported would send the caller looking for a different one.
+if $flink_explicit && ! $run_e2e; then
+    cat >&2 <<EOF
+Error: -f requires -e; it selects the Flink version the e2e tests run against.
+       The unit tests cannot be retargeted: each Java module builds against the
+       version its own pom resolves, and the Python unit tests install
+       apache-flink~=${DEFAULT_FLINK_VERSION}.0.
+EOF
+    exit 1
+fi
 
 # If no version is specified, the default version will be run by default.
 if [ ${#flink_versions[@]} -eq 0 ]; then
@@ -188,15 +210,6 @@ flink_versions=($(echo "${flink_versions[@]}" | tr ' ' '\n' | sort -u | tr '\n' 
 
 if $verbose; then
     echo "Will run tests for Flink versions: ${flink_versions[*]}"
-fi
-
-# The Java unit-test invocations pass no -P and exclude the e2e modules, so an
-# explicitly requested version cannot reach them. Say so before any Maven work
-# starts rather than accepting a value that will be ignored. Only the Java half
-# is claimed to ignore it: a default run also executes the Python tests, which
-# do install against the requested version.
-if $flink_explicit && $run_java && ! $run_e2e; then
-    echo "Warning: -f does not affect the Java unit tests; it applies to the e2e (-e) and Python tests." >&2
 fi
 
 # Skip spotless code-style check when SKIP_SPOTLESS_CHECK is set.

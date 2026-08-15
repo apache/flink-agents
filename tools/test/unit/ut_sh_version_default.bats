@@ -30,8 +30,39 @@ repo_flink_minor() {
     # whitespace so re-indenting or re-wrapping the block cannot break this.
     local flowed
     flowed="$(printf '%s' "$output" | tr -s '[:space:]' ' ')"
-    case "$flowed" in *"Applies to the e2e and Python tests"*) ;; *) false ;; esac
-    case "$flowed" in *"Java unit tests are unaffected"*) ;; *) false ;; esac
+    case "$flowed" in
+        *"Requires -e: it selects the Flink version the e2e tests run against"*) ;;
+        *) false ;;
+    esac
+    case "$flowed" in *"The unit tests cannot be retargeted"*) ;; *) false ;; esac
+    # Which version they use instead is the half most easily re-worded into
+    # something false, so both suites are pinned: each Java module resolves
+    # flink.version through its own pom, which most modules inherit from the
+    # root and most dist ones override, and the Python suite installs the
+    # requirement built from the default.
+    case "$flowed" in
+        *"each Java module builds against the version its own pom resolves"*) ;;
+        *) false ;;
+    esac
+    case "$flowed" in
+        *"Python unit tests install apache-flink~=$(repo_flink_minor).0"*) ;;
+        *) false ;;
+    esac
+}
+
+@test "--help builds the Python requirement from the pom rather than a literal" {
+    # The assertion above reads the same pom the help renders from, so a
+    # hardcoded literal satisfies it for as long as the pom agrees. Only a tree
+    # pinning a different version separates interpolation from a literal.
+    local fake flowed
+    fake="$(make_fake_root_pinning 9.9.9 9.9)"
+    run bash "$fake/tools/ut.sh" --help
+    [ "$status" -eq 0 ]
+    flowed="$(printf '%s' "$output" | tr -s '[:space:]' ' ')"
+    case "$flowed" in
+        *"Python unit tests install apache-flink~=9.9.0"*) ;;
+        *) false ;;
+    esac
 }
 
 @test "a bare Python run installs the Flink version the root pom pins" {
