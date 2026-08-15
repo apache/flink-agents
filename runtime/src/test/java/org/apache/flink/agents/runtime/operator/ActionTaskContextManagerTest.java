@@ -67,9 +67,37 @@ class ActionTaskContextManagerTest {
 
         assertThatThrownBy(mgr::close)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("runner context close failed");
+                .hasMessage("runner context close failed")
+                // Contract 3: a lone failure arrives with nothing attached to it.
+                .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
 
         verify(continuationExecutor).close();
+    }
+
+    /** The first failure is rethrown and the later one is attached as suppressed, never dropped. */
+    @Test
+    void closeReportsFirstFailureWithLaterOneSuppressed() throws Exception {
+        ActionTaskContextManager mgr = new ActionTaskContextManager(1);
+        RunnerContextImpl failingContext = mock(RunnerContextImpl.class);
+        ContinuationActionExecutor failingExecutor = mock(ContinuationActionExecutor.class);
+        doThrow(new IllegalStateException("runner context close failed"))
+                .when(failingContext)
+                .close();
+        doThrow(new IllegalStateException("continuation executor close failed"))
+                .when(failingExecutor)
+                .close();
+
+        setField(mgr, "runnerContext", failingContext);
+        setField(mgr, "continuationActionExecutor", failingExecutor);
+
+        assertThatThrownBy(mgr::close)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("runner context close failed")
+                .satisfies(
+                        thrown ->
+                                assertThat(thrown.getSuppressed())
+                                        .extracting(Throwable::getMessage)
+                                        .containsExactly("continuation executor close failed"));
     }
 
     private static void setField(ActionTaskContextManager mgr, String name, Object value)

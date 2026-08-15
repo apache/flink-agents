@@ -279,8 +279,11 @@ public class ResourceCacheTest {
         SkillManager skillManager = mock(SkillManager.class);
         setSkillManager(cache.getResourceContext(), skillManager);
 
-        // The Error reaches the caller unchanged rather than wrapped in an Exception.
-        assertThatThrownBy(cache::close).isSameAs(failure);
+        // The Error reaches the caller unchanged rather than wrapped in an Exception, and with
+        // nothing attached to it.
+        assertThatThrownBy(cache::close)
+                .isSameAs(failure)
+                .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
 
         assertThat(failing.closed).isTrue();
         assertThat(surviving.closed).isTrue();

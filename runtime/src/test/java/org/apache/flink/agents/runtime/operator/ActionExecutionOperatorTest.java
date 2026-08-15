@@ -646,7 +646,9 @@ public class ActionExecutionOperatorTest {
         try {
             assertThatThrownBy(operator::close)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("resource cache close failed");
+                    .hasMessage("resource cache close failed")
+                    // Contract 3: with super.close() healthy, nothing is attached to the failure.
+                    .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
 
             components.verifyClosedInOrder(stateHandler);
         } finally {

@@ -328,13 +328,15 @@ class ActionTaskContextManager implements AutoCloseable {
         //
         // The ladder catches Throwable, not Exception, so a non-Exception Throwable from the
         // runner context cannot strand the executor's thread pool. Neither type implements
-        // AutoCloseable, so the aggregation is spelled out rather than delegated.
+        // AutoCloseable, so the aggregation is spelled out rather than delegated. Both rungs go
+        // through firstOrSuppressed even though the first one cannot yet have a previous failure,
+        // so that a close inserted above it later suppresses rather than overwrites.
         Throwable firstFailure = null;
         if (runnerContext != null) {
             try {
                 runnerContext.close();
             } catch (Throwable t) {
-                firstFailure = t;
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
             } finally {
                 runnerContext = null;
             }
