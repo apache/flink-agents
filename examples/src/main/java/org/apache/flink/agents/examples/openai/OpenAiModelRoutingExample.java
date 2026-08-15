@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.flink.agents.examples;
+package org.apache.flink.agents.examples.openai;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
@@ -39,6 +39,10 @@ import java.util.Map;
  * to that model) and the decision is recorded as a {@code ModelRoutingEvent}.
  *
  * <p>Run with {@code OPENAI_API_KEY} set in the environment.
+ *
+ * <p>Lives in the {@code openai} subpackage (not directly under {@code examples}) so the
+ * submit-examples E2E job, which auto-submits every top-level example against a keyless local
+ * cluster, does not pick it up.
  */
 public class OpenAiModelRoutingExample {
 
