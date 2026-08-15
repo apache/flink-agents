@@ -72,6 +72,7 @@ public final class EventType {
                     Map.entry("ToolResponseEvent", ToolResponseEvent),
                     Map.entry("ContextRetrievalRequestEvent", ContextRetrievalRequestEvent),
                     Map.entry("ContextRetrievalResponseEvent", ContextRetrievalResponseEvent),
+                    Map.entry("ModelRoutingEvent", ModelRoutingEvent),
                     Map.entry("ShortTermWriteEvent", ShortTermWriteEvent),
                     Map.entry("ShortTermReadEvent", ShortTermReadEvent),
                     Map.entry("SensoryWriteEvent", SensoryWriteEvent),
