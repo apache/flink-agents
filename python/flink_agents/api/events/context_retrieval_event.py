@@ -63,9 +63,7 @@ class ContextRetrievalRequestEvent(Event):
             vector_store=event.attributes["vector_store"],
             max_results=event.attributes.get("max_results", 3),
         )
-        result.attachments = dict(event.attachments)
-        result.id = event.id
-        return result
+        return result.reconstruct_from(event)
 
     @property
     def query(self) -> str:
@@ -125,9 +123,7 @@ class ContextRetrievalResponseEvent(Event):
             query=event.attributes["query"],
             documents=documents,
         )
-        result.attachments = dict(event.attachments)
-        result.id = event.id
-        return result
+        return result.reconstruct_from(event)
 
     @property
     def request_id(self) -> UUID:

@@ -8,8 +8,8 @@
       "tool_calls" : [ ],
       "extra_args" : { }
     },
-    "retry_count" : 0,
-    "total_retry_wait_sec" : 0
+    "total_retry_wait_sec" : 0,
+    "retry_count" : 0
   },
   "attachments" : {
     "payload" : {

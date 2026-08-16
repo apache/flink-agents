@@ -19,11 +19,13 @@ package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorTest;
+import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.typeinfo.python.PickledByteArrayTypeInfo;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -94,6 +96,18 @@ public class CompileUtilsTest {
         resultList.sort(Long::compareTo);
 
         checkResult(resultList);
+    }
+
+    @Test
+    void detectsPickledAndExplicitByteArrayPythonKeyTypes() {
+        assertThat(
+                        CompileUtils.isPickledPythonKeyType(
+                                Types.ROW(PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO)))
+                .isTrue();
+        assertThat(
+                        CompileUtils.isPickledPythonKeyType(
+                                Types.ROW(Types.PRIMITIVE_ARRAY(Types.BYTE))))
+                .isFalse();
     }
 
     private static List<Long> getTestSequence() {

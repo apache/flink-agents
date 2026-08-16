@@ -50,6 +50,13 @@ def convert_to_python_object(bytesObject: bytes) -> Any:
     return cloudpickle.loads(bytesObject)
 
 
+def convert_to_python_key_text(bytes_object: bytes, serialization: str) -> str:
+    """Return the textual identity for a serialized or explicitly typed bytes key."""
+    if serialization == "pickled":
+        return str(cloudpickle.loads(bytes_object))
+    return str(bytes_object)
+
+
 def convert_json_to_python_event(event_json: str) -> Event:
     """Deserialize a JSON string into a base Python Event object.
 

@@ -142,16 +142,19 @@ def test_add_action_returns_self_for_chaining() -> None:
     assert result is agent
 
 
-# ── Multiple trigger conditions ─────────────────────────────────────────
-
-
-def test_add_action_supports_multiple_trigger_conditions() -> None:
+@pytest.mark.parametrize(
+    "conditions",
+    [
+        pytest.param(
+            ["evt_a", "attributes.ready == true", "type =="],
+            id="raw-conditions",
+        ),
+        pytest.param([], id="empty-deferred-to-plan"),
+    ],
+)
+def test_add_action_preserves_raw_conditions(conditions: list[str]) -> None:
     agent = Agent()
-    agent.add_action(
-        name="multi",
-        trigger_conditions=["evt_a", "evt_b", "evt_c"],
-        func=_make_java_function(),
-    )
+    agent.add_action(name="act", trigger_conditions=conditions, func=_dummy_action)
 
-    trigger_conditions, _, _ = agent.actions["multi"]
-    assert trigger_conditions == ["evt_a", "evt_b", "evt_c"]
+    trigger_conditions, _, _ = agent.actions["act"]
+    assert trigger_conditions == conditions

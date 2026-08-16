@@ -83,9 +83,7 @@ class ChatRequestEvent(Event):
             prompt_args=event.attributes.get("prompt_args"),
             output_schema=output_schema_raw,
         )
-        result.attachments = dict(event.attachments)
-        result.id = event.id
-        return result
+        return result.reconstruct_from(event)
 
     @property
     def model(self) -> str:
@@ -161,9 +159,7 @@ class ChatResponseEvent(Event):
             retry_count=event.attributes.get("retry_count", 0),
             total_retry_wait_sec=event.attributes.get("total_retry_wait_sec", 0),
         )
-        result.attachments = dict(event.attachments)
-        result.id = event.id
-        return result
+        return result.reconstruct_from(event)
 
     @property
     def request_id(self) -> UUID:

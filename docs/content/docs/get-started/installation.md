@@ -245,7 +245,7 @@ After building from source, copy the self-contained distribution JAR
 (without the `-thin` suffix) to Flink's `lib` directory:
 
 ```shell
-# Set the Flink Agents version (from the version you built, e.g. 0.3-SNAPSHOT)
+# Set the Flink Agents version (from the version you built, e.g. 0.4-SNAPSHOT)
 export FLINK_AGENTS_VERSION=<version>
 
 cp dist/flink-${FLINK_VERSION%.*}/target/flink-agents-dist-flink-${FLINK_VERSION%.*}-${FLINK_AGENTS_VERSION}.jar $FLINK_HOME/lib/

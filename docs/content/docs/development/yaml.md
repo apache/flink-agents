@@ -528,10 +528,12 @@ Common chat-model aliases:
 | `openai_completions` | —                           | OpenAI Completions (Java)   |
 | `openai_responses`   | —                           | OpenAI Responses (Java)     |
 | `anthropic`          | Anthropic                   | Anthropic                   |
-| `azure_openai`       | Azure OpenAI (Python)       | —                           |
-| `azure`              | —                           | Azure OpenAI (Java)         |
+| `gemini`             | —                           | Gemini (Java)               |
+| `azure_openai`       | Azure OpenAI (Python)       | Azure OpenAI (Java)         |
+| `azure`              | —                           | Azure AI (Java)             |
 | `bedrock`            | —                           | Bedrock (Java)              |
 | `tongyi`             | Tongyi (Python)             | —                           |
+| `vllm`               | vLLM (Python)               | vLLM (Java)                 |
 
 Embedding-model aliases (apply to both `embedding_model_connections` and `embedding_model_setups`):
 
@@ -544,10 +546,14 @@ Embedding-model aliases (apply to both `embedding_model_connections` and `embedd
 
 Vector-store aliases:
 
-| Alias           | `type: python` | `type: java`   |
-| --------------- | -------------- | -------------- |
-| `chroma`        | Chroma         | —              |
-| `elasticsearch` | —              | Elasticsearch  |
+| Alias           | `type: python` | `type: java`    |
+| --------------- | -------------- | --------------- |
+| `chroma`        | Chroma         | —               |
+| `mem0`          | Mem0           | —               |
+| `elasticsearch` | —              | Elasticsearch   |
+| `opensearch`    | —              | OpenSearch      |
+| `s3_vectors`    | —              | S3 Vectors      |
+| `milvus`        | —              | Milvus          |
 
 The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
 
@@ -636,10 +642,12 @@ Because Pydantic models are easier to author and evolve than raw JSON Schema, th
 python -m flink_agents.api.yaml.specs > docs/yaml-schema.json
 ```
 
+The coding-agent skill under `dev/agent-skills/` bundles a copy of the schema so it can work offline, so refresh that copy in the same change. `python3 tools/check-skill-schema.py` reports whether it is current and prints the two edits needed when it is not.
+
 Continuous tests then verify cross-runtime consistency:
 
 - the JSON Schema exported by the Pydantic specs matches the checked-in `docs/yaml-schema.json`;
-- the JSON Schema exported by the Java POJOs matches the checked-in `docs/yaml-schema.json`;
+- the Java POJOs match the checked-in `docs/yaml-schema.json` in property names, required fields, and `additionalProperties` strictness;
 - the Pydantic specs stay aligned with the Python `Agent` API;
 - the Java POJOs stay aligned with the Java `Agent` API.
 

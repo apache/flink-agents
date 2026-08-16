@@ -21,6 +21,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.core.JsonValue;
+import com.openai.core.Timeout;
 import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
 import com.openai.models.chat.completions.ChatCompletionMessage;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
@@ -31,7 +32,12 @@ import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.math.RoundingMode;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,8 +47,9 @@ import java.util.stream.Collectors;
 
 /**
  * Static helpers for converting between Flink Agents {@link ChatMessage} and OpenAI Chat
- * Completions API message types. Restricted to message conversion (no tool-definition conversion —
- * that stays per-connection).
+ * Completions API message types, plus shared parsing/validation of common connection arguments
+ * ({@code timeout}, {@code max_retries}). No tool-definition conversion — that stays
+ * per-connection.
  *
  * <p>Used by both {@code OpenAICompletionsConnection} (OpenAI / OpenAI-compatible providers) and
  * {@code AzureOpenAIChatModelConnection} (Azure OpenAI). Both rely on the same openai-java SDK
@@ -50,7 +57,104 @@ import java.util.stream.Collectors;
  */
 final class OpenAIChatCompletionsUtils {
 
+    private static final BigDecimal MAX_TIMEOUT_SECONDS =
+            BigDecimal.valueOf(Integer.MAX_VALUE).movePointLeft(3);
+
+    /** Default timeout in seconds for OpenAI API requests (aligned with Python SDK). */
+    static final int DEFAULT_TIMEOUT_SECONDS = 60;
+
+    /** Default max retries for OpenAI API requests (aligned with Python SDK). */
+    static final int DEFAULT_MAX_RETRIES = 3;
+
     private OpenAIChatCompletionsUtils() {}
+
+    /**
+     * Resolve and validate the {@code timeout} argument (in seconds). The raw value is validated
+     * before any numeric conversion so that e.g. {@code -0.5} cannot truncate to {@code 0} and
+     * bypass the non-negative check. Fractional values are rounded up to the SDK's millisecond
+     * precision so that a positive value can never become an unlimited timeout.
+     */
+    static Duration parseTimeout(ResourceDescriptor descriptor) {
+        Number raw = descriptor.getArgument("timeout");
+        if (raw == null) {
+            return Duration.ofSeconds(DEFAULT_TIMEOUT_SECONDS);
+        }
+        BigDecimal seconds = toBigDecimal(raw, "timeout");
+        if (seconds.signum() < 0) {
+            throw new IllegalArgumentException("timeout must be >= 0, got: " + raw);
+        }
+        if (seconds.compareTo(MAX_TIMEOUT_SECONDS) > 0) {
+            throw new IllegalArgumentException(
+                    "timeout exceeds the SDK maximum of "
+                            + MAX_TIMEOUT_SECONDS.toPlainString()
+                            + " seconds, got: "
+                            + raw);
+        }
+        try {
+            // The SDK's OkHttp transport accepts millisecond precision. Round positive values up
+            // so a valid nonzero timeout cannot become Duration.ZERO, which disables timeouts.
+            BigInteger milliseconds =
+                    seconds.multiply(BigDecimal.valueOf(1_000L))
+                            .setScale(0, RoundingMode.CEILING)
+                            .toBigIntegerExact();
+            return Duration.ofMillis(milliseconds.longValueExact());
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(
+                    "timeout is outside the supported range, got: " + raw, e);
+        }
+    }
+
+    /**
+     * Configure every SDK timeout component from the connection timeout. A zero duration means no
+     * timeout in openai-java, so all components must be set explicitly; setting only the request
+     * timeout leaves the SDK's default connection timeout in effect.
+     */
+    static Timeout toSdkTimeout(Duration timeout) {
+        return Timeout.builder()
+                .connect(timeout)
+                .read(timeout)
+                .write(timeout)
+                .request(timeout)
+                .build();
+    }
+
+    /**
+     * Resolve and validate the {@code max_retries} argument. Requires an exact non-negative integer
+     * within int range, matching Python-side validation (pydantic rejects fractional values for int
+     * fields).
+     */
+    static int parseMaxRetries(ResourceDescriptor descriptor) {
+        Number raw = descriptor.getArgument("max_retries");
+        if (raw == null) {
+            return DEFAULT_MAX_RETRIES;
+        }
+        BigDecimal value = toBigDecimal(raw, "max_retries");
+        try {
+            BigInteger retries = value.toBigIntegerExact();
+            if (retries.signum() < 0
+                    || retries.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0) {
+                throw new IllegalArgumentException(
+                        "max_retries must be a non-negative integer, got: " + raw);
+            }
+            return retries.intValueExact();
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(
+                    "max_retries must be a non-negative integer, got: " + raw, e);
+        }
+    }
+
+    private static BigDecimal toBigDecimal(Number raw, String argumentName) {
+        if ((raw instanceof Double || raw instanceof Float)
+                && !Double.isFinite(raw.doubleValue())) {
+            throw new IllegalArgumentException(argumentName + " must be finite, got: " + raw);
+        }
+        try {
+            return new BigDecimal(raw.toString());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    argumentName + " must be a finite number, got: " + raw, e);
+        }
+    }
 
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};

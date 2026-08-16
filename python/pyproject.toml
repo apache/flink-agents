@@ -25,7 +25,7 @@ backend-path = ["_build_backend"]
 
 [project]
 name = "flink-agents"
-version = "0.3.dev0"
+version = "0.4.dev0"
 
 description = "Flink Agents Python API"
 license-files = ["LICENSE"]
@@ -60,6 +60,9 @@ dependencies = [
     "mem0ai>=0.1.43,<2.0.0",
     "onnxruntime<1.24.1;python_version<'3.11'",
 ]
+
+[project.scripts]
+flink-agents-trace-tree = "flink_agents.cli.trace_tree:main"
 
 [tool.setuptools]
 include-package-data = true

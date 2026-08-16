@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.types.Row;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
@@ -44,9 +45,6 @@ public class PythonActionExecutor {
     private static final String CREATE_FLINK_RUNNER_CONTEXT =
             "flink_runner_context.create_flink_runner_context";
 
-    private static final String FLINK_RUNNER_CONTEXT_SWITCH_ACTION_CONTEXT =
-            "flink_runner_context.flink_runner_context_switch_action_context";
-
     private static final String CLOSE_FLINK_RUNNER_CONTEXT =
             "flink_runner_context.close_flink_runner_context";
 
@@ -66,6 +64,10 @@ public class PythonActionExecutor {
             "python_java_utils.convert_json_to_python_event";
     private static final String LOAD_EVENT_ATTACHMENTS_FOR_ACTION =
             "python_java_utils.load_event_attachments_for_action";
+    private static final String CONVERT_TO_PYTHON_KEY_TEXT =
+            "python_java_utils.convert_to_python_key_text";
+    private static final String PICKLED_KEY_SERIALIZATION = "pickled";
+    private static final String EXPLICIT_KEY_SERIALIZATION = "explicit";
     private static final String WRAP_TO_INPUT_EVENT = "python_java_utils.wrap_to_input_event";
     private static final String GET_OUTPUT_FROM_OUTPUT_EVENT =
             "python_java_utils.get_output_from_output_event";
@@ -126,13 +128,9 @@ public class PythonActionExecutor {
      * @return The name of the Python awaitable variable. It may be null if the Python function does
      *     not return a coroutine.
      */
-    public String executePythonFunction(PythonFunction function, Event event, int hashOfKey)
-            throws Exception {
+    public String executePythonFunction(PythonFunction function, Event event) throws Exception {
         runnerContext.checkNoPendingEvents();
         function.setInterpreter(interpreter);
-
-        interpreter.invoke(
-                FLINK_RUNNER_CONTEXT_SWITCH_ACTION_CONTEXT, pythonRunnerContext, hashOfKey);
 
         String eventJson = new ObjectMapper().writeValueAsString(event);
         Object pythonEventObject = interpreter.invoke(CONVERT_JSON_TO_PYTHON_EVENT, eventJson);
@@ -164,6 +162,22 @@ public class PythonActionExecutor {
         Object result = interpreter.invoke(WRAP_TO_INPUT_EVENT, eventData);
         checkState(result instanceof String);
         return Event.fromJson((String) result);
+    }
+
+    /** Resolves the textual logical key from PyFlink's keyed-stream representation. */
+    public String resolveKeyText(Object flinkKey, boolean pythonKeyIsPickled) {
+        Object logicalKey = flinkKey;
+        if (flinkKey instanceof Row) {
+            logicalKey = ((Row) flinkKey).getField(0);
+        }
+        if (pythonKeyIsPickled || logicalKey instanceof byte[]) {
+            String keySerialization =
+                    pythonKeyIsPickled ? PICKLED_KEY_SERIALIZATION : EXPLICIT_KEY_SERIALIZATION;
+            return (String)
+                    interpreter.invoke(
+                            CONVERT_TO_PYTHON_KEY_TEXT, (byte[]) logicalKey, keySerialization);
+        }
+        return String.valueOf(logicalKey);
     }
 
     public Object getOutputFromOutputEvent(String eventJson) {

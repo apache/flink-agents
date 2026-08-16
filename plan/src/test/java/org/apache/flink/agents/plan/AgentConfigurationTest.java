@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.plan;
 
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.junit.jupiter.api.*;
 
@@ -188,6 +190,19 @@ public class AgentConfigurationTest {
 
         ConfigOption<Integer> missingKey = new ConfigOption<>("missing.key2", Integer.class, null);
         assertNull(config.get(missingKey));
+    }
+
+    @Test
+    void conditionFailureStrategyContract() {
+        ConfigOption<ConditionEvaluationFailureStrategy> option =
+                AgentConfigOptions.CONDITION_EVALUATION_FAILURE_STRATEGY;
+
+        assertEquals("action.trigger-condition.evaluate-failure-strategy", option.getKey());
+        assertEquals(ConditionEvaluationFailureStrategy.class, option.getType());
+        assertEquals(ConditionEvaluationFailureStrategy.WARN_AND_SKIP, option.getDefaultValue());
+
+        AgentConfiguration config = new AgentConfiguration(Map.of(option.getKey(), "FAIL"));
+        assertEquals(ConditionEvaluationFailureStrategy.FAIL, config.get(option));
     }
 
     @Test

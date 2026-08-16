@@ -60,6 +60,50 @@ class AliasesTest {
     }
 
     @Test
+    void clazzAliasCoversChatModelJavaGeminiAndAzureOpenAI() {
+        String geminiConn =
+                Aliases.resolveClazz("gemini", ResourceType.CHAT_MODEL_CONNECTION, Language.JAVA);
+        assertThat(geminiConn).isEqualTo(ResourceName.ChatModel.GEMINI_CONNECTION);
+        String geminiSetup = Aliases.resolveClazz("gemini", ResourceType.CHAT_MODEL, Language.JAVA);
+        assertThat(geminiSetup).isEqualTo(ResourceName.ChatModel.GEMINI_SETUP);
+        String azureOpenAIConn =
+                Aliases.resolveClazz(
+                        "azure_openai", ResourceType.CHAT_MODEL_CONNECTION, Language.JAVA);
+        assertThat(azureOpenAIConn).isEqualTo(ResourceName.ChatModel.AZURE_OPENAI_CONNECTION);
+        String azureOpenAISetup =
+                Aliases.resolveClazz("azure_openai", ResourceType.CHAT_MODEL, Language.JAVA);
+        assertThat(azureOpenAISetup).isEqualTo(ResourceName.ChatModel.AZURE_OPENAI_SETUP);
+    }
+
+    @Test
+    void clazzAliasCoversVectorStoreJavaAndPython() {
+        String opensearch =
+                Aliases.resolveClazz("opensearch", ResourceType.VECTOR_STORE, Language.JAVA);
+        assertThat(opensearch).isEqualTo(ResourceName.VectorStore.OPENSEARCH_VECTOR_STORE);
+        String s3Vectors =
+                Aliases.resolveClazz("s3_vectors", ResourceType.VECTOR_STORE, Language.JAVA);
+        assertThat(s3Vectors).isEqualTo(ResourceName.VectorStore.S3_VECTORS_VECTOR_STORE);
+        String milvus = Aliases.resolveClazz("milvus", ResourceType.VECTOR_STORE, Language.JAVA);
+        assertThat(milvus).isEqualTo(ResourceName.VectorStore.MILVUS_VECTOR_STORE);
+        String mem0 = Aliases.resolveClazz("mem0", ResourceType.VECTOR_STORE, Language.PYTHON);
+        assertThat(mem0).isEqualTo(ResourceName.VectorStore.Python.MEM0_VECTOR_STORE);
+    }
+
+    @Test
+    void clazzAliasCoversChatModelVLLMInBothLanguages() {
+        String javaConn =
+                Aliases.resolveClazz("vllm", ResourceType.CHAT_MODEL_CONNECTION, Language.JAVA);
+        assertThat(javaConn).isEqualTo(ResourceName.ChatModel.VLLM_CONNECTION);
+        String javaSetup = Aliases.resolveClazz("vllm", ResourceType.CHAT_MODEL, Language.JAVA);
+        assertThat(javaSetup).isEqualTo(ResourceName.ChatModel.VLLM_SETUP);
+        String pythonConn =
+                Aliases.resolveClazz("vllm", ResourceType.CHAT_MODEL_CONNECTION, Language.PYTHON);
+        assertThat(pythonConn).isEqualTo(ResourceName.ChatModel.Python.VLLM_CONNECTION);
+        String pythonSetup = Aliases.resolveClazz("vllm", ResourceType.CHAT_MODEL, Language.PYTHON);
+        assertThat(pythonSetup).isEqualTo(ResourceName.ChatModel.Python.VLLM_SETUP);
+    }
+
+    @Test
     void clazzAliasMissPassesThrough() {
         String fqn =
                 Aliases.resolveClazz(

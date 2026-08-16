@@ -22,7 +22,7 @@ under the License.
     <parent>
         <groupId>org.apache.flink</groupId>
         <artifactId>flink-agents</artifactId>
-        <version>0.3-SNAPSHOT</version>
+        <version>0.4-SNAPSHOT</version>
     </parent>
 
     <artifactId>flink-agents-runtime</artifactId>
@@ -192,6 +192,11 @@ under the License.
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
             <version>${jackson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.cel</groupId>
+            <artifactId>cel</artifactId>
+            <version>${cel.version}</version>
         </dependency>
     </dependencies>
 

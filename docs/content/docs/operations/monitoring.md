@@ -184,13 +184,143 @@ Each record contains a top-level `timestamp`, the resolved `logLevel`, and a top
 {
   "timestamp": "2024-01-15T10:30:00Z",
   "logLevel": "STANDARD",
-  "eventType": "_input_event",
+  "eventType": "MiddleEvent",
   "event": {
-    "eventType": "_input_event",
-    "...": "..."
+    "eventType": "MiddleEvent",
+    "id": "39361629-4f1d-4b62-b734-a48b181cb6e0",
+    "attributes": {},
+    "type": "MiddleEvent",
+    "upstreamEventId": "dad5ed00-80e2-4746-8bdb-f126bad504b5",
+    "upstreamActionName": "action1"
   }
 }
 ```
+
+`upstreamEventId` identifies the Event consumed by the Action that emitted the current Event, and `upstreamActionName` identifies that Action. The framework maintains both fields directly on the `event` object, outside business `attributes`. A root `InputEvent` omits both fields.
+
+### Trace Tree Reconstruction
+
+The `flink-agents-trace-tree` command is installed with the Flink Agents Python wheel. It rebuilds InputEvent-rooted Trace Trees from a saved File Event Log. Pass either one log file for text output or a log directory for Trace Tree JSON:
+
+```bash
+flink-agents-trace-tree /path/to/events-job-task-0.log
+flink-agents-trace-tree /path/to/event-log-directory --format json
+```
+
+For example, the text output for an `InputEvent -> MiddleEvent -> OutputEvent` lineage is:
+
+```text
+Trace Tree 1
+  _input_event (dad5ed00-80e2-4746-8bdb-f126bad504b5)
+    [Action: action1]
+      MiddleEvent (39361629-4f1d-4b62-b734-a48b181cb6e0)
+        [Action: action2]
+          _output_event (f452ce08-c672-4c9c-841f-d81d15a900c5)
+```
+
+In JSON output:
+
+- `roots` lists the Event IDs of the root `InputEvent`s, one per reconstructed Trace Tree.
+- `nodes` maps each logical Event ID to one Event node with the following fields:
+  - `eventId`: the logical Event ID of the node.
+  - `eventType`: the top-level `eventType` routing key from the Event Log record.
+  - `timestamp`: the `timestamp` of the first Event Log record observed for this Event ID.
+  - `observationCount`: Number of times this Event was recorded in the Event Log. Values greater
+    than 1 usually mean the Event was reused during replay.
+  - `upstreamEdges`: the distinct recorded causal edges retained on this Event, each with an
+    `upstreamEventId` and an `upstreamActionName`. Repeated observations of the same
+    `(Event ID, upstream Event ID, upstream Action name)` edge are deduplicated. An edge that would
+    close a cycle is omitted. An invalid edge may remain for diagnosis even when a reconstruction
+    warning prevents it from being added to the parent Event's `actions`.
+  - `actions`: the virtual Action nodes triggered by this Event, each with the Action `name` and
+    the `children` Event IDs it emitted.
+- `warnings` contains the reconstruction warnings described below.
+
+Distinct edges are retained, so reused Events can be shared by multiple InputEvent-rooted
+branches and the combined result is a DAG rather than a strict tree. For example, two roots that
+share one reused output Event through the same Action produce:
+
+```json
+{
+  "roots": ["root-1", "root-2"],
+  "nodes": {
+    "root-1": {
+      "eventId": "root-1",
+      "eventType": "_input_event",
+      "timestamp": "2024-01-15T10:30:00Z",
+      "observationCount": 1,
+      "upstreamEdges": [],
+      "actions": [
+        {"name": "action1", "children": ["shared-1"]}
+      ]
+    },
+    "root-2": {
+      "eventId": "root-2",
+      "eventType": "_input_event",
+      "timestamp": "2024-01-15T10:31:00Z",
+      "observationCount": 1,
+      "upstreamEdges": [],
+      "actions": [
+        {"name": "action1", "children": ["shared-1"]}
+      ]
+    },
+    "shared-1": {
+      "eventId": "shared-1",
+      "eventType": "_output_event",
+      "timestamp": "2024-01-15T10:30:01Z",
+      "observationCount": 2,
+      "upstreamEdges": [
+        {"upstreamEventId": "root-1", "upstreamActionName": "action1"},
+        {"upstreamEventId": "root-2", "upstreamActionName": "action1"}
+      ],
+      "actions": []
+    }
+  },
+  "warnings": []
+}
+```
+
+{{< hint info >}}
+During ActionStateStore recovery, a reused output Event keeps its Event ID when a completed
+Action result is replayed, while its lineage is rebound to the recovered execution's current
+triggering Event. The same logical Event ID may therefore appear in multiple physical Event Log
+records with distinct upstream edges, as in the example above. Reusing an Event ID with the same
+Event type and content is valid.
+{{< /hint >}}
+
+When observations with the same Event ID disagree on Event type or content, only observations
+matching the first add distinct entries to `upstreamEdges`, while all observations count toward
+`observationCount`. For conflicting observations, the reader emits one `EVENT_ID_CONFLICT`
+warning per distinct (`upstreamEventId`, `upstreamActionName`) pair and includes each field when
+present. The resulting canonical node and its descendants remain in the reconstructed trace.
+
+The reader derives virtual Action nodes from `upstreamActionName`; they are not separate Event Log
+records. Log order does not add execution-order semantics, but it controls display order and
+first-observation fields such as `timestamp`. For a fixed set of reconstructed nodes and edges,
+cycle detection uses Event IDs and Action names in a stable order, so reordering non-conflicting
+records does not change which cycle-closing edge is omitted. For `EVENT_ID_CONFLICT`, the first
+observation determines the canonical Event type and content, so the order of conflicting
+observations remains significant.
+
+Reconstruction warnings are written to standard error and included in JSON output while valid
+InputEvent-rooted branches are retained. The reader keeps valid records from the same input and
+continues with other Event Log files.
+
+A `CYCLE_DETECTED` warning identifies an omitted edge with `eventId` for the child,
+`upstreamEventId` for the parent, and `upstreamActionName` for the Action. The edge is omitted from
+both the parent's `actions` and the child's `upstreamEdges`, so cycle pruning is represented
+consistently in both directions.
+
+| Warning Code           | Trigger Condition                                                          |
+|------------------------|----------------------------------------------------------------------------|
+| `EVENT_ID_CONFLICT`    | Records carrying the same Event ID disagree on the Event type or content.  |
+| `INVALID_ROOT_LINEAGE` | An InputEvent carries upstream lineage, which a root Event must not have.  |
+| `UNLINKED_EVENT`       | A non-InputEvent has no upstream Event.                                    |
+| `MISSING_ACTION_NAME`  | An Event has an upstream Event but no upstream Action name.                |
+| `MISSING_PARENT`       | An Event references an upstream Event with no valid node in the Event Log. |
+| `CYCLE_DETECTED`       | A lineage edge closes a cycle and is omitted from the reconstructed DAG.   |
+| `MALFORMED_RECORD`     | An Event Log record is invalid or partially written.                       |
+| `UNREADABLE_FILE`      | An Event Log file could not be read.                                       |
 
 ### Event Log Levels
 
@@ -204,7 +334,7 @@ Each event type is logged at a configurable verbosity. Three levels are supporte
 
 The global default is set by [`event-log.level`]({{< ref "docs/operations/configuration#core-options" >}}). At `STANDARD` level, the payload is shrunk along three independent axes — long strings, large arrays, and deep nesting — controlled by `event-log.standard.max-string-length`, `event-log.standard.max-array-elements`, and `event-log.standard.max-depth` respectively. Setting any threshold to `0` disables that specific truncation; setting all three to `0` makes `STANDARD` behave identically to `VERBOSE` (apart from the `logLevel` label). The exact truncation strategy may evolve over time; the contract is only that `STANDARD` keeps logs concise while `VERBOSE` preserves the full payload.
 
-**Fields that are never truncated.** Structural and identifying fields are always preserved in full so log consumers can still group, route, and correlate records: `timestamp`, `logLevel`, top-level `eventType`, and the event's own `id`, `type`, and short scalar fields. Truncation only applies to large nested content (long strings, big arrays, deeply nested objects).
+**Fields that are never truncated.** Structural and identifying fields are always preserved in full so log consumers can still group, route, and correlate records: `timestamp`, `logLevel`, top-level `eventType`, and the event's own `eventType`, `type`, `id`, `upstreamEventId`, and `upstreamActionName`. The `attributes` envelope is also preserved, while large nested content inside it can still be truncated.
 
 **Truncation wrapper format.** When a field is truncated at `STANDARD` level it is replaced by a JSON object that records what was retained and what was dropped. This keeps the record valid JSON and lets downstream tooling detect truncation programmatically:
 

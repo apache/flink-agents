@@ -539,7 +539,7 @@ public static void processEvent(Event event, RunnerContext ctx) throws Exception
 
 ## Context Isolation
 
-Long-Term Memory automatically provides context isolation through Flink's keyed partition model. Each keyed partition maintains its own isolated set of memories, ensuring that memories from one user or session do not leak into another.
+Long-Term Memory automatically provides context isolation through Flink's keyed partition model. Each keyed partition normally maintains its own isolated set of memories.
 
 The isolation hierarchy works as follows:
 - **Job-level** (`JOB_IDENTIFIER`): Separates memories between different Flink jobs
@@ -548,4 +548,4 @@ The isolation hierarchy works as follows:
 
 This means you can reuse the same memory set name across different partitions, and each partition will normally access only its own memories.
 
-> **Note:** Partition-level isolation is currently derived from the hash of the partition key (`String.valueOf(key.hashCode())`) rather than the full original key. Distinct keys whose hashes collide may therefore share the same memory context. Avoid relying on isolation as a strict security boundary; if collision-free isolation is required, encode a unique identifier into the memory set name.
+> **Note:** Partition-level isolation uses a textual identity derived from the logical key instead of `key.hashCode()`. Java keys use `String.valueOf(key)`. Default-serialized PyFlink keys are deserialized and use Python `str`; explicitly typed PyFlink keys use `String.valueOf`, except byte-array keys, which use Python's bytes representation. This avoids hash collisions, but distinct keys may still share a memory context if they produce the same text, for example when custom key types have non-unique `toString()` or `__str__()` implementations. Key representations should therefore be stable and unique, and this isolation should not be treated as a security boundary.

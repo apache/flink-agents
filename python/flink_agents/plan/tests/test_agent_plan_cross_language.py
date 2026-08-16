@@ -24,6 +24,10 @@ from pathlib import Path
 import pytest
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.core_options import (
+    AgentConfigOptions,
+    ConditionEvaluationFailureStrategy,
+)
 from flink_agents.api.events.event import Event, InputEvent
 from flink_agents.api.function import (
     JavaFunction as ApiJavaFunction,
@@ -170,10 +174,15 @@ def _java_action_plan() -> AgentPlan:
     agent = Agent()
     agent.add_action(
         name="handle",
-        trigger_conditions=[InputEvent.EVENT_TYPE],
+        trigger_conditions=[InputEvent.EVENT_TYPE, "attributes.ready == true"],
         func=_make_java_function_descriptor(),
     )
-    return AgentPlan.from_agent(agent, AgentConfiguration())
+    config = AgentConfiguration()
+    config.set(
+        AgentConfigOptions.CONDITION_EVALUATION_FAILURE_STRATEGY,
+        ConditionEvaluationFailureStrategy.FAIL,
+    )
+    return AgentPlan.from_agent(agent, config)
 
 
 def _python_action_plan() -> AgentPlan:
@@ -204,6 +213,23 @@ def test_python_plan_with_java_action_has_expected_exec_shape() -> None:
     }
 
 
+def test_failure_strategy_round_trips_in_plan_json() -> None:
+    serialized = _plan_dump_json(_java_action_plan())
+    payload = json.loads(serialized)
+
+    assert (
+        payload["config"]["conf_data"][
+            "action.trigger-condition.evaluate-failure-strategy"
+        ]
+        == "FAIL"
+    )
+    restored = AgentPlan.model_validate_json(serialized)
+    assert (
+        restored.config.get(AgentConfigOptions.CONDITION_EVALUATION_FAILURE_STRATEGY)
+        is ConditionEvaluationFailureStrategy.FAIL
+    )
+
+
 def test_python_plan_with_python_action_has_expected_exec_shape() -> None:
     """Pin the wire shape of a Python-target action's ``exec`` block."""
     plan = _python_action_plan()
@@ -229,6 +255,10 @@ def test_python_plan_with_java_action_round_trips_through_json() -> None:
     assert isinstance(action.exec, PlanJavaFunction)
     assert action.exec.qualname == "com.example.Handlers"
     assert action.exec.method_name == "handle"
+    assert action.trigger_conditions == [
+        InputEvent.EVENT_TYPE,
+        "attributes.ready == true",
+    ]
     assert list(action.exec.parameter_types) == [
         "org.apache.flink.agents.api.Event",
         "org.apache.flink.agents.api.context.RunnerContext",
@@ -290,9 +320,13 @@ def test_python_can_deserialize_java_plan_with_python_action() -> None:
     )
     assert action.exec.module == _dummy_action.__module__
     assert action.exec.qualname == _dummy_action.__qualname__
+    assert action.trigger_conditions == [
+        InputEvent.EVENT_TYPE,
+        "attributes.ready == true",
+    ]
 
 
-def test_python_plan_with_java_action_matches_runtime_operator_wire_shape() -> None:
+def test_java_action_plan_matches_runtime_wire_shape() -> None:
     handler_qualname = (
         "org.apache.flink.agents.runtime.operator."
         "CrossLanguageActionRuntimeTest$Handlers"
@@ -326,7 +360,6 @@ def test_python_plan_with_java_action_matches_runtime_operator_wire_shape() -> N
         "method_name": "handleInput",
         "parameter_types": expected_parameter_types,
     }
-    assert emitted["actions_by_event"][InputEvent.EVENT_TYPE] == ["handle"]
 
 
 def test_python_preserves_conf_data_types_and_event_ordering() -> None:
@@ -354,7 +387,6 @@ def test_python_preserves_conf_data_types_and_event_ordering() -> None:
                     "config": None,
                 },
             },
-            "actions_by_event": {InputEvent.EVENT_TYPE: ["first", "second"]},
             "resource_providers": {},
             "config": {
                 "conf_data": {
@@ -374,4 +406,4 @@ def test_python_preserves_conf_data_types_and_event_ordering() -> None:
         "k_bool": True,
         "k_str": "v1",
     }
-    assert restored.actions_by_event[InputEvent.EVENT_TYPE] == ["first", "second"]
+    assert list(restored.actions) == ["first", "second"]

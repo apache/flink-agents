@@ -37,8 +37,8 @@ class PythonBridgeManagerTest {
         // Java-only plan: one Java action, no resources.
         Action javaAction = TestActions.noopAction();
         Map<String, Action> actions = Map.of(javaAction.getName(), javaAction);
-        Map<String, List<Action>> byEvent = Map.of(InputEvent.class.getName(), List.of(javaAction));
-        AgentPlan plan = new AgentPlan(actions, byEvent);
+        Map<String, List<Action>> byEvent = Map.of(InputEvent.EVENT_TYPE, List.of(javaAction));
+        AgentPlan plan = new AgentPlan(actions);
 
         try (PythonBridgeManager bridge = new PythonBridgeManager()) {
             bridge.open(

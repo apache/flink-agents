@@ -23,7 +23,6 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.Event;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -54,13 +53,7 @@ public class ToolRequestEvent extends Event {
      */
     @SuppressWarnings("unchecked")
     public static ToolRequestEvent fromEvent(Event event) {
-        ToolRequestEvent result =
-                new ToolRequestEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        result.getAttachments().putAll(event.getAttachments());
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, ToolRequestEvent::new);
     }
 
     @JsonIgnore

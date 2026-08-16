@@ -94,3 +94,46 @@ def test_plain_text_response() -> None:
         [ChatMessage(role=MessageRole.USER, content="hi")]
     )
     assert response.content == "Hello!"
+
+
+def test_plain_text_response_keeps_token_usage() -> None:
+    # Token usage must survive on non-tool_use responses too: the common
+    # end_turn path previously dropped extra_args entirely, so promptTokens /
+    # completionTokens never reached the token metrics recording.
+    message = Message(
+        id="m",
+        model="claude",
+        role="assistant",
+        type="message",
+        stop_reason="end_turn",
+        content=[TextBlock(type="text", text="Hello!")],
+        usage=Usage(input_tokens=7, output_tokens=3),
+    )
+    response = _connection_returning(message).chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        model="claude-sonnet-4-5",
+    )
+    assert response.extra_args["model_name"] == "claude-sonnet-4-5"
+    assert response.extra_args["promptTokens"] == 7
+    assert response.extra_args["completionTokens"] == 3
+
+
+def test_tool_use_response_keeps_token_usage() -> None:
+    # Regression guard for the tool_use path, which already carried usage.
+    message = Message(
+        id="m",
+        model="claude",
+        role="assistant",
+        type="message",
+        stop_reason="tool_use",
+        content=[
+            ToolUseBlock(type="tool_use", id="t1", name="add", input={"a": 1, "b": 2})
+        ],
+        usage=Usage(input_tokens=7, output_tokens=3),
+    )
+    response = _connection_returning(message).chat(
+        [ChatMessage(role=MessageRole.USER, content="add 1 and 2")],
+        model="claude-sonnet-4-5",
+    )
+    assert response.extra_args["promptTokens"] == 7
+    assert response.extra_args["completionTokens"] == 3

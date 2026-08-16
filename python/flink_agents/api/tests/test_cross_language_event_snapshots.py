@@ -32,6 +32,8 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalResponseEvent,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.memory_event import MemoryEvent, ShortTermWriteEvent
+from flink_agents.api.events.run_event import AgentRunBeginEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.memory_reference import MemoryRef
@@ -57,8 +59,7 @@ def _force_id(event: Event, fixed_id: UUID) -> Event:
     event.set_attachment(
         _ATTACHMENT_KEY, MemoryRef.create(MemoryType.SENSORY, _ATTACHMENT_PATH)
     )
-    object.__setattr__(event, "id", fixed_id)
-    return event
+    return event.model_copy(update={"id": fixed_id})
 
 
 def _assert_memory_ref_attachment(event: Event) -> None:
@@ -95,7 +96,9 @@ def _read_java_snapshot(name: str) -> Event:
         f"Regenerate the Java side with -Dregenerate.snapshots=true "
         f"and commit alongside this test."
     )
-    return Event.from_json(java_snapshot.read_text())
+    event = Event.from_json(java_snapshot.read_text())
+    _assert_memory_ref_attachment(event)
+    return event
 
 
 # ── InputEvent ──────────────────────────────────────────────────────────
@@ -117,7 +120,6 @@ def test_input_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_input_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("input_event.json")
-    _assert_memory_ref_attachment(base)
     typed = InputEvent.from_event(base)
     assert typed.input == "hello", "InputEvent.input mismatch."
     assert typed.type == InputEvent.EVENT_TYPE
@@ -143,7 +145,6 @@ def test_output_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_output_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("output_event.json")
-    _assert_memory_ref_attachment(base)
     typed = OutputEvent.from_event(base)
     assert typed.output == "world", "OutputEvent.output mismatch."
     assert typed.type == OutputEvent.EVENT_TYPE
@@ -175,7 +176,6 @@ def test_chat_request_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_chat_request_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("chat_request_event.json")
-    _assert_memory_ref_attachment(base)
     typed = ChatRequestEvent.from_event(base)
     assert typed.model == "test-model"
     assert len(typed.messages) == 1
@@ -185,7 +185,9 @@ def test_python_can_deserialize_chat_request_event_from_java_snapshot() -> None:
     _assert_memory_ref_attachment(typed)
 
 
-def test_chat_request_row_type_info_output_schema_is_not_portable_across_languages_known_gap() -> None:
+def test_chat_request_row_type_info_output_schema_is_not_portable_across_languages_known_gap() -> (
+    None
+):
     """Known 0.3 gap — RowTypeInfo-typed output_schema does not round-trip across the language
     boundary. Python emits ``{"names": [...], "types": [<BasicTypeInfo ordinal>]}`` while Java
     emits ``{"fieldNames": [...], "types": [<Class>]}``, so a ChatRequestEvent carrying a
@@ -211,8 +213,8 @@ def test_chat_request_row_type_info_output_schema_is_not_portable_across_languag
     payload = event.model_dump_json()
     # Pin Python's local shape so a future regression can't silently change it. The gap with
     # Java's `{"fieldNames": ...}` shape is the documented limitation, not the assertion.
-    assert "\"names\"" in payload
-    assert "\"fieldNames\"" not in payload
+    assert '"names"' in payload
+    assert '"fieldNames"' not in payload
 
 
 # ── ChatResponseEvent ───────────────────────────────────────────────────
@@ -240,11 +242,12 @@ def test_chat_response_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("chat_response_event.json")
-    _assert_memory_ref_attachment(base)
     typed = ChatResponseEvent.from_event(base)
     expected_request_id = str(_FIXED_REQUEST_ID)
     actual_request_id = (
-        str(typed.request_id) if not isinstance(typed.request_id, str) else typed.request_id
+        str(typed.request_id)
+        if not isinstance(typed.request_id, str)
+        else typed.request_id
     )
     assert actual_request_id == expected_request_id, "request_id mismatch."
     assert typed.response is not None, "response is None."
@@ -259,7 +262,11 @@ def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None
 
 
 def _build_tool_request_event() -> ToolRequestEvent:
-    tool_call = {"id": _FIXED_TOOL_CALL_ID, "name": "echo", "arguments": {"value": "ping"}}
+    tool_call = {
+        "id": _FIXED_TOOL_CALL_ID,
+        "name": "echo",
+        "arguments": {"value": "ping"},
+    }
     event = ToolRequestEvent(model="test-model", tool_calls=[tool_call])
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -278,7 +285,6 @@ def test_tool_request_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_tool_request_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("tool_request_event.json")
-    _assert_memory_ref_attachment(base)
     typed = ToolRequestEvent.from_event(base)
     assert typed.model == "test-model"
     assert len(typed.tool_calls) == 1
@@ -323,7 +329,6 @@ def test_tool_response_event_python_snapshot_is_stable() -> None:
 
 def test_python_can_deserialize_java_tool_response_event_status_fields() -> None:
     base = _read_java_snapshot("tool_response_event.json")
-    _assert_memory_ref_attachment(base)
     typed = ToolResponseEvent.from_event(base)
 
     assert typed.request_id == _FIXED_REQUEST_ID
@@ -366,9 +371,10 @@ def test_context_retrieval_request_event_python_snapshot_is_stable() -> None:
     )
 
 
-def test_python_can_deserialize_context_retrieval_request_event_from_java_snapshot() -> None:
+def test_python_can_deserialize_context_retrieval_request_event_from_java_snapshot() -> (
+    None
+):
     base = _read_java_snapshot("context_retrieval_request_event.json")
-    _assert_memory_ref_attachment(base)
     typed = ContextRetrievalRequestEvent.from_event(base)
     assert typed.query == "what is flink"
     assert typed.vector_store == "test-store"
@@ -405,19 +411,95 @@ def test_context_retrieval_response_event_python_snapshot_is_stable() -> None:
     )
 
 
-def test_python_can_deserialize_context_retrieval_response_event_from_java_snapshot() -> None:
+def test_python_can_deserialize_context_retrieval_response_event_from_java_snapshot() -> (
+    None
+):
     base = _read_java_snapshot("context_retrieval_response_event.json")
-    _assert_memory_ref_attachment(base)
     typed = ContextRetrievalResponseEvent.from_event(base)
     expected_request_id = str(_FIXED_REQUEST_ID)
     actual_request_id = (
-        str(typed.request_id) if not isinstance(typed.request_id, str) else typed.request_id
+        str(typed.request_id)
+        if not isinstance(typed.request_id, str)
+        else typed.request_id
     )
     assert actual_request_id == expected_request_id
     assert typed.query == "what is flink"
     assert len(typed.documents) == 1
     assert typed.documents[0].content == "doc content"
     assert typed.documents[0].id == "doc-1"
+    _assert_memory_ref_attachment(typed)
+
+
+# ── Memory observation events ──────────────────────────────────────────
+
+
+def _build_short_term_write_event() -> ShortTermWriteEvent:
+    return _force_id(
+        ShortTermWriteEvent(
+            key="user-42",
+            value={"user.tier": "gold", "profile.m_a01": None},
+        ),
+        _FIXED_EVENT_ID,
+    )
+
+
+def test_regenerate_short_term_write_event_python_snapshot() -> None:
+    if not _regenerate_enabled():
+        pytest.skip("Set REGENERATE_SNAPSHOTS=1 to refresh.")
+    _write_python_snapshot(
+        "short_term_write_event.json", _build_short_term_write_event()
+    )
+
+
+def test_short_term_write_event_python_snapshot_is_stable() -> None:
+    _assert_python_snapshot_stable(
+        "short_term_write_event.json", _build_short_term_write_event()
+    )
+
+
+def test_python_can_deserialize_short_term_write_event_from_java_snapshot() -> None:
+    base = _read_java_snapshot("short_term_write_event.json")
+    typed = MemoryEvent.from_event(base)
+
+    assert isinstance(typed, ShortTermWriteEvent)
+    assert typed.id == _FIXED_EVENT_ID
+    assert typed.key == "user-42"
+    assert typed.value == {"user.tier": "gold", "profile.m_a01": None}
+    _assert_memory_ref_attachment(typed)
+
+
+# ── Agent-run lifecycle events ─────────────────────────────────────────
+
+
+def _build_agent_run_begin_event() -> AgentRunBeginEvent:
+    return _force_id(
+        AgentRunBeginEvent(
+            key="user-42",
+            value={"user.tier": "gold", "user.address.city": "SF"},
+        ),
+        _FIXED_EVENT_ID,
+    )
+
+
+def test_regenerate_agent_run_begin_event_python_snapshot() -> None:
+    if not _regenerate_enabled():
+        pytest.skip("Set REGENERATE_SNAPSHOTS=1 to refresh.")
+    _write_python_snapshot("agent_run_begin_event.json", _build_agent_run_begin_event())
+
+
+def test_agent_run_begin_event_python_snapshot_is_stable() -> None:
+    _assert_python_snapshot_stable(
+        "agent_run_begin_event.json", _build_agent_run_begin_event()
+    )
+
+
+def test_python_can_deserialize_agent_run_begin_event_from_java_snapshot() -> None:
+    base = _read_java_snapshot("agent_run_begin_event.json")
+    typed = AgentRunBeginEvent.from_event(base)
+
+    assert typed.id == _FIXED_EVENT_ID
+    assert typed.key == "user-42"
+    assert typed.value == {"user.tier": "gold", "user.address.city": "SF"}
     _assert_memory_ref_attachment(typed)
 
 

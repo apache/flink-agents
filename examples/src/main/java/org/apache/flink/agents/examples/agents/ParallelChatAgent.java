@@ -94,7 +94,8 @@ public class ParallelChatAgent extends Agent {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
-                .addInitialArgument("extract_reasoning", true)
+                .addInitialArgument("think", false)
+                .addInitialArgument("extract_reasoning", false)
                 .build();
     }
 

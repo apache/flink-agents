@@ -46,10 +46,16 @@ class TestChatModelSetup(BaseChatModelSetup):
         return ChatMessage(role=MessageRole.ASSISTANT, content="Test response")
 
     def test_record_token_metrics(
-        self, model_name: str, prompt_tokens: int, completion_tokens: int
+        self,
+        model_name: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        metric_group: MetricGroup | None,
     ) -> None:
         """Expose protected method for testing."""
-        self._record_token_metrics(model_name, prompt_tokens, completion_tokens)
+        self._record_token_metrics(
+            model_name, prompt_tokens, completion_tokens, metric_group
+        )
 
 
 class _MockCounter(Counter):
@@ -104,39 +110,60 @@ class TestBaseChatModelTokenMetrics:
         chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         mock_metric_group = _MockMetricGroup()
 
-        # Set the metric group
-        chat_model.set_metric_group(mock_metric_group)
-
         # Record token metrics
-        chat_model.test_record_token_metrics("gpt-4", 100, 50)
+        chat_model.test_record_token_metrics("gpt-4", 100, 50, mock_metric_group)
 
         # Verify the metrics were recorded
         model_group = mock_metric_group.get_sub_group("model", "gpt-4")
         assert model_group.get_counter("promptTokens").get_count() == 100
         assert model_group.get_counter("completionTokens").get_count() == 50
 
-    def test_record_token_metrics_without_metric_group(self) -> None:
-        """Test token metrics are not recorded when metric group is null."""
+    def test_record_token_metrics_skips_when_metric_group_missing(self) -> None:
+        """Test token metrics are not recorded when metric group is missing."""
         chat_model = TestChatModelSetup(connection="mock", model="mock-model")
+        bound_metric_group = _MockMetricGroup()
+        chat_model.set_metric_group(bound_metric_group)
 
-        # Do not set metric group (should be None by default)
-        # Record token metrics - should not throw
-        chat_model.test_record_token_metrics("gpt-4", 100, 50)
-        # No exception should be raised
+        chat_model.test_record_token_metrics("gpt-4", 100, 50, None)
+
+        model_group = bound_metric_group.get_sub_group("model", "gpt-4")
+        assert model_group.get_counter("promptTokens").get_count() == 0
+        assert model_group.get_counter("completionTokens").get_count() == 0
+
+    def test_record_token_metrics_with_request_scoped_metric_group(self) -> None:
+        """Token metrics use the metric group captured when the request started."""
+        chat_model = TestChatModelSetup(connection="mock", model="mock-model")
+        action_a_metric_group = _MockMetricGroup()
+        action_b_metric_group = _MockMetricGroup()
+
+        chat_model.set_metric_group(action_a_metric_group)
+        request_metric_group = chat_model.metric_group
+
+        chat_model.set_metric_group(action_b_metric_group)
+        chat_model.test_record_token_metrics(
+            "gpt-4", 100, 50, metric_group=request_metric_group
+        )
+
+        action_a_model_group = action_a_metric_group.get_sub_group("model", "gpt-4")
+        assert action_a_model_group.get_counter("promptTokens").get_count() == 100
+        assert action_a_model_group.get_counter("completionTokens").get_count() == 50
+
+        action_b_model_group = action_b_metric_group.get_sub_group("model", "gpt-4")
+        assert action_b_model_group.get_counter("promptTokens").get_count() == 0
+        assert action_b_model_group.get_counter("completionTokens").get_count() == 0
 
     def test_token_metrics_hierarchy(self) -> None:
         """Test token metrics hierarchy: actionMetricGroup -> modelName -> counters."""
         chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         mock_metric_group = _MockMetricGroup()
 
-        # Set the metric group
-        chat_model.set_metric_group(mock_metric_group)
-
         # Record for gpt-4
-        chat_model.test_record_token_metrics("gpt-4", 100, 50)
+        chat_model.test_record_token_metrics("gpt-4", 100, 50, mock_metric_group)
 
         # Record for gpt-3.5-turbo
-        chat_model.test_record_token_metrics("gpt-3.5-turbo", 200, 100)
+        chat_model.test_record_token_metrics(
+            "gpt-3.5-turbo", 200, 100, mock_metric_group
+        )
 
         # Verify each model has its own counters
         gpt4_group = mock_metric_group.get_sub_group("model", "gpt-4")
@@ -152,12 +179,9 @@ class TestBaseChatModelTokenMetrics:
         chat_model = TestChatModelSetup(connection="mock", model="mock-model")
         mock_metric_group = _MockMetricGroup()
 
-        # Set the metric group
-        chat_model.set_metric_group(mock_metric_group)
-
         # Record multiple times for the same model
-        chat_model.test_record_token_metrics("gpt-4", 100, 50)
-        chat_model.test_record_token_metrics("gpt-4", 150, 75)
+        chat_model.test_record_token_metrics("gpt-4", 100, 50, mock_metric_group)
+        chat_model.test_record_token_metrics("gpt-4", 150, 75, mock_metric_group)
 
         # Verify the metrics accumulated
         model_group = mock_metric_group.get_sub_group("model", "gpt-4")

@@ -19,12 +19,20 @@ import json
 from typing import Any, ClassVar, Dict
 
 try:
-    from typing import override
+    from typing import Self, override
 except ImportError:
-    from typing_extensions import override
+    from typing_extensions import Self, override
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
@@ -67,19 +75,33 @@ class Event(BaseModel, extra="allow"):
     Attributes:
     ----------
     id : UUID
-        Unique identifier for the event, generated randomly when not supplied.
+        Random version 4 UUID generated when the Event is created.
     type : str
         Event type string used for routing. Required for all events.
     attributes : Dict[str, Any]
         Key-value properties for the event data.
     attachments : Dict[str, Any]
         Key-value data passed between actions through sensory memory.
+    upstream_event_id : UUID | None
+        The ID of the direct upstream Event, or None.
+    upstream_action_name : str | None
+        The name of the emitting Action, or None.
     """
 
-    id: UUID = Field(default_factory=uuid4)
+    id: UUID = Field(default_factory=uuid4, frozen=True)
     type: str
     attributes: Dict[str, Any] = Field(default_factory=dict)
     attachments: Dict[str, Any] = Field(default_factory=dict)
+    upstream_event_id: UUID | None = Field(
+        default=None,
+        validation_alias=AliasChoices("upstream_event_id", "upstreamEventId"),
+        serialization_alias="upstreamEventId",
+    )
+    upstream_action_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("upstream_action_name", "upstreamActionName"),
+        serialization_alias="upstreamActionName",
+    )
 
     @field_validator("attachments", mode="before")
     @classmethod
@@ -115,6 +137,22 @@ class Event(BaseModel, extra="allow"):
             kwargs["fallback"] = self.__serialize_unknown
         return super().model_dump_json(**kwargs)
 
+    @model_serializer(mode="wrap")
+    def _serialize_event(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> Dict[str, Any]:
+        """Use cross-language names only for lineage and omit empty lineage."""
+        serialized: Dict[str, Any] = handler(self)
+        missing = object()
+        for field_name, alias in (
+            ("upstream_event_id", "upstreamEventId"),
+            ("upstream_action_name", "upstreamActionName"),
+        ):
+            value = serialized.pop(field_name, serialized.pop(alias, missing))
+            if value is not missing and value is not None:
+                serialized[alias] = value
+        return serialized
+
     @model_validator(mode="after")
     def validate_serializable_fields(self) -> "Event":
         """Validate JSON event fields without serializing raw attachments."""
@@ -126,6 +164,17 @@ class Event(BaseModel, extra="allow"):
         # Raw attachments are offloaded to sensory memory before sending. Validate every
         # other field here without serializing those payloads.
         self.model_dump_json(exclude={"attachments"})
+
+    def reconstruct_from(self, source: "Event") -> Self:
+        """Return a typed copy representing the same Event occurrence as source."""
+        return self.model_copy(
+            update={
+                "id": source.id,
+                "attachments": dict(source.attachments),
+                "upstream_event_id": source.upstream_event_id,
+                "upstream_action_name": source.upstream_action_name,
+            }
+        )
 
     def get_type(self) -> str:
         """Return the event type string used for routing."""
@@ -209,9 +258,7 @@ class InputEvent(Event):
     def from_event(cls, event: Event) -> "InputEvent":
         assert "input" in event.attributes
         result = InputEvent(input=event.attributes["input"])
-        result.attachments = dict(event.attachments)
-        result.id = event.id
-        return result
+        return result.reconstruct_from(event)
 
     @property
     def input(self) -> Any:
@@ -243,9 +290,7 @@ class OutputEvent(Event):
     def from_event(cls, event: Event) -> "OutputEvent":
         assert "output" in event.attributes
         result = OutputEvent(output=event.attributes["output"])
-        result.attachments = dict(event.attachments)
-        result.id = event.id
-        return result
+        return result.reconstruct_from(event)
 
     @property
     def output(self) -> Any:

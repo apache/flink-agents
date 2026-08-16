@@ -25,7 +25,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -75,13 +74,7 @@ public class ChatResponseEvent extends Event {
      * @return a typed ChatResponseEvent
      */
     public static ChatResponseEvent fromEvent(Event event) {
-        ChatResponseEvent result =
-                new ChatResponseEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        result.getAttachments().putAll(event.getAttachments());
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, ChatResponseEvent::new);
     }
 
     @JsonIgnore

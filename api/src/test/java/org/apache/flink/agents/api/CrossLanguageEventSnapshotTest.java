@@ -25,10 +25,13 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
+import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.MemoryEvent;
+import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.tools.ToolResponse;
@@ -123,14 +126,14 @@ class CrossLanguageEventSnapshotTest {
                         + " missing from "
                         + pythonSnapshot
                         + ". Regenerate the Python side with REGENERATE_SNAPSHOTS=1 and commit alongside this test.");
-        return Event.fromJson(Files.readString(pythonSnapshot));
+        Event event = Event.fromJson(Files.readString(pythonSnapshot));
+        assertMemoryRefAttachment(event);
+        return event;
     }
 
     private static <T extends Event> T withMemoryRefAttachment(T event) {
-        event.getAttachments()
-                .put(
-                        ATTACHMENT_KEY,
-                        MemoryRef.create(MemoryObject.MemoryType.SENSORY, ATTACHMENT_PATH));
+        event.setAttachment(
+                ATTACHMENT_KEY, MemoryRef.create(MemoryObject.MemoryType.SENSORY, ATTACHMENT_PATH));
         return event;
     }
 
@@ -164,7 +167,6 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeInputEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("input_event.json");
-        assertMemoryRefAttachment(base);
         InputEvent typed = InputEvent.fromEvent(base);
 
         assertEquals(
@@ -196,7 +198,6 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeOutputEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("output_event.json");
-        assertMemoryRefAttachment(base);
         OutputEvent typed = OutputEvent.fromEvent(base);
 
         assertEquals(
@@ -229,7 +230,6 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeChatRequestEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("chat_request_event.json");
-        assertMemoryRefAttachment(base);
         ChatRequestEvent typed = ChatRequestEvent.fromEvent(base);
 
         assertEquals(FIXED_EVENT_ID, typed.getId());
@@ -296,7 +296,6 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeChatResponseEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("chat_response_event.json");
-        assertMemoryRefAttachment(base);
         ChatResponseEvent typed = ChatResponseEvent.fromEvent(base);
 
         assertEquals(FIXED_EVENT_ID, typed.getId());
@@ -337,7 +336,6 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeToolRequestEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("tool_request_event.json");
-        assertMemoryRefAttachment(base);
         ToolRequestEvent typed = ToolRequestEvent.fromEvent(base);
 
         assertEquals(FIXED_EVENT_ID, typed.getId());
@@ -377,7 +375,6 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void pythonToolResponseEventRoundTripsScalarResponses() throws Exception {
         Event base = readPythonSnapshot("tool_response_event.json");
-        assertMemoryRefAttachment(base);
         ToolResponseEvent typed = ToolResponseEvent.fromEvent(base);
 
         assertEquals(FIXED_REQUEST_ID, typed.getRequestId());
@@ -430,7 +427,6 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeContextRetrievalRequestEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("context_retrieval_request_event.json");
-        assertMemoryRefAttachment(base);
         ContextRetrievalRequestEvent typed = ContextRetrievalRequestEvent.fromEvent(base);
 
         assertEquals(FIXED_EVENT_ID, typed.getId());
@@ -468,7 +464,6 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void javaCanDeserializeContextRetrievalResponseEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("context_retrieval_response_event.json");
-        assertMemoryRefAttachment(base);
         ContextRetrievalResponseEvent typed = ContextRetrievalResponseEvent.fromEvent(base);
 
         assertEquals(FIXED_EVENT_ID, typed.getId());
@@ -480,6 +475,77 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(1, docs.size());
         assertEquals("doc content", docs.get(0).getContent());
         assertEquals("doc-1", docs.get(0).getId());
+        assertMemoryRefAttachment(typed);
+    }
+
+    // ── Memory observation events ──────────────────────────────────────────
+
+    private static ShortTermWriteEvent buildShortTermWriteEvent() {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("user.tier", "gold");
+        value.put("profile.m_a01", null);
+        Map<String, Object> attrs = new LinkedHashMap<>();
+        attrs.put("key", "user-42");
+        attrs.put("value", value);
+        return withMemoryRefAttachment(new ShortTermWriteEvent(FIXED_EVENT_ID, attrs));
+    }
+
+    @Test
+    void regenerateShortTermWriteEventJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot("short_term_write_event.json", buildShortTermWriteEvent());
+    }
+
+    @Test
+    void shortTermWriteEventJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable("short_term_write_event.json", buildShortTermWriteEvent());
+    }
+
+    @Test
+    void javaCanDeserializeShortTermWriteEventFromPythonSnapshot() throws Exception {
+        Event base = readPythonSnapshot("short_term_write_event.json");
+        ShortTermWriteEvent typed = (ShortTermWriteEvent) MemoryEvent.fromEvent(base);
+
+        assertEquals(FIXED_EVENT_ID, typed.getId());
+        assertEquals("user-42", typed.getKey());
+        assertEquals("gold", typed.getValue().get("user.tier"));
+        assertTrue(typed.getValue().containsKey("profile.m_a01"));
+        assertEquals(null, typed.getValue().get("profile.m_a01"));
+        assertMemoryRefAttachment(typed);
+    }
+
+    // ── Agent-run lifecycle events ─────────────────────────────────────────
+
+    private static AgentRunBeginEvent buildAgentRunBeginEvent() {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("user.tier", "gold");
+        value.put("user.address.city", "SF");
+        Map<String, Object> attrs = new LinkedHashMap<>();
+        attrs.put("key", "user-42");
+        attrs.put("value", value);
+        return withMemoryRefAttachment(new AgentRunBeginEvent(FIXED_EVENT_ID, attrs));
+    }
+
+    @Test
+    void regenerateAgentRunBeginEventJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot("agent_run_begin_event.json", buildAgentRunBeginEvent());
+    }
+
+    @Test
+    void agentRunBeginEventJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable("agent_run_begin_event.json", buildAgentRunBeginEvent());
+    }
+
+    @Test
+    void javaCanDeserializeAgentRunBeginEventFromPythonSnapshot() throws Exception {
+        Event base = readPythonSnapshot("agent_run_begin_event.json");
+        AgentRunBeginEvent typed = AgentRunBeginEvent.fromEvent(base);
+
+        assertEquals(FIXED_EVENT_ID, typed.getId());
+        assertEquals("user-42", typed.getKey());
+        assertEquals("gold", typed.getValue().get("user.tier"));
+        assertEquals("SF", typed.getValue().get("user.address.city"));
         assertMemoryRefAttachment(typed);
     }
 

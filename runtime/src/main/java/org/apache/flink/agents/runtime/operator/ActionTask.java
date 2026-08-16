@@ -29,6 +29,7 @@ import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * This class represents a task related to the execution of an action in {@link
@@ -47,6 +48,10 @@ public abstract class ActionTask {
     protected final Object key;
     protected final Event event;
     protected final Action action;
+
+    /** Stable identifier for observations produced by this logical action execution. */
+    protected String observationId;
+
     /**
      * Since RunnerContextImpl contains references to the Operator and state, it should not be
      * serialized and included in the state with ActionTask. Instead, we should check if a valid
@@ -55,9 +60,14 @@ public abstract class ActionTask {
     protected transient RunnerContextImpl runnerContext;
 
     public ActionTask(Object key, Event event, Action action) {
+        this(key, event, action, UUID.randomUUID().toString());
+    }
+
+    protected ActionTask(Object key, Event event, Action action, String observationId) {
         this.key = key;
         this.event = event;
         this.action = action;
+        this.observationId = Objects.requireNonNull(observationId, "observationId");
     }
 
     public RunnerContextImpl getRunnerContext() {
@@ -72,6 +82,15 @@ public abstract class ActionTask {
         return key;
     }
 
+    public String getObservationId() {
+        if (observationId == null) {
+            // Tasks restored from state written before observation IDs were introduced have no
+            // value for this field. Assign one before the task is invoked or checkpointed again.
+            observationId = UUID.randomUUID().toString();
+        }
+        return observationId;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -79,17 +98,42 @@ public abstract class ActionTask {
         ActionTask other = (ActionTask) o;
         return Objects.equals(this.key, other.key)
                 && Objects.equals(this.event, other.event)
-                && Objects.equals(this.action, other.action);
+                && Objects.equals(this.action, other.action)
+                && Objects.equals(this.getObservationId(), other.getObservationId());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(key, event, action);
+        return Objects.hash(key, event, action, getObservationId());
     }
 
     /** Invokes the action task. */
     public abstract ActionTaskResult invoke(
             ClassLoader userCodeClassLoader, PythonActionExecutor executor) throws Exception;
+
+    /**
+     * Validates and binds output Events to this task's Action and trigger Event.
+     *
+     * <p>All outputs are validated before mutation to avoid partial updates. Existing lineage is
+     * overwritten, including during replay.
+     */
+    List<Event> finalizeOutputEvents(List<Event> outputEvents) {
+        for (Event outputEvent : outputEvents) {
+            if (Objects.equals(outputEvent.getId(), event.getId())) {
+                throw new IllegalArgumentException(
+                        "Action '"
+                                + action.getName()
+                                + "' cannot emit its triggering Event "
+                                + event.getId()
+                                + "; output Event IDs must differ from the triggering Event ID.");
+            }
+        }
+        for (Event outputEvent : outputEvents) {
+            outputEvent.setUpstreamEventId(event.getId());
+            outputEvent.setUpstreamActionName(action.getName());
+        }
+        return outputEvents;
+    }
 
     public class ActionTaskResult {
         private final boolean finished;
@@ -101,7 +145,7 @@ public abstract class ActionTask {
                 List<Event> outputEvents,
                 @Nullable ActionTask generatedActionTask) {
             this.finished = finished;
-            this.outputEvents = outputEvents;
+            this.outputEvents = finalizeOutputEvents(outputEvents);
             this.generatedActionTaskOpt = Optional.ofNullable(generatedActionTask);
         }
 

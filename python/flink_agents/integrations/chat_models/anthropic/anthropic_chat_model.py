@@ -239,6 +239,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             return ChatMessage(
                 role=MessageRole(message.role),
                 content=text,
+                extra_args=extra_args,
             )
 
     @override

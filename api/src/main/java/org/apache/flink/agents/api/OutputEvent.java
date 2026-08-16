@@ -22,7 +22,6 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -53,12 +52,7 @@ public class OutputEvent extends Event {
      * @return a typed OutputEvent
      */
     public static OutputEvent fromEvent(Event event) {
-        OutputEvent result = new OutputEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        result.getAttachments().putAll(event.getAttachments());
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, OutputEvent::new);
     }
 
     @JsonIgnore

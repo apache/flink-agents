@@ -2,7 +2,6 @@
   "id" : "00000000-0000-0000-0000-000000000001",
   "attributes" : {
     "request_id" : "00000000-0000-0000-0000-000000000002",
-    "query" : "what is flink",
     "documents" : [ {
       "content" : "doc content",
       "metadata" : {
@@ -11,7 +10,8 @@
       "id" : "doc-1",
       "embedding" : null,
       "score" : null
-    } ]
+    } ],
+    "query" : "what is flink"
   },
   "attachments" : {
     "payload" : {

@@ -31,7 +31,7 @@ under the License.
     <name>Flink Agents : </name>
     <!-- TODO: build website and update url -->
     <url>https://flink.apache.org</url>
-    <version>0.3-SNAPSHOT</version>
+    <version>0.4-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <properties>
@@ -47,11 +47,13 @@ under the License.
         <junit5.version>5.10.1</junit5.version>
         <jackson.version>2.18.2</jackson.version>
         <pemja.version>0.5.7</pemja.version>
-        <log4j2.version>2.23.1</log4j2.version>
+        <log4j2.version>2.24.3</log4j2.version>
         <slf4j.version>1.7.36</slf4j.version>
         <assertj.version>3.27.7</assertj.version>
         <mockito.version>5.14.2</mockito.version>
         <bytebuddy.version>1.15.4</bytebuddy.version>
+        <cel.version>0.12.0</cel.version>
+        <protobuf.version>4.33.5</protobuf.version>
         <gpg.useagent>true</gpg.useagent>
         <arguments />
     </properties>
@@ -76,6 +78,12 @@ under the License.
                 <version>${jackson.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <!-- Keep protobuf consistent across CEL and integration dependencies. -->
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-java</artifactId>
+                <version>${protobuf.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

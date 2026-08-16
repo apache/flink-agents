@@ -19,7 +19,13 @@ from typing import Any, Dict, List, Literal, Sequence
 
 import httpx
 from openai import NOT_GIVEN, OpenAI
-from pydantic import Field, PrivateAttr
+
+# Private SDK module (leading underscore): the openai client itself uses this helper to
+# build the strict json_schema for response_format, and there is no public re-export. It
+# has existed at this path since the structured-output support in openai 1.66.3 (the
+# pinned minimum). A future openai bump that moves it will fail loudly on import here.
+from openai.lib._pydantic import to_strict_json_schema
+from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
@@ -37,6 +43,67 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
 )
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+MAX_OPENAI_TIMEOUT_SECONDS = 2_147_483.647
+MAX_OPENAI_RETRIES = 2_147_483_647
+
+# Models with documented json_schema strict Structured Outputs support. Source of
+# truth: https://platform.openai.com/docs/guides/structured-outputs
+#
+# A name carrying a non-text modality marker is rejected before anything else. Audio,
+# realtime, speech and transcription variants expose no json_schema response format
+# even though they share the name prefix of a capable text family, so the marker check
+# has to win over a prefix match rather than merely coexist with it.
+#
+# A text family whose entire lifetime post-dates the Structured Outputs cutoff is
+# matched by name prefix, so its dated snapshots and size variants resolve without
+# enumerating each one.
+#
+# Two cases cannot use a prefix and are matched exactly instead. The gpt-4o family
+# straddles the cutoff -- gpt-4o-2024-05-13 predates it and is not capable -- so the
+# boundary there is temporal rather than nominal. The o1 family is not uniform: o1 is
+# capable while o1-mini is not, so an "o1" prefix would admit an incapable sibling.
+#
+# A name outside every listed family reports not-capable and degrades to the prompt
+# fallback rather than failing at the provider. Within a listed family the prefix
+# assumes capability, so a family variant that ships without json_schema support has
+# to be excluded explicitly, either by a marker that appears in no capable name or by
+# replacing the family prefix with exact names.
+_NON_TEXT_MODALITY_MARKERS = ("-audio", "-realtime", "-tts", "-transcribe")
+_NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES = (
+    "gpt-4o-mini",
+    "gpt-4o-search-preview",
+    "gpt-4.1",
+    "gpt-5",
+    "o3",
+    "o4-mini",
+)
+_NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
+    {"gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "o1", "o1-2024-12-17"}
+)
+
+
+def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
+    """Build the OpenAI ``response_format`` for a native structured-output request.
+
+    Returns ``None`` (leaving behavior unchanged) unless the schema is a ``BaseModel``
+    subclass. A ``RowTypeInfo`` schema is skipped so it keeps the prompt-engineering
+    fallback.
+    """
+    if output_schema is None:
+        return None
+    model = (
+        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    )
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": model.__name__,
+            "schema": to_strict_json_schema(model),
+            "strict": True,
+        },
+    }
 
 
 class OpenAIChatModelConnection(BaseChatModelConnection):
@@ -64,11 +131,14 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         default=3,
         description="The maximum number of API retries.",
         ge=0,
+        le=MAX_OPENAI_RETRIES,
     )
     timeout: float = Field(
         default=60.0,
-        description="The timeout, in seconds, for API requests.",
+        description="The timeout, in seconds, for API requests. Set to 0 to disable timeouts.",
         ge=0,
+        le=MAX_OPENAI_TIMEOUT_SECONDS,
+        allow_inf_nan=False,
     )
     default_headers: Dict[str, str] | None = Field(
         default=None, description="The default headers for API requests."
@@ -112,6 +182,8 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
 
         self._http_client = http_client
         self._async_http_client = async_http_client
+        if self.timeout == 0 and self._http_client is not None:
+            self._http_client.timeout = httpx.Timeout(None)
 
     @property
     def client(self) -> OpenAI:
@@ -130,10 +202,29 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             "api_key": self.api_key,
             "base_url": self.api_base_url,
             "max_retries": self.max_retries,
-            "timeout": self.timeout,
+            "timeout": None if self.timeout == 0 else self.timeout,
             "default_headers": self.default_headers,
             "http_client": self._http_client,
         }
+
+    @override
+    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+        """Whether OpenAI documents json_schema strict support for ``effective_model``.
+
+        See the module-level allowlist for the source of truth and the rationale for
+        rejecting non-text modality variants, matching capable text families by prefix,
+        and matching the gpt-4o snapshots and the o1 names exactly. A name outside
+        every listed family reports ``False`` so it degrades to the prompt-engineering
+        fallback rather than failing at the provider.
+        """
+        if not effective_model:
+            return False
+        if any(marker in effective_model for marker in _NON_TEXT_MODALITY_MARKERS):
+            return False
+        return (
+            effective_model.startswith(_NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES)
+            or effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
+        )
 
     def chat(
         self,
@@ -151,10 +242,10 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         tools : Optional[List]
             List of tools that can be called by the model
         output_schema : OutputSchema | None
-            Rejected when non-``None``: this connection has no native structured-output
-            translation, so callers stay on the prompt-engineering fallback. Declaring
-            the parameter keeps a caller-supplied schema out of ``**kwargs``, which is
-            forwarded to the provider SDK.
+            The schema the response should conform to, or ``None`` for an unconstrained
+            response. Native structured output is applied only for a ``BaseModel``
+            schema on a model the provider documents as capable; a ``RowTypeInfo``
+            schema or an incapable model keeps the prompt-engineering fallback.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
@@ -164,7 +255,6 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message
         """
-        self._reject_unsupported_output_schema(output_schema)
         tool_specs = None
         if tools is not None:
             tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]
@@ -173,6 +263,19 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
                 if tool_spec["type"] == "function":
                     tool_spec["function"]["strict"] = strict
                     tool_spec["function"]["parameters"]["additionalProperties"] = False
+
+        # TODO(#912): the requested strategy is not visible here, so this check
+        # cannot tell an explicit NATIVE request apart from one that merely
+        # resolved to native. A caller asking for NATIVE on a model this
+        # predicate rejects therefore gets an unconstrained response instead of
+        # an error. Once strategy resolution is wired up, NATIVE must either
+        # bypass this capability check or fail explicitly.
+        if output_schema is not None and self.supports_native_structured_output(
+            kwargs.get("model")
+        ):
+            response_format = _native_response_format(output_schema)
+            if response_format is not None:
+                kwargs["response_format"] = response_format
 
         response = self.client.chat.completions.create(
             messages=convert_to_openai_messages(messages),

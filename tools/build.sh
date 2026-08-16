@@ -17,6 +17,19 @@
 
 set -e
 
+show_help() {
+    cat <<EOF
+Build Flink Agents Java and Python artifacts
+
+Usage: $0 [options]
+
+Options:
+  -j, --java        Build only Java artifacts
+  -p, --python      Build only Python artifacts
+  -h, --help        Display this help message
+EOF
+}
+
 # Parse command-line arguments
 build_java=true
 build_python=true
@@ -27,6 +40,10 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         -j|--java)
             build_python=false
+            ;;
+        -h|--help)
+            show_help
+            exit 0
             ;;
         *)
             echo "Error: Unknown option '$1'" >&2
@@ -101,12 +118,12 @@ if $build_python; then
   # build python
   cd python
   rm -rf dist/  # Clean old build artifacts before building
-  pip install uv==0.11.0
-  uv lock
-  uv sync --extra dev
-  uv run python -m ensurepip --default-pip
-  uv run python -m build
-  uv pip install dist/*.whl
+  python3 -m pip install uv==0.11.0
+  python3 -m uv lock
+  python3 -m uv sync --extra dev
+  python3 -m uv run python -m ensurepip --default-pip
+  python3 -m uv run python -m build
+  python3 -m uv pip install --python .venv dist/*.whl
 
   rm -rf ${PYTHON_LIB_DIR}
 fi

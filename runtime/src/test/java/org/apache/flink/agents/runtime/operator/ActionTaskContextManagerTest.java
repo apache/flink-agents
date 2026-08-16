@@ -26,6 +26,7 @@ import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.api.common.state.MapState;
@@ -135,6 +136,23 @@ class ActionTaskContextManagerTest {
     }
 
     @Test
+    void sameKeyTasksSwitchLtmWithDistinctObservationIds() throws Exception {
+        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+            Action action = TestActions.noopAction();
+            ActionTask suspended = new JavaActionTask("k", new InputEvent(1L), action);
+            ActionTask sibling = new JavaActionTask("k", new InputEvent(1L), action);
+            InteranlBaseLongTermMemory ltm = mock(InteranlBaseLongTermMemory.class);
+
+            invokeCreateAndSetRunnerContext(mgr, suspended, ltm);
+            invokeCreateAndSetRunnerContext(mgr, sibling, ltm);
+
+            assertThat(suspended.getObservationId()).isNotEqualTo(sibling.getObservationId());
+            verify(ltm).switchContext("k", suspended.getObservationId(), false);
+            verify(ltm).switchContext("k", sibling.getObservationId(), false);
+        }
+    }
+
+    @Test
     void transferContextsCopiesMemoryAndContinuationToNewTask() throws Exception {
         try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
             Action action = TestActions.noopAction();
@@ -229,6 +247,14 @@ class ActionTaskContextManagerTest {
     @SuppressWarnings("unchecked")
     private static void invokeCreateAndSetRunnerContext(
             ActionTaskContextManager mgr, ActionTask task) {
+        invokeCreateAndSetRunnerContext(mgr, task, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void invokeCreateAndSetRunnerContext(
+            ActionTaskContextManager mgr,
+            ActionTask task,
+            InteranlBaseLongTermMemory longTermMemory) {
         AgentPlan plan = newEmptyAgentPlan();
         ResourceCache cache = mock(ResourceCache.class);
         FlinkAgentsMetricGroupImpl metricGroup =
@@ -246,7 +272,7 @@ class ActionTaskContextManagerTest {
                 sensoryMem,
                 shortTermMem,
                 /* pythonRunnerContext */ null,
-                /* longTermMemory */ null);
+                longTermMemory);
     }
 
     private static AgentPlan newEmptyAgentPlan() {

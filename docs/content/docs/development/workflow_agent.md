@@ -631,6 +631,13 @@ public static void handleMyEvent(Event event, RunnerContext ctx) {
 
 {{< /tabs >}}
 
+{{< hint info >}}
+`upstreamEventId` and `upstreamActionName` (`upstream_event_id` and
+`upstream_action_name` in Python) are framework-managed lineage metadata. User code should keep
+user data in `attributes`. Values accepted during deserialization or reconstruction are
+overwritten when an Action emits the Event.
+{{< /hint >}}
+
 ### JSON Serialization
 
 Events are serialized as JSON when passed between Python actions or across the Java-Python boundary. This means attribute values of non-trivial types (such as Pydantic models) lose their type information and arrive as plain `dict` objects. Users must manually reconstruct the typed object:
@@ -658,11 +665,8 @@ class MyEvent(Event):
     @override
     def from_event(cls, event: Event) -> "MyEvent":
         assert "value" in event.attributes
-        result = MyEvent(value=event.attributes["value"])
-        # Preserve the base event id. Assign it last: the content-based id is
-        # regenerated whenever another field changes.
-        result.id = event.id
-        return result
+        result = cls(value=event.attributes["value"])
+        return result.reconstruct_from(event)
 
     @property
     def value(self) -> str:
@@ -688,13 +692,7 @@ public class MyEvent extends Event {
     }
 
     public static MyEvent fromEvent(Event event) {
-        // Preserve the base event id (and sourceTimestamp) so event logs, listeners,
-        // correlation, deduplication, and timestamp propagation stay consistent.
-        MyEvent result = new MyEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, MyEvent::new);
     }
 
     public String getValue() {
@@ -706,17 +704,23 @@ public class MyEvent extends Event {
 
 {{< /tabs >}}
 
-{{< hint info >}}
-When reconstructing a typed event, preserve the base `Event` metadata so that event logs,
-listeners, correlation, deduplication, and downstream timestamp propagation stay consistent with
-built-in events:
+{{< hint warning >}}
+Python Event IDs are immutable. Custom `from_event` implementations written against earlier
+versions may assign `result.id = event.id`; that assignment now raises a Pydantic
+`ValidationError`. Replace `result.id = event.id` followed by `return result` with
+`return result.reconstruct_from(event)`.
 
-- **`id`**: copy the source event's `id` onto the reconstructed event, as all built-in events do
-  in both languages. In Python, assign `result.id = event.id` **last**, because the content-based
-  `id` is regenerated whenever any other field changes.
-- **`sourceTimestamp`** (Java only): carry it over with `setSourceTimestamp(...)` when
-  `hasSourceTimestamp()` is true, matching built-in Java events. This field is runtime-internal and
-  used for timestamp propagation; the Python `Event` has no equivalent.
+Typed reconstruction represents the same Event occurrence, so it must preserve the base Event's
+identity and framework-managed metadata:
+
+- **Python**: return `reconstruct_from(event)` after constructing the typed object.
+  It returns a new typed object with the Event's UUIDv4 `id`, `upstream_event_id`, and
+  `upstream_action_name`; the returned Event's `id` remains immutable.
+- **Java**: implement the typed constructor that accepts `(UUID id, Map<String, Object>
+  attributes)`, then have `fromEvent` return
+  `reconstructFrom(event, MyEvent::new)`. The framework supplies the original ID and
+  attributes, validates that the ID is preserved, and carries over `sourceTimestamp`,
+  `upstreamEventId`, and `upstreamActionName`.
 {{< /hint >}}
 
 {{< hint info >}}

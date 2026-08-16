@@ -23,7 +23,6 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.Event;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -59,14 +58,7 @@ public class ContextRetrievalRequestEvent extends Event {
      * @return a typed ContextRetrievalRequestEvent
      */
     public static ContextRetrievalRequestEvent fromEvent(Event event) {
-        ContextRetrievalRequestEvent result =
-                new ContextRetrievalRequestEvent(
-                        event.getId(), new HashMap<>(event.getAttributes()));
-        result.getAttachments().putAll(event.getAttachments());
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, ContextRetrievalRequestEvent::new);
     }
 
     @JsonIgnore

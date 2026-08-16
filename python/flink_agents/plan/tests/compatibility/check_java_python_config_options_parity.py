@@ -32,7 +32,11 @@ from pyflink.java_gateway import get_gateway
 from pyflink.util.java_utils import add_jars_to_context_class_loader
 
 from flink_agents.api.configuration import ConfigOption
-from flink_agents.api.core_options import AgentConfigOptions, AgentExecutionOptions
+from flink_agents.api.core_options import (
+    AgentConfigOptions,
+    AgentExecutionOptions,
+    MemoryEventOptions,
+)
 
 _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
     "java.lang.String": str,
@@ -45,7 +49,9 @@ _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
 }
 
 
-def collect_python_config_options(python_options_class: type) -> dict[str, ConfigOption]:
+def collect_python_config_options(
+    python_options_class: type,
+) -> dict[str, ConfigOption]:
     """Return ``{FIELD_NAME: ConfigOption}`` declared on a Python options class."""
     return {
         name: value
@@ -91,7 +97,9 @@ def normalize_java_default(java_default: Any, python_config_type: type) -> Any:
 
     if hasattr(java_default, "name") and callable(java_default.name):
         enum_name = java_default.name()
-        if isinstance(python_config_type, type) and issubclass(python_config_type, Enum):
+        if isinstance(python_config_type, type) and issubclass(
+            python_config_type, Enum
+        ):
             return python_config_type[enum_name]
         return enum_name
 
@@ -170,12 +178,18 @@ def main() -> None:
     java_agent_execution_options = class_loader.loadClass(
         "org.apache.flink.agents.api.agents.AgentExecutionOptions"
     )
+    java_memory_event_options = class_loader.loadClass(
+        "org.apache.flink.agents.api.configuration.MemoryEventOptions"
+    )
 
     assert_options_class_matches_java(
         AgentConfigOptions, java_agent_config_options, jvm
     )
     assert_options_class_matches_java(
         AgentExecutionOptions, java_agent_execution_options, jvm
+    )
+    assert_options_class_matches_java(
+        MemoryEventOptions, java_memory_event_options, jvm
     )
 
 

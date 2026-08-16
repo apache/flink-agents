@@ -58,8 +58,10 @@ import java.util.Optional;
  * <ul>
  *   <li><b>api_key</b> (required): OpenAI API key
  *   <li><b>api_base_url</b> (optional): Base URL for OpenAI API (useful for proxies)
- *   <li><b>timeout</b> (optional): Timeout in seconds for API requests
- *   <li><b>max_retries</b> (optional): Maximum number of retry attempts (default: 2)
+ *   <li><b>timeout</b> (optional): Timeout in seconds for API requests; must be non-negative
+ *       (default: 60)
+ *   <li><b>max_retries</b> (optional): Maximum number of retry attempts; must be non-negative
+ *       (default: 3)
  *   <li><b>default_headers</b> (optional): Map of default headers to include in all requests
  *   <li><b>model</b> (optional): Default model to use if not specified in setup
  * </ul>
@@ -86,6 +88,8 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
 
     private final OpenAIClient client;
     private final String defaultModel;
+    private final Duration timeout;
+    private final int maxRetries;
 
     public OpenAIResponsesModelConnection(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
@@ -103,15 +107,11 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
             builder.baseUrl(apiBaseUrl);
         }
 
-        Integer timeoutSeconds = descriptor.getArgument("timeout");
-        if (timeoutSeconds != null && timeoutSeconds > 0) {
-            builder.timeout(Duration.ofSeconds(timeoutSeconds));
-        }
+        this.timeout = OpenAIChatCompletionsUtils.parseTimeout(descriptor);
+        builder.timeout(OpenAIChatCompletionsUtils.toSdkTimeout(this.timeout));
 
-        Integer maxRetries = descriptor.getArgument("max_retries");
-        if (maxRetries != null && maxRetries >= 0) {
-            builder.maxRetries(maxRetries);
-        }
+        this.maxRetries = OpenAIChatCompletionsUtils.parseMaxRetries(descriptor);
+        builder.maxRetries(this.maxRetries);
 
         Map<String, String> defaultHeaders = descriptor.getArgument("default_headers");
         if (defaultHeaders != null && !defaultHeaders.isEmpty()) {
@@ -451,6 +451,14 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
             return new LinkedHashMap<>();
         }
         return mapper.convertValue(value, MAP_TYPE);
+    }
+
+    Duration getTimeout() {
+        return timeout;
+    }
+
+    int getMaxRetries() {
+        return maxRetries;
     }
 
     @Override

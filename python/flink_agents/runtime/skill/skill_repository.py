@@ -16,30 +16,10 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
 from flink_agents.runtime.skill.agent_skill import AgentSkill
-
-
-@dataclass
-class SkillRepositoryInfo:
-    """Information about a skill repository.
-
-    Attributes:
-    ----------
-    repo_type : str
-        The type of repository (e.g., "filesystem", "classpath", "url").
-    location : str
-        The location of the repository (e.g., path, URL).
-    writeable : bool
-        Whether the repository supports write operations.
-    """
-
-    repo_type: str
-    location: str
-    writeable: bool
 
 
 class SkillRepository(ABC):
