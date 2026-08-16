@@ -21,7 +21,7 @@ import hashlib
 from typing import TYPE_CHECKING, Any
 
 from flink_agents.api.events.event import OutputEvent
-from flink_agents.api.memory_object import validate_memory_value
+from flink_agents.api.memory_object import MemoryType, validate_memory_value
 from flink_agents.api.memory_reference import MemoryRef
 
 if TYPE_CHECKING:
@@ -64,6 +64,12 @@ def store_event_attachments(event: Event, ctx: RunnerContext) -> None:
     pending: list[tuple[str, str, Any]] = []
     for key, value in event.attachments.items():
         if isinstance(value, MemoryRef):
+            if value.memory_type != MemoryType.SENSORY:
+                msg = (
+                    "Event attachments must use sensory memory references: "
+                    f"{_attachment_context(event, key, value.path)}"
+                )
+                raise EventAttachmentError(msg)
             continue
         path = build_attachment_path(event.id, key)
         try:
@@ -84,7 +90,15 @@ def load_event_attachments(event: Event, ctx: RunnerContext) -> None:
             continue
 
         try:
-            event.attachments[key] = ctx.sensory_memory.get(value)
+            attachment = ctx.sensory_memory.get(value)
         except Exception as exc:
             msg = f"Failed to load event attachment: {_attachment_context(event, key, value.path)}"
             raise EventAttachmentError(msg) from exc
+
+        if attachment is None:
+            msg = (
+                "Event attachment does not exist in sensory memory: "
+                f"{_attachment_context(event, key, value.path)}"
+            )
+            raise EventAttachmentError(msg)
+        event.attachments[key] = attachment

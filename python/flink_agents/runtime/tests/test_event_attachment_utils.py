@@ -75,6 +75,24 @@ def test_store_offloads_non_utf8_bytes_from_regular_event() -> None:
     event.model_dump_json()
 
 
+def test_store_rejects_non_sensory_memory_references() -> None:
+    sensory_memory = LocalMemoryObject(MemoryType.SENSORY, {})
+    ctx = MockRunnerContext(sensory_memory)
+    event = Event(
+        type="AttachmentStep",
+        attachments={
+            "payload": MemoryRef.create(MemoryType.SHORT_TERM, "attachment.path")
+        },
+    )
+
+    with pytest.raises(EventAttachmentError) as exc_info:
+        store_event_attachments(event, ctx)
+
+    assert str(exc_info.value).startswith(
+        "Event attachments must use sensory memory references:"
+    )
+
+
 def test_store_rejects_output_event_attachments_before_storing_them() -> None:
     sensory_memory = LocalMemoryObject(MemoryType.SENSORY, {})
     ctx = MockRunnerContext(sensory_memory)
@@ -110,6 +128,24 @@ def test_load_event_attachments() -> None:
     load_event_attachments(event, ctx)
 
     assert event.get_attachment("payload") == payload
+
+
+def test_load_rejects_missing_event_attachment() -> None:
+    sensory_memory = LocalMemoryObject(MemoryType.SENSORY, {})
+    ctx = MockRunnerContext(sensory_memory)
+    event = Event(
+        type="AttachmentStep",
+        attachments={
+            "payload": MemoryRef.create(MemoryType.SENSORY, "missing.attachment")
+        },
+    )
+
+    with pytest.raises(EventAttachmentError) as exc_info:
+        load_event_attachments(event, ctx)
+
+    assert str(exc_info.value).startswith(
+        "Event attachment does not exist in sensory memory:"
+    )
 
 
 def test_build_attachment_path() -> None:

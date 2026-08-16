@@ -91,6 +91,30 @@ class EventAttachmentUtilsTest {
     }
 
     @Test
+    void rejectsNonSensoryMemoryReferencesWhenStoringAttachments() {
+        Event event =
+                new Event(
+                        UUID.randomUUID(),
+                        "AttachmentStep",
+                        Map.of(),
+                        new HashMap<>(
+                                Map.of(
+                                        "payload",
+                                        MemoryRef.create(
+                                                MemoryObject.MemoryType.SHORT_TERM,
+                                                "attachment.path"))));
+
+        IllegalArgumentException error =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> EventAttachmentUtils.storeEventAttachments(event, context));
+
+        assertTrue(
+                error.getMessage()
+                        .startsWith("Event attachments must use sensory memory references:"));
+    }
+
+    @Test
     void rejectsOutputEventAttachmentsBeforeStoringThem() throws Exception {
         UUID eventId = UUID.randomUUID();
         Map<String, Object> attachments =

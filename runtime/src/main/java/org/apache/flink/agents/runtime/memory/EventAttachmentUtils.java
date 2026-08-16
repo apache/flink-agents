@@ -61,6 +61,18 @@ public final class EventAttachmentUtils {
             String key = entry.getKey();
             Object value = entry.getValue();
             if (value instanceof MemoryRef) {
+                MemoryRef reference = (MemoryRef) value;
+                if (!MemoryObject.MemoryType.SENSORY.equals(reference.getType())) {
+                    throw new IllegalArgumentException(
+                            "Event attachments must use sensory memory references: event_id="
+                                    + event.getId()
+                                    + ", event_type="
+                                    + event.getType()
+                                    + ", key="
+                                    + key
+                                    + ", memory_type="
+                                    + reference.getType());
+                }
                 continue;
             }
 
