@@ -261,6 +261,83 @@ public class KafkaActionStateStoreTest {
                 .isEqualTo(thirdState);
     }
 
+    /**
+     * After recovery, only the keys accepted by the ownership filter should enter the in-memory
+     * cache. Here key "A" is owned and "B" is foreign, so "B" must be skipped while "A" is kept.
+     */
+    @Test
+    void testRebuildStateFiltersForeignKeys() throws Exception {
+        String keyA = "A";
+        String keyB = "B";
+        String stateKeyA = ActionStateUtil.generateKey(keyA, 1L, testAction, testEvent);
+        String stateKeyB = ActionStateUtil.generateKey(keyB, 1L, testAction, testEvent);
+
+        long offset = 0L;
+        mockConsumer.addRecord(
+                new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyA, testActionState));
+        mockConsumer.addRecord(
+                new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyB, testActionState));
+
+        List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
+
+        actionStateStore.setOwnershipFilter(k -> k.equals(keyA));
+        actionStateStore.rebuildState(recoveryMarkers);
+
+        assertThat(actionStates).containsKey(stateKeyA);
+        assertThat(actionStates).doesNotContainKey(stateKeyB);
+        assertThat(actionStateStore.get(keyA, 1L, testAction, testEvent))
+                .isEqualTo(testActionState);
+        assertThat(actionStateStore.get(keyB, 1L, testAction, testEvent)).isNull();
+    }
+
+    /**
+     * When no ownership filter is set, rebuildState retains every key — the original behavior is
+     * preserved (important for the in-memory and test backends).
+     */
+    @Test
+    void testRebuildStateKeepsAllKeysWhenNoFilter() throws Exception {
+        String stateKeyA = ActionStateUtil.generateKey("A", 1L, testAction, testEvent);
+        String stateKeyB = ActionStateUtil.generateKey("B", 1L, testAction, testEvent);
+
+        long offset = 0L;
+        mockConsumer.addRecord(
+                new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyA, testActionState));
+        mockConsumer.addRecord(
+                new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyB, testActionState));
+
+        List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
+
+        actionStateStore.rebuildState(recoveryMarkers);
+
+        assertThat(actionStates).containsKey(stateKeyA);
+        assertThat(actionStates).containsKey(stateKeyB);
+    }
+
+    /**
+     * A record whose composite state key cannot be parsed must still be retained (fail-safe: prefer
+     * keeping a valid key over dropping it on a parse error).
+     */
+    @Test
+    void testRebuildStateKeepsUnparseableKey() throws Exception {
+        String malformedKey = "malformed-key";
+        String stateKeyA = ActionStateUtil.generateKey("A", 1L, testAction, testEvent);
+
+        long offset = 0L;
+        mockConsumer.addRecord(
+                new ConsumerRecord<>(TEST_TOPIC, 0, offset++, malformedKey, testActionState));
+        mockConsumer.addRecord(
+                new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyA, testActionState));
+
+        List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
+
+        actionStateStore.setOwnershipFilter(k -> k.equals("A"));
+        actionStateStore.rebuildState(recoveryMarkers);
+
+        // "A" is accepted, and the unparseable key is retained as a fail-safe.
+        assertThat(actionStates).containsKey(stateKeyA);
+        assertThat(actionStates).containsKey(malformedKey);
+    }
+
     /** Contract: the consumer is closed even when closing the producer throws. */
     @Test
     @SuppressWarnings("unchecked")
