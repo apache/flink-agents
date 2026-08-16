@@ -80,15 +80,15 @@ public class ContinuationActionExecutor {
             int maxParallelism) {
         List<Outcome<T>> outcomes =
                 suppliers.stream()
-                .map(
-                        supplier -> {
-                            try {
-                                return Outcome.success(supplier.call());
-                            } catch (Exception e) {
-                                return Outcome.<T>failure(e);
-                            }
-                        })
-                .collect(Collectors.toList());
+                        .map(
+                                supplier -> {
+                                    try {
+                                        return Outcome.success(supplier.call());
+                                    } catch (Exception e) {
+                                        return Outcome.<T>failure(e);
+                                    }
+                                })
+                        .collect(Collectors.toList());
         boolean[] submitted = new boolean[suppliers.size()];
         Arrays.fill(submitted, true);
         return new BatchExecutionResult<>(outcomes, submitted);

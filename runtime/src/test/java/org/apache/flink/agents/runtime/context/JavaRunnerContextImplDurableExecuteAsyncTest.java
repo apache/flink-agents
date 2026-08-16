@@ -421,8 +421,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
         ((Configuration) context.getConfig())
                 .set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 10L);
-        ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
+        ((Configuration) context.getConfig()).set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
         TestDurableCallable<String> first =
                 new TestDurableCallable<>(
                         "batch-1",
@@ -635,8 +634,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         TimeoutException exception =
-                                new TimeoutException(
-                                        "Async durable batch execution interrupted");
+                                new TimeoutException("Async durable batch execution interrupted");
                         return collectBatchOutcomesOnTimeout(futures, submitted, exception);
                     }
                 }
@@ -659,11 +657,10 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
             return new BatchExecutionResult<>(results, submitted);
         }
 
-        private static <T> BatchExecutionResult<T>
-                collectBatchOutcomesOnTimeout(
-                        List<CompletableFuture<Outcome<T>>> futures,
-                        boolean[] submitted,
-                        TimeoutException timeoutException) {
+        private static <T> BatchExecutionResult<T> collectBatchOutcomesOnTimeout(
+                List<CompletableFuture<Outcome<T>>> futures,
+                boolean[] submitted,
+                TimeoutException timeoutException) {
             List<Outcome<T>> results = new java.util.ArrayList<>(futures.size());
             for (int i = 0; i < futures.size(); i++) {
                 CompletableFuture<Outcome<T>> future = futures.get(i);

@@ -22,8 +22,8 @@ import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.ResourceCache;
-import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
+import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
@@ -233,15 +233,15 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         if (continuationExecutor == null || continuationContext == null) {
             List<Outcome<T>> outcomes =
                     suppliers.stream()
-                    .map(
-                            supplier -> {
-                                try {
-                                    return Outcome.success(supplier.call());
-                                } catch (Exception e) {
-                                    return Outcome.<T>failure(e);
-                                }
-                            })
-                    .collect(Collectors.toList());
+                            .map(
+                                    supplier -> {
+                                        try {
+                                            return Outcome.success(supplier.call());
+                                        } catch (Exception e) {
+                                            return Outcome.<T>failure(e);
+                                        }
+                                    })
+                            .collect(Collectors.toList());
             boolean[] submitted = new boolean[suppliers.size()];
             Arrays.fill(submitted, true);
             return new BatchExecutionResult<>(outcomes, submitted);
