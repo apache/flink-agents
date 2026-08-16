@@ -50,6 +50,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_NUM_PARTITIONS;
@@ -90,6 +91,10 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     // Kafka topic that stores action states
     private final String topic;
+
+    // When set, only business keys accepted by this predicate are kept in the in-memory cache
+    // during rebuildState; null means retain all keys (default).
+    private Predicate<String> ownershipFilter;
 
     @VisibleForTesting
     KafkaActionStateStore(
@@ -201,6 +206,28 @@ public class KafkaActionStateStore implements ActionStateStore {
                 > 1;
     }
 
+    /**
+     * Returns {@code true} if the given composite state key's business key should be retained in
+     * this subtask's in-memory cache. When no ownership filter is set, all keys are retained. If
+     * the key cannot be parsed, it is retained (fail-safe: prefer keeping over dropping a valid
+     * key).
+     */
+    private boolean shouldRetain(String stateKey) {
+        if (ownershipFilter == null) {
+            return true;
+        }
+        try {
+            List<String> parts = ActionStateUtil.parseKey(stateKey);
+            if (parts.isEmpty()) {
+                return true;
+            }
+            return ownershipFilter.test(parts.get(0));
+        } catch (Exception e) {
+            LOG.warn("Failed to parse state key for ownership filtering: {}", stateKey, e);
+            return true;
+        }
+    }
+
     @Override
     public void rebuildState(List<Object> recoveryMarkers) {
         LOG.info("Rebuilding state from {} recovery markers", recoveryMarkers.size());
@@ -255,6 +282,9 @@ public class KafkaActionStateStore implements ActionStateStore {
 
                 for (ConsumerRecord<String, ActionState> record : records) {
                     try {
+                        if (!shouldRetain(record.key())) {
+                            continue;
+                        }
                         actionStates.put(record.key(), record.value());
                     } catch (Exception e) {
                         LOG.warn(

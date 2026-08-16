@@ -206,6 +206,39 @@ public class FlussActionStateStoreIT {
         }
     }
 
+    /**
+     * Reproduces the orphan-state leak fix: after recovery, a subtask must keep only the keys it
+     * owns and drop keys owned by other subtasks. Here "A" is owned and "B" is foreign, so the
+     * rebuilt cache must contain "A" but not "B".
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void testRebuildStateFiltersForeignKeys() throws Exception {
+        // Capture the recovery marker before any writes so the replay window covers the writes
+        // below (simulates a checkpoint taken before the actions were recorded).
+        Object marker = store.getRecoveryMarker();
+
+        store.put("A", 1L, testAction, testEvent, new ActionState(testEvent));
+        store.put("B", 1L, testAction, testEvent, new ActionState(testEvent));
+        store.close();
+
+        // Simulate recovery into a new store instance that owns only key "A".
+        FlussActionStateStore recoveredStore =
+                new FlussActionStateStore(createAgentConfiguration());
+        try {
+            recoveredStore.setOwnershipFilter(k -> k.equals("A"));
+            recoveredStore.rebuildState(List.of(marker));
+
+            // Owned key is recovered; foreign key is filtered out and never enters the cache.
+            assertThat(recoveredStore.get("A", 1L, testAction, testEvent)).isNotNull();
+            assertThat(recoveredStore.get("B", 1L, testAction, testEvent)).isNull();
+        } finally {
+            recoveredStore.close();
+            // Prevent double-close in tearDown
+            store = null;
+        }
+    }
+
     @Test
     void testPruneWorksAfterRecovery() throws Exception {
         // Capture recovery marker BEFORE writing data.

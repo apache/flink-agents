@@ -185,10 +185,20 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      * descriptor is re-created here using the same descriptor name — Flink returns the same
      * underlying state. No-op when durable execution is disabled.
      *
+     * <p>UnionListState broadcasts every subtask's recovery marker to all subtasks, so a naive
+     * replay would load the full key set into every subtask's cache, where the foreign keys are
+     * never pruned and stay resident for the whole attempt (the orphan-state leak). {@code
+     * ownershipFilter} restricts the rebuilt cache to keys owned by the current subtask; it is
+     * installed on the store just before {@link #rebuildState(List)}.
+     *
      * @param operatorStateBackend the operator state backend used to obtain the recovery-marker
      *     union-list state.
+     * @param ownershipFilter predicate accepting only the business keys owned by the current
+     *     subtask; {@code null} retains all keys (e.g. for the in-memory/test backends).
      */
-    void handleRecovery(OperatorStateBackend operatorStateBackend) throws Exception {
+    void handleRecovery(
+            OperatorStateBackend operatorStateBackend, @Nullable Predicate<String> ownershipFilter)
+            throws Exception {
         if (actionStateStore != null) {
             List<Object> markers = new ArrayList<>();
             ListState<Object> markerState =
@@ -200,6 +210,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
                 recoveryMarkers.forEach(markers::add);
             }
             LOG.info("Rebuilding action state from {} recovery markers", markers.size());
+            actionStateStore.setOwnershipFilter(ownershipFilter);
             actionStateStore.rebuildState(markers);
         }
     }

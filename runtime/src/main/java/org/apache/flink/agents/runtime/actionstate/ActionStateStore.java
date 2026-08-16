@@ -22,6 +22,7 @@ import org.apache.flink.agents.plan.actions.Action;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.function.Predicate;
 
 /** Interface for storing and retrieving the state of actions performed by agents. */
 public interface ActionStateStore extends AutoCloseable {
@@ -81,6 +82,26 @@ public interface ActionStateStore extends AutoCloseable {
      * @param seqNum the sequence number up to which the state should be pruned
      */
     void pruneState(Object key, long seqNum);
+
+    /**
+     * Installs a predicate that decides which business keys are retained in this store's in-memory
+     * cache during {@link #rebuildState(List)}.
+     *
+     * <p>Used after recovery so that {@code rebuildState} can skip action-state records owned by
+     * other subtasks. UnionListState broadcasts every subtask's recovery marker to all subtasks, so
+     * a naive replay loads the full key set into every subtask's cache; those foreign keys are then
+     * never pruned and stay resident for the whole attempt (the orphan-state leak). Passing a
+     * predicate that accepts only the current subtask's keys prevents foreign keys from ever
+     * entering the cache.
+     *
+     * <p>{@code null} means "retain all keys" — the default, which is safe for the in-memory and
+     * test backends where replay loads nothing extra. Implementations that do not rebuild from a
+     * shared backend can ignore this.
+     *
+     * @param ownershipFilter predicate over the business key (the first segment of the composite
+     *     state key); {@code null} retains everything.
+     */
+    default void setOwnershipFilter(Predicate<String> ownershipFilter) {}
 
     /**
      * Get a marker object representing the current recovery point in the state store.

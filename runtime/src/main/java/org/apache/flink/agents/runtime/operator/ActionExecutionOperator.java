@@ -73,6 +73,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -621,9 +622,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         super.initializeState(context);
 
         durableExecManager.maybeInitActionStateStore(agentPlan.getConfig());
-        durableExecManager.handleRecovery(getOperatorStateBackend());
 
         stateManager = new OperatorStateManager();
+
+        // Drop action-state records owned by other subtasks during rebuild. UnionListState
+        // broadcasts every subtask's recovery marker, so a naive replay would load all keys into
+        // every subtask's cache, where the foreign ones are never pruned (orphan-state leak).
+        int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
+        KeyGroupRange currentSubtaskKeyGroupRange =
+                stateManager.getCurrentSubtaskKeyGroupRange(maxParallelism, getRuntimeContext());
+        Predicate<String> ownershipFilter =
+                key ->
+                        stateManager.isKeyOwnedByCurrentSubtask(
+                                key, maxParallelism, currentSubtaskKeyGroupRange);
+
+        durableExecManager.handleRecovery(getOperatorStateBackend(), ownershipFilter);
 
         // Resolve the agent's stable job identifier:
         //  - If the user set it via AgentConfigOptions.JOB_IDENTIFIER, use that.
