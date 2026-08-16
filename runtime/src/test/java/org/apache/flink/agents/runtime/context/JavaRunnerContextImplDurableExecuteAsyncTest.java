@@ -403,7 +403,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals("fast", outcomes.get(0).getValue());
         assertTrue(outcomes.get(1).isFailure());
         assertInstanceOf(TimeoutException.class, outcomes.get(1).getError());
-        assertEquals(Duration.ofMillis(10), executor.getLastExecuteAllAsyncTimeout());
+        assertEquals(Duration.ofMillis(100), executor.getLastExecuteAllAsyncTimeout());
         assertEquals(1, first.getCallCount());
         assertEquals(1, second.getCallCount());
         List<CallResult> persisted =
