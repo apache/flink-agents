@@ -559,13 +559,13 @@ public class ChatModelActionRoutingTest {
                                 "function",
                                 "function",
                                 Map.of("name", "lookup", "arguments", Map.of())));
+        ChatMessage intermediate = ChatMessage.assistant("", toolCall);
         FakeRunnerContext ctx =
                 new FakeRunnerContext(router)
                         .register(
                                 "big",
                                 new FakeChatModel(
-                                        ChatMessage.assistant("", toolCall),
-                                        ChatMessage.assistant("final answer")));
+                                        intermediate, ChatMessage.assistant("final answer")));
 
         // initial routed request -> big -> tool call
         ChatModelAction.processChatRequestOrToolResponse(
@@ -598,6 +598,69 @@ public class ChatModelActionRoutingTest {
         assertThat(routing.get("router")).isEqualTo("router");
         assertThat(routing.get("final_model")).isEqualTo("big");
         assertThat(routing.get("decision_source")).isEqualTo(ModelRoutingEvent.SOURCE_STRATEGY);
+
+        // the intermediate tool-call message (which lives in the conversation history for the
+        // whole loop) is NOT stamped with observability metadata
+        assertThat(intermediate.getExtraArgs()).doesNotContainKey("model_routing");
+
+        // the parked metadata context was created for the loop and consumed by the final
+        // response (no leak) — asserted strictly so this fails if the context is never used
+        assertThat(ctx.getSensoryMemory().isExist("_ROUTING_METADATA_CONTEXT")).isTrue();
+        Map<?, ?> parked =
+                (Map<?, ?>) ctx.getSensoryMemory().get("_ROUTING_METADATA_CONTEXT").getValue();
+        assertThat(parked).isEmpty();
+    }
+
+    @Test
+    void routedLoopCleansParkedMetadataWhenToolRoundFailsUnderIgnore() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        List<Map<String, Object>> toolCall =
+                List.of(
+                        Map.of(
+                                "id",
+                                "call-1",
+                                "type",
+                                "function",
+                                "function",
+                                Map.of("name", "lookup", "arguments", Map.of())));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .withErrorHandling(Agent.ErrorHandlingStrategy.IGNORE)
+                        .register(
+                                "big",
+                                new FakeChatModel(
+                                        ChatMessage.assistant("", toolCall),
+                                        new RuntimeException("tool round exploded")));
+
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(ChatMessage.user("write sql"))), ctx);
+        ToolRequestEvent toolRequest = ctx.toolRequestEvent();
+        assertThat(toolRequest).isNotNull();
+        // the routed round parked its metadata for the loop
+        Map<?, ?> parkedMidLoop =
+                (Map<?, ?>) ctx.getSensoryMemory().get("_ROUTING_METADATA_CONTEXT").getValue();
+        assertThat(parkedMidLoop).hasSize(1);
+
+        // the tool round's chat call fails and IGNORE drops the request...
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        toolRequest.getId(),
+                        Map.of("call-1", ToolResponse.success("42")),
+                        Map.of("call-1", true),
+                        Map.of()),
+                ctx);
+        assertThat(ctx.chatResponse()).isNull();
+
+        // ...and the abandoned loop's parked metadata was cleaned up, not leaked
+        Map<?, ?> parkedAfter =
+                (Map<?, ?>) ctx.getSensoryMemory().get("_ROUTING_METADATA_CONTEXT").getValue();
+        assertThat(parkedAfter).isEmpty();
     }
 
     static class FakeMemoryObject implements MemoryObject {

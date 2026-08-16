@@ -77,9 +77,9 @@ import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
  *       see {@code AgentConfigOptions#ACTION_STATE_STORE_BACKEND}); without one — the default — the
  *       decision and the chat call re-execute together on recovery, which is self-consistent but
  *       re-derives the decision.
- *   <li><b>Once per reasoning loop</b> — the selected concrete model and its routing metadata are
- *       saved in the tool-request context; tool rounds re-enter {@code chat} via {@code
- *       RoutingSelection.carried} with no re-routing.
+ *   <li><b>Once per reasoning loop</b> — the selected concrete model is saved in the tool-request
+ *       context and reused by tool rounds with no re-routing; the routing metadata block is parked
+ *       once in an initial-request-keyed context and attached only to the loop's final response.
  *   <li><b>Fallback over retries</b> — {@code candidateAttemptOrder} tries the selected model first
  *       (with its full retry budget, durable id {@code "chat:<router>:<candidate>"}), then
  *       remaining candidates in declaration order if fallback is enabled.
@@ -99,7 +99,7 @@ public class ChatModelAction {
     private static final String TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT";
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
     private static final String MODEL = "model";
-    private static final String ROUTING = "routing";
+    private static final String ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT";
     private static final String OUTPUT_SCHEMA = "outputSchema";
     private static final String PROMPT_ARGS = "prompt_args";
     private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
@@ -119,12 +119,6 @@ public class ChatModelAction {
         @Nullable private final Double score;
         private final Map<String, Object> metadata;
 
-        /**
-         * Routing metadata inherited from the initial routed request, stamped unchanged onto
-         * responses produced by tool-call rounds (which reuse the already-selected model).
-         */
-        @Nullable private final Map<String, Object> carriedRouting;
-
         private RoutingSelection(
                 String requestedModel,
                 String selectedModel,
@@ -134,8 +128,7 @@ public class ChatModelAction {
                 String decisionSource,
                 @Nullable String reason,
                 @Nullable Double score,
-                @Nullable Map<String, Object> metadata,
-                @Nullable Map<String, Object> carriedRouting) {
+                @Nullable Map<String, Object> metadata) {
             this.requestedModel = requestedModel;
             this.selectedModel = selectedModel;
             this.candidates = Collections.unmodifiableList(new ArrayList<>(candidates));
@@ -148,7 +141,6 @@ public class ChatModelAction {
                     metadata == null
                             ? Collections.emptyMap()
                             : Collections.unmodifiableMap(new HashMap<>(metadata));
-            this.carriedRouting = carriedRouting;
         }
 
         private static RoutingSelection direct(String model) {
@@ -161,22 +153,7 @@ public class ChatModelAction {
                     "direct",
                     null,
                     null,
-                    null,
                     null);
-        }
-
-        private static RoutingSelection carried(String model, Map<String, Object> routing) {
-            return new RoutingSelection(
-                    model,
-                    model,
-                    Collections.singletonList(model),
-                    false,
-                    false,
-                    "carried",
-                    null,
-                    null,
-                    null,
-                    routing);
         }
     }
 
@@ -266,8 +243,7 @@ public class ChatModelAction {
             UUID initialRequestId,
             String model,
             Map<String, Object> promptArgs,
-            Object outputSchema,
-            @Nullable Object routingMetadata)
+            Object outputSchema)
             throws Exception {
         Map<UUID, Object> toolRequestEventContext;
         if (sensoryMem.isExist(TOOL_REQUEST_EVENT_CONTEXT)) {
@@ -282,9 +258,6 @@ public class ChatModelAction {
         context.put(PROMPT_ARGS, promptArgs != null ? promptArgs : Collections.emptyMap());
         if (outputSchema != null) {
             context.put(OUTPUT_SCHEMA, outputSchema);
-        }
-        if (routingMetadata != null) {
-            context.put(ROUTING, routingMetadata);
         }
         toolRequestEventContext.put(toolRequestEventId, context);
         sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
@@ -392,8 +365,7 @@ public class ChatModelAction {
                 initialRequestId,
                 model,
                 promptArgs,
-                outputSchema,
-                response.getExtraArgs().get("model_routing"));
+                outputSchema);
 
         ctx.sendEvent(toolRequestEvent);
     }
@@ -544,7 +516,6 @@ public class ChatModelAction {
                         result.retryCount,
                         result.totalRetryWaitSec);
                 if (selection.isRouter) {
-                    attachRoutingMetadata(result.response, selection, result.model, triedModels);
                     if (!result.model.equals(selection.selectedModel)) {
                         // The strategy's pick failed and another candidate answered; record the
                         // outcome in the event log, not just on the response.
@@ -563,13 +534,21 @@ public class ChatModelAction {
                                         selection.metadata,
                                         null));
                     }
-                } else if (selection.carriedRouting != null) {
-                    result.response
-                            .getExtraArgs()
-                            .put("model_routing", new LinkedHashMap<>(selection.carriedRouting));
                 }
 
+                // Routing metadata is observability-only and needed exactly once, on the final
+                // response. If this response starts (or continues) a tool loop, park the block
+                // in an initial-request-keyed context instead of stamping intermediate messages
+                // and copying it through every tool round.
+                Map<String, Object> routingMetadata =
+                        selection.isRouter
+                                ? buildRoutingMetadata(selection, result.model, triedModels)
+                                : null;
                 if (!Objects.requireNonNull(result.response).getToolCalls().isEmpty()) {
+                    if (routingMetadata != null) {
+                        saveRoutingMetadata(
+                                ctx.getSensoryMemory(), initialRequestId, routingMetadata);
+                    }
                     handleToolCalls(
                             result.response,
                             initialRequestId,
@@ -580,6 +559,13 @@ public class ChatModelAction {
                             outputSchema,
                             ctx);
                 } else {
+                    if (routingMetadata == null) {
+                        routingMetadata =
+                                takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
+                    }
+                    if (routingMetadata != null) {
+                        result.response.getExtraArgs().put("model_routing", routingMetadata);
+                    }
                     Map<String, Long> retryStats =
                             getRetryStats(ctx.getSensoryMemory(), initialRequestId);
                     int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
@@ -619,6 +605,9 @@ public class ChatModelAction {
                     selection.requestedModel,
                     lastError == null ? null : lastError.toString());
         }
+        // The reasoning loop is over; a routed loop that dies mid-way must not leak its
+        // parked metadata (matters under IGNORE, where the job keeps running).
+        takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
         if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
             LOG.warn(
                     "Chat request {} failed with error: {}, ignored.", initialRequestId, lastError);
@@ -779,11 +768,8 @@ public class ChatModelAction {
         return "chat:" + selection.requestedModel + ":" + candidate;
     }
 
-    private static void attachRoutingMetadata(
-            ChatMessage response,
-            RoutingSelection selection,
-            String finalModel,
-            List<String> triedModels) {
+    private static Map<String, Object> buildRoutingMetadata(
+            RoutingSelection selection, String finalModel, List<String> triedModels) {
         boolean fallbackAttempted = !finalModel.equals(selection.selectedModel);
         List<String> fallbackModelsTried = new ArrayList<>();
         for (int i = 1; i < triedModels.size(); i++) {
@@ -808,7 +794,42 @@ public class ChatModelAction {
         if (selection.score != null) {
             routing.put("score", selection.score);
         }
-        response.getExtraArgs().put("model_routing", routing);
+        return routing;
+    }
+
+    /**
+     * Parks the routed request's {@code model_routing} block for the lifetime of its reasoning
+     * loop, keyed by the initial request id. Stored once when the loop starts; taken (removed) once
+     * when the final response is produced or the loop is abandoned.
+     */
+    @SuppressWarnings("unchecked")
+    private static void saveRoutingMetadata(
+            MemoryObject sensoryMem, UUID initialRequestId, Map<String, Object> routing)
+            throws Exception {
+        Map<UUID, Object> context;
+        if (sensoryMem.isExist(ROUTING_METADATA_CONTEXT)) {
+            context = (Map<UUID, Object>) sensoryMem.get(ROUTING_METADATA_CONTEXT).getValue();
+        } else {
+            context = new HashMap<>();
+        }
+        context.put(initialRequestId, routing);
+        sensoryMem.set(ROUTING_METADATA_CONTEXT, context);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Nullable
+    private static Map<String, Object> takeRoutingMetadata(
+            MemoryObject sensoryMem, UUID initialRequestId) throws Exception {
+        if (!sensoryMem.isExist(ROUTING_METADATA_CONTEXT)) {
+            return null;
+        }
+        Map<UUID, Object> context =
+                (Map<UUID, Object>) sensoryMem.get(ROUTING_METADATA_CONTEXT).getValue();
+        Map<String, Object> routing = (Map<String, Object>) context.remove(initialRequestId);
+        if (routing != null) {
+            sensoryMem.set(ROUTING_METADATA_CONTEXT, context);
+        }
+        return routing;
     }
 
     private static ChatMessage generateStructuredOutputWithReport(
@@ -962,8 +983,7 @@ public class ChatModelAction {
                 decisionSource,
                 decision.getReason(),
                 decision.getScore(),
-                decision.getMetadata(),
-                null);
+                decision.getMetadata());
     }
 
     @SuppressWarnings("unchecked")
@@ -1011,14 +1031,16 @@ public class ChatModelAction {
                         Collections.emptyList(),
                         toolResponseMessages);
 
-        // Tool rounds reuse the already-selected concrete model (no re-routing); if the initial
-        // request was routed, carry its routing metadata onto the eventual final response.
-        Map<String, Object> routingMetadata = (Map<String, Object>) context.get(ROUTING);
-        RoutingSelection selection =
-                routingMetadata == null
-                        ? RoutingSelection.direct(model)
-                        : RoutingSelection.carried(model, routingMetadata);
-        chat(initialRequestId, selection, messages, promptArgs, outputSchema, ctx);
+        // Tool rounds reuse the already-selected concrete model (no re-routing). If the initial
+        // request was routed, its metadata block waits in ROUTING_METADATA_CONTEXT and is
+        // attached when this loop produces its final response.
+        chat(
+                initialRequestId,
+                RoutingSelection.direct(model),
+                messages,
+                promptArgs,
+                outputSchema,
+                ctx);
     }
 
     /**
