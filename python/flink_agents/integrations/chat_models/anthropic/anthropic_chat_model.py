@@ -120,10 +120,12 @@ def convert_to_anthropic_system_prompts(
 # name is itself the snapshot and is matched exactly.
 #
 # The three 4.5-generation names are aliases that front a dated snapshot, so a request
-# may carry either the alias or the snapshot behind it and both have to match. Those are
-# matched by prefix instead, and the prefix has to retain the minor version:
-# "claude-opus-4" would also capture claude-opus-4-1-20250805, which predates the cutoff
-# and is not capable.
+# may carry either the alias or the snapshot behind it and both have to match. Those
+# match the alias itself or a name continuing with a "-" separator, which covers
+# claude-sonnet-4-5-20250929. A name that extends the alias without that separator is
+# a different minor version and is capable only if the exact set names it. The alias
+# also has to retain the minor version: "claude-opus-4" would capture
+# claude-opus-4-1-20250805, which predates the cutoff and is not capable.
 #
 # A name outside both sets reports not-capable and degrades to the prompt-engineering
 # fallback rather than failing at the provider.
@@ -274,18 +276,19 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
     def supports_native_structured_output(self, effective_model: str | None) -> bool:
         """Whether Anthropic documents structured output for ``effective_model``.
 
-        See the module-level allowlists for the source of truth and for why the
-        4.5-generation aliases are matched by prefix while every other name is matched
-        exactly. A name outside both reports ``False`` so it degrades to the
-        prompt-engineering fallback rather than failing at the provider.
+        See the module-level allowlists for the source of truth and for why a
+        4.5-generation alias also matches the dated snapshot behind it while every other
+        name is matched exactly. A name outside both reports ``False`` so it degrades to
+        the prompt-engineering fallback rather than failing at the provider.
 
         Reads no instance state, so capability stays answerable independently of how
         the connection was configured.
         """
         if not effective_model:
             return False
-        return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS or (
-            effective_model.startswith(_NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES)
+        return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS or any(
+            effective_model == prefix or effective_model.startswith(prefix + "-")
+            for prefix in _NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES
         )
 
     def chat(

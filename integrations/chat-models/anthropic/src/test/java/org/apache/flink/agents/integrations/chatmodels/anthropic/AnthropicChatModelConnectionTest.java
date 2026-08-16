@@ -360,6 +360,15 @@ class AnthropicChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName("an alias prefix does not match a longer minor version")
+    void testAliasPrefixDoesNotMatchLongerMinorVersion() {
+        // A dated snapshot continues the alias with a "-" separator. A name that extends the
+        // alias without one is a different minor version, whose capability is not the alias's to
+        // answer for.
+        assertThat(connection().supportsNativeStructuredOutput("claude-sonnet-4-50")).isFalse();
+    }
+
+    @Test
     @DisplayName("capability does not depend on the connection's configured model")
     void testCapabilityReadsNoInstanceState() {
         AnthropicChatModelConnection configuredCapable =

@@ -294,6 +294,14 @@ def test_alias_prefix_matches_dated_snapshot() -> None:
     assert predicate("claude-sonnet-4-5-20250929") is True
 
 
+def test_alias_prefix_does_not_match_longer_minor_version() -> None:
+    # A dated snapshot continues the alias with a "-" separator. A name that extends
+    # the alias without one is a different minor version, whose capability is not the
+    # alias's to answer for.
+    predicate = _connection().supports_native_structured_output
+    assert predicate("claude-sonnet-4-50") is False
+
+
 def test_capability_reads_no_instance_state() -> None:
     # __new__ skips __init__, so no field is set and no client exists. A predicate
     # reading instance state would raise here instead of answering for its argument.

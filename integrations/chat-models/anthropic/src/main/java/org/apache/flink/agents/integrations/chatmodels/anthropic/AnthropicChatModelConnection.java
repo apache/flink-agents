@@ -126,9 +126,12 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     // snapshot and is matched exactly.
     //
     // The three 4.5-generation names are aliases that front a dated snapshot, so a request may
-    // carry either the alias or the snapshot behind it and both have to match. Those are matched
-    // by prefix instead, and the prefix has to retain the minor version: "claude-opus-4" would
-    // also capture claude-opus-4-1-20250805, which predates the cutoff and is not capable.
+    // carry either the alias or the snapshot behind it and both have to match. Those match the
+    // alias itself or a name continuing with a "-" separator, which covers
+    // claude-sonnet-4-5-20250929. A name that extends the alias without that separator is a
+    // different minor version and is capable only if the exact set names it. The alias also has
+    // to retain the minor version: "claude-opus-4" would capture claude-opus-4-1-20250805, which
+    // predates the cutoff and is not capable.
     //
     // A name outside both sets reports not-capable and degrades to the prompt-engineering
     // fallback rather than failing at the provider.
@@ -150,10 +153,10 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     /**
      * Whether Anthropic documents native structured-output support for {@code effectiveModel}.
      *
-     * <p>See the allowlists above for the source of truth and for why the 4.5-generation aliases
-     * are matched by prefix while every other name is matched exactly. An unrecognized name reports
-     * {@code false} so that it degrades to the prompt-engineering fallback rather than failing at
-     * the provider.
+     * <p>See the allowlists above for the source of truth and for why a 4.5-generation alias also
+     * matches the dated snapshot behind it while every other name is matched exactly. An
+     * unrecognized name reports {@code false} so that it degrades to the prompt-engineering
+     * fallback rather than failing at the provider.
      *
      * <p>Reads no instance state, so capability stays answerable independently of how the
      * connection was configured.
@@ -167,7 +170,10 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         }
         return NATIVE_STRUCTURED_OUTPUT_MODELS.contains(effectiveModel)
                 || NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES.stream()
-                        .anyMatch(effectiveModel::startsWith);
+                        .anyMatch(
+                                prefix ->
+                                        effectiveModel.equals(prefix)
+                                                || effectiveModel.startsWith(prefix + "-"));
     }
 
     // Models Anthropic documents as rejecting assistant-message prefilling. Source of truth:
