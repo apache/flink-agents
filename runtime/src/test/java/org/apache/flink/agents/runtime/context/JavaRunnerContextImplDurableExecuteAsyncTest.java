@@ -41,6 +41,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -540,6 +542,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         private int executeAsyncCallCount;
         private int executeAllAsyncCallCount;
         private final List<Integer> executeAllAsyncBatchSizes = new java.util.ArrayList<>();
+        private final ExecutorService batchExecutor = Executors.newFixedThreadPool(4);
 
         private InspectingContinuationActionExecutor() {
             super(1);
@@ -617,7 +620,8 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                                         } catch (Exception e) {
                                             return Outcome.<T>failure(e);
                                         }
-                                    }));
+                                    },
+                                    batchExecutor));
                 }
 
                 for (int i = 0; i < nextToSubmit; i++) {
@@ -718,6 +722,12 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         private int getLastExecuteAllAsyncMaxParallelism() {
             return lastExecuteAllAsyncMaxParallelism;
+        }
+
+        @Override
+        public void close() {
+            batchExecutor.shutdownNow();
+            super.close();
         }
     }
 
