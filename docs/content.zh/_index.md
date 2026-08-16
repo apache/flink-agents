@@ -41,7 +41,7 @@ under the License.
 
 ### Community Sync
 
-我们每周会举行一次在线同步会议，欢迎所有人参与。请查看此 [GitHub 讨论页面](https://github.com/apache/flink-agents/discussions/66) 获取下次会议的时间表、议程以及往期会议记录。
+我们每周会举行一次在线同步会议，欢迎所有人参与。请查看此 [GitHub 讨论页面](https://github.com/apache/flink-agents/discussions/419) 获取下次会议的时间表、议程以及往期会议记录。
 
 {{< /columns >}}
 
