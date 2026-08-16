@@ -386,7 +386,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         executor.setUseTimeoutCollection(true);
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
         ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 10L);
+                .set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 100L);
         TestDurableCallable<String> first =
                 new TestDurableCallable<>("batch-1", String.class, () -> "fast");
         TestDurableCallable<String> second =
@@ -394,7 +394,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         "batch-2",
                         String.class,
                         () -> {
-                            Thread.sleep(100);
+                            Thread.sleep(200);
                             return "slow";
                         });
 
@@ -420,14 +420,14 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         executor.setUseTimeoutCollection(true);
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
         ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 10L);
+                .set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 100L);
         ((Configuration) context.getConfig()).set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
         TestDurableCallable<String> first =
                 new TestDurableCallable<>(
                         "batch-1",
                         String.class,
                         () -> {
-                            Thread.sleep(50);
+                            Thread.sleep(200);
                             return "one";
                         });
         TestDurableCallable<String> second =
@@ -435,7 +435,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         "batch-2",
                         String.class,
                         () -> {
-                            Thread.sleep(50);
+                            Thread.sleep(200);
                             return "two";
                         });
         TestDurableCallable<String> third =
