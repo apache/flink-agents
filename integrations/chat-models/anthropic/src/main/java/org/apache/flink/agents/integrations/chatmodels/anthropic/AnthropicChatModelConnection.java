@@ -177,7 +177,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     }
 
     // Models Anthropic documents as rejecting assistant-message prefilling. Source of truth:
-    // https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prefill-claudes-response
+    // https://platform.claude.com/docs/en/build-with-claude/working-with-messages#putting-words-in-claudes-mouth
     //
     // Prefilling is not supported from the Claude 4.6 generation onward, nor on Claude Mythos
     // Preview, Claude Fable 5 or Claude Mythos 5; a request that prefills one of them is answered
