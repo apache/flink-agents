@@ -82,10 +82,9 @@ public class AgentExecutionOptions {
      * that is still running. {@code cancel(true)} cannot interrupt an in-flight {@code
      * CompletableFuture}, so a hung tool keeps its worker thread in the shared {@link
      * #NUM_ASYNC_THREADS} pool until it returns on its own. That thread is not reclaimed by the
-     * timeout and stays unavailable to other keys on the same subtask, so a tool that never
-     * returns permanently reduces pool capacity. Bound blocking work inside the tool itself (for
-     * example an HTTP client read timeout) rather than relying on this batch timeout to free the
-     * thread.
+     * timeout and stays unavailable to other keys on the same subtask, so a tool that never returns
+     * permanently reduces pool capacity. Bound blocking work inside the tool itself (for example an
+     * HTTP client read timeout) rather than relying on this batch timeout to free the thread.
      */
     public static final ConfigOption<Long> TOOL_CALL_BATCH_TIMEOUT_MS =
             new ConfigOption<>("tool-call.batch.timeout.ms", Long.class, -1L);
