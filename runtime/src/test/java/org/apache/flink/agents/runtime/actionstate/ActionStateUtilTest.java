@@ -230,7 +230,8 @@ public class ActionStateUtilTest {
 
     @Test
     public void testIsKeyRetainedKeepsUnparseableKey() {
-        // A key that cannot be parsed is retained as a fail-safe even when a filter would reject it.
+        // A key that cannot be parsed is retained as a fail-safe even when a filter would reject
+        // it.
         assertTrue(ActionStateUtil.isKeyRetained(k -> k.equals("A"), "malformed-key"));
     }
 }
