@@ -22,6 +22,7 @@ import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -32,11 +33,13 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Unit tests for {@link OpenAICompletionsConnection}'s native structured-output behavior. These
@@ -70,6 +73,30 @@ class OpenAICompletionsConnectionTest {
 
     private static List<ChatMessage> userMessage() {
         return List.of(new ChatMessage(MessageRole.USER, "hi"));
+    }
+
+    @Test
+    void testConnectionArgumentValidation() {
+        ResourceDescriptor missingKey =
+                ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
+                        .build();
+        assertThatThrownBy(() -> new OpenAICompletionsConnection(missingKey, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("api_key");
+
+        OpenAICompletionsConnection connection =
+                new OpenAICompletionsConnection(
+                        ResourceDescriptor.Builder.newBuilder(
+                                        OpenAICompletionsConnection.class.getName())
+                                .addInitialArgument("api_key", "test-key")
+                                .addInitialArgument("timeout", 0)
+                                .addInitialArgument("max_retries", 0)
+                                .build(),
+                        NOOP);
+        assertThat(connection).isInstanceOf(BaseChatModelConnection.class);
+        assertThat(connection.getTimeout()).isEqualTo(Duration.ZERO);
+        assertThat(connection.getMaxRetries()).isZero();
+        OpenAIClientTestUtils.assertNoTimeoutConfigured(connection);
     }
 
     @Test

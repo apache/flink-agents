@@ -533,6 +533,7 @@ Common chat-model aliases:
 | `azure`              | —                           | Azure AI (Java)             |
 | `bedrock`            | —                           | Bedrock (Java)              |
 | `tongyi`             | Tongyi (Python)             | —                           |
+| `vllm`               | vLLM (Python)               | vLLM (Java)                 |
 
 Embedding-model aliases (apply to both `embedding_model_connections` and `embedding_model_setups`):
 

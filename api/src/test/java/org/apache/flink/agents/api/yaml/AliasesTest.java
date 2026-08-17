@@ -90,6 +90,20 @@ class AliasesTest {
     }
 
     @Test
+    void clazzAliasCoversChatModelVLLMInBothLanguages() {
+        String javaConn =
+                Aliases.resolveClazz("vllm", ResourceType.CHAT_MODEL_CONNECTION, Language.JAVA);
+        assertThat(javaConn).isEqualTo(ResourceName.ChatModel.VLLM_CONNECTION);
+        String javaSetup = Aliases.resolveClazz("vllm", ResourceType.CHAT_MODEL, Language.JAVA);
+        assertThat(javaSetup).isEqualTo(ResourceName.ChatModel.VLLM_SETUP);
+        String pythonConn =
+                Aliases.resolveClazz("vllm", ResourceType.CHAT_MODEL_CONNECTION, Language.PYTHON);
+        assertThat(pythonConn).isEqualTo(ResourceName.ChatModel.Python.VLLM_CONNECTION);
+        String pythonSetup = Aliases.resolveClazz("vllm", ResourceType.CHAT_MODEL, Language.PYTHON);
+        assertThat(pythonSetup).isEqualTo(ResourceName.ChatModel.Python.VLLM_SETUP);
+    }
+
+    @Test
     void clazzAliasMissPassesThrough() {
         String fqn =
                 Aliases.resolveClazz(

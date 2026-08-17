@@ -43,6 +43,8 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
 )
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+MAX_OPENAI_TIMEOUT_SECONDS = 2_147_483.647
+MAX_OPENAI_RETRIES = 2_147_483_647
 
 # Models with documented json_schema strict Structured Outputs support. Source of
 # truth: https://platform.openai.com/docs/guides/structured-outputs
@@ -129,11 +131,14 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         default=3,
         description="The maximum number of API retries.",
         ge=0,
+        le=MAX_OPENAI_RETRIES,
     )
     timeout: float = Field(
         default=60.0,
-        description="The timeout, in seconds, for API requests.",
+        description="The timeout, in seconds, for API requests. Set to 0 to disable timeouts.",
         ge=0,
+        le=MAX_OPENAI_TIMEOUT_SECONDS,
+        allow_inf_nan=False,
     )
     default_headers: Dict[str, str] | None = Field(
         default=None, description="The default headers for API requests."
@@ -177,6 +182,8 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
 
         self._http_client = http_client
         self._async_http_client = async_http_client
+        if self.timeout == 0 and self._http_client is not None:
+            self._http_client.timeout = httpx.Timeout(None)
 
     @property
     def client(self) -> OpenAI:
@@ -195,7 +202,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             "api_key": self.api_key,
             "base_url": self.api_base_url,
             "max_retries": self.max_retries,
-            "timeout": self.timeout,
+            "timeout": None if self.timeout == 0 else self.timeout,
             "default_headers": self.default_headers,
             "http_client": self._http_client,
         }

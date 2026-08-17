@@ -20,12 +20,16 @@ package org.apache.flink.agents.integrations.chatmodels.openai;
 
 import com.openai.models.chat.completions.ChatCompletionMessage;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Unit tests for how {@link OpenAIChatCompletionsUtils} carries a provider refusal from a Chat
@@ -59,5 +63,30 @@ class OpenAIChatCompletionsUtilsTest {
         ChatMessage result = OpenAIChatCompletionsUtils.convertFromOpenAIMessage(message);
 
         assertThat(result.getExtraArgs()).doesNotContainKey("refusal");
+    }
+
+    @Test
+    void testMaxRetriesRejectsFractionalBigDecimal() {
+        assertThatThrownBy(
+                        () ->
+                                OpenAIChatCompletionsUtils.parseMaxRetries(
+                                        descriptor(
+                                                "max_retries",
+                                                new BigDecimal("2.0000000000000000000000001"))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void testPositiveTimeoutBelowMillisecondRoundsUpToSdkPrecision() {
+        assertThat(
+                        OpenAIChatCompletionsUtils.parseTimeout(
+                                descriptor("timeout", new BigDecimal("0.0000000001"))))
+                .isEqualTo(Duration.ofMillis(1));
+    }
+
+    private static ResourceDescriptor descriptor(String argumentName, Number value) {
+        return ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
+                .addInitialArgument(argumentName, value)
+                .build();
     }
 }

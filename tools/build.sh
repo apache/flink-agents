@@ -17,6 +17,19 @@
 
 set -e
 
+show_help() {
+    cat <<EOF
+Build Flink Agents Java and Python artifacts
+
+Usage: $0 [options]
+
+Options:
+  -j, --java        Build only Java artifacts
+  -p, --python      Build only Python artifacts
+  -h, --help        Display this help message
+EOF
+}
+
 # Parse command-line arguments
 build_java=true
 build_python=true
@@ -27,6 +40,10 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         -j|--java)
             build_python=false
+            ;;
+        -h|--help)
+            show_help
+            exit 0
             ;;
         *)
             echo "Error: Unknown option '$1'" >&2

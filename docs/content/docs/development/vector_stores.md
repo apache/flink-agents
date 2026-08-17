@@ -800,7 +800,7 @@ Elasticsearch is currently supported in the Java API only. To use Elasticsearch 
 | `dims`            | int  | `768`                     | Vector dimensionality                                              |
 | `k`               | int  | None                      | Number of nearest neighbors to return; can be overridden per query |
 | `num_candidates`  | int  | None                      | Candidate set size for ANN search; can be overridden per query     |
-| `filter_query`    | str  | None                      | Raw JSON Elasticsearch filter query (DSL) applied as a post-filter |
+| `filter_query`    | str  | None                      | Raw JSON Elasticsearch filter query (DSL) restricting which documents a KNN query can match |
 | `host`            | str  | `"http://localhost:9200"` | Elasticsearch endpoint                                             |
 | `hosts`           | str  | None                      | Comma-separated list of Elasticsearch endpoints                    |
 | `username`        | str  | None                      | Username for basic authentication                                  |

@@ -15,15 +15,19 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import math
 import os
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.azure.azure_openai_chat_model import (
+    MAX_OPENAI_RETRIES,
+    MAX_OPENAI_TIMEOUT_SECONDS,
     AzureOpenAIChatModelConnection,
     AzureOpenAIChatModelSetup,
 )
@@ -129,6 +133,55 @@ def test_model_field_roundtrip() -> None:
     setup = AzureOpenAIChatModelSetup(connection="conn", model="test-deployment")
     restored = AzureOpenAIChatModelSetup.model_validate(setup.model_dump())
     assert restored.model == "test-deployment"
+
+
+def test_zero_timeout_disables_client_timeout() -> None:
+    """Keep zero-timeout semantics aligned with the Java OpenAI SDK."""
+    conn = AzureOpenAIChatModelConnection(
+        api_key="fake-key",
+        azure_endpoint="https://example.openai.azure.com",
+        api_version="2024-02-01",
+        timeout=0,
+    )
+
+    assert conn.client.timeout is None
+    # openai>=3 wraps timeouts in its own Timeout class, so compare
+    # components instead of instances.
+    transport_timeout = conn.client._client.timeout
+    assert transport_timeout.connect is None
+    assert transport_timeout.read is None
+    assert transport_timeout.write is None
+    assert transport_timeout.pool is None
+
+
+@pytest.mark.parametrize("timeout", [math.nan, math.inf])
+def test_connection_rejects_non_finite_timeout(timeout: float) -> None:
+    with pytest.raises(ValidationError, match="finite"):
+        AzureOpenAIChatModelConnection(
+            api_key="fake-key",
+            azure_endpoint="https://example.openai.azure.com",
+            api_version="2024-02-01",
+            timeout=timeout,
+        )
+
+
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [
+        ("timeout", MAX_OPENAI_TIMEOUT_SECONDS + 0.001),
+        ("max_retries", MAX_OPENAI_RETRIES + 1),
+    ],
+)
+def test_connection_rejects_values_beyond_java_sdk_limits(
+    argument: str, value: float | int
+) -> None:
+    with pytest.raises(ValidationError, match="less than or equal"):
+        AzureOpenAIChatModelConnection(
+            api_key="fake-key",
+            azure_endpoint="https://example.openai.azure.com",
+            api_version="2024-02-01",
+            **{argument: value},
+        )
 
 
 def test_model_kwargs_nests_additional_kwargs() -> None:

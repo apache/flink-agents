@@ -141,6 +141,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
     private static final Pattern API_VERSION_DATE_PREFIX = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}");
 
     private final OpenAIClient client;
+    private final Duration timeout;
+    private final int maxRetries;
 
     private final String apiVersion;
 
@@ -170,15 +172,11 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
                         .credential(AzureApiKeyCredential.create(apiKey))
                         .azureServiceVersion(AzureOpenAIServiceVersion.fromString(apiVersion));
 
-        Integer timeoutSeconds = descriptor.getArgument("timeout");
-        if (timeoutSeconds != null && timeoutSeconds > 0) {
-            clientBuilder.timeout(Duration.ofSeconds(timeoutSeconds));
-        }
+        this.timeout = OpenAIChatCompletionsUtils.parseTimeout(descriptor);
+        clientBuilder.timeout(OpenAIChatCompletionsUtils.toSdkTimeout(this.timeout));
 
-        Integer maxRetries = descriptor.getArgument("max_retries");
-        if (maxRetries != null && maxRetries >= 0) {
-            clientBuilder.maxRetries(maxRetries);
-        }
+        this.maxRetries = OpenAIChatCompletionsUtils.parseMaxRetries(descriptor);
+        clientBuilder.maxRetries(this.maxRetries);
 
         String azureUrlPathMode = descriptor.getArgument("azure_url_path_mode");
         if (azureUrlPathMode != null && !azureUrlPathMode.isBlank()) {
@@ -194,6 +192,16 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         }
 
         this.client = clientBuilder.build();
+    }
+
+    // visible for testing
+    Duration getTimeout() {
+        return timeout;
+    }
+
+    // visible for testing
+    int getMaxRetries() {
+        return maxRetries;
     }
 
     /**

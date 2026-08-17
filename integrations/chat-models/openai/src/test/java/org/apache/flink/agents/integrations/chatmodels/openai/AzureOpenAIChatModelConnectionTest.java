@@ -43,6 +43,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,6 +94,25 @@ class AzureOpenAIChatModelConnectionTest {
 
     private static AzureOpenAIChatModelConnection connection() {
         return connection(CAPABLE_API_VERSION);
+    }
+
+    @Test
+    void testConnectionArgumentDefaultsAndZeroTimeout() {
+        AzureOpenAIChatModelConnection connection =
+                new AzureOpenAIChatModelConnection(
+                        connectionDescriptor()
+                                .addInitialArgument("api_key", "test-key")
+                                .addInitialArgument("api_version", "2024-02-01")
+                                .addInitialArgument(
+                                        "azure_endpoint", "https://example.openai.azure.com")
+                                .addInitialArgument("timeout", 0)
+                                .addInitialArgument("max_retries", 0)
+                                .build(),
+                        NOOP);
+        assertThat(connection).isInstanceOf(BaseChatModelConnection.class);
+        assertThat(connection.getTimeout()).isEqualTo(Duration.ZERO);
+        assertThat(connection.getMaxRetries()).isZero();
+        OpenAIClientTestUtils.assertNoTimeoutConfigured(connection);
     }
 
     /**

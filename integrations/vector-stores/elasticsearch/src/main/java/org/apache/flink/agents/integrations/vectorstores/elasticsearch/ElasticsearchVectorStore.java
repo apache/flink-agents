@@ -82,8 +82,8 @@ import java.util.*;
  *   <li>{@code k} (optional): Number of nearest neighbors to return; can be overridden per query.
  *   <li>{@code num_candidates} (optional): Candidate set size for ANN search; can be overridden per
  *       query.
- *   <li>{@code filter_query} (optional): A raw JSON Elasticsearch filter query (DSL) that is
- *       applied as a post-filter; can be overridden per query.
+ *   <li>{@code filter_query} (optional): A raw JSON Elasticsearch filter query (DSL) restricting
+ *       which documents a KNN query can match; can be overridden per query.
  *   <li>{@code host} or {@code hosts} (optional): Elasticsearch endpoint(s). If omitted, defaults
  *       to {@code localhost:9200}.
  *   <li>Authentication (optional): Either basic auth via {@code username}/{@code password}, or API
@@ -336,29 +336,23 @@ public class ElasticsearchVectorStore extends BaseVectorStore
     /**
      * Retrieve documents from the vector store.
      *
-     * <p>When {@code ids} is non-empty, documents are retrieved directly by ID and the filter,
-     * limit, offset, and {@code filter_query} arguments are not applied.
+     * <p>If ids is not provided, this method will retrieve documents according to {@code limit},
+     * {@code offset}, and {@code filter_query} in additional arguments. If {@code limit} is null,
+     * up to {@link ElasticsearchVectorStore#MAX_RESULT_WINDOW} documents are returned (an
+     * Elasticsearch ceiling).
      *
-     * <p>Otherwise, {@code filters} provides equality-only matching against document metadata. Each
-     * entry is translated to an Elasticsearch {@code term} query on {@code
-     * <metadataField>.<key>.keyword}, and multiple entries are combined with AND semantics. Because
-     * Elasticsearch dynamic mapping creates `.keyword` sub-fields only for strings, filters on
-     * non-string metadata values do not match; use a raw `filter_query` for those values. A raw
-     * Elasticsearch JSON query may also be supplied as {@code filter_query} in {@code extraArgs};
-     * when both forms are present, they are combined with AND semantics.
+     * <p>The unified {@code filters} DSL parameter is not yet translated to Elasticsearch's native
+     * query DSL — callers needing structured filtering should pass a raw {@code filter_query} via
+     * {@code extraArgs}. TODO: implement equality-DSL translation parallel to the Python Chroma
+     * implementation.
      *
-     * <p>The {@code limit} parameter takes precedence over a {@code limit} value in {@code
-     * extraArgs}. If neither is provided, up to {@link ElasticsearchVectorStore#MAX_RESULT_WINDOW}
-     * documents are returned. This is the Elasticsearch result-window ceiling: the combined {@code
-     * offset} and {@code limit} must not exceed it; an explicit limit above it is rejected by
-     * Elasticsearch rather than truncated. {@code extraArgs} may also contain an {@code offset}.
-     *
-     * @param ids The IDs of documents to retrieve directly.
-     * @param collection The collection name, or null to use the default collection.
-     * @param filters Equality-only metadata filters combined with AND semantics.
-     * @param limit Maximum number of documents to return for filtered or unfiltered searches.
-     * @param extraArgs Additional arguments, including {@code offset} and raw JSON {@code
-     *     filter_query}.
+     * @param ids The ids of the documents.
+     * @param collection The name of the collection to be retrieved. If is null, retrieve the
+     *     default collection.
+     * @param filters Unified filter DSL. Currently ignored — see method Javadoc.
+     * @param limit Maximum number of documents to return; falls back to {@link
+     *     ElasticsearchVectorStore#MAX_RESULT_WINDOW} when null.
+     * @param extraArgs Additional arguments. (offset, filter_query, etc.)
      * @return List of documents retrieved.
      */
     @Override
@@ -385,24 +379,22 @@ public class ElasticsearchVectorStore extends BaseVectorStore
     }
 
     /**
-     * Delete documents from the vector store.
+     * Delete documents in the vector store.
      *
-     * <p>When {@code ids} is non-empty, documents are deleted directly by ID and {@code filters}
-     * and {@code filter_query} are not applied.
+     * <p>If ids is not provided, this method will delete documents matched the {@code filter_query}
+     * in additional arguments. If neither {@code filter_query} nor {@code filters} is provided,
+     * this method will delete all the documents.
      *
-     * <p>Otherwise, {@code filters} provides equality-only matching against document metadata. Each
-     * entry is translated to an Elasticsearch {@code term} query on {@code
-     * <metadataField>.<key>.keyword}, and multiple entries are combined with AND semantics. Because
-     * Elasticsearch dynamic mapping creates `.keyword` sub-fields only for strings, filters on
-     * non-string metadata values do not match; use a raw `filter_query` for those values. A raw
-     * Elasticsearch JSON query may also be supplied as {@code filter_query} in {@code extraArgs};
-     * when both forms are present, they are combined with AND semantics. If neither form is
-     * supplied, all documents in the collection are deleted.
+     * <p>The unified {@code filters} DSL parameter is not yet translated to Elasticsearch's native
+     * query DSL — callers needing structured filtering should pass a raw {@code filter_query} via
+     * {@code extraArgs}. TODO: implement equality-DSL translation parallel to the Python Chroma
+     * implementation.
      *
-     * @param ids The IDs of documents to delete directly.
-     * @param collection The collection name, or null to use the default collection.
-     * @param filters Equality-only metadata filters combined with AND semantics.
-     * @param extraArgs Additional arguments, including raw JSON {@code filter_query}.
+     * @param ids The ids of the documents.
+     * @param collection The name of the collection the documents belong to. If is null, use the
+     *     default collection.
+     * @param filters Unified filter DSL. Currently ignored — see method Javadoc.
+     * @param extraArgs Additional arguments. (filter_query, etc.)
      */
     @Override
     public void delete(
@@ -554,7 +546,7 @@ public class ElasticsearchVectorStore extends BaseVectorStore
         if (combined != null) {
             builder.query(q -> q.withJson(new StringReader(combined)));
         } else {
-            // No filter at all 闂?delete every document (match_all).
+            // No filter at all → delete every document (match_all).
             builder.query(q -> q.matchAll(ma -> ma));
         }
 
@@ -579,24 +571,19 @@ public class ElasticsearchVectorStore extends BaseVectorStore
      * Executes a KNN vector search using a pre-computed embedding.
      *
      * <p>The method prepares a KNN search request using the supplied {@code embedding} and merges
-     * default arguments from the store with the provided {@code args}. {@code filters} provides
-     * equality-only matching against metadata fields. Each entry targets {@code
-     * <metadataField>.<key>.keyword}; multiple entries are combined with AND semantics. Because
-     * Elasticsearch dynamic mapping creates `.keyword` sub-fields only for strings, filters on
-     * non-string metadata values do not match; use a raw {@code filter_query} for those values. The
-     * filters are applied as a post-filter.
+     * default arguments from the store with the provided {@code args}. Optional filter queries
+     * (JSON DSL) restrict the documents the KNN search may match, so the nearest neighbours are
+     * selected from among the matching documents rather than filtered out afterwards. Up to {@code
+     * k} matching documents are returned even when the closest vectors overall do not match.
      *
-     * <p>A raw Elasticsearch JSON query may also be supplied as {@code filter_query} in {@code
-     * args}. When both filter forms are present, they are combined with AND semantics.
-     *
-     * @param embedding The embedding vector to search with.
-     * @param limit Maximum number of items requested; used as a fallback for {@code k}.
-     * @param collection The collection name, or null to use the default collection.
-     * @param filters Equality-only metadata filters combined with AND semantics.
-     * @param args Additional arguments. Supported keys are {@code k}, {@code num_candidates}, and
-     *     raw JSON {@code filter_query}.
-     * @return A list of matching documents, possibly empty.
-     * @throws RuntimeException if the search request fails.
+     * @param embedding The embedding vector to search with
+     * @param limit Maximum number of items the caller is interested in; used as a fallback for
+     *     {@code k} if not explicitly provided
+     * @param collection The index to query search. If is null, search the default index.
+     * @param args Additional arguments. Supported keys: {@code k}, {@code num_candidates}, {@code
+     *     filter_query}
+     * @return A list of matching documents, possibly empty
+     * @throws RuntimeException if the search request fails
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     @Override
@@ -618,20 +605,32 @@ public class ElasticsearchVectorStore extends BaseVectorStore
             List<Float> queryVector = new ArrayList<>(embedding.length);
             for (float v : embedding) queryVector.add(v);
 
+            final String finalCombined = combined;
             SearchRequest.Builder builder =
                     new SearchRequest.Builder()
                             .index(index)
                             .knn(
-                                    kb ->
-                                            kb.field(this.vectorField)
-                                                    .queryVector(queryVector)
-                                                    .k(k)
-                                                    .numCandidates(numCandidates));
+                                    kb -> {
+                                        kb.field(this.vectorField)
+                                                .queryVector(queryVector)
+                                                .k(k)
+                                                .numCandidates(numCandidates);
+                                        // Filter inside the KNN clause rather than after it, so the
+                                        // k nearest neighbours are chosen from the documents that
+                                        // match. A post-filter can only discard hits the vector
+                                        // search already picked, which yields fewer than k results
+                                        // whenever the nearest vectors belong to filtered-out
+                                        // documents.
+                                        if (finalCombined != null) {
+                                            kb.filter(
+                                                    f ->
+                                                            f.withJson(
+                                                                    new StringReader(
+                                                                            finalCombined)));
+                                        }
+                                        return kb;
+                                    });
 
-            if (combined != null) {
-                final String finalCombined = combined;
-                builder = builder.postFilter(f -> f.withJson(new StringReader(finalCombined)));
-            }
             final SearchResponse<Map<String, Object>> searchResponse =
                     (SearchResponse) this.client.search(builder.build(), Map.class);
 
@@ -733,7 +732,7 @@ public class ElasticsearchVectorStore extends BaseVectorStore
             throws JsonProcessingException {
         final List<Document> documents = new ArrayList<>(total);
         for (Hit<Map<String, Object>> hit : searchResponse.hits().hits()) {
-            // hit.score() is a Double 闂?null for plain get-all responses, populated for
+            // hit.score() is a Double — null for plain get-all responses, populated for
             // KNN / scored search; mirror that null-ness on Document.score.
             Double score = hit.score();
             documents.add(

@@ -43,6 +43,8 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
 )
 
 logger = logging.getLogger(__name__)
+MAX_OPENAI_TIMEOUT_SECONDS = 2_147_483.647
+MAX_OPENAI_RETRIES = 2_147_483_647
 
 _RESERVED_KWARG_KEYS = frozenset(
     {"model", "model_of_azure_deployment", "temperature", "max_tokens", "logprobs"}
@@ -144,13 +146,16 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
     )
     timeout: float = Field(
         default=60.0,
-        description="The number of seconds to wait for an API call before it times out.",
+        description="The number of seconds to wait for an API call before it times out. Set to 0 to disable timeouts.",
         ge=0,
+        le=MAX_OPENAI_TIMEOUT_SECONDS,
+        allow_inf_nan=False,
     )
     max_retries: int = Field(
         default=3,
         description="The number of times to retry the API call upon failure.",
         ge=0,
+        le=MAX_OPENAI_RETRIES,
     )
 
     def __init__(
@@ -183,7 +188,8 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
                 azure_endpoint=self.azure_endpoint,
                 api_key=self.api_key,
                 api_version=self.api_version,
-                timeout=self.timeout,
+                # Match Java's Duration.ZERO: None avoids an immediate timeout in httpx.
+                timeout=None if self.timeout == 0 else self.timeout,
                 max_retries=self.max_retries,
             )
         return self._client

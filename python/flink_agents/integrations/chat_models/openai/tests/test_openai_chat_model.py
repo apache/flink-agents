@@ -15,16 +15,21 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import math
 import os
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
+from pydantic import ValidationError
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
     DEFAULT_OPENAI_MODEL,
+    MAX_OPENAI_RETRIES,
+    MAX_OPENAI_TIMEOUT_SECONDS,
     OpenAIChatModelConnection,
     OpenAIChatModelSetup,
 )
@@ -121,3 +126,74 @@ def test_default_model_when_omitted() -> None:
     """Verify per-integration default applies when `model` is omitted from __init__."""
     setup = OpenAIChatModelSetup(connection="conn")
     assert setup.model == DEFAULT_OPENAI_MODEL
+
+
+def test_connection_default_timeout_and_max_retries() -> None:
+    """Pin canonical connection defaults to prevent silent drift."""
+    conn = OpenAIChatModelConnection(
+        name="test", api_key="fake", api_base_url="http://localhost"
+    )
+    assert conn.timeout == 60.0
+    assert conn.max_retries == 3
+
+
+def test_zero_timeout_disables_client_timeout() -> None:
+    """Keep zero-timeout semantics aligned with the Java OpenAI SDK."""
+    conn = OpenAIChatModelConnection(
+        name="test", api_key="fake", api_base_url="http://localhost", timeout=0
+    )
+
+    assert conn.client.timeout is None
+    # openai>=3 wraps timeouts in its own Timeout class, so compare
+    # components instead of instances.
+    transport_timeout = conn.client._client.timeout
+    assert transport_timeout.connect is None
+    assert transport_timeout.read is None
+    assert transport_timeout.write is None
+    assert transport_timeout.pool is None
+
+
+def test_zero_timeout_disables_custom_http_client_timeout() -> None:
+    http_client = httpx.Client(timeout=10.0)
+    conn = OpenAIChatModelConnection(
+        name="test",
+        api_key="fake",
+        api_base_url="http://localhost",
+        timeout=0,
+        http_client=http_client,
+    )
+
+    assert conn.client.timeout is None
+    assert http_client.timeout == httpx.Timeout(None)
+
+    http_client.close()
+
+
+@pytest.mark.parametrize("timeout", [math.nan, math.inf])
+def test_connection_rejects_non_finite_timeout(timeout: float) -> None:
+    with pytest.raises(ValidationError, match="finite"):
+        OpenAIChatModelConnection(
+            name="test",
+            api_key="fake",
+            api_base_url="http://localhost",
+            timeout=timeout,
+        )
+
+
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [
+        ("timeout", MAX_OPENAI_TIMEOUT_SECONDS + 0.001),
+        ("max_retries", MAX_OPENAI_RETRIES + 1),
+    ],
+)
+def test_connection_rejects_values_beyond_java_sdk_limits(
+    argument: str, value: float | int
+) -> None:
+    with pytest.raises(ValidationError, match="less than or equal"):
+        OpenAIChatModelConnection(
+            name="test",
+            api_key="fake",
+            api_base_url="http://localhost",
+            **{argument: value},
+        )

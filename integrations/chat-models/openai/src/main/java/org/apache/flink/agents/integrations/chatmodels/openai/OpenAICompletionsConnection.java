@@ -84,6 +84,8 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
     private static final ObjectMapper mapper = new ObjectMapper();
     private final OpenAIClient client;
     private final String defaultModel;
+    private final Duration timeout;
+    private final int maxRetries;
 
     public OpenAICompletionsConnection(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
@@ -101,15 +103,11 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             builder.baseUrl(apiBaseUrl);
         }
 
-        Integer timeoutSeconds = descriptor.getArgument("timeout");
-        if (timeoutSeconds != null && timeoutSeconds > 0) {
-            builder.timeout(Duration.ofSeconds(timeoutSeconds));
-        }
+        this.timeout = OpenAIChatCompletionsUtils.parseTimeout(descriptor);
+        builder.timeout(OpenAIChatCompletionsUtils.toSdkTimeout(this.timeout));
 
-        Integer maxRetries = descriptor.getArgument("max_retries");
-        if (maxRetries != null && maxRetries >= 0) {
-            builder.maxRetries(maxRetries);
-        }
+        this.maxRetries = OpenAIChatCompletionsUtils.parseMaxRetries(descriptor);
+        builder.maxRetries(this.maxRetries);
 
         Map<String, String> defaultHeaders = descriptor.getArgument("default_headers");
         if (defaultHeaders != null && !defaultHeaders.isEmpty()) {
@@ -120,6 +118,16 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
 
         this.defaultModel = descriptor.getArgument("model");
         this.client = builder.build();
+    }
+
+    // visible for testing
+    Duration getTimeout() {
+        return timeout;
+    }
+
+    // visible for testing
+    int getMaxRetries() {
+        return maxRetries;
     }
 
     // Models for which OpenAI documents json_schema strict Structured Outputs support.

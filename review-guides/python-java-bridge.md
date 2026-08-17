@@ -36,11 +36,12 @@ Run both language lanes. A bridge change verified on one side only is untested.
 - Java: `mvn --batch-mode test -pl runtime -am`. The `-am` matters here because
   the Java halves of the cross-language snapshot tests live in `api` and
   `plan`, upstream of the module that owns the bridge implementations.
-- Python: from `python/`, run `uv sync --extra test`, install the
-  `apache-flink` release for the Flink version under test (`tools/ut.sh` names
-  the supported versions), then `uv run --no-sync pytest flink_agents/runtime
-  flink_agents/api flink_agents/plan`. PyFlink is not a declared test
-  dependency and the event types import it, so collection fails without it.
+- Python: from `python/`, run `uv sync --extra test`, then `uv pip install
+  "apache-flink==$(mvn -q -N --batch-mode -f ../pom.xml help:evaluate
+  -Dexpression=flink.version -DforceStdout)"`, then `uv run --no-sync pytest
+  flink_agents/runtime flink_agents/api flink_agents/plan`. PyFlink is not a
+  declared test dependency and the event types import it, so collection fails
+  without it.
 
 Together these run the committed cross-language snapshot tests from both sides.
 Dispatch through a real interpreter is only covered by the cross-language

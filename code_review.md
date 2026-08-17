@@ -41,7 +41,7 @@ Guides load on demand, so the general passes here stay short.
 |---|---|---|
 | `runtime/` state and recovery | serde and replay type fidelity, real failure-path tests | [review-guides/runtime-state-recovery.md](review-guides/runtime-state-recovery.md) |
 | Python-Java bridge | cross-language parity, type mapping across Pemja | [review-guides/python-java-bridge.md](review-guides/python-java-bridge.md) |
-| `api/` contract | API shape, compatibility policy, deprecation | planned |
+| `api/` contract | API shape, compatibility policy, deprecation | [review-guides/api-contract.md](review-guides/api-contract.md) |
 | `dist` and dependency | shading, LICENSE and NOTICE, dist registration | planned |
 | docs-only | facts match their source of truth | [review-guides/docs-only.md](review-guides/docs-only.md) |
 
