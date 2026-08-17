@@ -35,6 +35,7 @@ from flink_agents.api.function import (
 from flink_agents.api.function import (
     PythonFunction as ApiPythonFunction,
 )
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
@@ -44,7 +45,6 @@ from flink_agents.plan.function import (
 from flink_agents.plan.function import (
     PythonFunction as PlanPythonFunction,
 )
-from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.plan.resource_provider import JavaResourceProvider
 
 # python/flink_agents/plan/tests/test_*.py -> repo root is parents[4].
