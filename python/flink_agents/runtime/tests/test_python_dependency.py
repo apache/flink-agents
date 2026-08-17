@@ -17,16 +17,20 @@
 ################################################################################
 
 import importlib
+import importlib.util
 import shutil
 import sys
 import uuid
 from importlib.resources import files
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 from flink_agents.plan import function as plan_function
 from flink_agents.runtime import _python_dependency
+
+_HELPER_MODULE = "flink_agents.runtime._python_dependency"
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +39,7 @@ def restore_import_state():
     original_importer_cache = dict(sys.path_importer_cache)
     original_generations = dict(_python_dependency._JOB_GENERATIONS)
     original_function_cache = dict(plan_function._PYTHON_FUNCTION_CACHE)
+    original_helper = sys.modules.get(_HELPER_MODULE)
     imported_packages: set[str] = set()
 
     yield imported_packages
@@ -46,6 +51,8 @@ def restore_import_state():
     _python_dependency._JOB_GENERATIONS.update(original_generations)
     plan_function._PYTHON_FUNCTION_CACHE.clear()
     plan_function._PYTHON_FUNCTION_CACHE.update(original_function_cache)
+    if original_helper is not None:
+        sys.modules[_HELPER_MODULE] = original_helper
     for package_name in imported_packages:
         for module_name in list(sys.modules):
             if module_name == package_name or module_name.startswith(
@@ -192,6 +199,69 @@ def test_failed_refresh_is_retried(tmp_path: Path, restore_import_state, monkeyp
     assert importlib.import_module(f"{package_name}.action").VALUE == "new"
 
 
+def test_activate_uses_configured_python_path(tmp_path: Path, restore_import_state):
+    package_name = f"configured_path_{uuid.uuid4().hex}"
+    restore_import_state.add(package_name)
+    generation, python_path = _create_generation(
+        tmp_path, "configured", package_name, "configured"
+    )
+    normalized = _python_dependency._normalize_path(python_path)
+    assert normalized not in sys.path
+
+    assert _python_dependency.ensure_python_dependency_generation(
+        "job-configured", str(generation), str(python_path)
+    )
+    assert sys.path[0] == normalized
+    assert importlib.import_module(f"{package_name}.action").VALUE == "configured"
+
+    sys.path.remove(normalized)
+    assert not _python_dependency.ensure_python_dependency_generation(
+        "job-configured", str(generation), str(python_path)
+    )
+    assert sys.path[0] == normalized
+
+
+def test_generation_state_survives_helper_reload_from_job_requirements(
+    tmp_path: Path, restore_import_state
+):
+    package_name = f"helper_reload_{uuid.uuid4().hex}"
+    restore_import_state.add(package_name)
+
+    gen_a, path_a = _create_generation(tmp_path, "helper-a", package_name, "a")
+    gen_b, path_b = _create_generation(tmp_path, "helper-b", package_name, "b")
+    gen_c, path_c = _create_generation(tmp_path, "helper-c", package_name, "c")
+    helper_a = _copy_helper_into_generation(path_a)
+    helper_b = _copy_helper_into_generation(path_b)
+    helper_c = _copy_helper_into_generation(path_c)
+
+    loaded_a = _load_helper_from(helper_a)
+    assert loaded_a.ensure_python_dependency_generation(
+        "job-fa", str(gen_a), str(path_a)
+    )
+    assert importlib.import_module(f"{package_name}.action").VALUE == "a"
+
+    shutil.rmtree(gen_a)
+    assert loaded_a.ensure_python_dependency_generation(
+        "job-fa", str(gen_b), str(path_b)
+    )
+    assert sys.modules.get(_HELPER_MODULE) is not loaded_a
+
+    loaded_b = _load_helper_from(helper_b)
+    state = sys.modules[_python_dependency._STATE_MODULE_NAME]
+    assert loaded_b._JOB_GENERATIONS is state.job_generations
+    assert loaded_a._JOB_GENERATIONS is state.job_generations
+    assert loaded_b._JOB_GENERATIONS["job-fa"] == loaded_b._normalize_path(gen_b)
+    assert importlib.import_module(f"{package_name}.action").VALUE == "b"
+
+    shutil.rmtree(gen_b)
+    assert loaded_b.ensure_python_dependency_generation(
+        "job-fa", str(gen_c), str(path_c)
+    )
+    loaded_c = _load_helper_from(helper_c)
+    assert loaded_c._JOB_GENERATIONS["job-fa"] == loaded_c._normalize_path(gen_c)
+    assert importlib.import_module(f"{package_name}.action").VALUE == "c"
+
+
 def _create_generation(
     tmp_path: Path, generation_name: str, package_name: str, value: str
 ) -> tuple[Path, Path]:
@@ -204,3 +274,22 @@ def _create_generation(
     (package_path / "action.py").write_text(f"VALUE = {value!r}\n")
     (skills_path / "SKILL.md").write_text(value)
     return generation, python_path
+
+
+def _copy_helper_into_generation(python_path: Path) -> Path:
+    dest = python_path / "flink_agents" / "runtime" / "_python_dependency.py"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    (python_path / "flink_agents" / "__init__.py").write_text("")
+    (dest.parent / "__init__.py").write_text("")
+    shutil.copy(Path(_python_dependency.__file__), dest)
+    return dest
+
+
+def _load_helper_from(helper_file: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(_HELPER_MODULE, helper_file)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_HELPER_MODULE] = module
+    spec.loader.exec_module(module)
+    return module

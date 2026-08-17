@@ -23,6 +23,7 @@ import org.mockito.InOrder;
 import pemja.core.PythonInterpreter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -35,16 +36,18 @@ class PythonDependencyGenerationManagerTest {
         PythonInterpreter interpreter = mock(PythonInterpreter.class);
         JobID jobId = new JobID();
         String generation = "/tmp/python-dist-current";
+        String pythonPath = "/tmp/python-dist-current/python-files";
 
         when(interpreter.invoke(
                         "_python_dependency.ensure_python_dependency_generation",
                         jobId.toHexString(),
-                        generation))
+                        generation,
+                        pythonPath))
                 .thenReturn(true);
 
         assertThat(
                         PythonDependencyGenerationManager.ensurePythonDependencyGeneration(
-                                interpreter, jobId, generation))
+                                interpreter, jobId, generation, pythonPath))
                 .isTrue();
 
         InOrder calls = inOrder(interpreter);
@@ -53,6 +56,29 @@ class PythonDependencyGenerationManagerTest {
                 .invoke(
                         "_python_dependency.ensure_python_dependency_generation",
                         jobId.toHexString(),
-                        generation);
+                        generation,
+                        pythonPath);
+    }
+
+    @Test
+    void rejectsNonBooleanGenerationResult() {
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        JobID jobId = new JobID();
+        String generation = "/tmp/python-dist-current";
+        String pythonPath = "/tmp/python-dist-current/python-files";
+
+        when(interpreter.invoke(
+                        "_python_dependency.ensure_python_dependency_generation",
+                        jobId.toHexString(),
+                        generation,
+                        pythonPath))
+                .thenReturn("yes");
+
+        assertThatThrownBy(
+                        () ->
+                                PythonDependencyGenerationManager.ensurePythonDependencyGeneration(
+                                        interpreter, jobId, generation, pythonPath))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("invalid result");
     }
 }

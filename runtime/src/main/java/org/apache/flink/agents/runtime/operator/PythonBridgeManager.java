@@ -95,10 +95,12 @@ class PythonBridgeManager implements AutoCloseable {
      * <p>Scans the agent plan for any {@link PythonFunction} action or {@link
      * PythonResourceProvider}. If neither is present, this method is a no-op and {@link
      * #isInitialized()} stays {@code false}. Otherwise it builds the {@link
-     * PythonEnvironmentManager}, opens an embedded {@link PythonInterpreter}, constructs the shared
-     * {@link PythonRunnerContextImpl}, wires the Java/Python resource adapters, and conditionally
+     * PythonEnvironmentManager}, opens an embedded {@link PythonInterpreter}, refreshes the shared
+     * import state for the current dependency generation, constructs the shared {@link
+     * PythonRunnerContextImpl}, wires the Java/Python resource adapters, and conditionally
      * initializes the Python action executor and the Python resource adapter (each only when the
-     * corresponding component is present in the plan).
+     * corresponding component is present in the plan). The generation guard runs immediately after
+     * interpreter construction and before any user module import.
      *
      * @param agentPlan the agent plan describing actions and resources.
      * @param resourceCache the resource cache visible to both languages.
@@ -154,9 +156,13 @@ class PythonBridgeManager implements AutoCloseable {
             EmbeddedPythonEnvironment env = pythonEnvironmentManager.createEnvironment();
             pythonInterpreter = env.getInterpreter();
             String dependencyGeneration = pythonEnvironmentManager.getBaseDirectory();
+            String pythonPath = env.getEnv().get("PYTHONPATH");
             boolean dependencyGenerationChanged =
                     PythonDependencyGenerationManager.ensurePythonDependencyGeneration(
-                            pythonInterpreter, jobId, dependencyGeneration);
+                            pythonInterpreter,
+                            jobId,
+                            dependencyGeneration,
+                            pythonPath == null ? "" : pythonPath);
             if (dependencyGenerationChanged) {
                 LOG.info(
                         "Activated Python dependency generation {} for job {}.",

@@ -23,22 +23,53 @@ import os
 import sys
 import threading
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from types import ModuleType
     from typing import Any
 
-_GENERATION_LOCK = threading.RLock()
-_JOB_GENERATIONS: dict[str, str] = {}
+# Interpreter-scoped generation records. This helper may be imported from a
+# job's python-dist directory and evicted when that directory is replaced; the
+# records must outlive any one generation-scoped module.
+_STATE_MODULE_NAME = "_flink_agents_python_dependency_state"
 
 
-def ensure_python_dependency_generation(job_id: str, generation: str) -> bool:
+def _get_state_module() -> ModuleType:
+    state = sys.modules.get(_STATE_MODULE_NAME)
+    if state is not None:
+        return state
+
+    candidate = ModuleType(_STATE_MODULE_NAME)
+    candidate.generation_lock = threading.RLock()
+    candidate.job_generations = {}
+    # setdefault prevents concurrent Pemja threads from installing different
+    # state modules.
+    return sys.modules.setdefault(_STATE_MODULE_NAME, candidate)
+
+
+_STATE = _get_state_module()
+_GENERATION_LOCK = _STATE.generation_lock
+_JOB_GENERATIONS = _STATE.job_generations
+
+
+def ensure_python_dependency_generation(
+    job_id: str, generation: str, python_path: str = ""
+) -> bool:
     """Activate a Flink-managed dependency generation in the Pemja interpreter.
 
     When Flink replaces a job's temporary dependency directory, remove imports
     owned by the previous directory before user actions or resources are loaded.
+
+    This tracks one generation per job id and only refreshes that job's previous
+    directory. It does not deactivate generations when a job ends, and it does
+    not isolate import caches across jobs that share a TaskManager.
+
+    ``python_path`` is the generation's configured ``PYTHONPATH``. Activation
+    prepends those entries even if they are not already on ``sys.path``. Callers
+    must invoke this after the interpreter is constructed and before any user
+    module is imported.
 
     Returns:
         ``True`` when a different generation was activated, otherwise ``False``.
@@ -58,14 +89,14 @@ def ensure_python_dependency_generation(job_id: str, generation: str) -> bool:
             # Pemja inserts configured paths for every interpreter sharing this
             # generation.
             _deduplicate_and_prepend_paths(
-                _paths_for_generation(sys.path, current_generation)
+                _configured_paths_for_generation(current_generation, python_path)
             )
             return False
 
         if previous_generation is not None:
             _deactivate_generation(previous_generation)
 
-        _activate_generation(current_generation)
+        _activate_generation(current_generation, python_path)
 
         _JOB_GENERATIONS[job_id] = current_generation
         return True
@@ -84,10 +115,24 @@ def _deactivate_generation(generation: str) -> None:
     _clear_importer_cache(generation)
 
 
-def _activate_generation(generation: str) -> None:
-    _deduplicate_and_prepend_paths(_paths_for_generation(sys.path, generation))
+def _activate_generation(generation: str, python_path: str = "") -> None:
+    _deduplicate_and_prepend_paths(
+        _configured_paths_for_generation(generation, python_path)
+    )
     _clear_importer_cache(generation)
     importlib.invalidate_caches()
+
+
+def _python_path_entries(python_path: str) -> list[str]:
+    if not python_path:
+        return []
+    return [entry for entry in python_path.split(os.pathsep) if entry]
+
+
+def _configured_paths_for_generation(generation: str, python_path: str) -> list[str]:
+    return _paths_for_generation(
+        [*_python_path_entries(python_path), *sys.path], generation
+    )
 
 
 def _paths_for_generation(paths: list[str], generation: str) -> list[str]:
@@ -129,6 +174,8 @@ def _try_normalize_path(path: Any) -> str | None:
 
 
 def _clear_python_function_cache() -> None:
+    # Same-job failover runs this during operator open after the previous
+    # attempt has closed, so no concurrent call_python_function is expected.
     function_module = sys.modules.get("flink_agents.plan.function")
     if function_module is not None:
         function_module.clear_python_function_cache()
@@ -137,6 +184,8 @@ def _clear_python_function_cache() -> None:
 def _evict_modules_from_generation(generation: str) -> None:
     modules_to_remove = []
     for module_name, module in list(sys.modules.items()):
+        if module_name == _STATE_MODULE_NAME:
+            continue
         if module is not None and any(
             _path_belongs_to_generation(path, generation)
             for path in _module_paths(module)

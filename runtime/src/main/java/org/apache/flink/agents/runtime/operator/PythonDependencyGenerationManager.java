@@ -33,16 +33,37 @@ final class PythonDependencyGenerationManager {
 
     private PythonDependencyGenerationManager() {}
 
+    /**
+     * Refreshes Pemja's process-level import state for this job's current dependency directory.
+     *
+     * <p>Must be called after {@link
+     * org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment#getInterpreter()} has
+     * constructed the interpreter and before any user action or resource is imported.
+     *
+     * <p>This guard only tracks same-job failover, where Flink rematerializes the same artifacts
+     * under a new {@code python-dist-*} directory. Cross-job reuse of a TaskManager is out of
+     * scope.
+     *
+     * @param interpreter the Pemja interpreter that shares process-level import state
+     * @param jobId the Flink job whose dependency generation should be activated
+     * @param generation the current Flink-managed dependency directory
+     * @param pythonPath the environment {@code PYTHONPATH} for this generation; used to activate
+     *     generation entries even if they are not yet present on {@code sys.path}
+     */
     static boolean ensurePythonDependencyGeneration(
-            PythonInterpreter interpreter, JobID jobId, String generation) {
+            PythonInterpreter interpreter, JobID jobId, String generation, String pythonPath) {
         checkNotNull(interpreter);
         checkNotNull(jobId);
         checkNotNull(generation);
+        checkNotNull(pythonPath);
 
         interpreter.exec(PYTHON_IMPORT);
         Object result =
                 interpreter.invoke(
-                        ENSURE_PYTHON_DEPENDENCY_GENERATION, jobId.toHexString(), generation);
+                        ENSURE_PYTHON_DEPENDENCY_GENERATION,
+                        jobId.toHexString(),
+                        generation,
+                        pythonPath);
         checkState(
                 result instanceof Boolean,
                 "Python dependency generation guard returned an invalid result: %s",
