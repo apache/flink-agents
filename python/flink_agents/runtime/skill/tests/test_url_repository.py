@@ -21,6 +21,7 @@ import hashlib
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -100,10 +101,15 @@ class TestURLSkillRepository:
         with pytest.raises(ValueError, match="disabled by default"):
             URLSkillRepository(url)
 
-    def test_sha256_mismatch_rejected(
+    def test_sha256_mismatch_rejected_before_extraction(
         self, zip_server: "tuple[str, type[_ZipHandler]]"
     ) -> None:
-        url, _handler = zip_server
+        url, handler = zip_server
+        archive = BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("../evil.txt", "pwn")
+        handler.zip_bytes = archive.getvalue()
+
         with pytest.raises(ValueError, match="SHA-256 mismatch"):
             URLSkillRepository(url, sha256="0" * 64, allow_insecure_http=True)
 

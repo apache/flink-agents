@@ -25,6 +25,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -112,7 +113,11 @@ class URLSkillRepositoryTest {
     @Test
     void sha256MismatchRejectedBeforeExtraction(@TempDir Path tempDir) throws IOException {
         Path zip = tempDir.resolve("skills.zip");
-        zipDir(resourcesRoot(), zip);
+        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
+            zos.putNextEntry(new ZipEntry("../evil.txt"));
+            zos.write("pwn".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
         HttpServer server = startZipServer(Files.readAllBytes(zip), 200);
         try {
             int port = server.getAddress().getPort();
