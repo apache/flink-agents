@@ -56,6 +56,18 @@ setup() {
     [ ! -f "$rat_jar" ]
 }
 
+@test "treats unzip status 2 as an invalid cached JAR" {
+    touch "$rat_jar"
+    shim_bin_missing jar
+    shim_bin unzip 2
+
+    run acquire_rat_jar
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"is invalid"* ]]
+    [ ! -f "$rat_jar" ]
+}
+
 @test "does not download an existing valid JAR" {
     touch "$rat_jar"
     shim_bin_missing jar
@@ -123,6 +135,18 @@ setup() {
     touch "$rat_jar"
     shim_bin_missing unzip
     shim_bin jar 1
+
+    run acquire_rat_jar
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"is invalid"* ]]
+    [ ! -f "$rat_jar" ]
+}
+
+@test "treats jar status 2 as an invalid cached JAR" {
+    touch "$rat_jar"
+    shim_bin_missing unzip
+    shim_bin jar 2
 
     run acquire_rat_jar
 

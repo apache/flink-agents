@@ -24,8 +24,10 @@ validate_rat_jar() {
   local jar_cmd
 
   if command -v unzip >/dev/null 2>&1; then
-    unzip -tq "$JAR" >/dev/null 2>&1
-    return $?
+    if unzip -tq "$JAR" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
   elif [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/jar" ]; then
     jar_cmd="$JAVA_HOME/bin/jar"
   elif command -v jar >/dev/null 2>&1; then
@@ -35,7 +37,10 @@ validate_rat_jar() {
     return 2
   fi
 
-  "$jar_cmd" tf "$JAR" >/dev/null 2>&1
+  if "$jar_cmd" tf "$JAR" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }
 
 acquire_rat_jar() {
