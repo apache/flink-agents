@@ -17,6 +17,7 @@
 #################################################################################
 """Unit tests for the _materialize utility module."""
 
+import logging
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -100,8 +101,11 @@ class _StaticHandler(BaseHTTPRequestHandler):
     redirect_location: str | None = None
 
     def do_GET(self) -> None:
-        self.send_response(type(self).status)
-        if type(self).redirect_location is not None:
+        is_redirect = self.path.startswith("/redirect") and (
+            type(self).redirect_location is not None
+        )
+        self.send_response(302 if is_redirect else type(self).status)
+        if is_redirect:
             self.send_header("Location", type(self).redirect_location)
         self.send_header("Content-Length", str(len(type(self).payload)))
         self.end_headers()
@@ -168,7 +172,6 @@ class TestDownloadToTempfile:
         self, static_server: "tuple[str, type[_StaticHandler]]"
     ) -> None:
         base_url, handler = static_server
-        handler.status = 302
         handler.redirect_location = "https://127.0.0.1:1/skills.zip"
 
         with pytest.raises(
@@ -177,3 +180,34 @@ class TestDownloadToTempfile:
             download_to_tempfile(
                 f"{base_url}/redirect", timeout=10, allow_insecure_http=True
             )
+
+    def test_logs_sanitized_effective_url_for_same_protocol_redirect(
+        self,
+        static_server: "tuple[str, type[_StaticHandler]]",
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        base_url, handler = static_server
+        handler.payload = b"redirected-zip-bytes"
+        handler.redirect_location = (
+            f"{base_url}/skills.zip?redirect_token=secret#redirect-fragment"
+        )
+
+        configured_url = f"{base_url}/redirect?configured_token=secret"
+        with caplog.at_level(
+            logging.WARNING,
+            logger="flink_agents.runtime.skill.repository._materialize",
+        ):
+            path = download_to_tempfile(
+                configured_url, timeout=10, allow_insecure_http=True
+            )
+
+        try:
+            assert path.read_bytes() == b"redirected-zip-bytes"
+            warning = "\n".join(caplog.messages)
+            assert f"{base_url}/redirect" in warning
+            assert f"{base_url}/skills.zip" in warning
+            assert "configured_token" not in warning
+            assert "redirect_token" not in warning
+            assert "redirect-fragment" not in warning
+        finally:
+            path.unlink(missing_ok=True)

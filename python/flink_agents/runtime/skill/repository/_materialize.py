@@ -20,12 +20,14 @@
 from __future__ import annotations
 
 import atexit
+import logging
 import os
 import shutil
 import tempfile
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 if TYPE_CHECKING:
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
 _TEMP_DIR_PREFIX = "flink-agents-skills-"
+logger = logging.getLogger(__name__)
 
 
 class _SameProtocolRedirectHandler(HTTPRedirectHandler):
@@ -206,11 +209,27 @@ def download_to_tempfile(
                 allow_insecure_http=allow_insecure_http,
                 initial_scheme=initial_scheme,
             )
+            if final_url != url:
+                logger.warning(
+                    "Skill URL redirected from %s to %s",
+                    _url_for_logging(url),
+                    _url_for_logging(final_url),
+                )
             shutil.copyfileobj(resp, out)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
     return tmp_path
+
+
+def _url_for_logging(url: str) -> str:
+    try:
+        parts = urlsplit(url)
+        netloc = parts.netloc.rsplit("@", 1)[-1]
+        return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+    except ValueError:
+        scheme = url.split(":", 1)[0].lower()
+        return f"{scheme}://<redacted>"
 
 
 def _require_allowed_transport(

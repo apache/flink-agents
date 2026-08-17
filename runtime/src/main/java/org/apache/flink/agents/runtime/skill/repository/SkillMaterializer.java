@@ -25,6 +25,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
@@ -274,6 +275,9 @@ public final class SkillMaterializer {
         conn.setConnectTimeout(timeoutMs);
         conn.setReadTimeout(timeoutMs);
         conn.setRequestMethod("GET");
+        // HttpURLConnection follows same-protocol redirects but leaves cross-protocol redirects
+        // unfollowed. Any future HTTP client must preserve that restriction.
+        conn.setInstanceFollowRedirects(true);
         Path tmpZip = Files.createTempFile(TEMP_DIR_PREFIX, ".zip");
         try {
             int responseCode = conn.getResponseCode();
@@ -283,6 +287,13 @@ public final class SkillMaterializer {
                                 + conn.getHeaderField("Location"));
             }
             try (InputStream in = conn.getInputStream()) {
+                URL effectiveUrl = conn.getURL();
+                if (!u.toExternalForm().equals(effectiveUrl.toExternalForm())) {
+                    LOG.warn(
+                            "Skill URL redirected from {} to {}",
+                            urlForLogging(u),
+                            urlForLogging(effectiveUrl));
+                }
                 Files.copy(in, tmpZip, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException e) {
@@ -292,6 +303,23 @@ public final class SkillMaterializer {
             conn.disconnect();
         }
         return tmpZip;
+    }
+
+    private static String urlForLogging(URL url) {
+        try {
+            return new URI(
+                            url.getProtocol(),
+                            null,
+                            url.getHost(),
+                            url.getPort(),
+                            url.getPath(),
+                            null,
+                            null)
+                    .toASCIIString();
+        } catch (URISyntaxException e) {
+            // Keep credentials, query parameters, and fragments out of the fallback too.
+            return url.getProtocol() + "://" + url.getHost();
+        }
     }
 
     private static void deleteRecursively(Path path) {
