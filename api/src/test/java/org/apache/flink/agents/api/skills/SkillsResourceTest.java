@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.skills;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SkillsResourceTest {
 
@@ -123,11 +125,16 @@ class SkillsResourceTest {
     }
 
     @Test
-    void pinnedUrlRoundTripsThroughJackson() throws Exception {
+    void unsafePinnedUrlRoundTripsThroughJackson() throws Exception {
         Skills original =
-                Skills.fromUrlWithSha256("https://example.com/skills.zip", "a".repeat(64));
+                Skills.fromUrlUnsafeWithSha256(
+                        "http://example.com/skills.zip", "a".repeat(64));
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(original);
+        JsonNode allowInsecureHttp =
+                mapper.readTree(json).at("/sources/0/params/allow_insecure_http");
+        assertTrue(allowInsecureHttp.isTextual());
+        assertEquals("true", allowInsecureHttp.asText());
         Skills restored = mapper.readValue(json, Skills.class);
         assertEquals(original.getSources(), restored.getSources());
     }

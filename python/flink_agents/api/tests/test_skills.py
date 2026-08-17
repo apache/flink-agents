@@ -96,7 +96,11 @@ class TestSkillsFactories:
                 SkillSourceSpec(scheme="local", params={"path": "/a"}),
                 SkillSourceSpec(
                     scheme="url",
-                    params={"url": "https://e.com/x.zip", "sha256": "a" * 64},
+                    params={
+                        "url": "http://e.com/x.zip",
+                        "sha256": "a" * 64,
+                        "allow_insecure_http": "true",
+                    },
                 ),
                 SkillSourceSpec(
                     scheme="package",
@@ -105,6 +109,7 @@ class TestSkillsFactories:
             ]
         )
         dumped = s.model_dump()
+        assert dumped["sources"][1]["params"]["allow_insecure_http"] == "true"
         restored = Skills.model_validate(dumped)
         assert restored.sources == s.sources
 
