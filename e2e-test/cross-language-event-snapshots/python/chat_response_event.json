@@ -11,5 +11,12 @@
     },
     "retry_count": 0,
     "total_retry_wait_sec": 0
+  },
+  "attachments": {
+    "payload": {
+      "@type": "memory_ref",
+      "memory_type": "sensory",
+      "path": "memory.path"
+    }
   }
 }

@@ -42,6 +42,7 @@ from flink_agents.runtime.java.java_resource_wrapper import (
     JavaResourceContextWrapper,
     JavaTool,
 )
+from flink_agents.runtime.memory.event_attachment_utils import load_event_attachments
 
 
 def convert_to_python_object(bytesObject: bytes) -> Any:
@@ -65,6 +66,12 @@ def convert_json_to_python_event(event_json: str) -> Event:
     ``SubClass.from_event(event)`` themselves.
     """
     return Event.from_json(event_json)
+
+
+def load_event_attachments_for_action(event: Event, ctx: Any) -> Event:
+    """Load attachment values before invoking a Python action."""
+    load_event_attachments(event, ctx)
+    return event
 
 
 def wrap_to_input_event(bytesObject: bytes) -> str:

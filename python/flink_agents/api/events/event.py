@@ -29,11 +29,14 @@ from pydantic import (
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
 from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
+
+from flink_agents.api.memory_reference import MemoryRef
 
 
 def _reconstruct_row_if_needed(data: Any) -> Any:
@@ -77,6 +80,8 @@ class Event(BaseModel, extra="allow"):
         Event type string used for routing. Required for all events.
     attributes : Dict[str, Any]
         Key-value properties for the event data.
+    attachments : Dict[str, Any]
+        Key-value data passed between actions through sensory memory.
     upstream_event_id : UUID | None
         The ID of the direct upstream Event, or None.
     upstream_action_name : str | None
@@ -86,6 +91,7 @@ class Event(BaseModel, extra="allow"):
     id: UUID = Field(default_factory=uuid4, frozen=True)
     type: str
     attributes: Dict[str, Any] = Field(default_factory=dict)
+    attachments: Dict[str, Any] = Field(default_factory=dict)
     upstream_event_id: UUID | None = Field(
         default=None,
         validation_alias=AliasChoices("upstream_event_id", "upstreamEventId"),
@@ -96,6 +102,20 @@ class Event(BaseModel, extra="allow"):
         validation_alias=AliasChoices("upstream_action_name", "upstreamActionName"),
         serialization_alias="upstreamActionName",
     )
+
+    @field_validator("attachments", mode="before")
+    @classmethod
+    def _deserialize_memory_ref_attachments(cls, attachments: Any) -> Any:
+        """Restore explicitly tagged memory-reference attachment values."""
+        if not isinstance(attachments, dict):
+            return attachments
+        return {
+            key: MemoryRef.model_validate(value)
+            if isinstance(value, dict)
+            and value.get(MemoryRef.TYPE_FIELD) == MemoryRef.TYPE_VALUE
+            else value
+            for key, value in attachments.items()
+        }
 
     @staticmethod
     def __serialize_unknown(field: Any) -> Dict[str, Any]:
@@ -135,20 +155,22 @@ class Event(BaseModel, extra="allow"):
 
     @model_validator(mode="after")
     def validate_serializable_fields(self) -> "Event":
-        """Validate that all Event fields can be serialized."""
-        self.model_dump_json()
+        """Validate JSON event fields without serializing raw attachments."""
+        self.model_dump_json(exclude={"attachments"})
         return self
 
     def __setattr__(self, name: str, value: Any) -> None:
         super().__setattr__(name, value)
-        # Ensure added property can be serialized.
-        self.model_dump_json()
+        # Raw attachments are offloaded to sensory memory before sending. Validate every
+        # other field here without serializing those payloads.
+        self.model_dump_json(exclude={"attachments"})
 
     def reconstruct_from(self, source: "Event") -> Self:
         """Return a typed copy representing the same Event occurrence as source."""
         return self.model_copy(
             update={
                 "id": source.id,
+                "attachments": dict(source.attachments),
                 "upstream_event_id": source.upstream_event_id,
                 "upstream_action_name": source.upstream_action_name,
             }
@@ -165,6 +187,14 @@ class Event(BaseModel, extra="allow"):
     def set_attr(self, name: str, value: Any) -> None:
         """Set an attribute value in the attributes map."""
         self.attributes[name] = value
+
+    def get_attachment(self, name: str) -> Any:
+        """Get an attachment value from the attachments map."""
+        return self.attachments.get(name)
+
+    def set_attachment(self, name: str, value: Any) -> None:
+        """Set an attachment value in the attachments map."""
+        self.attachments = {**self.attachments, name: value}
 
     @classmethod
     def from_event(cls, event: "Event") -> "Event":

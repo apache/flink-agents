@@ -20,6 +20,8 @@ package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.MemoryRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -143,6 +145,38 @@ class EventTest {
         assertEquals(1, event.getAttr("x"));
         assertNull(event.getUpstreamEventId());
         assertNull(event.getUpstreamActionName());
+    }
+
+    @Test
+    void testUnifiedEventJsonRoundTripPreservesAttachments() throws Exception {
+        Map<String, Object> attachments = new HashMap<>();
+        attachments.put("payload", Map.of("memory_type", "sensory", "path", "memory.path"));
+        Event original = new Event(UUID.randomUUID(), "MyEvent", new HashMap<>(), attachments);
+
+        Event restored =
+                objectMapper.readValue(objectMapper.writeValueAsString(original), Event.class);
+
+        assertEquals(attachments, restored.getAttachments());
+    }
+
+    @Test
+    void testUnifiedEventJsonRoundTripPreservesMemoryRefAttachments() throws Exception {
+        MemoryRef reference = MemoryRef.create(MemoryObject.MemoryType.SENSORY, "memory.path");
+        Event original =
+                new Event(
+                        UUID.randomUUID(),
+                        "MyEvent",
+                        new HashMap<>(),
+                        Map.of("payload", reference));
+
+        String json = objectMapper.writeValueAsString(original);
+        JsonNode attachment = objectMapper.readTree(json).get("attachments").get("payload");
+        Event restored = objectMapper.readValue(json, Event.class);
+
+        assertEquals("memory_ref", attachment.get("@type").asText());
+        assertEquals("sensory", attachment.get("memory_type").asText());
+        assertEquals("memory.path", attachment.get("path").asText());
+        assertEquals(reference, restored.getAttachment("payload"));
     }
 
     @Test

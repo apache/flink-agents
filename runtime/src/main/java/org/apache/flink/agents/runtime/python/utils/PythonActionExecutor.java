@@ -62,6 +62,8 @@ public class PythonActionExecutor {
     // =========== PYTHON AND JAVA OBJECT CONVERT ===========
     private static final String CONVERT_JSON_TO_PYTHON_EVENT =
             "python_java_utils.convert_json_to_python_event";
+    private static final String LOAD_EVENT_ATTACHMENTS_FOR_ACTION =
+            "python_java_utils.load_event_attachments_for_action";
     private static final String CONVERT_TO_PYTHON_KEY_TEXT =
             "python_java_utils.convert_to_python_key_text";
     private static final String PICKLED_KEY_SERIALIZATION = "pickled";
@@ -132,6 +134,9 @@ public class PythonActionExecutor {
 
         String eventJson = new ObjectMapper().writeValueAsString(event);
         Object pythonEventObject = interpreter.invoke(CONVERT_JSON_TO_PYTHON_EVENT, eventJson);
+        pythonEventObject =
+                interpreter.invoke(
+                        LOAD_EVENT_ATTACHMENTS_FOR_ACTION, pythonEventObject, pythonRunnerContext);
 
         try {
             Object calledResult = function.call(pythonEventObject, pythonRunnerContext);
