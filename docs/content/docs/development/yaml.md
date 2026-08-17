@@ -219,6 +219,19 @@ agents:
 | `classpath` | one-of | `classpath` scheme (Java runtime only): list of classpath resource paths. |
 | `package` | one-of | `package` scheme (Python runtime only): list of `{package, resource}` pairs. |
 
+`urls` entries must use HTTPS. To keep an existing plain-HTTP source, move it to
+`url_sources` and opt in explicitly:
+
+```yaml
+skills:
+  - name: agent_skills
+    url_sources:
+      - url: http://example.com/skills.zip
+        allow_insecure_http: true
+```
+
+Use this compatibility option only on trusted development networks; prefer HTTPS.
+
 ```yaml
 skills:
   - name: agent_skills
