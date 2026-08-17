@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.skill;
 
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -211,7 +212,8 @@ public class SkillManager implements AutoCloseable {
      * <p>Mirrors {@code ResourceCache.close()}: the first failure is rethrown after every repo has
      * been attempted, with subsequent failures attached as suppressed exceptions. This surfaces
      * real shutdown bugs (locked files, permission denied, disk full) instead of silently
-     * swallowing them.
+     * swallowing them. As there, a non-{@code Exception} {@code Throwable} does not stop the
+     * remaining repos, and reaches the caller unwrapped.
      */
     @Override
     public void close() throws Exception {
@@ -225,20 +227,20 @@ public class SkillManager implements AutoCloseable {
         // contributes multiple skills.
         Set<SkillRepository> unique = Collections.newSetFromMap(new IdentityHashMap<>());
         unique.addAll(openedRepos);
-        Exception firstException = null;
+        // Catches Throwable, not Exception: a repo failing with an Error would otherwise skip the
+        // repos behind it, and ResourceContextImpl.close() clears its manager reference in a
+        // finally, so nothing can retry the ones that were skipped. This is the nested branch of
+        // the close-all guarantee that ResourceCache.close() makes one level up.
+        Throwable firstFailure = null;
         for (SkillRepository repo : unique) {
             try {
                 repo.close();
-            } catch (Exception e) {
-                if (firstException == null) {
-                    firstException = e;
-                } else {
-                    firstException.addSuppressed(e);
-                }
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
             }
         }
-        if (firstException != null) {
-            throw firstException;
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
         }
     }
 
