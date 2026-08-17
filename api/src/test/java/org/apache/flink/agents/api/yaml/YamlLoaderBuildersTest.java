@@ -206,7 +206,7 @@ class YamlLoaderBuildersTest {
                                 + "paths: [./a]\n"
                                 + "urls: [https://x/unpinned.zip]\n"
                                 + "url_sources:\n"
-                                + "  - url: https://x/s.zip\n"
+                                + "  - url: http://x/s.zip\n"
                                 + "    sha256: "
                                 + "a".repeat(64)
                                 + "\n"
@@ -222,11 +222,60 @@ class YamlLoaderBuildersTest {
                                 "url",
                                 Map.of(
                                         "url",
-                                        "https://x/s.zip",
+                                        "http://x/s.zip",
                                         "sha256",
                                         "a".repeat(64),
                                         "allow_insecure_http",
                                         "true")),
                         new SkillSourceSpec("classpath", Map.of("resource", "com/example/s")));
+    }
+
+    @Test
+    void buildSkillsSupportsAllUrlSourceSecurityOptions() throws Exception {
+        assertUrlSource(
+                "https://x/secure.zip",
+                null,
+                false,
+                Map.of("url", "https://x/secure.zip"));
+        assertUrlSource(
+                "https://x/pinned.zip",
+                "a".repeat(64),
+                false,
+                Map.of("url", "https://x/pinned.zip", "sha256", "a".repeat(64)));
+        assertUrlSource(
+                "http://x/unsafe.zip",
+                null,
+                true,
+                Map.of("url", "http://x/unsafe.zip", "allow_insecure_http", "true"));
+        assertUrlSource(
+                "http://x/unsafe-pinned.zip",
+                "b".repeat(64),
+                true,
+                Map.of(
+                        "url",
+                        "http://x/unsafe-pinned.zip",
+                        "sha256",
+                        "b".repeat(64),
+                        "allow_insecure_http",
+                        "true"));
+    }
+
+    private static void assertUrlSource(
+            String url,
+            String sha256,
+            boolean allowInsecureHttp,
+            Map<String, String> expectedParams)
+            throws Exception {
+        StringBuilder yaml =
+                new StringBuilder("name: s\nurl_sources:\n  - url: ").append(url).append('\n');
+        if (sha256 != null) {
+            yaml.append("    sha256: ").append(sha256).append('\n');
+        }
+        if (allowInsecureHttp) {
+            yaml.append("    allow_insecure_http: true\n");
+        }
+        SkillsSpec spec = M.readValue(yaml.toString(), SkillsSpec.class);
+        assertThat(YamlLoader.buildSkills(spec).getSources())
+                .containsExactly(new SkillSourceSpec("url", expectedParams));
     }
 }

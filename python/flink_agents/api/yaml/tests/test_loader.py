@@ -386,7 +386,7 @@ def test_build_skills_merges_all_schemes() -> None:
             "urls": ["https://x/unpinned.zip"],
             "url_sources": [
                 {
-                    "url": "https://x/s.zip",
+                    "url": "http://x/s.zip",
                     "sha256": "a" * 64,
                     "allow_insecure_http": True,
                 }
@@ -402,7 +402,7 @@ def test_build_skills_merges_all_schemes() -> None:
         SkillSourceSpec(
             scheme="url",
             params={
-                "url": "https://x/s.zip",
+                "url": "http://x/s.zip",
                 "sha256": "a" * 64,
                 "allow_insecure_http": "true",
             },
@@ -412,6 +412,86 @@ def test_build_skills_merges_all_schemes() -> None:
             scheme="package", params={"package": "my_pkg", "resource": "skills/"}
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    ("url", "sha256", "allow_insecure_http", "expected_params"),
+    [
+        ("https://x/secure.zip", None, False, {"url": "https://x/secure.zip"}),
+        (
+            "https://x/pinned.zip",
+            "a" * 64,
+            False,
+            {"url": "https://x/pinned.zip", "sha256": "a" * 64},
+        ),
+        (
+            "http://x/unsafe.zip",
+            None,
+            True,
+            {"url": "http://x/unsafe.zip", "allow_insecure_http": "true"},
+        ),
+        (
+            "http://x/unsafe-pinned.zip",
+            "b" * 64,
+            True,
+            {
+                "url": "http://x/unsafe-pinned.zip",
+                "sha256": "b" * 64,
+                "allow_insecure_http": "true",
+            },
+        ),
+    ],
+)
+def test_build_skills_supports_all_url_source_security_options(
+    url: str,
+    sha256: str | None,
+    allow_insecure_http: bool,
+    expected_params: dict[str, str],
+) -> None:
+    spec = SkillsSpec.model_validate(
+        {
+            "name": "s",
+            "url_sources": [
+                {
+                    "url": url,
+                    "sha256": sha256,
+                    "allow_insecure_http": allow_insecure_http,
+                }
+            ],
+        }
+    )
+
+    assert _build_skills(spec).sources == [
+        SkillSourceSpec(scheme="url", params=expected_params)
+    ]
+
+
+def test_build_agents_rejects_plain_http_skill_url_during_loading(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "plain_http_skill.yaml"
+    path.write_text(
+        "skills:\n  - name: invalid\n    urls: [http://example.com/skills.zip]\n"
+    )
+
+    with pytest.raises(ValueError, match="Plain HTTP skill URLs are disabled"):
+        build_agents(path)
+
+
+def test_build_agents_rejects_malformed_skill_digest_during_loading(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "malformed_skill_digest.yaml"
+    path.write_text(
+        "skills:\n"
+        "  - name: invalid\n"
+        "    url_sources:\n"
+        "      - url: https://example.com/skills.zip\n"
+        "        sha256: invalid\n"
+    )
+
+    with pytest.raises(ValueError, match="64 hexadecimal characters"):
+        build_agents(path)
 
 
 def test_load_yaml_registers_shared_skills_on_env() -> None:

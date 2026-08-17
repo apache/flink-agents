@@ -175,18 +175,24 @@ public final class YamlLoader {
             sources.add(new SkillSourceSpec("local", Map.of("path", p)));
         }
         for (String url : spec.getUrls()) {
-            sources.add(new SkillSourceSpec("url", Map.of("url", url)));
+            sources.addAll(Skills.fromUrl(url).getSources());
         }
         for (UrlSkillSpec urlSpec : spec.getUrlSources()) {
-            Map<String, String> params = new LinkedHashMap<>();
-            params.put("url", urlSpec.getUrl());
-            if (urlSpec.getSha256() != null) {
-                params.put("sha256", urlSpec.getSha256());
-            }
+            Skills urlSkills;
             if (urlSpec.isAllowInsecureHttp()) {
-                params.put("allow_insecure_http", "true");
+                urlSkills =
+                        urlSpec.getSha256() == null
+                                ? Skills.fromUrlUnsafe(urlSpec.getUrl())
+                                : Skills.fromUrlUnsafeWithSha256(
+                                        urlSpec.getUrl(), urlSpec.getSha256());
+            } else {
+                urlSkills =
+                        urlSpec.getSha256() == null
+                                ? Skills.fromUrl(urlSpec.getUrl())
+                                : Skills.fromUrlWithSha256(
+                                        urlSpec.getUrl(), urlSpec.getSha256());
             }
-            sources.add(new SkillSourceSpec("url", params));
+            sources.addAll(urlSkills.getSources());
         }
         for (String r : spec.getClasspath()) {
             sources.add(new SkillSourceSpec("classpath", Map.of("resource", r)));
