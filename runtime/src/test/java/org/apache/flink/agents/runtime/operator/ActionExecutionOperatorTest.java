@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ShortTermWriteEvent;
+import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
@@ -35,6 +36,7 @@ import org.apache.flink.agents.api.logger.EventLoggerFactory;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.api.memory.MemorySet;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
@@ -42,6 +44,10 @@ import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.actions.ToolCallAction;
+import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
@@ -440,6 +446,51 @@ public class ActionExecutionOperatorTest {
                         ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
                         "linkageErrorAction",
                         ExecutionLifecycleEvents.STATUS_FAILED);
+        assertThat(failed.traceContext().getExecutionId())
+                .isEqualTo(started.traceContext().getExecutionId());
+        assertThat(failed.event.getAttr("errorType"))
+                .isEqualTo(NoClassDefFoundError.class.getName());
+    }
+
+    @Test
+    void testToolLinkageErrorEmitsFailedLifecycleBeforeActionFailure() throws Exception {
+        AgentPlan basePlan = TestAgent.getLinkageErrorToolAgentPlan();
+        AgentPlan agentPlan =
+                new AgentPlan(
+                        basePlan.getActions(),
+                        basePlan.getResourceProviders(),
+                        traceEnabledConfig(),
+                        basePlan.getAgentName());
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(0L));
+            assertThatThrownBy(() -> operator.waitInFlightEventsFinished())
+                    .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
+                    .rootCause()
+                    .isInstanceOf(NoClassDefFoundError.class)
+                    .hasMessageContaining("synthetic missing runtime dependency");
+        }
+
+        RecordedEvent started =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
+                        "linkageErrorTool",
+                        ExecutionLifecycleEvents.STATUS_STARTED);
+        RecordedEvent failed =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
+                        "linkageErrorTool",
+                        ExecutionLifecycleEvents.STATUS_FAILED);
+        assertThat(started.traceContext().getEntityType())
+                .isEqualTo(ExecutionReporter.EntityTypes.TOOL);
         assertThat(failed.traceContext().getExecutionId())
                 .isEqualTo(started.traceContext().getExecutionId());
         assertThat(failed.event.getAttr("errorType"))
@@ -3009,6 +3060,20 @@ public class ActionExecutionOperatorTest {
             return null;
         }
 
+        public static void requestLinkageErrorTool(Event event, RunnerContext context) {
+            Map<String, Object> function = new HashMap<>();
+            function.put("name", "linkageErrorTool");
+            function.put("arguments", new HashMap<String, Object>());
+            Map<String, Object> toolCall = new HashMap<>();
+            toolCall.put("id", "call-1");
+            toolCall.put("function", function);
+            context.sendEvent(new ToolRequestEvent("unused-model", List.of(toolCall)));
+        }
+
+        public static String linkageErrorTool() {
+            throw new NoClassDefFoundError("synthetic missing runtime dependency");
+        }
+
         public static AgentPlan getLinkageErrorAgentPlan() {
             try {
                 Map<String, Action> actions = new HashMap<>();
@@ -3024,6 +3089,41 @@ public class ActionExecutionOperatorTest {
                 actions.put(errorAction.getName(), errorAction);
 
                 return new AgentPlan(actions);
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        public static AgentPlan getLinkageErrorToolAgentPlan() {
+            try {
+                Action requestAction =
+                        new Action(
+                                "requestLinkageErrorTool",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "requestLinkageErrorTool",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                Action toolCallAction = ToolCallAction.getToolCallAction();
+                Map<String, Action> actions = new LinkedHashMap<>();
+                actions.put(requestAction.getName(), requestAction);
+                actions.put(toolCallAction.getName(), toolCallAction);
+
+                FunctionTool tool =
+                        FunctionTool.fromStaticMethod(
+                                "Throws a linkage error.",
+                                TestAgent.class.getMethod("linkageErrorTool"));
+                Map<String, ResourceProvider> tools = new HashMap<>();
+                tools.put(
+                        "linkageErrorTool",
+                        JavaSerializableResourceProvider.createResourceProvider(
+                                "linkageErrorTool", ResourceType.TOOL, tool));
+                Map<ResourceType, Map<String, ResourceProvider>> resourceProviders =
+                        new HashMap<>();
+                resourceProviders.put(ResourceType.TOOL, tools);
+
+                return new AgentPlan(actions, resourceProviders);
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }

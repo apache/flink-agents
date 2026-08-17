@@ -97,6 +97,18 @@ class TestLoadSkillTool:
         assert metadata[ToolExecutionMetadataKeys.SKILL_NAME] == "github"
         assert metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] == "README.md"
 
+    def test_execution_metadata_normalizes_omitted_path(self, tool: LoadSkillTool) -> None:
+        metadata = tool.get_tool_execution_metadata({"name": "github"})
+        assert metadata[ToolExecutionMetadataKeys.SKILL_NAME] == "github"
+        assert metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] == "SKILL.md"
+
+    def test_execution_metadata_normalizes_explicit_none_path(
+        self, tool: LoadSkillTool
+    ) -> None:
+        metadata = tool.get_tool_execution_metadata({"name": "github", "path": None})
+        assert metadata[ToolExecutionMetadataKeys.SKILL_NAME] == "github"
+        assert metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] == "SKILL.md"
+
     # -- skill not found -----------------------------------------------------
 
     def test_skill_not_found(self, tool: LoadSkillTool) -> None:

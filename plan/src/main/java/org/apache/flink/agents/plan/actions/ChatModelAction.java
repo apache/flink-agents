@@ -391,15 +391,14 @@ public class ChatModelAction {
                                     ? ctx.durableExecuteAsync(callable)
                                     : ctx.durableExecute(callable);
                     Objects.requireNonNull(response, "ChatModel returned a null response.");
-                } catch (Exception modelError) {
-                    ExecutionReporters.failed(
+                } catch (Throwable modelError) {
+                    throw reportFailedAndPropagate(
                             ctx,
                             ExecutionReporter.EntityTypes.LLM,
                             model,
                             llmMetadata,
                             modelError,
                             ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
-                    throw modelError;
                 }
                 ExecutionReporters.succeeded(
                         ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
@@ -478,14 +477,14 @@ public class ChatModelAction {
             ExecutionReporters.succeeded(
                     ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
             return structuredResponse;
-        } catch (Exception e) {
-            ExecutionReporters.failed(
+        } catch (Throwable e) {
+            throw reportFailedAndPropagate(
                     ctx,
                     ExecutionReporter.EntityTypes.PARSER,
                     STRUCTURED_OUTPUT,
+                    null,
                     e,
                     ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR);
-            throw e;
         }
     }
 
@@ -569,5 +568,33 @@ public class ChatModelAction {
         } else {
             throw new RuntimeException(String.format("Unexpected type event %s", event));
         }
+    }
+
+    /**
+     * Reports a nested execution failure, then returns or throws the original failure so callers
+     * can {@code throw} it. {@link Error} is thrown here so retry/ignore handling cannot swallow
+     * it.
+     */
+    private static Exception reportFailedAndPropagate(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            @Nullable Map<String, Object> entityMetadata,
+            Throwable error,
+            String problemCategory)
+            throws Exception {
+        if (entityMetadata == null) {
+            ExecutionReporters.failed(ctx, entityType, entityName, error, problemCategory);
+        } else {
+            ExecutionReporters.failed(
+                    ctx, entityType, entityName, entityMetadata, error, problemCategory);
+        }
+        if (error instanceof Error) {
+            throw (Error) error;
+        }
+        if (error instanceof Exception) {
+            return (Exception) error;
+        }
+        return new RuntimeException(error);
     }
 }

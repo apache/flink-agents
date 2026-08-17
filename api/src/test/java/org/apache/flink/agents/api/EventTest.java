@@ -203,6 +203,22 @@ class EventTest {
     }
 
     @Test
+    void testFromJsonExplicitNullIdGeneratesUuid() throws IOException {
+        Event event = Event.fromJson("{\"id\":null,\"type\":\"x\"}");
+
+        assertNotNull(event.getId());
+        assertEquals("x", event.getType());
+    }
+
+    @Test
+    void testConstructorExplicitNullIdGeneratesUuid() {
+        Event event = new Event(null, "x", Map.of());
+
+        assertNotNull(event.getId());
+        assertEquals("x", event.getType());
+    }
+
+    @Test
     void testFromJsonMissingType() {
         String json = "{\"attributes\":{\"msg\":\"hello\"}}";
         assertThrows(IOException.class, () -> Event.fromJson(json));

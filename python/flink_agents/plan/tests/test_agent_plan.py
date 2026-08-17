@@ -105,6 +105,12 @@ def test_from_agent_uses_explicit_agent_name() -> None:
     assert agent_plan.agent_name == "registered_agent"
 
 
+def test_from_agent_preserves_empty_agent_name() -> None:
+    agent_plan = AgentPlan.from_agent(AgentForTest(), AgentConfiguration(), "")
+
+    assert agent_plan.agent_name == ""
+
+
 class InvalidAgent(Agent):
     @action(EventType.InputEvent)
     @staticmethod

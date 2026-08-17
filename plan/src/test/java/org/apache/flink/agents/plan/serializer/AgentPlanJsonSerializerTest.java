@@ -230,6 +230,13 @@ public class AgentPlanJsonSerializerTest {
     }
 
     @Test
+    public void testExplicitEmptyAgentNameIsPreserved() throws Exception {
+        AgentPlan plan = new AgentPlan(new TestAgent(), new AgentConfiguration(), "");
+
+        assertThat(plan.getAgentName()).isEqualTo("");
+    }
+
+    @Test
     public void testSerializeAgentPlanWithInjectedToolArgs() throws Exception {
         AgentPlan agentPlan =
                 new AgentPlan(new TestAgentWithInjectedTool(), new AgentConfiguration());

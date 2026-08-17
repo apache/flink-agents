@@ -158,7 +158,7 @@ class AgentPlan(BaseModel):
         return AgentPlan(
             actions=actions,
             resource_providers=resource_providers,
-            agent_name=agent_name or agent.__class__.__name__,
+            agent_name=agent_name if agent_name is not None else agent.__class__.__name__,
             config=config,
         )
 

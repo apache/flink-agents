@@ -126,6 +126,29 @@ def test_event_id_cannot_be_reassigned() -> None:
         event.id = uuid4()
 
 
+def test_explicit_none_id_generates_uuid() -> None:
+    event = Event(id=None, type="x")
+
+    assert event.id is not None
+    assert event.id.version == 4
+    assert event.type == "x"
+
+
+def test_from_json_explicit_null_id_generates_uuid() -> None:
+    event = Event.from_json('{"id":null,"type":"x"}')
+
+    assert event.id is not None
+    assert event.id.version == 4
+    assert event.type == "x"
+
+
+def test_explicit_none_ids_are_distinct() -> None:
+    first = Event(id=None, type="x")
+    second = Event(id=None, type="x")
+
+    assert first.id != second.id
+
+
 def test_event_json_serialization_with_row() -> None:
     event = InputEvent(input=Row({"test": "data"}))
     json_str = event.model_dump_json()

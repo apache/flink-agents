@@ -183,6 +183,15 @@ public class ToolCallAction {
                         entityMetadata,
                         e,
                         ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+            } catch (Error e) {
+                ExecutionReporters.failed(
+                        ctx,
+                        ExecutionReporter.EntityTypes.TOOL,
+                        name,
+                        entityMetadata,
+                        e,
+                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+                throw e;
             }
             if (response != null) {
                 if (response.isSuccess()) {

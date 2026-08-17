@@ -73,21 +73,15 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
                     ToolExecutionMetadataKeys.SKILL_NAME,
                     String.valueOf(parameters.getParameter("name")));
         }
-        if (parameters.hasParameter("path")) {
-            metadata.put(
-                    ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH,
-                    String.valueOf(parameters.getParameter("path")));
-        }
+        metadata.put(
+                ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH, normalizeResourcePath(parameters));
         return metadata;
     }
 
     @Override
     public ToolResponse call(ToolParameters parameters) {
         String name = parameters.getParameter("name", String.class);
-        String path =
-                parameters.hasParameter("path")
-                        ? parameters.getParameter("path", String.class)
-                        : "SKILL.md";
+        String path = normalizeResourcePath(parameters);
 
         SkillManager manager;
         try {
@@ -162,5 +156,18 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
             return ((ResourceContextImpl) resourceContext).getSkillManager();
         }
         return null;
+    }
+
+    /**
+     * Resolves the skill resource path the same way {@link #call(ToolParameters)} loads it.
+     *
+     * <p>A missing or explicit {@code null} path loads {@code SKILL.md}.
+     */
+    static String normalizeResourcePath(ToolParameters parameters) {
+        if (parameters == null || !parameters.hasParameter("path")) {
+            return "SKILL.md";
+        }
+        String path = parameters.getParameter("path", String.class);
+        return path == null ? "SKILL.md" : path;
     }
 }

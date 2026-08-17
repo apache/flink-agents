@@ -107,6 +107,41 @@ class LoadSkillToolTest {
     }
 
     @Test
+    void executionMetadataNormalizesOmittedPathToSkillMd() {
+        Map<String, Object> metadata =
+                tool(contextWithSkills()).getToolExecutionMetadata(args("github", null));
+
+        assertEquals("github", metadata.get(ToolExecutionMetadataKeys.SKILL_NAME));
+        assertEquals("SKILL.md", metadata.get(ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH));
+    }
+
+    @Test
+    void executionMetadataNormalizesExplicitNullPathToSkillMd() {
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("name", "github");
+        parameters.put("path", null);
+
+        Map<String, Object> metadata =
+                tool(contextWithSkills()).getToolExecutionMetadata(new ToolParameters(parameters));
+
+        assertEquals("github", metadata.get(ToolExecutionMetadataKeys.SKILL_NAME));
+        assertEquals("SKILL.md", metadata.get(ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH));
+    }
+
+    @Test
+    void explicitNullPathLoadsSkillContentEnvelope() {
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("name", "github");
+        parameters.put("path", null);
+        LoadSkillTool t = tool(contextWithSkills());
+
+        ToolResponse resp = t.call(new ToolParameters(parameters));
+
+        String out = (String) resp.getResult();
+        assertTrue(out.startsWith("<skill_content name=\"github\">"));
+    }
+
+    @Test
     void missingResourceReportsAvailable() {
         LoadSkillTool t = tool(contextWithSkills());
         ToolResponse resp = t.call(args("nano-banana-pro", "no-such.txt"));
