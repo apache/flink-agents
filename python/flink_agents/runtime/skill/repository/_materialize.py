@@ -26,12 +26,40 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from typing_extensions import Self
 
 _TEMP_DIR_PREFIX = "flink-agents-skills-"
+
+
+class _SameProtocolRedirectHandler(HTTPRedirectHandler):
+    """Reject cross-protocol redirects before requesting their targets."""
+
+    def __init__(
+        self, initial_scheme: str, *, allow_insecure_http: bool = False
+    ) -> None:
+        self._initial_scheme = initial_scheme
+        self._allow_insecure_http = allow_insecure_http
+
+    def redirect_request(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> Request | None:
+        _require_allowed_transport(
+            newurl,
+            allow_insecure_http=self._allow_insecure_http,
+            initial_scheme=self._initial_scheme,
+        )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class Materialized:
@@ -140,7 +168,7 @@ def download_to_tempfile(
     """Download ``url`` to a temp file and return its path.
 
     Uses ``urllib.request`` from the standard library. ``timeout`` is the
-    socket-level timeout passed to ``urlopen`` and applies to both the
+    socket-level timeout passed to the opener and applies to both the
     connection and the read phases.
 
     Args:
@@ -159,6 +187,11 @@ def download_to_tempfile(
     initial_scheme = _require_allowed_transport(
         url, allow_insecure_http=allow_insecure_http
     )
+    opener = build_opener(
+        _SameProtocolRedirectHandler(
+            initial_scheme, allow_insecure_http=allow_insecure_http
+        )
+    )
     req = Request(url, method="GET")
     # The .zip suffix is load-bearing: FileSystemSkillRepository uses
     # path.suffix == ".zip" to detect zip input. Do not change it.
@@ -166,7 +199,7 @@ def download_to_tempfile(
     os.close(fd)
     tmp_path = Path(tmp_path_str)
     try:
-        with urlopen(req, timeout=timeout) as resp, tmp_path.open("wb") as out:
+        with opener.open(req, timeout=timeout) as resp, tmp_path.open("wb") as out:
             final_url = resp.geturl()
             _require_allowed_transport(
                 final_url,

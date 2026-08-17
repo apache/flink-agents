@@ -20,9 +20,7 @@
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
 from urllib.error import HTTPError
 
 import pytest
@@ -99,9 +97,12 @@ class TestMaterialized:
 class _StaticHandler(BaseHTTPRequestHandler):
     payload: bytes = b""
     status: int = 200
+    redirect_location: str | None = None
 
     def do_GET(self) -> None:
         self.send_response(type(self).status)
+        if type(self).redirect_location is not None:
+            self.send_header("Location", type(self).redirect_location)
         self.send_header("Content-Length", str(len(type(self).payload)))
         self.end_headers()
         self.wfile.write(type(self).payload)
@@ -114,6 +115,7 @@ class _StaticHandler(BaseHTTPRequestHandler):
 def static_server() -> "tuple[str, type[_StaticHandler]]":
     _StaticHandler.payload = b""
     _StaticHandler.status = 200
+    _StaticHandler.redirect_location = None
     server = HTTPServer(("127.0.0.1", 0), _StaticHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -125,6 +127,7 @@ def static_server() -> "tuple[str, type[_StaticHandler]]":
         server.server_close()
         _StaticHandler.payload = b""
         _StaticHandler.status = 200
+        _StaticHandler.redirect_location = None
 
 
 class TestDownloadToTempfile:
@@ -161,19 +164,16 @@ class TestDownloadToTempfile:
         with pytest.raises(ValueError, match="disallowed transport"):
             download_to_tempfile("http://127.0.0.1:1/anything", timeout=10)
 
-    def test_cross_protocol_redirect_fails_clearly(self) -> None:
-        class RedirectedResponse(BytesIO):
-            def geturl(self) -> str:
-                return "https://example.com/skills.zip"
+    def test_rejects_cross_protocol_redirect_before_request(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        handler.status = 302
+        handler.redirect_location = "https://127.0.0.1:1/skills.zip"
 
-        response = RedirectedResponse(b"redirected archive")
-        with (
-            patch(
-                "flink_agents.runtime.skill.repository._materialize.urlopen",
-                return_value=response,
-            ),
-            pytest.raises(ValueError, match=r"unsupported redirect.*https://example\.com"),
+        with pytest.raises(
+            ValueError, match=r"unsupported redirect.*https://127\.0\.0\.1:1"
         ):
             download_to_tempfile(
-                "http://example.com/skills.zip", allow_insecure_http=True
+                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
             )
