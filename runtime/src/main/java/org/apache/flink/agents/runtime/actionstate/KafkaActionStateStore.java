@@ -206,28 +206,6 @@ public class KafkaActionStateStore implements ActionStateStore {
                 > 1;
     }
 
-    /**
-     * Returns {@code true} if the given composite state key's business key should be retained in
-     * this subtask's in-memory cache. When no ownership filter is set, all keys are retained. If
-     * the key cannot be parsed, it is retained (fail-safe: prefer keeping over dropping a valid
-     * key).
-     */
-    private boolean shouldRetain(String stateKey) {
-        if (ownershipFilter == null) {
-            return true;
-        }
-        try {
-            List<String> parts = ActionStateUtil.parseKey(stateKey);
-            if (parts.isEmpty()) {
-                return true;
-            }
-            return ownershipFilter.test(parts.get(0));
-        } catch (Exception e) {
-            LOG.warn("Failed to parse state key for ownership filtering: {}", stateKey, e);
-            return true;
-        }
-    }
-
     @Override
     public void rebuildState(List<Object> recoveryMarkers) {
         LOG.info("Rebuilding state from {} recovery markers", recoveryMarkers.size());
@@ -282,7 +260,7 @@ public class KafkaActionStateStore implements ActionStateStore {
 
                 for (ConsumerRecord<String, ActionState> record : records) {
                     try {
-                        if (!shouldRetain(record.key())) {
+                        if (!ActionStateUtil.isKeyRetained(ownershipFilter, record.key())) {
                             continue;
                         }
                         actionStates.put(record.key(), record.value());
@@ -301,6 +279,11 @@ public class KafkaActionStateStore implements ActionStateStore {
         } catch (Exception e) {
             throw new RuntimeException("Failed to rebuild state from Kafka", e);
         }
+    }
+
+    @Override
+    public void setOwnershipFilter(Predicate<String> ownershipFilter) {
+        this.ownershipFilter = ownershipFilter;
     }
 
     @Override

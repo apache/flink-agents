@@ -47,6 +47,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.FLUSS;
@@ -65,10 +66,10 @@ import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.Backe
  * <p>Lifecycle: instantiated in the operator constructor. {@link
  * #maybeInitActionStateStore(AgentConfiguration)} runs from BOTH the operator's {@code
  * initializeState()} and {@code open()} — recovery requires the store to be configured before
- * {@link #handleRecovery(OperatorStateBackend)} reads from it, and the {@code open()} call ensures
+ * {@link #handleRecovery(OperatorStateBackend, Predicate)} reads from it, and the {@code open()} call ensures
  * the store is also available on the normal (non-recovery) path. The method creates a default
  * Kafka-backed store when one was not pre-injected, and is idempotent on the second call. {@link
- * #handleRecovery(OperatorStateBackend)} runs from the operator's {@code initializeState()} during
+ * #handleRecovery(OperatorStateBackend, Predicate)} runs from the operator's {@code initializeState()} during
  * recovery. {@link #initRecoveryMarkerState(OperatorStateBackend)} runs from the operator's {@code
  * open()}. {@link #close()} closes the underlying store.
  *
