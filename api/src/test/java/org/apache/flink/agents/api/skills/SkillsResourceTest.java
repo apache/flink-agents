@@ -127,8 +127,7 @@ class SkillsResourceTest {
     @Test
     void unsafePinnedUrlRoundTripsThroughJackson() throws Exception {
         Skills original =
-                Skills.fromUrlUnsafeWithSha256(
-                        "http://example.com/skills.zip", "a".repeat(64));
+                Skills.fromUrlUnsafeWithSha256("http://example.com/skills.zip", "a".repeat(64));
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(original);
         JsonNode allowInsecureHttp =

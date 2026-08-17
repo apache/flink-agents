@@ -189,8 +189,7 @@ public final class YamlLoader {
                 urlSkills =
                         urlSpec.getSha256() == null
                                 ? Skills.fromUrl(urlSpec.getUrl())
-                                : Skills.fromUrlWithSha256(
-                                        urlSpec.getUrl(), urlSpec.getSha256());
+                                : Skills.fromUrlWithSha256(urlSpec.getUrl(), urlSpec.getSha256());
             }
             sources.addAll(urlSkills.getSources());
         }

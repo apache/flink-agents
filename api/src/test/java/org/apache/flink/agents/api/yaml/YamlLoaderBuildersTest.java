@@ -232,11 +232,7 @@ class YamlLoaderBuildersTest {
 
     @Test
     void buildSkillsSupportsAllUrlSourceSecurityOptions() throws Exception {
-        assertUrlSource(
-                "https://x/secure.zip",
-                null,
-                false,
-                Map.of("url", "https://x/secure.zip"));
+        assertUrlSource("https://x/secure.zip", null, false, Map.of("url", "https://x/secure.zip"));
         assertUrlSource(
                 "https://x/pinned.zip",
                 "a".repeat(64),
