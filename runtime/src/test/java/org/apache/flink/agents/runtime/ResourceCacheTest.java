@@ -34,12 +34,17 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
+import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
+import org.apache.flink.agents.runtime.skill.AgentSkill;
 import org.apache.flink.agents.runtime.skill.SkillManager;
+import org.apache.flink.agents.runtime.skill.SkillRepository;
+import org.apache.flink.agents.runtime.skill.SkillSourceRegistry;
 import org.junit.jupiter.api.Test;
 import pemja.core.object.PyObject;
 
@@ -47,6 +52,7 @@ import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -336,6 +342,87 @@ public class ResourceCacheTest {
                 .containsExactlyInAnyOrder("first", "second");
         assertThat(first.closed).isTrue();
         assertThat(second.closed).isTrue();
+    }
+
+    /**
+     * The close-all guarantee has to reach the nested skill repositories, not stop at {@code
+     * ResourceContextImpl}. Exercised through the real production path — {@code
+     * ResourceCache.close()} → {@code ResourceContextImpl.close()} → {@code SkillManager.close()} →
+     * the repos — because {@code ResourceContextImpl} clears its manager reference in a {@code
+     * finally}, so a repo skipped here can never be retried and leaks its temp directory.
+     */
+    @Test
+    public void closeClosesEverySkillRepositoryWhenAnEarlierRepoThrowsError() throws Exception {
+        // Both repos fail, so the assertions do not depend on the de-dup set's iteration order:
+        // a handler narrowed to Exception anywhere along the chain stops at whichever runs first
+        // and leaves the other unclosed, which fails here either way round.
+        Error firstBoom = new Error("repo close failed");
+        Error secondBoom = new Error("other repo close failed");
+        RecordingRepo failing = new RecordingRepo("alpha", firstBoom);
+        RecordingRepo surviving = new RecordingRepo("beta", secondBoom);
+        AtomicInteger seq = new AtomicInteger();
+        List<RecordingRepo> ordered = List.of(failing, surviving);
+        SkillSourceRegistry.register(
+                "test-resource-cache-close-error",
+                (params, cl) -> ordered.get(seq.getAndIncrement()));
+        Skills skills =
+                new Skills(
+                        List.of(
+                                new SkillSourceSpec("test-resource-cache-close-error", Map.of()),
+                                new SkillSourceSpec("test-resource-cache-close-error", Map.of())));
+
+        ResourceCache cache = new ResourceCache(new HashMap<>());
+        cache.put(Skills.SKILLS_CONFIG, ResourceType.SKILLS, skills);
+        // Force the lazily-cached SkillManager to exist, so close() has repos to release.
+        cache.getResourceContext().getSkillDirs(List.of("alpha"));
+
+        // The Error reaches the caller unwrapped, through both intervening close() methods.
+        Throwable thrown = catchThrowable(cache::close);
+
+        assertThat(thrown).isInstanceOf(Error.class);
+        assertThat(failing.closed).isTrue();
+        assertThat(surviving.closed).isTrue();
+        assertThat(thrown.getSuppressed()).hasSize(1);
+        assertThat(List.of(thrown, thrown.getSuppressed()[0]))
+                .containsExactlyInAnyOrder(firstBoom, secondBoom);
+    }
+
+    /** A skill repository that records its close and can be made to fail it. */
+    private static final class RecordingRepo implements SkillRepository {
+        private final AgentSkill skill;
+        private final Throwable failure;
+        private boolean closed = false;
+
+        private RecordingRepo(String skillName, Throwable failure) {
+            this.skill = new AgentSkill(skillName, "fake", "body", null, null, null);
+            this.failure = failure;
+        }
+
+        @Override
+        public AgentSkill getSkill(String name) {
+            return name.equals(skill.getName()) ? skill : null;
+        }
+
+        @Override
+        public List<AgentSkill> getSkills() {
+            return List.of(skill);
+        }
+
+        @Override
+        public Map<String, String> getResources(String name) {
+            return Map.of();
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+            if (failure instanceof Error) {
+                throw (Error) failure;
+            }
+            if (failure instanceof RuntimeException) {
+                throw (RuntimeException) failure;
+            }
+        }
     }
 
     private static void setSkillManager(ResourceContextImpl context, SkillManager skillManager)
