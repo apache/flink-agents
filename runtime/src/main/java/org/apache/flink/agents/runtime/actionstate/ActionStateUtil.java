@@ -23,16 +23,22 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.util.Preconditions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 /** Utility class for action state related operations. */
 public class ActionStateUtil {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ActionStateUtil.class);
 
     private static final JsonMapper MAPPER =
             JsonMapper.builder()
@@ -60,6 +66,25 @@ public class ActionStateUtil {
         String[] parts = key.split(KEY_SEPARATOR);
         Preconditions.checkArgument(parts.length == 4, "Invalid key format.");
         return List.of(parts);
+    }
+
+    /**
+     * Returns {@code true} if the composite {@code stateKey}'s business key should be retained in a
+     * subtask's in-memory cache under the given ownership filter. A {@code null} filter retains
+     * every key (the default for in-memory and test backends). If the key cannot be parsed, it is
+     * retained as a fail-safe: prefer keeping a valid key over dropping it on a parse error.
+     */
+    public static boolean isKeyRetained(
+            @Nullable Predicate<String> ownershipFilter, String stateKey) {
+        if (ownershipFilter == null) {
+            return true;
+        }
+        try {
+            return ownershipFilter.test(parseKey(stateKey).get(0));
+        } catch (Exception e) {
+            LOG.warn("Failed to parse state key for ownership filtering: {}", stateKey, e);
+            return true;
+        }
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {

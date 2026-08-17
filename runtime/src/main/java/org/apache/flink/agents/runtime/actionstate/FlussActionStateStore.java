@@ -52,6 +52,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.LongPredicate;
+import java.util.function.Predicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_ACTION_STATE_DATABASE;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_ACTION_STATE_TABLE;
@@ -445,7 +446,7 @@ public class FlussActionStateStore implements ActionStateStore {
             }
             InternalRow row = record.getRow();
             String stateKey = row.getString(COL_STATE_KEY).toString();
-            if (!shouldRetain(stateKey)) {
+            if (!ActionStateUtil.isKeyRetained(ownershipFilter, stateKey)) {
                 continue;
             }
             byte[] payload = row.getBytes(COL_STATE_PAYLOAD);
@@ -458,28 +459,6 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public void setOwnershipFilter(Predicate<String> ownershipFilter) {
         this.ownershipFilter = ownershipFilter;
-    }
-
-    /**
-     * Returns {@code true} if the given composite state key's business key should be retained in
-     * this subtask's in-memory cache. When no ownership filter is set, all keys are retained. If
-     * the key cannot be parsed, it is retained (fail-safe: prefer keeping over dropping a valid
-     * key).
-     */
-    private boolean shouldRetain(String stateKey) {
-        if (ownershipFilter == null) {
-            return true;
-        }
-        try {
-            List<String> parts = ActionStateUtil.parseKey(stateKey);
-            if (parts.isEmpty()) {
-                return true;
-            }
-            return ownershipFilter.test(parts.get(0));
-        } catch (Exception e) {
-            LOG.warn("Failed to parse state key for ownership filtering: {}", stateKey, e);
-            return true;
-        }
     }
 
     private Map<Integer, Long> getBucketEndOffsets() {

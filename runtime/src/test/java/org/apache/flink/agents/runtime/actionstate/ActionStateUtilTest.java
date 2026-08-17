@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -203,5 +204,33 @@ public class ActionStateUtilTest {
         // But event and action UUIDs should be the same (same event and action)
         assertEquals(parsed1.get(2), parsed2.get(2)); // Event UUID
         assertEquals(parsed1.get(3), parsed2.get(3)); // Action UUID
+    }
+
+    @Test
+    public void testIsKeyRetainedFiltersForeignKeys() throws Exception {
+        Action action = new NoOpAction("owner-action");
+        InputEvent event = new InputEvent("owner-input");
+        String ownedKey = ActionStateUtil.generateKey("A", 1, action, event);
+        String foreignKey = ActionStateUtil.generateKey("B", 1, action, event);
+
+        assertTrue(ActionStateUtil.isKeyRetained(k -> k.equals("A"), ownedKey));
+        assertFalse(ActionStateUtil.isKeyRetained(k -> k.equals("A"), foreignKey));
+    }
+
+    @Test
+    public void testIsKeyRetainedKeepsAllKeysWhenNoFilter() throws Exception {
+        Action action = new NoOpAction("no-filter-action");
+        InputEvent event = new InputEvent("no-filter-input");
+        String keyA = ActionStateUtil.generateKey("A", 1, action, event);
+        String keyB = ActionStateUtil.generateKey("B", 1, action, event);
+
+        assertTrue(ActionStateUtil.isKeyRetained(null, keyA));
+        assertTrue(ActionStateUtil.isKeyRetained(null, keyB));
+    }
+
+    @Test
+    public void testIsKeyRetainedKeepsUnparseableKey() {
+        // A key that cannot be parsed is retained as a fail-safe even when a filter would reject it.
+        assertTrue(ActionStateUtil.isKeyRetained(k -> k.equals("A"), "malformed-key"));
     }
 }
