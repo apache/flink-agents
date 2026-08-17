@@ -158,12 +158,7 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
         return null;
     }
 
-    /**
-     * Resolves the skill resource path the same way {@link #call(ToolParameters)} loads it.
-     *
-     * <p>A missing or explicit {@code null} path loads {@code SKILL.md}.
-     */
-    static String normalizeResourcePath(ToolParameters parameters) {
+    private static String normalizeResourcePath(ToolParameters parameters) {
         if (parameters == null || !parameters.hasParameter("path")) {
             return "SKILL.md";
         }

@@ -571,9 +571,8 @@ public class ChatModelAction {
     }
 
     /**
-     * Reports a nested execution failure, then returns or throws the original failure so callers
-     * can {@code throw} it. {@link Error} is thrown here so retry/ignore handling cannot swallow
-     * it.
+     * Reports a nested execution failure, then always throws the original failure. The Exception
+     * return type exists so callers must {@code throw} the result and cannot fall through.
      */
     private static Exception reportFailedAndPropagate(
             RunnerContext ctx,
@@ -593,8 +592,8 @@ public class ChatModelAction {
             throw (Error) error;
         }
         if (error instanceof Exception) {
-            return (Exception) error;
+            throw (Exception) error;
         }
-        return new RuntimeException(error);
+        throw new RuntimeException(error);
     }
 }
