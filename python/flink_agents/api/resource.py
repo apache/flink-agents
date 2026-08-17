@@ -32,7 +32,7 @@ class ResourceType(Enum):
     """Type enum of resource.
 
     Currently, support chat_model, chat_model_server, tool, embedding_model,
-    vector_store, prompt, mcp_server, skills.
+    vector_store, prompt, mcp_server, skills, model_router.
     """
 
     CHAT_MODEL = "chat_model"
@@ -44,6 +44,11 @@ class ResourceType(Enum):
     PROMPT = "prompt"
     MCP_SERVER = "mcp_server"
     SKILLS = "skills"
+    # Java-side in-chat model routing (FLIP; full Python routing is a follow-up).
+    # Present so a Java plan containing a MODEL_ROUTER resource deserializes on the
+    # Python side: mixed jobs (Java router + Python actions) must not fail at
+    # operator open with a ValidationError.
+    MODEL_ROUTER = "model_router"
 
 
 class Resource(BaseModel, ABC):

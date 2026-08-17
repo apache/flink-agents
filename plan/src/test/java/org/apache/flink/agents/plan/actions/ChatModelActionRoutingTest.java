@@ -137,6 +137,12 @@ public class ChatModelActionRoutingTest {
             return this;
         }
 
+        FakeRunnerContext withRetryBudget(int maxRetries, int waitIntervalSec) {
+            config.set(AgentExecutionOptions.MAX_RETRIES, maxRetries);
+            config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, waitIntervalSec);
+            return this;
+        }
+
         @Override
         public boolean hasResource(String name, ResourceType type) {
             return type == ResourceType.MODEL_ROUTER && "router".equals(name) && router != null;
@@ -353,6 +359,56 @@ public class ChatModelActionRoutingTest {
     }
 
     @Test
+    void routedRequestUsesRoutedDurableCallIds() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register("big", new FakeChatModel(ChatMessage.assistant("ok")));
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(ChatMessage.user("write sql"))), ctx);
+        // the decision and the chat attempt are distinct durable calls with routed ids
+        assertThat(ctx.durableCallIds).containsExactly("route:router", "chat:router:big");
+    }
+
+    @Test
+    void retryBudgetRunsBeforeFallback() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
+                                .defaultModel("small")
+                                .fallback(true)
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .withErrorHandling(Agent.ErrorHandlingStrategy.RETRY)
+                        .withRetryBudget(1, 0)
+                        .register(
+                                "big",
+                                new FakeChatModel(
+                                        new RuntimeException("transient"),
+                                        ChatMessage.assistant("recovered on retry")))
+                        .register(
+                                "small", new FakeChatModel(ChatMessage.assistant("small answer")));
+
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(ChatMessage.user("write sql"))), ctx);
+
+        // the selected model's retry budget is consumed BEFORE fallback: big's retry
+        // succeeds and small is never resolved — the ordering the class javadoc guarantees
+        assertThat(ctx.chatResponse().getResponse().getContent()).isEqualTo("recovered on retry");
+        assertThat(ctx.resolvedChatModels).containsExactly("big");
+        assertThat(ctx.routingEventCount()).isEqualTo(1L);
+    }
+
+    @Test
     void directModelKeepsLegacyDurableCallId() throws Exception {
         FakeRunnerContext ctx = new FakeRunnerContext(null);
         ChatModelAction.processChatRequestOrToolResponse(
@@ -384,6 +440,10 @@ public class ChatModelActionRoutingTest {
 
         // routed to big; big failed; fell back to small in declaration order
         assertThat(ctx.resolvedChatModels).containsExactly("big", "small");
+        // each stage has its own durable identity: the route decision, then one distinct
+        // chat call per candidate (the format recovery depends on, changed once already)
+        assertThat(ctx.durableCallIds)
+                .containsExactly("route:router", "chat:router:big", "chat:router:small");
         ChatResponseEvent response = ctx.chatResponse();
         assertThat(response).isNotNull();
         assertThat(response.getResponse().getContent()).isEqualTo("ok from small");
