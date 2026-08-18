@@ -36,16 +36,20 @@ import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.apache.flink.agents.runtime.skill.AgentSkill;
 import org.apache.flink.agents.runtime.skill.SkillManager;
 import org.apache.flink.agents.runtime.skill.SkillRepository;
 import org.apache.flink.agents.runtime.skill.SkillSourceRegistry;
+import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
 import org.junit.jupiter.api.Test;
 import pemja.core.object.PyObject;
 
@@ -520,5 +524,33 @@ public class ResourceCacheTest {
                 throw (Exception) failure;
             }
         }
+    }
+
+    /** Test Java sub-agent setup, registered as an AGENT resource. */
+    public static class TestAgentSetup extends BaseSubagentSetup {
+        @Override
+        public SubagentFuture submit(
+                RunnerContext ctx, Object prompt, String sessionId, String callId) {
+            return null;
+        }
+    }
+
+    @Test
+    public void testMaterializingAnAgentInjectsTheResourceNameAsSubagentName() throws Exception {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = new HashMap<>();
+        Map<String, ResourceProvider> agentProviders = new HashMap<>();
+        agentProviders.put(
+                "reviewer",
+                JavaSerializableResourceProvider.createResourceProvider(
+                        "reviewer", ResourceType.AGENT, new TestAgentSetup()));
+        providers.put(ResourceType.AGENT, agentProviders);
+
+        ResourceCache cache = new ResourceCache(providers);
+        List<Resource> materialized = cache.eagerMaterialize(ResourceType.AGENT);
+
+        assertThat(materialized).hasSize(1);
+        assertThat(materialized.get(0)).isInstanceOf(TestAgentSetup.class);
+        // The framework owns the identity: the resource name becomes the sub-agent name.
+        assertThat(((TestAgentSetup) materialized.get(0)).getSubagentName()).isEqualTo("reviewer");
     }
 }
