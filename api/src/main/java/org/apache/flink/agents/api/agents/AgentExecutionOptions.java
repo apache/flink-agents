@@ -75,8 +75,11 @@ public class AgentExecutionOptions {
     /**
      * Overall timeout for one parallel tool-call batch, in milliseconds.
      *
-     * <p>Non-positive values disable the timeout. When the deadline elapses, unfinished slots are
-     * failed; slots that already completed keep their success or failure outcome.
+     * <p>Non-positive values disable the timeout. When the deadline elapses, slots that already
+     * completed keep their success or failure outcome; slots that started but did not finish are
+     * recorded as failures; slots that never started executing (for example, queued in a saturated
+     * pool) stay pending, so they are re-executed after recovery instead of recording a false
+     * failure.
      *
      * <p><b>Thread reclamation:</b> the timeout unblocks the action but does not interrupt a tool
      * that is still running. {@code cancel(true)} cannot interrupt an in-flight {@code

@@ -21,21 +21,28 @@ import org.apache.flink.agents.api.context.Outcome;
 
 import java.util.List;
 
-/** Result of a durable batch execution plus per-slot submission metadata. */
+/**
+ * Result of a durable batch execution plus per-slot start metadata.
+ *
+ * <p>{@code started[i]} is {@code true} only when slot {@code i}'s worker actually began executing
+ * the supplier, not merely when it was handed to the thread pool. A slot that was queued but never
+ * ran (for example, when the pool is saturated at the batch deadline) reports {@code false}, so the
+ * caller leaves it pending for re-execution on recovery instead of recording a false failure.
+ */
 public final class BatchExecutionResult<T> {
     private final List<Outcome<T>> outcomes;
-    private final boolean[] submitted;
+    private final boolean[] started;
 
-    public BatchExecutionResult(List<Outcome<T>> outcomes, boolean[] submitted) {
+    public BatchExecutionResult(List<Outcome<T>> outcomes, boolean[] started) {
         this.outcomes = outcomes;
-        this.submitted = submitted.clone();
+        this.started = started.clone();
     }
 
     public List<Outcome<T>> getOutcomes() {
         return outcomes;
     }
 
-    public boolean wasSubmitted(int index) {
-        return submitted[index];
+    public boolean wasStarted(int index) {
+        return started[index];
     }
 }

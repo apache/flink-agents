@@ -598,33 +598,40 @@ def test_flink_runner_context_reconciler_kwarg_is_not_forwarded() -> None:
 
 def test_flink_runner_context_durable_execute_all_async_runs_calls_in_parallel() -> None:
     j_runner_context = _FakeJavaRunnerContext()
+    parallelism = 3
     config = AgentConfiguration(
-        {"tool-call.batch.timeout.ms": -1, "tool-call.parallelism": 3}
+        {"tool-call.batch.timeout.ms": -1, "tool-call.parallelism": parallelism}
     )
-    ctx = _create_runner_context(j_runner_context, config=config, executor_workers=3)
-    sleep_seconds = 0.2
+    ctx = _create_runner_context(
+        j_runner_context, config=config, executor_workers=parallelism
+    )
 
-    def slow_call(value: str) -> str:
-        time.sleep(sleep_seconds)
+    # A barrier trips only when every call is executing concurrently. If the
+    # runtime instead ran them serially, the first call would block until the
+    # timeout and raise BrokenBarrierError, deterministically failing the test
+    # rather than relying on a fragile wall-clock threshold. On genuine
+    # parallel execution the barrier releases immediately, so the success path
+    # stays fast.
+    barrier = threading.Barrier(parallelism, timeout=10)
+
+    def concurrent_call(value: str) -> str:
+        barrier.wait()
         return value
 
     try:
-        start = time.perf_counter()
         outcomes = _run_async(
             ctx.durable_execute_all_async(
                 [
-                    _durable_call(slow_call, "one"),
-                    _durable_call(slow_call, "two"),
-                    _durable_call(slow_call, "three"),
+                    _durable_call(concurrent_call, "one"),
+                    _durable_call(concurrent_call, "two"),
+                    _durable_call(concurrent_call, "three"),
                 ]
             )
         )
-        elapsed = time.perf_counter() - start
     finally:
         _close_runner_context(ctx)
 
     assert [outcome.value for outcome in outcomes] == ["one", "two", "three"]
-    assert elapsed < sleep_seconds * 2.5
     assert [result.status for result in j_runner_context.call_results] == [
         "SUCCEEDED",
         "SUCCEEDED",
@@ -807,11 +814,19 @@ def test_flink_runner_context_durable_execute_all_async_collects_failures() -> N
 
 def test_flink_runner_context_durable_execute_all_async_timeout_keeps_completed_results() -> None:
     j_runner_context = _FakeJavaRunnerContext()
-    config = AgentConfiguration({"tool-call.batch.timeout.ms": 10})
+    config = AgentConfiguration({"tool-call.batch.timeout.ms": 100})
     ctx = _create_runner_context(j_runner_context, config=config)
 
+    # The slow worker blocks on an event instead of racing a sleep against the
+    # deadline. Once its worker thread starts, _mark_started_on_run has already
+    # flipped the started flag, so the timeout must record it as FAILED (started
+    # but unfinished) rather than PENDING. The event guarantees it never
+    # finishes before the deadline, and the finally block releases it so the
+    # pool can shut down.
+    release = threading.Event()
+
     def slow_call() -> str:
-        time.sleep(0.05)
+        release.wait(5)
         return "slow"
 
     try:
@@ -824,6 +839,7 @@ def test_flink_runner_context_durable_execute_all_async_timeout_keeps_completed_
             )
         )
     finally:
+        release.set()
         _close_runner_context(ctx)
 
     assert outcomes[0].value == "fast"
@@ -837,26 +853,34 @@ def test_flink_runner_context_durable_execute_all_async_timeout_keeps_completed_
 def test_flink_runner_context_durable_execute_all_async_timeout_leaves_unsubmitted_slots_pending() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     config = AgentConfiguration(
-        {"tool-call.batch.timeout.ms": 10, "tool-call.parallelism": 2}
+        {"tool-call.batch.timeout.ms": 100, "tool-call.parallelism": 2}
     )
     ctx = _create_runner_context(j_runner_context, config=config, executor_workers=2)
 
-    def slow_call(value: str) -> str:
-        time.sleep(0.05)
+    # The two blocking calls saturate the parallelism budget and hold their
+    # worker threads (started flag flipped) until the deadline, so they fail; the
+    # remaining two suppliers are never submitted and stay pending. Blocking on an
+    # event instead of sleeping makes "started" deterministic rather than racing
+    # thread startup against a short wall-clock timeout.
+    release = threading.Event()
+
+    def blocking_call(value: str) -> str:
+        release.wait(5)
         return value
 
     try:
         outcomes = _run_async(
             ctx.durable_execute_all_async(
                 [
-                    _durable_call(slow_call, "one"),
-                    _durable_call(slow_call, "two"),
+                    _durable_call(blocking_call, "one"),
+                    _durable_call(blocking_call, "two"),
                     _durable_call(_call_value, "three"),
                     _durable_call(_call_value, "four"),
                 ]
             )
         )
     finally:
+        release.set()
         _close_runner_context(ctx)
 
     assert outcomes[0].is_failure()
@@ -869,6 +893,51 @@ def test_flink_runner_context_durable_execute_all_async_timeout_leaves_unsubmitt
         "PENDING",
         "PENDING",
     ]
+    assert j_runner_context.current_call_index == 4
+
+
+def test_flink_runner_context_durable_execute_all_async_timeout_leaves_queued_slots_pending() -> (
+    None
+):
+    j_runner_context = _FakeJavaRunnerContext()
+    # Parallelism budget exceeds the worker count, so two suppliers are handed to a
+    # saturated pool and wait in its queue without ever starting before the deadline.
+    config = AgentConfiguration(
+        {"tool-call.batch.timeout.ms": 100, "tool-call.parallelism": 4}
+    )
+    ctx = _create_runner_context(j_runner_context, config=config, executor_workers=2)
+
+    # Blocking on an event (rather than sleeping) keeps the two running workers
+    # deterministically "started but unfinished" until the deadline, while the two
+    # queued suppliers never begin.
+    release = threading.Event()
+
+    def blocking_call(value: str) -> str:
+        release.wait(5)
+        return value
+
+    try:
+        outcomes = _run_async(
+            ctx.durable_execute_all_async(
+                [
+                    _durable_call(blocking_call, "one"),
+                    _durable_call(blocking_call, "two"),
+                    _durable_call(blocking_call, "three"),
+                    _durable_call(blocking_call, "four"),
+                ]
+            )
+        )
+    finally:
+        release.set()
+        _close_runner_context(ctx)
+
+    assert all(outcome.is_failure() for outcome in outcomes)
+    statuses = [result.status for result in j_runner_context.call_results]
+    # Only the two workers that actually began executing are persisted as failures; the
+    # queued-but-never-started pair stays pending so recovery re-executes them instead of
+    # replaying a false failure.
+    assert statuses.count("FAILED") == 2
+    assert statuses.count("PENDING") == 2
     assert j_runner_context.current_call_index == 4
 
 

@@ -82,7 +82,6 @@ class _ReconcilerExecutionPlan:
 class _BatchExecutionPlan:
     outcomes: list[Outcome]
     suppliers: list[tuple[int, Callable[[], Any]]]
-    submitted: list[bool]
     needs_reservation: bool = False
     execution_start: int = -1
 
@@ -306,6 +305,7 @@ class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
         deadline = time.monotonic() + timeout_ms / 1000 if timeout_ms > 0 else None
         suppliers = [supplier for _, supplier in plan.suppliers]
         batch_futures: list[Any | None] = [None] * len(suppliers)
+        started: list[bool] = [False] * len(suppliers)
         try:
             executed = yield from _execute_sliding_window_batch(
                 self._ctx.executor,
@@ -314,17 +314,36 @@ class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
                 deadline,
                 timeout_ms,
                 batch_futures,
-                plan.submitted,
+                started,
             )
         except _BatchTimeoutError as exception:
             executed = _collect_sliding_window_outcomes_on_timeout(
-                batch_futures, plan.submitted, exception
+                batch_futures, started, exception
             )
-        return self._ctx._finalize_batch_execution(self._calls, plan, executed)
+        return self._ctx._finalize_batch_execution(
+            self._calls, plan, started, executed
+        )
 
 
 class _BatchTimeoutError(TimeoutError):
     """Raised when a durable batch exceeds its deadline."""
+
+
+def _mark_started_on_run(
+    supplier: Callable[[], Any], started: list[bool], index: int
+) -> Callable[[], Any]:
+    """Wrap a supplier so ``started[index]`` flips only when the worker truly runs.
+
+    A task queued in a saturated pool but cancelled before it executes keeps
+    ``started[index] == False``, so it is treated as never-run and stays
+    re-executable on recovery instead of being recorded as a timeout failure.
+    """
+
+    def _run() -> Any:
+        started[index] = True
+        return supplier()
+
+    return _run
 
 
 def _execute_sliding_window_batch(
@@ -334,7 +353,7 @@ def _execute_sliding_window_batch(
     deadline: float | None,
     timeout_ms: int,
     futures: list[Any | None],
-    submitted: list[bool],
+    started: list[bool],
 ) -> Any:
     batch_size = len(suppliers)
     if batch_size == 0:
@@ -360,8 +379,10 @@ def _execute_sliding_window_batch(
             raise _BatchTimeoutError(timeout_message)
 
         while next_to_submit < batch_size and in_flight() < parallelism_limit:
-            futures[next_to_submit] = executor.submit(suppliers[next_to_submit])
-            submitted[next_to_submit] = True
+            index = next_to_submit
+            futures[index] = executor.submit(
+                _mark_started_on_run(suppliers[index], started, index)
+            )
             next_to_submit += 1
 
         for i in range(next_to_submit):
@@ -377,12 +398,12 @@ def _execute_sliding_window_batch(
 
 def _collect_sliding_window_outcomes_on_timeout(
     futures: list[Any | None],
-    submitted: list[bool],
+    started: list[bool],
     timeout_exception: BaseException,
 ) -> list[Outcome]:
     outcomes = []
-    for is_submitted, future in zip(submitted, futures, strict=True):
-        if not is_submitted or future is None:
+    for is_started, future in zip(started, futures, strict=True):
+        if not is_started or future is None:
             outcomes.append(Outcome.failure(timeout_exception))
             continue
         if not future.done():
@@ -938,7 +959,6 @@ class FlinkRunnerContext(RunnerContext):
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes: list[Outcome | None] = []
         suppliers: list[tuple[int, Callable[[], Any]]] = []
-        submitted: list[bool] = []
         needs_reservation = False
         execution_start = -1
 
@@ -951,7 +971,6 @@ class FlinkRunnerContext(RunnerContext):
                     execution_start = index
                 outcomes.append(None)
                 suppliers.append((index, self._callable_for_durable_call(call)))
-                submitted.append(False)
                 continue
 
             if not self._call_matches(current, call):
@@ -960,7 +979,6 @@ class FlinkRunnerContext(RunnerContext):
                 execution_start = index
                 outcomes.append(None)
                 suppliers.append((index, self._callable_for_durable_call(call)))
-                submitted.append(False)
                 for remaining_index in range(index + 1, len(calls)):
                     outcomes.append(None)
                     suppliers.append(
@@ -969,7 +987,6 @@ class FlinkRunnerContext(RunnerContext):
                             self._callable_for_durable_call(calls[remaining_index]),
                         )
                     )
-                    submitted.append(False)
                 break
 
             if current.status == "PENDING":
@@ -980,7 +997,6 @@ class FlinkRunnerContext(RunnerContext):
                         call.reconciler or self._callable_for_durable_call(call),
                     )
                 )
-                submitted.append(False)
             else:
                 outcomes.append(self._read_terminal_outcome(current))
 
@@ -996,7 +1012,6 @@ class FlinkRunnerContext(RunnerContext):
         return _BatchExecutionPlan(
             outcomes=outcomes,
             suppliers=suppliers,
-            submitted=submitted,
             needs_reservation=needs_reservation,
             execution_start=execution_start,
         )
@@ -1005,6 +1020,7 @@ class FlinkRunnerContext(RunnerContext):
         self,
         calls: list[DurableCall],
         plan: _BatchExecutionPlan,
+        started: list[bool],
         executed: list[Outcome],
     ) -> list[Outcome]:
         base = self._j_runner_context.getCurrentCallIndex()
@@ -1014,7 +1030,7 @@ class FlinkRunnerContext(RunnerContext):
         ):
             call = calls[call_index]
             function_id, args_digest = self._durable_identity(call)
-            if not plan.submitted[i]:
+            if not started[i]:
                 outcomes[call_index] = outcome
                 continue
             try:
