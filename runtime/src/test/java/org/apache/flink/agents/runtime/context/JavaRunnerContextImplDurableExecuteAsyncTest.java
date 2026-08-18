@@ -464,8 +464,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
-    void testDurableExecuteAllAsyncTimeoutLeavesQueuedButUnstartedSlotsPending()
-            throws Exception {
+    void testDurableExecuteAllAsyncTimeoutLeavesQueuedButUnstartedSlotsPending() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         executor.setUseTimeoutCollection(true);
         // Pool has fewer threads than the parallelism budget, so two suppliers are handed to a
@@ -480,10 +479,12 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                     Thread.sleep(300);
                     return "slow";
                 };
-        TestDurableCallable<String> first = new TestDurableCallable<>("batch-1", String.class, slow);
+        TestDurableCallable<String> first =
+                new TestDurableCallable<>("batch-1", String.class, slow);
         TestDurableCallable<String> second =
                 new TestDurableCallable<>("batch-2", String.class, slow);
-        TestDurableCallable<String> third = new TestDurableCallable<>("batch-3", String.class, slow);
+        TestDurableCallable<String> third =
+                new TestDurableCallable<>("batch-3", String.class, slow);
         TestDurableCallable<String> fourth =
                 new TestDurableCallable<>("batch-4", String.class, slow);
 
