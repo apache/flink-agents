@@ -20,7 +20,6 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
-import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -32,6 +31,7 @@ import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryEventBuilder;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.memory.MemoryUpdateReplayer;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
@@ -417,19 +417,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     key);
             isFinished = true;
             outputEvents = actionTask.finalizeOutputEvents(actionState.getOutputEvents());
-            for (MemoryUpdate memoryUpdate : actionState.getShortTermMemoryUpdates()) {
-                actionTask
-                        .getRunnerContext()
-                        .getShortTermMemory()
-                        .set(memoryUpdate.getPath(), memoryUpdate.getValue());
-            }
-
-            for (MemoryUpdate memoryUpdate : actionState.getSensoryMemoryUpdates()) {
-                actionTask
-                        .getRunnerContext()
-                        .getSensoryMemory()
-                        .set(memoryUpdate.getPath(), memoryUpdate.getValue());
-            }
+            MemoryUpdateReplayer.replay(
+                    actionTask.getRunnerContext().getShortTermMemory(),
+                    actionState.getShortTermMemoryUpdates());
+            MemoryUpdateReplayer.replay(
+                    actionTask.getRunnerContext().getSensoryMemory(),
+                    actionState.getSensoryMemoryUpdates());
         } else {
             // Initialize ActionState if not exists, or use existing one for recovery
             if (actionState == null) {

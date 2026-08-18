@@ -61,11 +61,13 @@ public class ActionStateSerdeTest {
 
         MemoryUpdate sensoryMemoryUpdate = new MemoryUpdate("sm.test.path", "sm test value");
         MemoryUpdate shortTermMemoryUpdate = new MemoryUpdate("stm.test.path", "stm test value");
+        MemoryUpdate objectCreationUpdate = new MemoryUpdate("stm.test.obj", null, true);
 
         // Create ActionState
         ActionState originalState = new ActionState(inputEvent);
         originalState.addSensoryMemoryUpdate(sensoryMemoryUpdate);
         originalState.addShortTermMemoryUpdate(shortTermMemoryUpdate);
+        originalState.addShortTermMemoryUpdate(objectCreationUpdate);
         originalState.addEvent(outputEvent);
 
         // Serialize
@@ -90,11 +92,18 @@ public class ActionStateSerdeTest {
                 deserializedState.getSensoryMemoryUpdates().get(0);
         assertEquals("sm.test.path", deserializedSensoryMemoryUpdate.getPath());
         assertEquals("sm test value", deserializedSensoryMemoryUpdate.getValue());
-        assertEquals(1, deserializedState.getShortTermMemoryUpdates().size());
+        assertFalse(deserializedSensoryMemoryUpdate.isObjectCreation());
+        assertEquals(2, deserializedState.getShortTermMemoryUpdates().size());
         MemoryUpdate deserializedShortTermMemoryUpdate =
                 deserializedState.getShortTermMemoryUpdates().get(0);
         assertEquals("stm.test.path", deserializedShortTermMemoryUpdate.getPath());
         assertEquals("stm test value", deserializedShortTermMemoryUpdate.getValue());
+        assertFalse(deserializedShortTermMemoryUpdate.isObjectCreation());
+        MemoryUpdate deserializedObjectCreationUpdate =
+                deserializedState.getShortTermMemoryUpdates().get(1);
+        assertEquals("stm.test.obj", deserializedObjectCreationUpdate.getPath());
+        assertNull(deserializedObjectCreationUpdate.getValue());
+        assertTrue(deserializedObjectCreationUpdate.isObjectCreation());
 
         // Verify outputEvents
         assertEquals(1, deserializedState.getOutputEvents().size());

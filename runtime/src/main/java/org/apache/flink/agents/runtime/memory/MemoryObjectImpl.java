@@ -138,7 +138,7 @@ public class MemoryObjectImpl implements MemoryObject {
         } else {
             store.put(absPath, new MemoryItem());
         }
-        memoryUpdates.add(new MemoryUpdate(absPath, null));
+        memoryUpdates.add(new MemoryUpdate(absPath, null, true));
 
         String parent =
                 absPath.contains(SEPARATOR)
