@@ -30,7 +30,7 @@ On Linux, install it with:
 $ ./setup_hugo.sh
 ```
 
-`setup_hugo.sh` downloads the Linux binary only. On other platforms, install the extended Hugo 0.110.0 from the [Hugo releases page](https://github.com/gohugoio/hugo/releases/tag/v0.110.0) yourself.
+`setup_hugo.sh` downloads a Linux binary, x86_64 or ARM64. On other platforms, install the extended Hugo 0.110.0 from the [Hugo releases page](https://github.com/gohugoio/hugo/releases/tag/v0.110.0) yourself.
 
 Then build the docs from source:
 
