@@ -34,7 +34,7 @@ It provides a step by step introduction on how to install Flink Agents and build
 
 * [Workflow Agent]({{< ref "docs/get-started/quickstart/workflow_agent" >}}) - Define agent logic as an explicit event-driven workflow
 * [ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}}) - Let the model plan and call tools in a reason-act loop
-* [YAML Agent]({{< ref "docs/get-started/quickstart/yaml_agent" >}}) - Declare an agent without writing code
+* [YAML Agent]({{< ref "docs/get-started/quickstart/yaml_agent" >}}) - Configure an agent declaratively in YAML
 
 ### Build and Operate
 
