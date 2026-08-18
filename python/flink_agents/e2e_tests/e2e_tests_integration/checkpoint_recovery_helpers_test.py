@@ -78,11 +78,16 @@ def test_deadline_raises(tmp_path: Path) -> None:
         await_release(str(tmp_path), timeout_s=0.3, poll_interval_s=0.05)
 
 
+class _BytesSub(bytes):
+    """A ``bytes`` subclass, which short-term memory rejects at write time."""
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
         (_KNOWN_BLOB, True),
-        (bytearray(_KNOWN_BLOB), True),
+        (bytearray(_KNOWN_BLOB), False),
+        (_BytesSub(_KNOWN_BLOB), False),
         (b"other", False),
         (memoryview(_KNOWN_BLOB), False),
         (list(_KNOWN_BLOB), False),
@@ -92,17 +97,17 @@ def test_deadline_raises(tmp_path: Path) -> None:
         (5, False),
     ],
 )
-def test_blob_matches_compares_content_only(raw: Any, expected: bool) -> None:
-    """Contract: ``bytes`` or ``bytearray`` holding the known content, nothing else.
+def test_blob_matches_requires_exact_bytes(raw: Any, expected: bool) -> None:
+    """Contract: exact ``bytes`` holding the known content, nothing else.
 
-    A list or tuple of the same ints must not pass: ``bytes()`` accepts any iterable
-    of ints, so a sequence that merely enumerates the right byte values is not
-    evidence the value survived as a byte array.
+    A ``bytearray``, a ``bytes`` subclass and a ``memoryview`` over the same buffer
+    all compare equal to the blob, and all three are rejected: short-term memory
+    accepts only exact ``bytes`` at write time, so a value arriving as any of them is
+    a round trip that did not preserve the type rather than a match.
 
-    ``memoryview`` is rejected deliberately, not by oversight. Admitting it would be
-    speculation about how the bridge materializes a ``byte[]``, and it would also
-    admit views whose element format is not a byte. If one ever does arrive this
-    fails, and ``blob_observed_type`` in the verdict names what came back.
+    A list or tuple of the same ints must not pass either: a sequence enumerating the
+    right byte values is not evidence the value survived as a byte array. Whatever
+    does come back, ``blob_observed_type`` in the verdict names it.
     """
     assert _blob_matches(raw) is expected
 

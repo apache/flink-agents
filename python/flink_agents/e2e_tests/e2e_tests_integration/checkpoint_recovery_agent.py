@@ -237,24 +237,20 @@ def _mark_tool_call_emitted() -> None:
 
 
 def _blob_matches(raw: Any) -> bool:
-    """Check the value is ``bytes`` or ``bytearray`` holding the known blob.
+    """Check the value is exact ``bytes`` holding the known blob.
 
-    The type gate is part of the assertion, not defensive coding. ``bytes()``
-    accepts any iterable of ints, so without it a ``byte[]`` materialized as
-    ``[0, 1, 102, ...]`` would compare equal to the blob and pass, and a bug here
-    produces a false pass rather than a failure.
+    The type gate is part of the assertion, not defensive coding. A ``bytearray``, a
+    ``memoryview`` and a ``bytes`` subclass all compare equal to the blob, so content
+    alone says nothing about the form the value came back in: a gate that admitted
+    them would report a pass for a round trip that did not preserve the type.
 
-    ``bytes`` is admitted because it is the only one of the two the memory value
-    validator accepts at write time. ``bytearray`` is admitted because the value
-    comes back across the bridge from a Java ``byte[]`` and may materialize as
-    either — a read-side allowance this test makes, not one the write-side contract
-    grants. Nothing else is admitted on the chance it might appear; anything else
-    fails here rather than aborting the action, so the run still publishes a verdict
-    and ``blob_observed_type`` records what did come back.
+    Exact type rather than ``isinstance``, matching the write side, which accepts only
+    exact ``bytes`` into short-term memory and rejects both a ``bytearray`` and a
+    ``bytes`` subclass. Nothing else is admitted on the chance it might appear. An
+    unexpected type returns ``False`` rather than raising, so the run still publishes a
+    verdict and ``blob_observed_type`` records what did come back.
     """
-    if not isinstance(raw, bytes | bytearray):
-        return False
-    return bytes(raw) == _KNOWN_BLOB
+    return type(raw) is bytes and raw == _KNOWN_BLOB
 
 
 def _structured_transcript(raw: Any) -> str | None:
