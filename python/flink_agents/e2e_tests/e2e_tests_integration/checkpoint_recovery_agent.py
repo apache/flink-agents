@@ -19,10 +19,13 @@
 
 A deterministic mock chat model emits one tool call, and the tool then blocks on a
 filesystem handshake, so the harness rather than the clock decides when the agent
-run may finish. While the run is parked, the built-in tool-call context and a
-``bytes`` short-term-memory value sit in checkpointable state; the harness kills and
-restarts the TaskManager, and the assertions below then run in a TaskManager process
-that never performed any of the writes.
+run may finish. The chat request also carries an output schema, so the tool-call
+context, that schema, and a ``bytes`` short-term-memory value all sit in
+checkpointable state while the run is parked; the harness kills and restarts the
+TaskManager, and the assertions below then run in a TaskManager process that never
+performed any of the writes. Rebuilding the schema there resolves its class by name
+from the module path recorded before the kill, so that path must still name this
+class in the restarted process.
 
 Submitted to a real cluster by ``checkpoint_recovery_job``. The module name is
 deliberately neither ``*_test.py`` nor ``*_example.py``: the first would make pytest
@@ -41,7 +44,7 @@ from pydantic import BaseModel
 from pyflink.datastream import KeySelector
 
 import flink_agents.api.memory_object as memory_object_module
-from flink_agents.api.agents.agent import Agent
+from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
@@ -93,6 +96,30 @@ _BLOB_MEMORY_KEY = "blob"
 # makes the value load-bearing: it must not be a substring of that failure string,
 # which rules out anything built from the tool's own name.
 _TOOL_SENTINEL = "handshake-done-sentinel"
+
+# Field name of the round-two structured response, and the key
+# _structured_transcript looks up. That lookup is the check that the schema rebuilt
+# from restored state is this one: it returns None whenever the key is absent, which
+# fails the verdict. Validation upstream cannot carry the check, because pydantic
+# ignores extra keys by default — a schema rebuilt as some other class raises only if
+# that class has required fields the payload lacks, and otherwise accepts the payload
+# while dropping this key. The name is distinctive so that a successful lookup means
+# this class was rebuilt, rather than one that happens to declare a field of the same
+# name.
+_STRUCTURED_TRANSCRIPT_FIELD = "recovery_transcript"
+
+
+class RecoveryStructuredResponse(BaseModel):
+    """Round-two response shape, named by the output schema on the chat request.
+
+    Attributes:
+    ----------
+    recovery_transcript : str
+        Every message of the round-two request joined into one string.
+    """
+
+    recovery_transcript: str
+
 
 # A NUL plus bytes that are not valid UTF-8, so a value handled as UTF-8 text anywhere
 # on the path either raises or comes back corrupted. A single-byte codec such as
@@ -214,8 +241,8 @@ def _blob_matches(raw: Any) -> bool:
 
     The type gate is part of the assertion, not defensive coding. ``bytes()``
     accepts any iterable of ints, so without it a ``byte[]`` materialized as
-    ``[0, 1, 102, ...]`` would compare equal to the blob and pass — and this
-    predicate is the one whose bug produces a false pass.
+    ``[0, 1, 102, ...]`` would compare equal to the blob and pass, and a bug here
+    produces a false pass rather than a failure.
 
     ``bytes`` is admitted because it is the only one of the two the memory value
     validator accepts at write time. ``bytearray`` is admitted because the value
@@ -228,6 +255,27 @@ def _blob_matches(raw: Any) -> bool:
     if not isinstance(raw, bytes | bytearray):
         return False
     return bytes(raw) == _KNOWN_BLOB
+
+
+def _structured_transcript(raw: Any) -> str | None:
+    """Return the transcript held by a structured output, else ``None``.
+
+    The value arrives as a plain ``dict`` rather than as the model: the response
+    crosses the event bridge as JSON, and only ``Row`` is reconstructed to its own
+    type there. The model instance is accepted too, so the contract holds wherever
+    it is exercised.
+
+    ``None`` means no transcript was recovered — either nothing structured at all, or
+    a payload that does not carry this field as a string — which fails the verdict.
+    It is never conflated with an empty transcript, so a round in which this schema
+    was never applied cannot pass the marker checks that read the returned string.
+    """
+    if isinstance(raw, RecoveryStructuredResponse):
+        return raw.recovery_transcript
+    if isinstance(raw, dict):
+        value = raw.get(_STRUCTURED_TRANSCRIPT_FIELD)
+        return value if isinstance(value, str) else None
+    return None
 
 
 def _required_config(ctx: RunnerContext, key: str) -> str:
@@ -262,7 +310,7 @@ class CheckpointRecoveryKeySelector(KeySelector):
 
 
 class RecoveryMockChatConnection(BaseChatModelConnection):
-    """Mock connection emitting one tool call, then joining the whole transcript."""
+    """Mock connection emitting one tool call, then joining the transcript as JSON."""
 
     def chat(
         self,
@@ -274,15 +322,23 @@ class RecoveryMockChatConnection(BaseChatModelConnection):
         """Request the blocking tool, or join every message once the tool replied.
 
         A non-``None`` ``output_schema`` is rejected: this connection has no native
-        structured-output translation. Declaring the parameter keeps a caller-supplied
-        schema out of ``**kwargs``.
+        structured-output translation. A schema set on the request still takes
+        effect, because the caller applies it to the returned content rather than
+        handing it down here, and the content of the round after the tool result is
+        emitted as the JSON object that application expects. Declaring the parameter
+        keeps a caller-supplied schema out of ``**kwargs``.
         """
         self._reject_unsupported_output_schema(output_schema)
         if messages[-1].role == MessageRole.TOOL:
             # Joining every message carries the rebuilt transcript out to the
-            # emitted content, which is where the assertion can reach it.
+            # emitted content, which is where the assertion can reach it. It is
+            # wrapped as a JSON object because the caller parses this round against
+            # the output schema; the joined text survives verbatim inside the field.
             content = "\n".join(message.content for message in messages)
-            return ChatMessage(role=MessageRole.ASSISTANT, content=content)
+            return ChatMessage(
+                role=MessageRole.ASSISTANT,
+                content=json.dumps({_STRUCTURED_TRANSCRIPT_FIELD: content}),
+            )
 
         # Validate the tool was bound before the model was invoked.
         assert tools[0].name == BLOCKING_TOOL_NAME
@@ -395,6 +451,10 @@ class CheckpointRecoveryAgent(Agent):
                     ChatMessage(role=MessageRole.USER, content=input_data.content)
                 ],
                 prompt_args={"task": input_data.content},
+                # Set once, on the only request this agent issues. The framework
+                # persists it with the tool-call context and re-reads the restored
+                # copy for the round that follows the tool result.
+                output_schema=OutputSchema(output_schema=RecoveryStructuredResponse),
             )
         )
 
@@ -402,21 +462,35 @@ class CheckpointRecoveryAgent(Agent):
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Check the restored payload, publish the verdict, then fail on mismatch."""
-        transcript = ChatResponseEvent.from_event(event).response.content
+        chat_response = ChatResponseEvent.from_event(event).response
+        raw_structured = chat_response.extra_args.get(STRUCTURED_OUTPUT)
+        transcript = _structured_transcript(raw_structured)
         input_id = ctx.short_term_memory.get("input_id")
         raw = ctx.short_term_memory.get(_BLOB_MEMORY_KEY)
 
         blob_ok = _blob_matches(raw)
-        # _ROUND_ONE_MARKER is the load-bearing half: it exists only in the round-one
-        # assistant message, so it can reach here only through the restored tool-call
-        # context. USER_CONTENT is also restored, but weakly, because round two
-        # re-renders the prompt from restored prompt_args and that rendering contains
-        # it too.
-        context_ok = _ROUND_ONE_MARKER in transcript and USER_CONTENT in transcript
-        handshake_ok = _TOOL_SENTINEL in transcript
+        # The markers reach the assertion through the structured payload, so
+        # structured_ok carries its own claim: an output schema whose class was
+        # resolved by name from the recorded module path was applied to the round-two
+        # response. What places that round in a process which never emitted the tool
+        # call is restored_context, which pairs its checks with a process counter.
+        # structured_ok also guards the substring checks, which have no string to
+        # read when the payload is absent.
+        structured_ok = transcript is not None
+        # _ROUND_ONE_MARKER is the load-bearing half of the transcript: it exists only
+        # in the round-one assistant message, so it can reach here only through the
+        # restored tool-call context. USER_CONTENT is also restored, but weakly,
+        # because round two re-renders the prompt from restored prompt_args and that
+        # rendering contains it too.
+        context_ok = (
+            structured_ok
+            and _ROUND_ONE_MARKER in transcript
+            and USER_CONTENT in transcript
+        )
+        handshake_ok = structured_ok and _TOOL_SENTINEL in transcript
         restored_blob = blob_ok and _BLOB_WRITES_IN_THIS_PROCESS == 0
         restored_context = context_ok and _TOOL_CALLS_EMITTED_IN_THIS_PROCESS == 0
-        passed = restored_blob and restored_context and handshake_ok
+        passed = structured_ok and restored_blob and restored_context and handshake_ok
         # Identity is spread first so that no key it grows later can overwrite an
         # assertion field. The harness reads "verdict"; losing it to a silent
         # collision would be unrecoverable from the file alone.
@@ -429,10 +503,15 @@ class CheckpointRecoveryAgent(Agent):
             "context_ok": context_ok,
             "restored_context": restored_context,
             "handshake_ok": handshake_ok,
+            "structured_ok": structured_ok,
             "blob_observed_type": type(raw).__name__,
+            "structured_observed_type": type(raw_structured).__name__,
             "blob_writes_in_this_process": _BLOB_WRITES_IN_THIS_PROCESS,
             "tool_calls_emitted_in_this_process": _TOOL_CALLS_EMITTED_IN_THIS_PROCESS,
             "transcript": transcript,
+            # The unparsed response alongside the unpacked transcript, so a payload
+            # that failed to unpack is diagnosable from this file alone.
+            "response_content": chat_response.content,
         }
         verdict = json.dumps(record, sort_keys=True)
         _atomic_write(

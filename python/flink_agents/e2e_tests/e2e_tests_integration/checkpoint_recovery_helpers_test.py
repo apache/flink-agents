@@ -17,8 +17,8 @@
 #################################################################################
 """Unit tests for the checkpoint-recovery helpers that decide pass or fail.
 
-Covers the handshake's two obligations to the harness and the blob predicate the
-verdict is computed from.
+Covers the handshake's two obligations to the harness and the two helpers that
+feed the verdict's assertions.
 """
 
 import time
@@ -29,9 +29,12 @@ import pytest
 
 from flink_agents.e2e_tests.e2e_tests_integration.checkpoint_recovery_agent import (
     _KNOWN_BLOB,
+    _STRUCTURED_TRANSCRIPT_FIELD,
     RELEASE_MARKER,
     TOOL_ENTERED_MARKER,
+    RecoveryStructuredResponse,
     _blob_matches,
+    _structured_transcript,
     await_release,
 )
 
@@ -102,3 +105,29 @@ def test_blob_matches_compares_content_only(raw: Any, expected: bool) -> None:
     fails, and ``blob_observed_type`` in the verdict names what came back.
     """
     assert _blob_matches(raw) is expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (RecoveryStructuredResponse(recovery_transcript="joined"), "joined"),
+        ({_STRUCTURED_TRANSCRIPT_FIELD: "joined"}, "joined"),
+        ({_STRUCTURED_TRANSCRIPT_FIELD: 5}, None),
+        ({"other_field": "joined"}, None),
+        (None, None),
+        ("joined", None),
+    ],
+)
+def test_structured_transcript_requires_a_structured_payload(
+    raw: Any, expected: str | None
+) -> None:
+    """Contract: only a structured payload yields a transcript, everything else None.
+
+    The transcript is the sole carrier of the marker assertions, so a round in which
+    the output schema was never applied must not be mistaken for one in which it was.
+    ``None`` is the value a response carrying no structured output yields. A bare
+    string is rejected so the response content cannot stand in for a transcript: the
+    connection emits that content with no schema involved, yet it wraps the joined
+    transcript in JSON and so carries every marker the verdict looks for.
+    """
+    assert _structured_transcript(raw) == expected
