@@ -315,8 +315,18 @@ If your job mixes heavy tool batches with chat/RAG on the same subtask, lower
 {{< /hint >}}
 
 `tool-call.batch.timeout.ms` applies to the whole batch. On timeout, completed slots keep their
-outcome and unfinished slots fail. Timeout cancellation is best-effort; side-effecting tools should
-be idempotent or provide a reconciler.
+outcome; slots that started but did not finish are recorded as failures; slots that never started
+executing (for example, queued in a saturated pool) stay pending, so they are re-executed after
+recovery instead of recording a false failure. Timeout cancellation is best-effort; side-effecting
+tools should be idempotent or provide a reconciler.
+
+{{< hint warning >}}
+**Thread reclamation:** a timeout unblocks the batch but cannot interrupt a tool that is still
+running. Its worker thread stays in the shared `num-async-threads` pool until the tool returns on
+its own, so a tool that never returns permanently reduces pool capacity. Bound blocking work inside
+the tool (for example an HTTP client read timeout) rather than relying on this batch timeout to free
+the thread.
+{{< /hint >}}
 
 ## MCP Tool
 

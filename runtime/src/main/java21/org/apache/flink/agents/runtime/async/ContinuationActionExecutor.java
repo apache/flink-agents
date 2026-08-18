@@ -32,6 +32,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -187,7 +188,7 @@ public class ContinuationActionExecutor {
 
         final int batchSize = suppliers.size();
         CompletableFuture<Outcome<T>>[] slots = new CompletableFuture[batchSize];
-        boolean[] submitted = new boolean[batchSize];
+        AtomicIntegerArray started = new AtomicIntegerArray(batchSize);
         boolean[] counted = new boolean[batchSize];
         int completed = 0;
         int nextToSubmit = 0;
@@ -201,16 +202,19 @@ public class ContinuationActionExecutor {
                         new TimeoutException(
                                 "Async durable batch execution timed out after " + timeout);
                 context.setPendingBatchFuture(null);
-                return collectBatchOutcomesOnTimeout(slots, submitted, exception);
+                return collectBatchOutcomesOnTimeout(slots, started, exception);
             }
 
             while (nextToSubmit < batchSize && countInFlight(slots, nextToSubmit) < parallelismLimit) {
                 int index = nextToSubmit++;
                 Callable<T> supplier = suppliers.get(index);
-                submitted[index] = true;
                 slots[index] =
                         CompletableFuture.supplyAsync(
                                 () -> {
+                                    // Mark started only when the worker truly begins, so a task
+                                    // queued in a saturated pool but never run stays re-executable
+                                    // on recovery instead of being recorded as a timeout failure.
+                                    started.set(index, 1);
                                     try {
                                         return Outcome.success(supplier.call());
                                     } catch (Exception e) {
@@ -248,7 +252,7 @@ public class ContinuationActionExecutor {
         }
 
         context.setPendingBatchFuture(null);
-        return collectBatchOutcomes(Arrays.asList(slots), submitted);
+        return collectBatchOutcomes(Arrays.asList(slots), started);
     }
 
     private static <T> int countInFlight(
@@ -270,30 +274,32 @@ public class ContinuationActionExecutor {
      * returns that outcome rather than throwing for ordinary tool exceptions.
      */
     private static <T> BatchExecutionResult<T> collectBatchOutcomes(
-            List<CompletableFuture<Outcome<T>>> futures, boolean[] submitted) {
+            List<CompletableFuture<Outcome<T>>> futures, AtomicIntegerArray started) {
         List<Outcome<T>> results = new ArrayList<>(futures.size());
         for (CompletableFuture<Outcome<T>> future : futures) {
             results.add(future.join());
         }
-        return new BatchExecutionResult<>(results, submitted);
+        return new BatchExecutionResult<>(results, toStartedFlags(started));
     }
 
     /**
      * Collects per-slot outcomes when the batch deadline elapses.
      *
-     * <p>Completed slots keep their success or failure outcome. Only slots that are still running
-     * (or become cancelled) are finalized as timeout failures. {@code cancel(true)} is attempted
-     * only for unfinished futures; a future that completes between the check and cancel stays
+     * <p>Completed slots keep their success or failure outcome. A slot whose worker never began
+     * ({@code started == 0}) is reported as a timeout failure but flagged as not started, so the
+     * caller leaves it pending for re-execution on recovery. Slots that started but are still
+     * running are cancelled and finalized as timeout failures; {@code cancel(true)} is attempted
+     * only for unfinished futures, and a future that completes between the check and cancel stays
      * non-cancelled and is collected as a normal outcome.
      */
     private static <T> BatchExecutionResult<T> collectBatchOutcomesOnTimeout(
             CompletableFuture<Outcome<T>>[] futures,
-            boolean[] submitted,
+            AtomicIntegerArray started,
             TimeoutException timeoutException) {
         List<Outcome<T>> results = new ArrayList<>(futures.length);
         for (int i = 0; i < futures.length; i++) {
             CompletableFuture<Outcome<T>> future = futures[i];
-            if (!submitted[i] || future == null) {
+            if (started.get(i) == 0 || future == null) {
                 results.add(Outcome.failure(timeoutException));
                 continue;
             }
@@ -306,7 +312,15 @@ public class ContinuationActionExecutor {
                 results.add(Outcome.failure(timeoutException));
             }
         }
-        return new BatchExecutionResult<>(results, submitted);
+        return new BatchExecutionResult<>(results, toStartedFlags(started));
+    }
+
+    private static boolean[] toStartedFlags(AtomicIntegerArray started) {
+        boolean[] flags = new boolean[started.length()];
+        for (int i = 0; i < flags.length; i++) {
+            flags[i] = started.get(i) == 1;
+        }
+        return flags;
     }
 
     private long getDeadlineNanos(Duration timeout) {

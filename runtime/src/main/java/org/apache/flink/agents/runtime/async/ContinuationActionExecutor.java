@@ -89,9 +89,9 @@ public class ContinuationActionExecutor {
                                     }
                                 })
                         .collect(Collectors.toList());
-        boolean[] submitted = new boolean[suppliers.size()];
-        Arrays.fill(submitted, true);
-        return new BatchExecutionResult<>(outcomes, submitted);
+        boolean[] started = new boolean[suppliers.size()];
+        Arrays.fill(started, true);
+        return new BatchExecutionResult<>(outcomes, started);
     }
 
     public void close() {}

@@ -188,7 +188,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             int callIndex = plan.executableCallIndexes.get(i);
             Outcome<T> outcome = executed.getOutcomes().get(i);
             DurableCallable<T> callable = callables.get(callIndex);
-            if (!executed.wasSubmitted(i)) {
+            if (!executed.wasStarted(i)) {
                 plan.outcomes.set(callIndex, outcome);
                 continue;
             }
@@ -242,9 +242,9 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
                                         }
                                     })
                             .collect(Collectors.toList());
-            boolean[] submitted = new boolean[suppliers.size()];
-            Arrays.fill(submitted, true);
-            return new BatchExecutionResult<>(outcomes, submitted);
+            boolean[] started = new boolean[suppliers.size()];
+            Arrays.fill(started, true);
+            return new BatchExecutionResult<>(outcomes, started);
         }
         Long timeoutMs = getConfig().get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS);
         Duration timeout =

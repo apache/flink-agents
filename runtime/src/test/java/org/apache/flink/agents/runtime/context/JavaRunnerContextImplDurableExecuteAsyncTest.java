@@ -45,6 +45,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -463,6 +464,57 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
+    void testDurableExecuteAllAsyncTimeoutLeavesQueuedButUnstartedSlotsPending()
+            throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        executor.setUseTimeoutCollection(true);
+        // Pool has fewer threads than the parallelism budget, so two suppliers are handed to a
+        // saturated pool and sit in its queue without ever running before the deadline.
+        executor.setBatchThreads(2);
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        ((Configuration) context.getConfig())
+                .set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 100L);
+        ((Configuration) context.getConfig()).set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4);
+        Callable<String> slow =
+                () -> {
+                    Thread.sleep(300);
+                    return "slow";
+                };
+        TestDurableCallable<String> first = new TestDurableCallable<>("batch-1", String.class, slow);
+        TestDurableCallable<String> second =
+                new TestDurableCallable<>("batch-2", String.class, slow);
+        TestDurableCallable<String> third = new TestDurableCallable<>("batch-3", String.class, slow);
+        TestDurableCallable<String> fourth =
+                new TestDurableCallable<>("batch-4", String.class, slow);
+
+        List<Outcome<String>> outcomes =
+                context.durableExecuteAllAsync(List.of(first, second, third, fourth));
+
+        assertTrue(outcomes.get(0).isFailure());
+        assertTrue(outcomes.get(1).isFailure());
+        assertTrue(outcomes.get(2).isFailure());
+        assertTrue(outcomes.get(3).isFailure());
+        // Only the two workers that actually began executing count as started, so exactly two
+        // suppliers were invoked while the queued pair never ran.
+        int totalCalls =
+                first.getCallCount()
+                        + second.getCallCount()
+                        + third.getCallCount()
+                        + fourth.getCallCount();
+        assertEquals(2, totalCalls);
+        List<CallResult> persisted =
+                context.getDurableExecutionContext().getActionState().getCallResults();
+        // Started slots are persisted as timeout failures; the queued-but-never-started slots stay
+        // pending so recovery re-executes them instead of replaying a false failure.
+        long failed = persisted.stream().filter(CallResult::isFailure).count();
+        long pending = persisted.stream().filter(CallResult::isPending).count();
+        assertEquals(2, failed);
+        assertEquals(2, pending);
+        assertEquals(4, context.getDurableExecutionContext().getCurrentCallIndex());
+        executor.close();
+    }
+
+    @Test
     void testDurableExecuteAllAsyncFinalizeFailureReturnsOutcomeAndKeepsSlotPending()
             throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
@@ -542,7 +594,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         private int executeAsyncCallCount;
         private int executeAllAsyncCallCount;
         private final List<Integer> executeAllAsyncBatchSizes = new java.util.ArrayList<>();
-        private final ExecutorService batchExecutor = Executors.newFixedThreadPool(4);
+        private ExecutorService batchExecutor = Executors.newFixedThreadPool(4);
 
         private InspectingContinuationActionExecutor() {
             super(1);
@@ -571,8 +623,8 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                 return executeAllAsyncWithDeadline(suppliers, timeout, maxParallelism);
             }
             List<Outcome<T>> outcomes = new java.util.ArrayList<>(suppliers.size());
-            boolean[] submitted = new boolean[suppliers.size()];
-            java.util.Arrays.fill(submitted, true);
+            boolean[] started = new boolean[suppliers.size()];
+            java.util.Arrays.fill(started, true);
             for (Callable<T> supplier : suppliers) {
                 try {
                     outcomes.add(Outcome.success(supplier.call()));
@@ -580,14 +632,14 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                     outcomes.add(Outcome.failure(e));
                 }
             }
-            return new BatchExecutionResult<>(outcomes, submitted);
+            return new BatchExecutionResult<>(outcomes, started);
         }
 
         private <T> BatchExecutionResult<T> executeAllAsyncWithDeadline(
                 List<Callable<T>> suppliers, Duration timeout, int maxParallelism) {
             int batchSize = suppliers.size();
             List<CompletableFuture<Outcome<T>>> futures = new java.util.ArrayList<>(batchSize);
-            boolean[] submitted = new boolean[batchSize];
+            AtomicIntegerArray started = new AtomicIntegerArray(batchSize);
             boolean[] counted = new boolean[batchSize];
             for (int i = 0; i < batchSize; i++) {
                 futures.add(null);
@@ -603,18 +655,18 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                     TimeoutException exception =
                             new TimeoutException(
                                     "Async durable batch execution timed out after " + timeout);
-                    return collectBatchOutcomesOnTimeout(futures, submitted, exception);
+                    return collectBatchOutcomesOnTimeout(futures, started, exception);
                 }
 
                 while (nextToSubmit < batchSize
                         && countInFlight(futures, nextToSubmit) < parallelismLimit) {
                     int index = nextToSubmit++;
                     Callable<T> supplier = suppliers.get(index);
-                    submitted[index] = true;
                     futures.set(
                             index,
                             CompletableFuture.supplyAsync(
                                     () -> {
+                                        started.set(index, 1);
                                         try {
                                             return Outcome.success(supplier.call());
                                         } catch (Exception e) {
@@ -639,11 +691,11 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         Thread.currentThread().interrupt();
                         TimeoutException exception =
                                 new TimeoutException("Async durable batch execution interrupted");
-                        return collectBatchOutcomesOnTimeout(futures, submitted, exception);
+                        return collectBatchOutcomesOnTimeout(futures, started, exception);
                     }
                 }
             }
-            return collectBatchOutcomes(futures, submitted);
+            return collectBatchOutcomes(futures, started);
         }
 
         private static long getDeadlineNanos(Duration timeout) {
@@ -653,22 +705,22 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         }
 
         private static <T> BatchExecutionResult<T> collectBatchOutcomes(
-                List<CompletableFuture<Outcome<T>>> futures, boolean[] submitted) {
+                List<CompletableFuture<Outcome<T>>> futures, AtomicIntegerArray started) {
             List<Outcome<T>> results = new java.util.ArrayList<>(futures.size());
             for (CompletableFuture<Outcome<T>> future : futures) {
                 results.add(future.join());
             }
-            return new BatchExecutionResult<>(results, submitted);
+            return new BatchExecutionResult<>(results, toStartedFlags(started));
         }
 
         private static <T> BatchExecutionResult<T> collectBatchOutcomesOnTimeout(
                 List<CompletableFuture<Outcome<T>>> futures,
-                boolean[] submitted,
+                AtomicIntegerArray started,
                 TimeoutException timeoutException) {
             List<Outcome<T>> results = new java.util.ArrayList<>(futures.size());
             for (int i = 0; i < futures.size(); i++) {
                 CompletableFuture<Outcome<T>> future = futures.get(i);
-                if (!submitted[i] || future == null) {
+                if (started.get(i) == 0 || future == null) {
                     results.add(Outcome.failure(timeoutException));
                     continue;
                 }
@@ -681,7 +733,15 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                     results.add(Outcome.failure(timeoutException));
                 }
             }
-            return new BatchExecutionResult<>(results, submitted);
+            return new BatchExecutionResult<>(results, toStartedFlags(started));
+        }
+
+        private static boolean[] toStartedFlags(AtomicIntegerArray started) {
+            boolean[] flags = new boolean[started.length()];
+            for (int i = 0; i < flags.length; i++) {
+                flags[i] = started.get(i) == 1;
+            }
+            return flags;
         }
 
         private static <T> int countInFlight(
@@ -702,6 +762,11 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         private void setUseTimeoutCollection(boolean useTimeoutCollection) {
             this.useTimeoutCollection = useTimeoutCollection;
+        }
+
+        private void setBatchThreads(int threads) {
+            batchExecutor.shutdownNow();
+            batchExecutor = Executors.newFixedThreadPool(threads);
         }
 
         private int getExecuteAsyncCallCount() {
