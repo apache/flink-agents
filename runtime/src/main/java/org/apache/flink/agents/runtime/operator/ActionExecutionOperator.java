@@ -55,6 +55,7 @@ import org.apache.flink.streaming.runtime.tasks.StreamTask;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxExecutorImpl;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxProcessor;
 import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -554,23 +555,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void close() throws Exception {
         // Must close before pythonInterpreter since cached resources may hold Python references.
-        if (resourceCache != null) {
-            resourceCache.close();
-        }
-        if (contextManager != null) {
-            contextManager.close();
-        }
-        if (pythonBridge != null) {
-            pythonBridge.close();
-        }
-        if (eventRouter != null) {
-            eventRouter.close();
-        }
-        if (durableExecManager != null) {
-            durableExecManager.close();
-        }
-
-        super.close();
+        IOUtils.closeAll(
+                resourceCache,
+                contextManager,
+                pythonBridge,
+                eventRouter,
+                durableExecManager,
+                super::close);
     }
 
     @Override

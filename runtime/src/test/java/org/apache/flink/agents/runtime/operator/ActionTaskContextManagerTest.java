@@ -23,6 +23,7 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
+import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -31,7 +32,9 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.api.common.state.MapState;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
+import java.lang.reflect.Field;
 import java.util.HashMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,6 +42,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
@@ -240,6 +245,29 @@ class ActionTaskContextManagerTest {
         mgr.close();
     }
 
+    @Test
+    void closeAttemptsContinuationExecutorWhenRunnerContextCloseFails() throws Exception {
+        ActionTaskContextManager mgr = new ActionTaskContextManager(1);
+        RunnerContextImpl runnerContext = mock(RunnerContextImpl.class);
+        ContinuationActionExecutor continuationActionExecutor =
+                mock(ContinuationActionExecutor.class);
+        RuntimeException runnerContextFailure = new RuntimeException("runner context close failed");
+        RuntimeException continuationExecutorFailure =
+                new RuntimeException("continuation executor close failed");
+
+        doThrow(runnerContextFailure).when(runnerContext).close();
+        doThrow(continuationExecutorFailure).when(continuationActionExecutor).close();
+        setPrivateField(mgr, "runnerContext", runnerContext);
+        setPrivateField(mgr, "continuationActionExecutor", continuationActionExecutor);
+
+        assertThatThrownBy(mgr::close)
+                .isSameAs(runnerContextFailure)
+                .hasSuppressedException(continuationExecutorFailure);
+        InOrder closeOrder = inOrder(runnerContext, continuationActionExecutor);
+        closeOrder.verify(runnerContext).close();
+        closeOrder.verify(continuationActionExecutor).close();
+    }
+
     /**
      * Shared helper: install a runner context on {@code task} using mocked collaborators. Used by
      * tests that need a fully wired runner context but do not care about the collaborator details.
@@ -277,5 +305,12 @@ class ActionTaskContextManagerTest {
 
     private static AgentPlan newEmptyAgentPlan() {
         return new AgentPlan(new HashMap<>(), new HashMap<>());
+    }
+
+    private static void setPrivateField(Object target, String fieldName, Object value)
+            throws ReflectiveOperationException {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 }
