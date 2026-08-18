@@ -136,6 +136,11 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
     - ASSISTANT role with tool_calls -> ChatCompletionAssistantMessageParam
     - USER role -> ChatCompletionUserMessageParam
     - SYSTEM role -> ChatCompletionSystemMessageParam
+
+    Only the fields OpenAI defines for each role are sent. Entries in
+    extra_args are not forwarded as message fields, except that a tool
+    message takes its tool_call_id from extra_args["external_id"], and an
+    assistant message carries extra_args["refusal"] when that value is a str.
     """
     role = message.role
 
@@ -145,7 +150,6 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
             "role": "system",
             "content": message.content,
         }
-        system_message.update(message.extra_args)
         return system_message
 
     # Handle USER role messages
@@ -154,7 +158,6 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
             "role": "user",
             "content": message.content,
         }
-        user_message.update(message.extra_args)
         return user_message
     # Handle ASSISTANT role messages
 
@@ -172,7 +175,9 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
             ]
             assistant_message["tool_calls"] = openai_tool_calls
 
-        assistant_message.update(message.extra_args)
+        refusal = message.extra_args.get("refusal")
+        if isinstance(refusal, str):
+            assistant_message["refusal"] = refusal
         return assistant_message
 
     # Handle TOOL role messages

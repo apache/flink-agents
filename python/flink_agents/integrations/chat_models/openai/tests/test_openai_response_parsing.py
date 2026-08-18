@@ -18,8 +18,10 @@
 import pytest
 from openai.types.chat import ChatCompletionMessage
 
+from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.integrations.chat_models.openai.openai_utils import (
     convert_from_openai_message,
+    convert_to_openai_message,
 )
 
 
@@ -43,10 +45,98 @@ def test_refusal_is_preserved_in_extra_args(refusal: str) -> None:
 
 def test_no_refusal_key_when_refusal_absent() -> None:
     """A response that was not refused leaves no refusal key behind."""
-    # extra_args is merged back into the outbound assistant message, so a null
-    # refusal key here would be echoed to the provider on every later request.
+    # Absence of the key, not a falsy value, is what marks a response that was
+    # never refused.
     message = ChatCompletionMessage(role="assistant", content="ok", refusal=None)
 
     result = convert_from_openai_message(message, {})
 
     assert "refusal" not in result.extra_args
+
+
+@pytest.mark.parametrize(
+    "role", [MessageRole.SYSTEM, MessageRole.USER, MessageRole.ASSISTANT]
+)
+def test_convert_to_openai_message_omits_response_metadata(
+    role: MessageRole,
+) -> None:
+    """Completion metadata held in extra_args never reaches an outbound param."""
+    message = ChatMessage(
+        role=role,
+        content="hello",
+        extra_args={
+            "model_name": "gpt-4o",
+            "promptTokens": 3,
+            "completionTokens": 5,
+        },
+    )
+
+    param = convert_to_openai_message(message)
+
+    assert param == {"role": role.value, "content": "hello"}
+
+
+@pytest.mark.parametrize("refusal", ["I cannot help with that", ""])
+def test_convert_to_openai_message_forwards_string_refusal(refusal: str) -> None:
+    """A string refusal on an assistant message is sent to the provider."""
+    # The outbound guard is a type check rather than a truthiness check, so an
+    # empty reason forwards like any other.
+    message = ChatMessage(
+        role=MessageRole.ASSISTANT,
+        content="",
+        extra_args={"refusal": refusal},
+    )
+
+    param = convert_to_openai_message(message)
+
+    assert param == {"role": "assistant", "content": "", "refusal": refusal}
+
+
+@pytest.mark.parametrize("refusal", [{"reason": "policy"}, 123, True])
+def test_convert_to_openai_message_omits_non_string_refusal(
+    refusal: object,
+) -> None:
+    """Only a string refusal is forwarded; a value of any other type is dropped."""
+    message = ChatMessage(
+        role=MessageRole.ASSISTANT,
+        content="",
+        extra_args={"refusal": refusal},
+    )
+
+    param = convert_to_openai_message(message)
+
+    assert param == {"role": "assistant", "content": ""}
+
+
+def test_convert_to_openai_message_assistant_tool_calls() -> None:
+    """An assistant message requesting tool calls sends them with a null content."""
+    message = ChatMessage(
+        role=MessageRole.ASSISTANT,
+        content="",
+        tool_calls=[
+            {
+                "original_id": "call_abc",
+                "function": {"name": "get_weather", "arguments": {"city": "Berlin"}},
+            }
+        ],
+        extra_args={"model_name": "gpt-4o", "promptTokens": 3},
+    )
+
+    param = convert_to_openai_message(message)
+
+    assert set(param) == {"role", "content", "tool_calls"}
+    assert param["role"] == "assistant"
+    assert param["content"] is None
+
+
+def test_convert_to_openai_message_tool_role_unchanged() -> None:
+    """A tool result carries its call id and nothing else from extra_args."""
+    message = ChatMessage(
+        role=MessageRole.TOOL,
+        content="42",
+        extra_args={"external_id": "call_abc", "promptTokens": 7},
+    )
+
+    param = convert_to_openai_message(message)
+
+    assert param == {"role": "tool", "content": "42", "tool_call_id": "call_abc"}
