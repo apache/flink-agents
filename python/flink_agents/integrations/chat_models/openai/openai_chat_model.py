@@ -253,7 +253,8 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         Returns:
         -------
         ChatMessage
-            Model response message
+            Model response message. When the response carries a finish reason,
+            it is available as ``extra_args["finish_reason"]``.
         """
         tool_specs = None
         if tools is not None:
@@ -291,7 +292,11 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             extra_args["promptTokens"] = response.usage.prompt_tokens
             extra_args["completionTokens"] = response.usage.completion_tokens
 
-        message = response.choices[0].message
+        choice = response.choices[0]
+        if choice.finish_reason is not None:
+            extra_args["finish_reason"] = choice.finish_reason
+
+        message = choice.message
 
         return convert_from_openai_message(message, extra_args)
 
