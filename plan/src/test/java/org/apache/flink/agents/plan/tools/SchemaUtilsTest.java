@@ -44,6 +44,15 @@ class SchemaUtilsTest {
 
         public void methodWithoutAnnotations(String param1, int param2) {}
 
+        public void methodWithWideNumericTypes(
+                @ToolParam(name = "longParam", description = "A long parameter") long longParam,
+                @ToolParam(name = "boxedLongParam", description = "A boxed long") Long boxedLong,
+                @ToolParam(name = "floatParam", description = "A float parameter") float floatParam,
+                @ToolParam(name = "boxedFloatParam", description = "A boxed float")
+                        Float boxedFloat,
+                @ToolParam(name = "shortParam", description = "A short parameter") short shortParam,
+                @ToolParam(name = "byteParam", description = "A byte parameter") byte byteParam) {}
+
         public void methodWithCustomObject(
                 @ToolParam(name = "objectParam", description = "A custom object parameter")
                         Object customObject) {}
@@ -54,6 +63,34 @@ class SchemaUtilsTest {
     }
 
     private final ObjectMapper mapper = new ObjectMapper();
+
+    @Test
+    void testGenerateSchemaWithWideNumericTypes() throws Exception {
+        Method method =
+                TestClass.class.getMethod(
+                        "methodWithWideNumericTypes",
+                        long.class,
+                        Long.class,
+                        float.class,
+                        Float.class,
+                        short.class,
+                        byte.class);
+        String schema = SchemaUtils.generateSchema(method);
+        final JsonNode jsonNode = mapper.readTree(schema);
+        JsonNode properties = jsonNode.get("properties");
+
+        // Integral types map to "integer" (#1015): previously these all fell back to "object",
+        // which models either follow (producing object-shaped arguments) or treat as an
+        // uncallable tool.
+        assertEquals("integer", properties.get("longParam").get("type").asText());
+        assertEquals("integer", properties.get("boxedLongParam").get("type").asText());
+        assertEquals("integer", properties.get("shortParam").get("type").asText());
+        assertEquals("integer", properties.get("byteParam").get("type").asText());
+
+        // Floating-point types map to "number".
+        assertEquals("number", properties.get("floatParam").get("type").asText());
+        assertEquals("number", properties.get("boxedFloatParam").get("type").asText());
+    }
 
     @Test
     void testGenerateSchemaWithBasicTypes() throws Exception {
