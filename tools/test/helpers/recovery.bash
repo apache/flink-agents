@@ -41,6 +41,7 @@ reset_recovery_sh_state() {
     INPUT_FILE=""
     CHECKPOINT_DIR="/tmp/ckpt"
     FLINK_CONF=""
+    FLINK_CONF_BACKUP=""
     TM_PID_BEFORE=""
     TM_RESOURCE_ID_BEFORE=""
     RESTORED_BEFORE=""

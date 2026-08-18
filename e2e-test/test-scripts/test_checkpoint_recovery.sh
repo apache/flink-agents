@@ -123,11 +123,58 @@ CHECKPOINT_DIR=""
 INPUT_DIR=""
 INPUT_FILE=""
 FLINK_CONF=""
+FLINK_CONF_BACKUP=""
 TM_PID_BEFORE=""
 TM_RESOURCE_ID_BEFORE=""
 RESTORED_BEFORE=""
 RELEASE_DEADLINE_S=""
 HANDSHAKE_DEADLINE_AT=""
+
+# ---------------------------------------------------------------------------
+# A reused Flink home carries someone's own config.yaml. set_config_key deletes any
+# line already present for a key before appending ours, so reverting key by key
+# cannot put back a value the installation already had: the whole file is copied
+# aside before the first edit and copied back at exit. config.yaml is the only
+# thing copied aside — the jars this run stages into lib/ are not.
+#
+# The copy carries mode as well as content. delete_config_key rewrites through
+# mktemp and mv, which replaces the file with a 0600 temp file, so restoring the
+# bytes alone would leave the installation's config readable only by this user.
+#
+# The copy lives under TMPDIR rather than in WORK_DIR or in the installation:
+# WORK_DIR does not exist yet when the copy is taken and is removed on a clean
+# exit, and writing into conf/ mutates the directory being protected.
+# ---------------------------------------------------------------------------
+backup_flink_conf() {
+    FLINK_CONF_BACKUP="$(mktemp "${TMPDIR:-/tmp}/flink-agents-config.yaml.XXXXXX")" || {
+        log_error "Could not create a temporary file to copy $FLINK_CONF aside"
+        exit 1
+    }
+    # `if !` rather than a bare cp: set -e would abort before the diagnostic prints.
+    if ! cp -p "$FLINK_CONF" "$FLINK_CONF_BACKUP"; then
+        rm -f "$FLINK_CONF_BACKUP"
+        FLINK_CONF_BACKUP=""
+        log_error "Could not copy $FLINK_CONF aside. Refusing to edit an installation that cannot be put back."
+        exit 1
+    fi
+    log_info "Copied $FLINK_CONF aside for restore at exit"
+}
+
+restore_flink_conf() {
+    # Guarded on the copy, not on the destination: a config.yaml that went missing
+    # mid-run is exactly when the restore is needed, and cp recreates it. The
+    # explicit `|| return 0` is load-bearing under bash 3, where a bare [[ ]] as a
+    # non-final command does not trigger errexit.
+    [[ -n "$FLINK_CONF" && -n "$FLINK_CONF_BACKUP" && -f "$FLINK_CONF_BACKUP" ]] || return 0
+    if cp -p "$FLINK_CONF_BACKUP" "$FLINK_CONF"; then
+        log_info "Restored $FLINK_CONF from the pre-run copy"
+        rm -f "$FLINK_CONF_BACKUP"
+    else
+        # Keep the only surviving original and say where it is.
+        log_warn "Could not restore $FLINK_CONF; the pre-run copy is kept at $FLINK_CONF_BACKUP"
+        return 1
+    fi
+}
 
 cleanup() {
     local exit_code=$?
@@ -159,16 +206,18 @@ cleanup() {
         fi
     fi
 
-    # Strip the keys we appended. A second run against a reused Flink home would
-    # otherwise append them twice, and a duplicate key is a hard YAML parse failure
-    # that stops the cluster from starting at all.
-    if [[ -n "$FLINK_CONF" && -f "$FLINK_CONF" ]]; then
-        local key
-        for key in "${CONFIG_KEYS_SET[@]:-}"; do
-            [[ -n "$key" ]] || continue
-            delete_config_key "$key"
-        done
-        log_info "Reverted ${#CONFIG_KEYS_SET[@]} appended config key(s)"
+    # Put the installation's config.yaml back exactly as it was, mode included.
+    # Restoring the whole file also drops the keys this run appended, so a second
+    # run against a reused Flink home finds no duplicate top-level key — which
+    # would be a hard YAML parse failure that stops the cluster from starting at
+    # all.
+    #
+    # Tested inside the `if` so a failure cannot trip errexit here: aborting the
+    # trap would skip print_summary, which is what reports the results and settles
+    # the exit status. A run that left the installation mutated is not a success,
+    # so a restore failure with nothing else to report becomes the exit code.
+    if ! restore_flink_conf && (( exit_code == 0 )); then
+        exit_code=1
     fi
 
     # The killed TaskManager's entry stays in /tmp/flink-*-taskexecutor.pid, which
@@ -542,6 +591,10 @@ install_flink() {
         log_error "Flink config not found: $FLINK_CONF"
         exit 1
     fi
+
+    # Adjacent to the assignment on purpose, so FLINK_CONF is never set without a
+    # copy of the file existing and every later edit is reversible.
+    backup_flink_conf
 }
 
 # The wheel this run must exercise is the one tools/build.sh just produced, so it is
@@ -791,16 +844,19 @@ start_cluster() {
     "$FLINK_HOME/bin/start-cluster.sh"
 
     log_info "Waiting for JobManager REST API at $REST_URL ..."
-    local deadline=$((SECONDS + CLUSTER_TIMEOUT))
+    local start=$SECONDS
+    local deadline=$((start + CLUSTER_TIMEOUT))
+    # The deadline is tested at the top of the iteration, so the last probe and its
+    # sleep run past it. The message reports the time waited rather than the budget.
     while (( SECONDS < deadline )); do
-        if curl -fsS "$REST_URL/overview" >/dev/null 2>&1; then
+        if rest_get "/overview" >/dev/null; then
             log_ok "Flink cluster is up"
             return 0
         fi
         sleep "$POLL_INTERVAL"
     done
 
-    log_error "Flink cluster did not become ready within ${CLUSTER_TIMEOUT}s. A duplicate key in $FLINK_CONF is the usual cause; check the JobManager log for a YAML parse error."
+    log_error "Flink cluster did not become ready within $((SECONDS - start))s. A duplicate key in $FLINK_CONF is the usual cause; check the JobManager log for a YAML parse error."
     exit 1
 }
 

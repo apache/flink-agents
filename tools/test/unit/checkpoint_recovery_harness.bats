@@ -188,6 +188,40 @@ setup() {
 }
 
 # ---------------------------------------------------------------------------
+# The REST transport itself. Every read the harness performs goes through
+# rest_get, and nothing else in this suite looks at the request layer: rest_get
+# is replaced by stub_rest_get everywhere it is exercised.
+# ---------------------------------------------------------------------------
+
+@test "REST reads: every curl in test_checkpoint_recovery.sh is bounded by --max-time" {
+    # Contract: no request may run without a deadline of its own. A peer that
+    # accepts the connection and then never answers is not covered by curl's
+    # connect timeout, so an unbounded read has nothing to end it and outlives the
+    # wait loop that issued it.
+    #
+    # This reads the script's text rather than its behavior, which makes it
+    # deliberately brittle: the -m short form, a curl inside a heredoc, or a
+    # request split across a line continuation would fail it and need it
+    # rewritten — the continuation because --max-time on the next line is never
+    # seen. That cost is accepted because the invariant has no behavioral surface
+    # here — every caller stubs the transport out — and an unbounded read
+    # reintroduced anywhere in the file would otherwise be invisible until a run
+    # hung.
+    run grep -nE '^[[:space:]]*[^#]*curl[[:space:]]' "$RECOVERY_SH"
+    # A denominator: a rename or a refactor that leaves no curl at all must fail
+    # here rather than sweep nothing and read as a pass.
+    [ "$status" -eq 0 ]
+
+    local line
+    while IFS= read -r line; do
+        case "$line" in
+            *--max-time*) continue ;;
+            *) printf 'unbounded curl: %s\n' "$line"; return 1 ;;
+        esac
+    done <<< "$output"
+}
+
+# ---------------------------------------------------------------------------
 # wait_for_rest — the four states of (probe parsed, target parsed). Each must
 # report a different thing, because each means something different.
 # ---------------------------------------------------------------------------
@@ -527,7 +561,7 @@ EOF
     [ "$output" = "execution.checkpointing.interval: 7000ms" ]
 }
 
-@test "delete_config_key: reverting restores the file byte for byte" {
+@test "delete_config_key: removes the appended lines and nothing else" {
     FLINK_CONF="$BATS_TEST_TMPDIR/config.yaml"
     write_nested_config_fixture "$FLINK_CONF"
     cp "$FLINK_CONF" "$BATS_TEST_TMPDIR/config.yaml.orig"
@@ -576,6 +610,58 @@ EOF
     done
     run diff "$BATS_TEST_TMPDIR/shipped.orig" "$FLINK_CONF"
     [ "$status" -eq 0 ]
+}
+
+# stat spells a file mode differently in its BSD and GNU flavors, and these tests
+# run under both.
+file_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
+@test "restore_flink_conf: the installation's config comes back byte for byte and mode for mode" {
+    FLINK_CONF="$BATS_TEST_TMPDIR/config.yaml"
+    write_nested_config_fixture "$FLINK_CONF"
+    # A value the installation itself set, at column 0, for a key this run also
+    # writes. set_config_key drops that line before appending its own, so nothing
+    # narrower than the whole file can put it back.
+    printf 'restart-strategy.type: exponential-delay\n' >> "$FLINK_CONF"
+    chmod 644 "$FLINK_CONF"
+    cp -p "$FLINK_CONF" "$BATS_TEST_TMPDIR/config.yaml.orig"
+
+    backup_flink_conf
+    configure_flink
+
+    # Without these two the test could pass against a run that never altered the
+    # file, proving nothing about the restore.
+    run grep -c '^restart-strategy.type: exponential-delay$' "$FLINK_CONF"
+    [ "$output" = "0" ]
+    # The mode half of that denominator: the 644 check after the restore is vacuous
+    # unless the mode moves off it first.
+    [ "$(file_mode "$FLINK_CONF")" = "600" ]
+
+    restore_flink_conf
+    run diff "$BATS_TEST_TMPDIR/config.yaml.orig" "$FLINK_CONF"
+    [ "$status" -eq 0 ]
+    [ "$(file_mode "$FLINK_CONF")" = "644" ]
+    [ ! -f "$FLINK_CONF_BACKUP" ]
+
+    # Restoring a second time finds no copy and returns without touching anything.
+    # The status is what distinguishes that from a failed copy: cp cannot truncate
+    # the destination when its source is missing, so the file is unchanged either
+    # way and comparing it again would assert nothing.
+    run restore_flink_conf
+    [ "$status" -eq 0 ]
+}
+
+@test "install_flink: takes the pre-run copy of config.yaml" {
+    # The wiring rather than the function. restore_flink_conf can only put the file
+    # back if the copy was taken, and the test above calls backup_flink_conf itself
+    # — so dropping the one call inside install_flink leaves the suite green. Read
+    # from the parsed function body because install_flink needs a real Flink
+    # distribution to run: this pins the call, not where it sits in the body.
+    run declare -f install_flink
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | grep -q 'backup_flink_conf'
 }
 
 # ---------------------------------------------------------------------------
@@ -837,15 +923,19 @@ payload_budget_setup() {
 # trap and depends on the exit status.
 # ---------------------------------------------------------------------------
 
-run_cleanup_with_exit() {  # $1 = exit code, $2 = recorded state ("" for none)
-    local code="$1" state="$2"
+run_cleanup_with_exit() {  # $1 = exit code, $2 = recorded state ("" for none),
+                           # $3 = FLINK_CONF, $4 = FLINK_CONF_BACKUP (both
+                           # optional; empty leaves the restore inert)
+    local code="$1" state="$2" conf="${3:-}" backup="${4:-}"
     env FLINK_AGENTS_RECOVERY_SH_NO_RUN=1 bash -c '
         source "$1"
         WORK_DIR="$2"; mkdir -p "$WORK_DIR"
-        FLINK_CONF=""
+        FLINK_CONF="$5"
+        FLINK_CONF_BACKUP="$6"
         if [[ -n "$4" ]]; then RESULT_NAMES=(step); RESULT_STATES=("$4"); fi
         exit "$3"
-    ' _ "$RECOVERY_SH" "$BATS_TEST_TMPDIR/wd" "$code" "$state" >/dev/null 2>&1 || true
+    ' _ "$RECOVERY_SH" "$BATS_TEST_TMPDIR/wd" "$code" "$state" "$conf" "$backup" \
+        >/dev/null 2>&1 || true
 }
 
 @test "cleanup: a clean exit with everything passing removes the work directory" {
@@ -869,6 +959,21 @@ run_cleanup_with_exit() {  # $1 = exit code, $2 = recorded state ("" for none)
 @test "cleanup: recording nothing at all keeps the work directory" {
     run_cleanup_with_exit 0 ""
     [ -d "$BATS_TEST_TMPDIR/wd" ]
+}
+
+@test "cleanup: the EXIT trap puts the installation's config.yaml back" {
+    # The other half of the wiring: a restore nothing calls leaves the installation
+    # mutated, and a test that calls restore_flink_conf directly cannot see that.
+    write_nested_config_fixture "$BATS_TEST_TMPDIR/config.yaml"
+    cp -p "$BATS_TEST_TMPDIR/config.yaml" "$BATS_TEST_TMPDIR/config.yaml.orig"
+    cp -p "$BATS_TEST_TMPDIR/config.yaml" "$BATS_TEST_TMPDIR/config.yaml.bak"
+    printf 'execution.checkpointing.interval: 5000ms\n' >> "$BATS_TEST_TMPDIR/config.yaml"
+
+    run_cleanup_with_exit 0 PASS \
+        "$BATS_TEST_TMPDIR/config.yaml" "$BATS_TEST_TMPDIR/config.yaml.bak"
+
+    run diff "$BATS_TEST_TMPDIR/config.yaml.orig" "$BATS_TEST_TMPDIR/config.yaml"
+    [ "$status" -eq 0 ]
 }
 
 # ---------------------------------------------------------------------------
