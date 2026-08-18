@@ -553,24 +553,38 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     @Override
     public void close() throws Exception {
-        // Must close before pythonInterpreter since cached resources may hold Python references.
-        if (resourceCache != null) {
-            resourceCache.close();
-        }
-        if (contextManager != null) {
-            contextManager.close();
-        }
-        if (pythonBridge != null) {
-            pythonBridge.close();
-        }
-        if (eventRouter != null) {
-            eventRouter.close();
-        }
-        if (durableExecManager != null) {
-            durableExecManager.close();
+        // Close every component even when an earlier one fails, so a failing close cannot leak
+        // the components behind it or skip super.close(). The first failure is rethrown with
+        // the later ones suppressed. Order is preserved: the resource cache must close before
+        // pythonInterpreter since cached resources may hold Python references.
+        //
+        // The ladder catches Throwable, not Exception, and IOUtils.closeAll is deliberately not
+        // used: both stop at the first non-Exception Throwable without closing what follows,
+        // which is the very leak this method has to avoid.
+        Throwable firstFailure = null;
+        for (AutoCloseable closeable :
+                new AutoCloseable[] {
+                    resourceCache, contextManager, pythonBridge, eventRouter, durableExecManager
+                }) {
+            if (closeable == null) {
+                continue;
+            }
+            try {
+                closeable.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
         }
 
-        super.close();
+        try {
+            super.close();
+        } catch (Throwable t) {
+            firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+        }
+
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
+        }
     }
 
     @Override
