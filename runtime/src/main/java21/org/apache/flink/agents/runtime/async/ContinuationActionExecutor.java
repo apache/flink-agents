@@ -43,7 +43,7 @@ public class ContinuationActionExecutor {
     public ContinuationActionExecutor(int numAsyncThreads) {
         LOG.info("Initialize fixed thread pool for async task with {} threads", numAsyncThreads);
         this.asyncExecutor =
-                Executors.newFixedThreadPool(numAsyncThreads);
+                Executors.newFixedThreadPool(numAsyncThreads, new AsyncExecutorThreadFactory());
     }
 
     /**
