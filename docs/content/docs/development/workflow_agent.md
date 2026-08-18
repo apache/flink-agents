@@ -402,9 +402,11 @@ public static void emitOutput(Event event, RunnerContext ctx) {
 A custom event type may be a bare name such as `order.created` or `order-created`. Each dot-separated
 segment must start with an ASCII letter or underscore and may then contain ASCII letters, digits,
 underscores, or hyphens. Quote a name that contains other punctuation or would otherwise be parsed as
-an expression, for example `'order:created'`, `'true'`, or `'EventType.custom'`. A quoted name matches
-the literal event-type string; it does not reference a built-in `EventType` constant. Quoted names
-must be non-empty and cannot contain whitespace, quotes, backslashes, or control characters.
+an expression, for example `'order:created'`, `'true'`, or `'EventType.custom'`. In Java and Python,
+the quotes are part of the condition string. For example, use `@Action("'order:created'")` in Java or
+`@action("'order:created'")` in Python. A quoted name matches the literal event-type string; it does
+not reference a built-in `EventType` constant. Quoted names must be non-empty and cannot contain
+whitespace, quotes, backslashes, or control characters.
 
 #### Expression Variables
 
