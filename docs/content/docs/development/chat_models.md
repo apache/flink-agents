@@ -287,7 +287,7 @@ Anthropic provides cloud-based chat models featuring the Claude family, known fo
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Reference to connection method name |
-| `model` | str | `"claude-sonnet-4-20250514"` | Name of the chat model to use |
+| `model` | str | `"claude-sonnet-4-5"` | Name of the chat model to use |
 | `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
 | `tools` | List[str] | None | List of tool names available to the model |
 | `max_tokens` | int | `1024` | Maximum number of tokens to generate |
@@ -302,7 +302,7 @@ Anthropic provides cloud-based chat models featuring the Claude family, known fo
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | String | Required | Reference to connection method name |
-| `model` | String | `"claude-sonnet-4-20250514"` | Name of the chat model to use |
+| `model` | String | `"claude-sonnet-4-5"` | Name of the chat model to use |
 | `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
 | `tools` | List<String> | None | List of tool names available to the model |
 | `max_tokens` | long | `1024` | Maximum number of tokens to generate |
@@ -339,7 +339,7 @@ class MyAgent(Agent):
         return ResourceDescriptor(
             clazz=ResourceName.ChatModel.ANTHROPIC_SETUP,
             connection="anthropic_connection",
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5",
             max_tokens=2048,
             temperature=0.7
         )
@@ -364,7 +364,7 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor anthropicChatModel() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.ANTHROPIC_SETUP)
                 .addInitialArgument("connection", "anthropicConnection")
-                .addInitialArgument("model", "claude-sonnet-4-20250514")
+                .addInitialArgument("model", "claude-sonnet-4-5")
                 .addInitialArgument("temperature", 0.7d)
                 .addInitialArgument("max_tokens", 2048)
                 .build();
@@ -382,10 +382,9 @@ public class MyAgent extends Agent {
 Visit the [Anthropic Models documentation](https://docs.anthropic.com/en/docs/about-claude/models) for the complete and up-to-date list of available chat models.
 
 Some popular options include:
-- **Claude Sonnet 4.5** (claude-sonnet-4-5-20250929)
-- **Claude Sonnet 4** (claude-sonnet-4-20250514)
-- **Claude Sonnet 3.7** (claude-3-7-sonnet-20250219)
-- **Claude Opus 4.1** (claude-opus-4-1-20250805)
+- **Claude Opus 4.5** (claude-opus-4-5)
+- **Claude Sonnet 4.5** (claude-sonnet-4-5)
+- **Claude Haiku 4.5** (claude-haiku-4-5)
 
 {{< hint warning >}}
 Model availability and specifications may change. Always check the official Anthropic documentation for the latest information before implementing in production.

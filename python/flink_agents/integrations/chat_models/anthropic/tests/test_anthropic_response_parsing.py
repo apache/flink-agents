@@ -171,7 +171,8 @@ class _Answer(BaseModel):
 # even with the output_config suppression removed.
 _CAPABLE_MODEL = "claude-sonnet-4-5"
 
-# The default model this integration ships with, which predates the cutoff.
+# A model the provider does not document native structured-output support for,
+# predating the cutoff.
 _INCAPABLE_MODEL = "claude-sonnet-4-20250514"
 
 # The models the provider documents native structured-output support for, in the order
