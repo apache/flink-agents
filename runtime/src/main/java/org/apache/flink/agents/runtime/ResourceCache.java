@@ -26,6 +26,7 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
+import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
 import org.apache.flink.util.ExceptionUtils;
 
 import java.util.ArrayList;
@@ -151,6 +152,12 @@ public class ResourceCache implements AutoCloseable {
         }
 
         Resource resource = provider.provide(resourceContext);
+
+        if (resource instanceof BaseSubagentSetup) {
+            // The framework owns the setup's identity: inject the resource name as its
+            // subagent name.
+            ((BaseSubagentSetup) resource).setSubagentName(name);
+        }
 
         if (pythonResourceAdapter != null && resource instanceof FunctionTool) {
             ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
