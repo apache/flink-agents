@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict
 
 from flink_agents.api.configuration import ReadableConfiguration
@@ -24,10 +25,46 @@ from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 
-__all__ = ["AsyncExecutionResult", "RunnerContext"]
+__all__ = ["AsyncExecutionResult", "DurableCall", "Outcome", "RunnerContext"]
 
 if TYPE_CHECKING:
     from flink_agents.api.memory_object import MemoryObject
+
+
+@dataclass(frozen=True)
+class DurableCall:
+    """A deterministic durable call entry for batch execution."""
+
+    func: Callable[..., Any]
+    args: tuple[Any, ...] = ()
+    kwargs: dict[str, Any] | None = None
+    reconciler: Callable[[], Any] | None = None
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """Result or failure for one durable batch slot."""
+
+    value: Any = None
+    error: BaseException | None = None
+
+    @classmethod
+    def success(cls, value: Any) -> "Outcome":
+        """Create a successful outcome."""
+        return cls(value=value)
+
+    @classmethod
+    def failure(cls, error: BaseException) -> "Outcome":
+        """Create a failed outcome."""
+        return cls(error=error)
+
+    def is_success(self) -> bool:
+        """Return whether this outcome is successful."""
+        return self.error is None
+
+    def is_failure(self) -> bool:
+        """Return whether this outcome is failed."""
+        return self.error is not None
 
 
 class AsyncExecutionResult:
@@ -310,6 +347,18 @@ class RunnerContext(ABC):
         -------
         AsyncExecutionResult
             An awaitable object that yields the function result when awaited.
+        """
+
+    @abstractmethod
+    def durable_execute_all_async(
+        self,
+        callables: list[DurableCall],
+    ) -> "AsyncExecutionResult":
+        """Execute multiple durable callables as one asynchronous durable batch.
+
+        The returned awaitable resolves to a list of ``Outcome`` values in the
+        same order as the input calls. Individual callable exceptions are returned
+        as failure outcomes instead of failing the whole batch.
         """
 
     @property

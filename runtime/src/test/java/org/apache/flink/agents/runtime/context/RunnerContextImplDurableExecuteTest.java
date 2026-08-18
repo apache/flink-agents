@@ -184,8 +184,8 @@ class RunnerContextImplDurableExecuteTest {
 
         Exception thrown = assertThrows(Exception.class, () -> context.durableExecute(callable));
 
-        assertTrue(thrown.getMessage().contains("IllegalStateException"));
-        assertTrue(thrown.getMessage().contains("cached failure"));
+        assertInstanceOf(IllegalStateException.class, thrown);
+        assertEquals("cached failure", thrown.getMessage());
         assertEquals(0, callable.getCallCount());
         assertEquals(0, callable.getReconcileCount());
         assertEquals(0, persistCallCount.get());
@@ -242,6 +242,60 @@ class RunnerContextImplDurableExecuteTest {
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
         assertTrue(persisted.isFailure());
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
+    }
+
+    @Test
+    void testDurableExecuteCompletionOnlyReExecutesPendingSlot() throws Exception {
+        ActionState actionState = new ActionState(null);
+        actionState.addCallResult(CallResult.pending("tool-call", ""));
+        RunnerContextImpl context = createContext(actionState);
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>("tool-call", String.class, () -> "recovered");
+
+        String result = context.durableExecute(callable);
+
+        assertEquals("recovered", result);
+        assertEquals(1, callable.getCallCount());
+        assertEquals(1, persistCallCount.get());
+        assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
+        assertEquals(1, context.getDurableExecutionContext().getActionState().getCallResultCount());
+        CallResult persisted =
+                context.getDurableExecutionContext().getActionState().getCallResults().get(0);
+        assertTrue(persisted.isSuccess());
+    }
+
+    @Test
+    void testDurableExecuteCompletionOnlyReExecutesPendingSlotAfterBatchReservation()
+            throws Exception {
+        ActionState actionState = new ActionState(null);
+        actionState.addCallResult(CallResult.pending("tool-call", ""));
+        actionState.addCallResult(CallResult.pending("tool-call", ""));
+        RunnerContextImpl context = createContext(actionState);
+        TestDurableCallable<String> first =
+                new TestDurableCallable<>("tool-call", String.class, () -> "one");
+        TestDurableCallable<String> second =
+                new TestDurableCallable<>("tool-call", String.class, () -> "two");
+
+        assertEquals("one", context.durableExecute(first));
+        assertEquals("two", context.durableExecute(second));
+
+        assertEquals(1, first.getCallCount());
+        assertEquals(1, second.getCallCount());
+        assertEquals(2, persistCallCount.get());
+        assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
+        assertEquals(2, context.getDurableExecutionContext().getActionState().getCallResultCount());
+        assertTrue(
+                context.getDurableExecutionContext()
+                        .getActionState()
+                        .getCallResults()
+                        .get(0)
+                        .isSuccess());
+        assertTrue(
+                context.getDurableExecutionContext()
+                        .getActionState()
+                        .getCallResults()
+                        .get(1)
+                        .isSuccess());
     }
 
     @Test

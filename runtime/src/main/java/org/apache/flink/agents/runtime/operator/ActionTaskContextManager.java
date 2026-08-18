@@ -74,13 +74,13 @@ class ActionTaskContextManager implements AutoCloseable {
     private final Map<ActionTask, ContinuationContext> continuationContexts;
     private final Map<ActionTask, String> pythonAwaitableRefs;
 
-    private ContinuationActionExecutor continuationActionExecutor;
+    private final ContinuationActionExecutor actionContinuationExecutor;
 
     ActionTaskContextManager(int numAsyncThreads) {
         this.actionTaskMemoryContexts = new HashMap<>();
         this.continuationContexts = new HashMap<>();
         this.pythonAwaitableRefs = new HashMap<>();
-        this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
+        this.actionContinuationExecutor = new ContinuationActionExecutor(numAsyncThreads);
     }
 
     /**
@@ -112,7 +112,7 @@ class ActionTaskContextManager implements AutoCloseable {
             @Nullable InteranlBaseLongTermMemory longTermMemory) {
         if (isJava) {
             if (runnerContext == null) {
-                if (continuationActionExecutor == null) {
+                if (actionContinuationExecutor == null) {
                     throw new IllegalStateException(
                             "ContinuationActionExecutor has not been initialized.");
                 }
@@ -123,7 +123,7 @@ class ActionTaskContextManager implements AutoCloseable {
                                 agentPlan,
                                 resourceCache,
                                 jobIdentifier,
-                                continuationActionExecutor);
+                                actionContinuationExecutor);
                 if (longTermMemory != null) {
                     runnerContext.setLongTermMemory(longTermMemory);
                 }
@@ -329,8 +329,8 @@ class ActionTaskContextManager implements AutoCloseable {
                 runnerContext = null;
             }
         }
-        if (continuationActionExecutor != null) {
-            continuationActionExecutor.close();
+        if (actionContinuationExecutor != null) {
+            actionContinuationExecutor.close();
         }
     }
 }

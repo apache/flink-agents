@@ -18,6 +18,7 @@
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -27,6 +28,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * End-to-end tests for Java async execution functionality.
@@ -333,6 +336,212 @@ public class AsyncExecutionTest {
         System.out.println("=== Test Passed ===");
     }
 
+    @Test
+    public void testToolCallBatchExecutionIsActuallyParallel() throws Exception {
+        boolean continuationSupported = ContinuationActionExecutor.isContinuationSupported();
+        int javaVersion = Runtime.version().feature();
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        int sleepTimeMs = 500;
+        DataStream<AsyncExecutionAgent.AsyncRequest> inputStream =
+                env.fromElements(
+                        new AsyncExecutionAgent.AsyncRequest(1, "tool-batch", sleepTimeMs));
+
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 3);
+
+        DataStream<Object> outputStream =
+                agentsEnv
+                        .fromDataStream(
+                                inputStream, new AsyncExecutionAgent.AsyncRequestKeySelector())
+                        .apply(new AsyncExecutionAgent.ToolBatchAgent(sleepTimeMs))
+                        .toDataStream();
+
+        CloseableIterator<Object> results = outputStream.collectAsync();
+        agentsEnv.execute();
+
+        List<long[]> executionRanges = new ArrayList<>();
+        while (results.hasNext()) {
+            String output = results.next().toString();
+            Matcher matcher = Pattern.compile("start=(\\d+),end=(\\d+)").matcher(output);
+            while (matcher.find()) {
+                long start = Long.parseLong(matcher.group(1));
+                long end = Long.parseLong(matcher.group(2));
+                executionRanges.add(new long[] {start, end});
+            }
+        }
+        results.close();
+
+        Assertions.assertEquals(3, executionRanges.size());
+        int overlapCount = countOverlaps(executionRanges);
+        if (continuationSupported && javaVersion >= 21) {
+            Assertions.assertTrue(
+                    overlapCount >= 2,
+                    "On JDK 21+, tool calls in one ToolRequestEvent should run in parallel.");
+        } else {
+            Assertions.assertEquals(
+                    0,
+                    overlapCount,
+                    "On JDK < 21, tool-call batch execution should use the sequential fallback.");
+        }
+    }
+
+    @Test
+    public void testToolCallBatchRespectsMaxParallelismInFlight() throws Exception {
+        boolean continuationSupported = ContinuationActionExecutor.isContinuationSupported();
+        int javaVersion = Runtime.version().feature();
+        if (!continuationSupported || javaVersion < 21) {
+            System.out.println(
+                    "Skipping max-parallelism e2e: requires JDK 21+ Continuation execution");
+            return;
+        }
+
+        final int sleepTimeMs = AsyncExecutionAgent.ToolBatchMaxParallelismAgent.SLEEP_MS;
+        final int toolCount = AsyncExecutionAgent.ToolBatchMaxParallelismAgent.TOOL_COUNT;
+        final int maxParallelism = 2;
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        DataStream<AsyncExecutionAgent.AsyncRequest> inputStream =
+                env.fromElements(
+                        new AsyncExecutionAgent.AsyncRequest(1, "tool-batch-max-parallelism"));
+
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
+        agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 8);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, maxParallelism);
+
+        DataStream<Object> outputStream =
+                agentsEnv
+                        .fromDataStream(
+                                inputStream, new AsyncExecutionAgent.AsyncRequestKeySelector())
+                        .apply(new AsyncExecutionAgent.ToolBatchMaxParallelismAgent())
+                        .toDataStream();
+
+        CloseableIterator<Object> results = outputStream.collectAsync();
+        long pipelineStart = System.currentTimeMillis();
+        agentsEnv.execute();
+        long pipelineEnd = System.currentTimeMillis();
+
+        List<long[]> executionRanges = new ArrayList<>();
+        while (results.hasNext()) {
+            String output = results.next().toString();
+            Matcher matcher = Pattern.compile("start=(\\d+),end=(\\d+)").matcher(output);
+            while (matcher.find()) {
+                long start = Long.parseLong(matcher.group(1));
+                long end = Long.parseLong(matcher.group(2));
+                executionRanges.add(new long[] {start, end});
+            }
+        }
+        results.close();
+
+        Assertions.assertEquals(
+                toolCount,
+                executionRanges.size(),
+                "Expected one timing record per tool call in the batch.");
+        int maxConcurrent = maxConcurrentOverlap(executionRanges);
+        Assertions.assertTrue(
+                maxConcurrent <= maxParallelism,
+                "At most "
+                        + maxParallelism
+                        + " tool calls should run concurrently, but observed "
+                        + maxConcurrent
+                        + " in-flight.");
+
+        long batchStart =
+                executionRanges.stream().mapToLong(range -> range[0]).min().orElse(pipelineStart);
+        long batchEnd =
+                executionRanges.stream().mapToLong(range -> range[1]).max().orElse(pipelineEnd);
+        long batchDuration = batchEnd - batchStart;
+        int expectedWaves = (int) Math.ceil((double) toolCount / maxParallelism);
+        long expectedMinDuration = (long) sleepTimeMs * expectedWaves;
+        Assertions.assertTrue(
+                batchDuration >= expectedMinDuration - 150,
+                "With max-parallelism="
+                        + maxParallelism
+                        + ", a "
+                        + toolCount
+                        + "-tool batch should take at least "
+                        + expectedWaves
+                        + " waves (~"
+                        + expectedMinDuration
+                        + "ms), but took "
+                        + batchDuration
+                        + "ms.");
+        Assertions.assertTrue(
+                batchDuration < (long) sleepTimeMs * toolCount - 150,
+                "Capped batch should finish faster than fully serial execution: "
+                        + batchDuration
+                        + "ms vs serial ~"
+                        + ((long) sleepTimeMs * toolCount)
+                        + "ms.");
+        Assertions.assertTrue(
+                pipelineEnd - pipelineStart >= expectedMinDuration - 150,
+                "Pipeline wall time should reflect capped in-flight execution.");
+    }
+
+    @Test
+    public void testToolCallBatchTimeoutKeepsCompletedOutcomes() throws Exception {
+        boolean continuationSupported = ContinuationActionExecutor.isContinuationSupported();
+        int javaVersion = Runtime.version().feature();
+        if (!continuationSupported || javaVersion < 21) {
+            System.out.println(
+                    "Skipping batch timeout e2e: requires JDK 21+ Continuation execution");
+            return;
+        }
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        DataStream<AsyncExecutionAgent.AsyncRequest> inputStream =
+                env.fromElements(new AsyncExecutionAgent.AsyncRequest(1, "tool-batch-timeout"));
+
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 200L);
+
+        DataStream<Object> outputStream =
+                agentsEnv
+                        .fromDataStream(
+                                inputStream, new AsyncExecutionAgent.AsyncRequestKeySelector())
+                        .apply(new AsyncExecutionAgent.ToolBatchTimeoutAgent())
+                        .toDataStream();
+
+        CloseableIterator<Object> results = outputStream.collectAsync();
+        agentsEnv.execute();
+
+        List<String> outputList = new ArrayList<>();
+        while (results.hasNext()) {
+            outputList.add(results.next().toString());
+        }
+        results.close();
+
+        Assertions.assertEquals(1, outputList.size());
+        String output = outputList.get(0);
+
+        Pattern fastToolPattern =
+                Pattern.compile("call=1.*sleep_ms=0.*start=\\d+,end=\\d+", Pattern.DOTALL);
+        Assertions.assertTrue(
+                fastToolPattern.matcher(output).find(),
+                "Fast tool should complete before the batch deadline: " + output);
+        Assertions.assertTrue(
+                output.contains("execute failed") || output.toLowerCase().contains("timed out"),
+                "Slow tool should fail when the batch deadline elapses: " + output);
+        Assertions.assertFalse(
+                Pattern.compile("call=2.*sleep_ms=800.*start=\\d+,end=\\d+", Pattern.DOTALL)
+                        .matcher(output)
+                        .find(),
+                "Slow tool should not report a successful timed result: " + output);
+    }
+
     /**
      * Tests that durableExecute (sync) works correctly.
      *
@@ -386,5 +595,42 @@ public class AsyncExecutionTest {
                     output.contains("SyncProcessed:"),
                     "Output should contain processed data: " + output);
         }
+    }
+
+    private static int maxConcurrentOverlap(List<long[]> executionRanges) {
+        List<long[]> events = new ArrayList<>();
+        for (long[] range : executionRanges) {
+            events.add(new long[] {range[0], 1});
+            events.add(new long[] {range[1], -1});
+        }
+        events.sort(
+                (left, right) -> {
+                    int byTime = Long.compare(left[0], right[0]);
+                    if (byTime != 0) {
+                        return byTime;
+                    }
+                    return Long.compare(left[1], right[1]);
+                });
+        int current = 0;
+        int max = 0;
+        for (long[] event : events) {
+            current += event[1];
+            max = Math.max(max, current);
+        }
+        return max;
+    }
+
+    private static int countOverlaps(List<long[]> executionRanges) {
+        int overlapCount = 0;
+        for (int i = 0; i < executionRanges.size(); i++) {
+            for (int j = i + 1; j < executionRanges.size(); j++) {
+                long[] range1 = executionRanges.get(i);
+                long[] range2 = executionRanges.get(j);
+                if (range1[0] < range2[1] && range2[0] < range1[1]) {
+                    overlapCount++;
+                }
+            }
+        }
+        return overlapCount;
     }
 }

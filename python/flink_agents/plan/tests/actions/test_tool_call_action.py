@@ -22,15 +22,37 @@ from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
+from flink_agents.api.runner_context import Outcome
 from flink_agents.api.tools import InjectedArg
 from flink_agents.plan.actions.tool_call_action import process_tool_request
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
+from flink_agents.runtime.durable_execution import durable_identity_for_call
 
 
 def query_order(order_id: str, tenant_id: str) -> str:
     return f"{tenant_id}:{order_id}"
+
+
+def _query_order_tool(injected_args: dict[str, InjectedArg] | None = None) -> FunctionTool:
+    return FunctionTool(
+        func=PythonFunction.from_callable(query_order),
+        injected_args=injected_args or {"tenant_id": InjectedArg.from_config("tenant_id")},
+    )
+
+
+def _expected_durable_function_id(
+    order_id: str,
+    tenant_id: str = "tenant-1",
+) -> str:
+    tool = _query_order_tool()
+    function_id, _ = durable_identity_for_call(
+        tool.call,
+        (),
+        {"order_id": order_id, "tenant_id": tenant_id},
+    )
+    return function_id
 
 
 class _Context:
@@ -41,29 +63,48 @@ class _Context:
         sensory_memory: Any | None = None,
         short_term_memory: Any | None = None,
     ) -> None:
-        self.config = config or AgentConfiguration({"tenant_id": "tenant-1"})
-        if isinstance(self.config, AgentConfiguration):
+        if config is None:
+            self.config = AgentConfiguration({"tenant_id": "tenant-1"})
             self.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, False)
+        else:
+            self.config = config
         self.injected_args = injected_args or {
             "tenant_id": InjectedArg.from_config("tenant_id")
         }
         self.sensory_memory = sensory_memory
         self.short_term_memory = short_term_memory
         self.sent_events = []
+        self.durable_execute_calls = []
+        self.durable_execute_async_calls = []
+        self.durable_execute_all_async_calls = []
+        self.durable_execute_all_async_outcomes = None
 
     def get_resource(self, name: str, type: ResourceType) -> FunctionTool:
-        assert name == "query_order"
         assert type == ResourceType.TOOL
+        if name != "query_order":
+            msg = f"Tool `{name}` does not exist."
+            raise ValueError(msg)
         return FunctionTool(
             func=PythonFunction.from_callable(query_order),
             injected_args=self.injected_args,
         )
 
-    def durable_execute(self, func: Any, **kwargs: Any) -> Any:
-        return func(**kwargs)
+    def durable_execute(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        self.durable_execute_calls.append((func, args, kwargs))
+        return func(*args, **kwargs)
 
-    async def durable_execute_async(self, func: Any, **kwargs: Any) -> Any:
-        return func(**kwargs)
+    async def durable_execute_async(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        self.durable_execute_async_calls.append((func, args, kwargs))
+        return func(*args, **kwargs)
+
+    async def durable_execute_all_async(self, callables: list[Any]) -> list[Outcome]:
+        self.durable_execute_all_async_calls.append(callables)
+        if self.durable_execute_all_async_outcomes is not None:
+            return self.durable_execute_all_async_outcomes
+        return [
+            Outcome.success(call.func(*call.args, **(call.kwargs or {})))
+            for call in callables
+        ]
 
     def send_event(self, event: Any) -> None:
         self.sent_events.append(event)
@@ -102,7 +143,10 @@ class _NestedMemoryObject(MemoryObject):
 
 class _WrongConfig:
     def get(self, option: Any) -> bool:
-        assert option == AgentExecutionOptions.TOOL_CALL_ASYNC
+        assert option in (
+            AgentExecutionOptions.TOOL_CALL_ASYNC,
+            AgentExecutionOptions.TOOL_CALL_PARALLELISM,
+        )
         return False
 
 
@@ -277,14 +321,159 @@ def test_tool_call_action_uses_sync_execution_in_test_context() -> None:
     assert ctx.config.get(AgentExecutionOptions.TOOL_CALL_ASYNC) is False
 
 
-def tool_request() -> ToolRequestEvent:
+def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    ctx = _Context(config=config)
+
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
+
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.responses == {
+        "call-1": "tenant-1:order-call-1",
+        "call-2": "tenant-1:order-call-2",
+    }
+    assert response.success == {"call-1": True, "call-2": True}
+    assert len(ctx.durable_execute_all_async_calls) == 1
+    expected_id = _expected_durable_function_id("order-call-1")
+    assert [
+        durable_identity_for_call(call.func, call.args, call.kwargs)[0]
+        for call in ctx.durable_execute_all_async_calls[0]
+    ] == [
+        expected_id,
+        expected_id,
+    ]
+    assert ctx.durable_execute_async_calls == []
+
+
+def test_tool_call_action_uses_serial_async_when_parallelism_is_one() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 1)
+    ctx = _Context(config=config)
+
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
+
+    assert ctx.durable_execute_all_async_calls == []
+    assert len(ctx.durable_execute_async_calls) == 2
+
+
+def test_tool_call_action_does_not_batch_single_tool() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    ctx = _Context(config=config)
+
+    asyncio.run(process_tool_request(tool_request("call-1"), ctx))
+
+    assert ctx.durable_execute_all_async_calls == []
+    assert len(ctx.durable_execute_async_calls) == 1
+
+
+def test_tool_call_action_excludes_missing_tool_from_parallel_batch() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    ctx = _Context(config=config)
+
+    asyncio.run(process_tool_request(tool_request("call-1", "missing"), ctx))
+
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.success["call-1"] is True
+    assert response.success["missing"] is False
+    assert len(ctx.durable_execute_async_calls) == 1
+    assert ctx.durable_execute_all_async_calls == []
+
+
+def test_tool_call_action_records_parallel_outcome_failure() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    ctx = _Context(config=config)
+    ctx.durable_execute_all_async_outcomes = [
+        Outcome.success("ok"),
+        Outcome.failure(ValueError("boom")),
+    ]
+
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
+
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.responses["call-1"] == "ok"
+    assert response.success["call-1"] is True
+    assert response.responses["call-2"] == "Tool `query_order` execute failed."
+    assert response.success["call-2"] is False
+    assert response.error["call-2"] == "boom"
+
+
+def test_tool_call_action_uses_sync_when_async_disabled_multi_tool() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, False)
+    ctx = _Context(config=config)
+
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
+
+    assert ctx.durable_execute_all_async_calls == []
+    assert ctx.durable_execute_async_calls == []
+    assert len(ctx.durable_execute_calls) == 2
+
+
+def test_tool_call_action_records_tool_execution_exception() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    ctx = _Context(config=config)
+
+    async def failing_async(func: Any, *args: Any, **kwargs: Any) -> Any:
+        msg = "boom"
+        raise ValueError(msg)
+
+    ctx.durable_execute_async = failing_async  # type: ignore[method-assign]
+    asyncio.run(process_tool_request(tool_request("call-1"), ctx))
+
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.success["call-1"] is False
+    assert response.responses["call-1"] == "Tool `query_order` execute failed."
+    assert response.error["call-1"] == "boom"
+
+
+def test_tool_call_action_records_infrastructure_failure_for_all_parallel_tools() -> None:
+    class _FailingBatchContext(_Context):
+        async def durable_execute_all_async(self, callables: list[Any]) -> list[Outcome]:
+            msg = "persist failed"
+            raise RuntimeError(msg)
+
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    ctx = _FailingBatchContext(config=config)
+
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
+
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.success["call-1"] is False
+    assert response.success["call-2"] is False
+    assert response.error["call-1"] == "persist failed"
+    assert response.error["call-2"] == "persist failed"
+
+
+def tool_request(*call_ids: str) -> ToolRequestEvent:
+    if not call_ids:
+        call_ids = ("call-1",)
     return ToolRequestEvent(
         model="model",
         tool_calls=[
             {
-                "id": "call-1",
+                "id": call_id,
                 "type": "function",
-                "function": {"name": "query_order", "arguments": {"order_id": "order-1"}},
+                "function": {
+                    "name": "missing_tool" if call_id == "missing" else "query_order",
+                    "arguments": {
+                        "order_id": "order-1"
+                        if len(call_ids) == 1
+                        else f"order-{call_id}"
+                    },
+                },
             }
+            for call_id in call_ids
         ],
     )
