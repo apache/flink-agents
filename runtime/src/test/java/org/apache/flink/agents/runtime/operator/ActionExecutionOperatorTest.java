@@ -1759,6 +1759,117 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
+    void testReplayReappliesNewObjectMemoryUpdatesIntoEmptyState() throws Exception {
+        AgentPlan agentPlan = TestAgent.getNestedMemoryAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.set(0);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.get()).isEqualTo(1);
+        }
+
+        // Simulate recovery from a checkpoint taken before the input was processed: the keyed
+        // memory state is empty, but the completed ActionState survives in the store, so the
+        // action is skipped and its memory updates are replayed. The newObject update must be
+        // re-applied as an object creation — replaying it as set("user", null) would create a
+        // null value leaf and the subsequent set("user.score", ...) replay would fail.
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(8L);
+            assertThat(TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.get())
+                    .as("Completed action must not be re-executed during replay")
+                    .isEqualTo(1);
+        }
+    }
+
+    @Test
+    void testReplayReappliesNewObjectMemoryUpdatesOverRestoredState() throws Exception {
+        AgentPlan agentPlan = TestAgent.getNestedMemoryAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.set(0);
+        OperatorSubtaskState snapshot;
+
+        // Both inputs must share one Flink key so the second input's replay runs over the state
+        // the first input left behind.
+        KeySelector<Long, Long> constantKey = value -> 0L;
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        constantKey,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // First input for this key: the action creates the "user" object, and the checkpoint
+            // taken afterwards persists it in the keyed memory state.
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+            snapshot = testHarness.snapshot(1L, 1L);
+
+            // Second input for the same key: the action completes (its ActionState survives in
+            // the store), but the job "fails" before the next checkpoint.
+            testHarness.processElement(new StreamRecord<>(9L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.get()).isEqualTo(2);
+        }
+
+        // Recovery: the restored memory state already contains "user" as a nested object (from
+        // the first input), and the second input is re-delivered. Its action is completed in the
+        // ActionState store, so its memory updates are replayed against the restored state. The
+        // newObject update must tolerate the already existing object — replaying it as
+        // set("user", null) would throw "Cannot overwrite object with value" and crash-loop
+        // recovery.
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        constantKey,
+                        TypeInformation.of(Long.class))) {
+            testHarness.initializeState(snapshot);
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(9L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(10L);
+            assertThat(TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.get())
+                    .as("Completed action must not be re-executed during replay")
+                    .isEqualTo(2);
+        }
+    }
+
+    @Test
     void testReplayRebindsOutputLineage() throws Exception {
         AgentPlan agentPlan = TestAgent.getAgentPlan(false);
         long inputValue = 7L;
@@ -2493,6 +2604,10 @@ public class ActionExecutionOperatorTest {
         public static final java.util.concurrent.atomic.AtomicBoolean FOLLOWING_ACTION_EXECUTED =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
 
+        public static final java.util.concurrent.atomic.AtomicInteger
+                NESTED_MEMORY_ACTION_CALL_COUNTER =
+                        new java.util.concurrent.atomic.AtomicInteger(0);
+
         public static class MiddleEvent extends Event {
             public static final String EVENT_TYPE = "MiddleEvent";
 
@@ -2526,6 +2641,19 @@ public class ActionExecutionOperatorTest {
                 MemoryObject mem = context.getShortTermMemory();
                 Long tmp = (Long) mem.get("tmp").getValue();
                 context.sendEvent(new OutputEvent(tmp * 2));
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+        }
+
+        public static void nestedMemoryAction(Event event, RunnerContext context) {
+            NESTED_MEMORY_ACTION_CALL_COUNTER.incrementAndGet();
+            Long inputData = (Long) InputEvent.fromEvent(event).getInput();
+            try {
+                MemoryObject mem = context.getShortTermMemory();
+                mem.newObject("user");
+                mem.set("user.score", inputData + 1);
+                context.sendEvent(new OutputEvent(inputData + 1));
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -2900,6 +3028,29 @@ public class ActionExecutionOperatorTest {
                 }
 
                 return new AgentPlan(actions, new HashMap<>(), config);
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        /** Creates an AgentPlan with a single action that creates a nested memory object. */
+        public static AgentPlan getNestedMemoryAgentPlan() {
+            try {
+                Action nestedMemoryAction =
+                        new Action(
+                                "nestedMemoryAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "nestedMemoryAction",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                actionsByEvent.put(
+                        InputEvent.EVENT_TYPE, Collections.singletonList(nestedMemoryAction));
+                Map<String, Action> actions = new HashMap<>();
+                actions.put(nestedMemoryAction.getName(), nestedMemoryAction);
+                return new AgentPlan(actions, new HashMap<>(), new AgentConfiguration());
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }

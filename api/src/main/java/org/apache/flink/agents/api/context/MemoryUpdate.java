@@ -32,17 +32,36 @@ public class MemoryUpdate implements Serializable {
 
     private final String path;
     private final Object value;
+    private final boolean objectCreation;
+
+    /**
+     * Creates a new MemoryUpdate instance describing a value write.
+     *
+     * @param path the absolute path of the data in Short-Term Memory.
+     * @param value the new value to set at the specified path.
+     */
+    public MemoryUpdate(String path, Object value) {
+        this(path, value, false);
+    }
 
     /**
      * Creates a new MemoryUpdate instance.
      *
      * @param path the absolute path of the data in Short-Term Memory.
-     * @param value the new value to set at the specified path.
+     * @param value the new value to set at the specified path; always null when {@code
+     *     objectCreation} is true.
+     * @param objectCreation true if this update records the creation of a nested object rather than
+     *     a value write. Absent in records written before this field existed, in which case Jackson
+     *     defaults it to false, preserving their original replay behavior.
      */
     @JsonCreator
-    public MemoryUpdate(@JsonProperty("path") String path, @JsonProperty("value") Object value) {
+    public MemoryUpdate(
+            @JsonProperty("path") String path,
+            @JsonProperty("value") Object value,
+            @JsonProperty("objectCreation") boolean objectCreation) {
         this.path = path;
         this.value = value;
+        this.objectCreation = objectCreation;
     }
 
     /**
@@ -63,21 +82,41 @@ public class MemoryUpdate implements Serializable {
         return value;
     }
 
+    /**
+     * Whether this update records the creation of a nested object (via {@code newObject}) rather
+     * than a value write. Replay must re-create the object instead of setting a null value.
+     *
+     * @return true if this update is a nested-object creation.
+     */
+    public boolean isObjectCreation() {
+        return objectCreation;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof MemoryUpdate)) return false;
         MemoryUpdate that = (MemoryUpdate) o;
-        return Objects.equals(path, that.path) && Objects.equals(value, that.value);
+        return objectCreation == that.objectCreation
+                && Objects.equals(path, that.path)
+                && Objects.equals(value, that.value);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(path, value);
+        return Objects.hash(path, value, objectCreation);
     }
 
     @Override
     public String toString() {
-        return "MemoryUpdate{" + "path='" + path + '\'' + ", value=" + value + '}';
+        return "MemoryUpdate{"
+                + "path='"
+                + path
+                + '\''
+                + ", value="
+                + value
+                + ", objectCreation="
+                + objectCreation
+                + '}';
     }
 }
