@@ -99,7 +99,6 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 |---|---|---|
 | [Amazon Bedrock]({{< ref "docs/development/chat_models#amazon-bedrock" >}}) | ❌ | ✅ |
 | [Anthropic]({{< ref "docs/development/chat_models#anthropic" >}}) | ✅ | ✅ |
-| [Azure AI]({{< ref "docs/development/chat_models#azure-ai" >}}) | ❌ | ✅ |
 | [Azure OpenAI]({{< ref "docs/development/chat_models#azure-openai" >}}) | ✅ | ✅ |
 | [Gemini]({{< ref "docs/development/chat_models#gemini" >}}) | ❌ | ✅ |
 | [Ollama]({{< ref "docs/development/chat_models#ollama" >}}) | ✅ | ✅ |

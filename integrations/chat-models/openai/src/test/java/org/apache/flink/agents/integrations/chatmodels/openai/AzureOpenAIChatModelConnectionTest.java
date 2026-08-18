@@ -19,6 +19,7 @@
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.openai.errors.BadRequestException;
 import com.openai.models.ChatModel;
 import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletion;
@@ -43,6 +44,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -94,6 +96,18 @@ class AzureOpenAIChatModelConnectionTest {
 
     private static AzureOpenAIChatModelConnection connection() {
         return connection(CAPABLE_API_VERSION);
+    }
+
+    private static AzureOpenAIChatModelConnection connection(
+            String apiVersion, String azureEndpoint, String azureUrlPathMode) {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", apiVersion)
+                        .addInitialArgument("azure_endpoint", azureEndpoint)
+                        .addInitialArgument("azure_url_path_mode", azureUrlPathMode)
+                        .build();
+        return new AzureOpenAIChatModelConnection(desc, NOOP);
     }
 
     @Test
@@ -220,6 +234,26 @@ class AzureOpenAIChatModelConnectionTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("additional_kwargs")
                 .hasMessageContaining("temperature");
+    }
+
+    @Test
+    @DisplayName("A provider error reaches the caller as the SDK exception carrying its payload")
+    void testProviderErrorPropagatesUnwrapped() throws IOException {
+        try (FakeOpenAIErrorEndpoint endpoint = FakeOpenAIErrorEndpoint.rejectingWith400()) {
+            // A loopback endpoint is a custom gateway rather than an *.openai.azure.com resource,
+            // so LEGACY is what builds the deployment-scoped Azure request path against it.
+            AzureOpenAIChatModelConnection connection =
+                    connection(CAPABLE_API_VERSION, endpoint.baseUrl(), "LEGACY");
+
+            assertThatThrownBy(() -> connection.chat(userMessage(), List.of(), params(null), null))
+                    .isInstanceOfSatisfying(
+                            BadRequestException.class,
+                            e -> {
+                                assertThat(e.statusCode()).isEqualTo(400);
+                                assertThat(e.code()).contains(FakeOpenAIErrorEndpoint.ERROR_CODE);
+                            })
+                    .hasMessageContaining(FakeOpenAIErrorEndpoint.ERROR_MESSAGE);
+        }
     }
 
     @Test

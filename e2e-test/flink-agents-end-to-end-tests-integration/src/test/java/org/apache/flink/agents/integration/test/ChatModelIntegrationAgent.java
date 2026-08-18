@@ -74,13 +74,6 @@ public class ChatModelIntegrationAgent extends Agent {
                     .addInitialArgument("endpoint", "http://localhost:11434")
                     .addInitialArgument("requestTimeout", 240)
                     .build();
-        } else if (provider.equals("AZURE")) {
-            String endpoint = System.getenv().get("AZURE_ENDPOINT");
-            String apiKey = System.getenv().get("AZURE_API_KEY");
-            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_CONNECTION)
-                    .addInitialArgument("endpoint", endpoint)
-                    .addInitialArgument("apiKey", apiKey)
-                    .build();
         } else if (provider.equals("OPENAI")) {
             String apiKey = System.getenv().get("OPENAI_API_KEY");
             return ResourceDescriptor.Builder.newBuilder(
@@ -123,14 +116,6 @@ public class ChatModelIntegrationAgent extends Agent {
                     .addInitialArgument("connection", "chatModelConnection")
                     .addInitialArgument("model", OLLAMA_MODEL)
                     .addInitialArgument("think", false)
-                    .addInitialArgument(
-                            "tools",
-                            List.of("calculateBMI", "convertTemperature", "createRandomNumber"))
-                    .build();
-        } else if (provider.equals("AZURE")) {
-            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_SETUP)
-                    .addInitialArgument("connection", "chatModelConnection")
-                    .addInitialArgument("model", "gpt-4o")
                     .addInitialArgument(
                             "tools",
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))

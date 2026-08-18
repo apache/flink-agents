@@ -53,12 +53,6 @@ public final class ResourceName {
         public static final String ANTHROPIC_SETUP =
                 "org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelSetup";
 
-        // Azure
-        public static final String AZURE_CONNECTION =
-                "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelConnection";
-        public static final String AZURE_SETUP =
-                "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup";
-
         // Bedrock
         public static final String BEDROCK_CONNECTION =
                 "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelConnection";

@@ -276,10 +276,6 @@ class ResourceName:
             ANTHROPIC_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelConnection"
             ANTHROPIC_SETUP = "org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelSetup"
 
-            # Azure
-            AZURE_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelConnection"
-            AZURE_SETUP = "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup"
-
             # Bedrock
             BEDROCK_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelConnection"
             BEDROCK_SETUP = "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup"

@@ -289,15 +289,9 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
             List<Tool> tools,
             Map<String, Object> modelParams,
             Object outputSchema) {
-        try {
-            ChatCompletionCreateParams params =
-                    buildRequest(messages, tools, modelParams, outputSchema);
-            return toResponse(client.chat().completions().create(params), modelParams);
-        } catch (IllegalArgumentException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to call Azure OpenAI chat completions API.", e);
-        }
+        ChatCompletionCreateParams params =
+                buildRequest(messages, tools, modelParams, outputSchema);
+        return toResponse(client.chat().completions().create(params), modelParams);
     }
 
     // Package-private so response handling can be asserted against a constructed completion without

@@ -88,7 +88,6 @@ public final class Aliases {
         chatConnJava.put("anthropic", ResourceName.ChatModel.ANTHROPIC_CONNECTION);
         chatConnJava.put("gemini", ResourceName.ChatModel.GEMINI_CONNECTION);
         chatConnJava.put("azure_openai", ResourceName.ChatModel.AZURE_OPENAI_CONNECTION);
-        chatConnJava.put("azure", ResourceName.ChatModel.AZURE_CONNECTION);
         chatConnJava.put("bedrock", ResourceName.ChatModel.BEDROCK_CONNECTION);
         chatConnJava.put("vllm", ResourceName.ChatModel.VLLM_CONNECTION);
         Map<String, String> chatConnPython = new HashMap<>();
@@ -108,7 +107,6 @@ public final class Aliases {
         chatJava.put("anthropic", ResourceName.ChatModel.ANTHROPIC_SETUP);
         chatJava.put("gemini", ResourceName.ChatModel.GEMINI_SETUP);
         chatJava.put("azure_openai", ResourceName.ChatModel.AZURE_OPENAI_SETUP);
-        chatJava.put("azure", ResourceName.ChatModel.AZURE_SETUP);
         chatJava.put("bedrock", ResourceName.ChatModel.BEDROCK_SETUP);
         chatJava.put("vllm", ResourceName.ChatModel.VLLM_SETUP);
         Map<String, String> chatPython = new HashMap<>();

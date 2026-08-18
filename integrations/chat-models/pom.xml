@@ -32,7 +32,6 @@ under the License.
 
     <modules>
         <module>anthropic</module>
-        <module>azureai</module>
         <module>bedrock</module>
         <module>gemini</module>
         <module>ollama</module>
