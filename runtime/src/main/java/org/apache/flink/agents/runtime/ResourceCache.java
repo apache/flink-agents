@@ -27,6 +27,7 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
+import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -134,6 +135,12 @@ public class ResourceCache implements AutoCloseable {
 
         Resource resource = provider.provide(resourceContext);
 
+        if (resource instanceof BaseSubagentSetup) {
+            // The framework owns the setup's identity: inject the resource name as its
+            // subagent name.
+            ((BaseSubagentSetup) resource).setSubagentName(name);
+        }
+
         if (pythonResourceAdapter != null && resource instanceof FunctionTool) {
             ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
         }
@@ -158,9 +165,9 @@ public class ResourceCache implements AutoCloseable {
      * Eagerly materializes every resource of the given type, wherever it lives. Java-owned
      * resources are resolved through their provider exactly like a first {@link #getResource}
      * access, while Python-owned resources are materialized in the Python runtime and represented
-     * by a handle. Every instance is returned and cached, so a later lookup by name resolves to
-     * the same instance. Providers are resolved in no particular order, and resource construction
-     * must not depend on it.
+     * by a handle. Every instance is returned and cached, so a later lookup by name resolves to the
+     * same instance. Providers are resolved in no particular order, and resource construction must
+     * not depend on it.
      *
      * @param type the resource type to materialize.
      * @return the materialized resources, empty when the type has none.

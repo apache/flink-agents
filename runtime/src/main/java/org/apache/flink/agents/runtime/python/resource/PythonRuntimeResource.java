@@ -20,7 +20,6 @@ package org.apache.flink.agents.runtime.python.resource;
 
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
-
 import pemja.core.object.PyObject;
 
 /**
@@ -32,9 +31,9 @@ import pemja.core.object.PyObject;
  * nothing, because opening or closing the same Python resource a second time from Java would break
  * the invariants its owner already established.
  *
- * <p>The handle carries no behaviour of its own, because what a Python resource can do is
- * expressed in Python: a caller that needs more than the resource's type drives the Python object
- * from {@link #getPythonResource()} over the bridge.
+ * <p>The handle carries no behaviour of its own, because what a Python resource can do is expressed
+ * in Python: a caller that needs more than the resource's type drives the Python object from {@link
+ * #getPythonResource()} over the bridge.
  */
 public final class PythonRuntimeResource extends Resource {
 

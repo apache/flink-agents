@@ -22,6 +22,8 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
+import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
@@ -33,6 +35,7 @@ import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
+import org.apache.flink.agents.runtime.lifecycle.PythonTaskLifecycleListener;
 import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryEventBuilder;
@@ -40,6 +43,7 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
+import org.apache.flink.agents.runtime.python.resource.PythonRuntimeResource;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.trace.ExecutionEventLogger;
 import org.apache.flink.agents.runtime.utils.EventUtil;
@@ -222,6 +226,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (taskLifecycleListeners == null) {
             taskLifecycleListeners = new ArrayList<>();
         }
+
+        registerSubagentSetups();
 
         // init context manager for runner context creation and memory contexts
         contextManager =
@@ -735,6 +741,34 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private void notifyExecutionLifecycleEvent(ExecutionTraceContext traceContext, Event event) {
         executionEventLogger.emit(event, traceContext);
+    }
+
+    /**
+     * Materializes every sub-agent setup, in either language, and registers the ones that observe
+     * the task lifecycle. A Java setup joins this operator's listeners directly; a Python setup
+     * lives in the Python runtime, so it joins the Python runtime's listeners and this operator
+     * notifies them through a single bridge listener.
+     *
+     * <p>Runs while the operator opens, after the Python bridge is up, because the Python runtime
+     * materializes the setups it owns.
+     */
+    private void registerSubagentSetups() throws Exception {
+        boolean pythonSetupRegistered = false;
+        for (Resource setup : resourceCache.eagerMaterialize(ResourceType.AGENT)) {
+            if (setup instanceof PythonRuntimeResource) {
+                pythonSetupRegistered |=
+                        pythonBridge
+                                .getPythonActionExecutor()
+                                .addTaskLifecycleListener(
+                                        ((PythonRuntimeResource) setup).getPythonResource());
+            } else if (setup instanceof TaskLifecycleListener) {
+                taskLifecycleListeners.add((TaskLifecycleListener) setup);
+            }
+        }
+        if (pythonSetupRegistered) {
+            taskLifecycleListeners.add(
+                    new PythonTaskLifecycleListener(pythonBridge.getPythonActionExecutor()));
+        }
     }
 
     /**

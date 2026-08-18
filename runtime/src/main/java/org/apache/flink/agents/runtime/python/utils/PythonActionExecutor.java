@@ -134,8 +134,7 @@ public class PythonActionExecutor {
         ((Map<String, PyObject>) pythonResources)
                 .forEach(
                         (name, pythonResource) ->
-                                handles.put(
-                                        name, new PythonRuntimeResource(type, pythonResource)));
+                                handles.put(name, new PythonRuntimeResource(type, pythonResource)));
         return handles;
     }
 

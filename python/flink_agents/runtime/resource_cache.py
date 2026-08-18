@@ -89,6 +89,13 @@ class ResourceCache:
         )
         if isinstance(resource, FunctionTool) and isinstance(resource.func, JavaFunction):
             resource.set_java_resource_adapter(self._j_resource_adapter)
+        # Local import avoids pulling sub-agent machinery for non-sub-agent usage.
+        from flink_agents.runtime.base_subagent import BaseSubagentSetup
+
+        if isinstance(resource, BaseSubagentSetup):
+            # The framework owns the setup's identity: inject the resource name
+            # as its sub-agent name, mirroring the Java ResourceCache.
+            resource.set_subagent_name(name)
         resource.open()
         self._cache.setdefault(type, {})[name] = resource
         return resource
