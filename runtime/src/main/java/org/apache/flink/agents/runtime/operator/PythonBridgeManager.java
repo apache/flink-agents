@@ -172,6 +172,7 @@ class PythonBridgeManager implements AutoCloseable {
             }
             if (containPythonAction || mem0Configured) {
                 initPythonActionExecutor(agentPlan, jobIdentifier);
+                resourceCache.setPythonActionExecutor(pythonActionExecutor);
             }
             if (mem0Configured) {
                 wireLongTermMemory(agentPlan);
