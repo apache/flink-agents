@@ -22,6 +22,8 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
+import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
@@ -33,12 +35,15 @@ import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
+import org.apache.flink.agents.runtime.lifecycle.PythonTaskLifecycleListener;
+import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryEventBuilder;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
+import org.apache.flink.agents.runtime.python.resource.PythonRuntimeResource;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.trace.ExecutionEventLogger;
 import org.apache.flink.agents.runtime.utils.EventUtil;
@@ -140,6 +145,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final boolean pythonKeyIsPickled;
     private final boolean agentRunBeginEventEnabled;
 
+    // Broadcast targets for the per-record/per-task lifecycle events.
+    private transient List<TaskLifecycleListener> taskLifecycleListeners = new ArrayList<>();
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
@@ -214,6 +222,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Capture the wired Mem0 long-term memory, if any, so it can be plumbed into the Java
         // runner context created by ActionTaskContextManager.
         ltm = pythonBridge.getLongTermMemory();
+
+        if (taskLifecycleListeners == null) {
+            taskLifecycleListeners = new ArrayList<>();
+        }
+
+        registerSubagentSetups();
 
         // init context manager for runner context creation and memory contexts
         contextManager =
@@ -303,8 +317,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 output.collect(eventRouter.getReusedStreamRecord().replace(outputData));
             }
         } else {
+            boolean freshRecordRound = false;
             if (isInputEvent) {
                 // If the event is an InputEvent, we mark that the key is currently being processed.
+                if (!stateManager.hasMoreActionTasks()) {
+                    // No tasks in flight for this key: this input record starts a fresh record
+                    // processing round.
+                    freshRecordRound = true;
+                }
                 stateManager.addProcessingKey(key);
                 stateManager.initOrIncSequenceNumber();
                 tryEmitAgentRunBeginEvent(key, contextKey, event, traceContext);
@@ -315,7 +335,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             if (triggerActions != null && !triggerActions.isEmpty()) {
                 for (Action triggerAction : triggerActions) {
                     stateManager.addActionTask(
-                            createActionTask(key, triggerAction, event, traceContext));
+                            createActionTask(
+                                    key,
+                                    triggerAction,
+                                    event,
+                                    stateManager.getSequenceNumber(),
+                                    traceContext));
+                    if (freshRecordRound) {
+                        notifyRecordStart(key);
+                        freshRecordRound = false;
+                    }
                 }
             }
         }
@@ -422,6 +451,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 pythonBridge.getPythonRunnerContext(),
                 ltm,
                 executionEventLogger);
+        notifyTaskPrepared(actionTask);
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
@@ -454,6 +484,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .set(memoryUpdate.getPath(), memoryUpdate.getValue());
             }
             notifyActionReused(actionTask);
+
+            // Pair with the onTaskPrepared emitted above, even though the invocation itself
+            // was skipped because the action already completed before the replay.
+            notifyTaskFinished(actionTask);
         } else {
             // Initialize ActionState if not exists, or use existing one for recovery
             if (actionState == null) {
@@ -488,11 +522,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     throw new AssertionError("Unreachable after rethrowing action failure");
                 }
 
-                // Drop task-local contexts after each step; continuations transfer them back.
-                contextManager.removeMemoryContext(actionTask);
+                // We remove the contexts record from the map after the task is processed. It
+                // will be recreated by transferContexts below if the action task has a generated
+                // action task, meaning it is not finished.
+                contextManager.removeContexts(actionTask);
                 durableExecManager.removeDurableContext(actionTask);
-                contextManager.removeContinuationContext(actionTask);
-                contextManager.removePythonAwaitableRef(actionTask);
+                if (actionTaskResult.isFinished()) {
+                    // Notify before persisting the result, so a listener that throws still prevents
+                    // the completed state from becoming durable.
+                    notifyTaskFinished(actionTask);
+                }
                 durableExecManager.maybePersistTaskResult(
                         key,
                         sequenceNumber,
@@ -547,12 +586,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // If the action task is not finished, we keep the contexts in memory for the
             // next generated ActionTask to be invoked.
             contextManager.transferContexts(actionTask, generatedActionTask, durableExecManager);
+            notifyTaskTransferred(actionTask, generatedActionTask);
 
             stateManager.addActionTask(generatedActionTask);
         }
 
         // 3. Process the next InputEvent or next action task
         if (currentInputEventFinished) {
+            notifyRecordFinished(key);
             // Clean up sensory memory when a single run finished.
             actionTask.getRunnerContext().clearSensoryMemory();
             durableExecManager.updateLastCompletedSequenceNumber(sequenceNumber);
@@ -702,14 +743,84 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         executionEventLogger.emit(event, traceContext);
     }
 
+    /**
+     * Materializes every sub-agent setup, in either language, and registers the ones that observe
+     * the task lifecycle. A Java setup joins this operator's listeners directly; a Python setup
+     * lives in the Python runtime, so it joins the Python runtime's listeners and this operator
+     * notifies them through a single bridge listener.
+     *
+     * <p>Runs while the operator opens, after the Python bridge is up, because the Python runtime
+     * materializes the setups it owns.
+     */
+    private void registerSubagentSetups() throws Exception {
+        boolean pythonSetupRegistered = false;
+        for (Resource setup : resourceCache.eagerMaterialize(ResourceType.AGENT)) {
+            if (setup instanceof PythonRuntimeResource) {
+                pythonSetupRegistered |=
+                        pythonBridge
+                                .getPythonActionExecutor()
+                                .addTaskLifecycleListener(
+                                        ((PythonRuntimeResource) setup).getPythonResource());
+            } else if (setup instanceof TaskLifecycleListener) {
+                taskLifecycleListeners.add((TaskLifecycleListener) setup);
+            }
+        }
+        if (pythonSetupRegistered) {
+            taskLifecycleListeners.add(
+                    new PythonTaskLifecycleListener(pythonBridge.getPythonActionExecutor()));
+        }
+    }
+
+    /**
+     * Registers a listener to be notified of per-record/per-task lifecycle events. The registration
+     * itself is not part of the operator state, so it must happen before records are processed.
+     */
+    public void addTaskLifecycleListener(TaskLifecycleListener listener) {
+        taskLifecycleListeners.add(listener);
+    }
+
+    private void notifyRecordStart(Object key) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onRecordStart(key);
+        }
+    }
+
+    private void notifyTaskPrepared(ActionTask task) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onTaskPrepared(task);
+        }
+    }
+
+    private void notifyTaskTransferred(ActionTask from, ActionTask to) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onTaskTransferred(from, to);
+        }
+    }
+
+    private void notifyTaskFinished(ActionTask task) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onTaskFinished(task);
+        }
+    }
+
+    private void notifyRecordFinished(Object key) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onRecordFinished(key);
+        }
+    }
+
     private ActionTask createActionTask(
-            Object key, Action action, Event event, ExecutionTraceContext sourceTraceContext) {
+            Object key,
+            Action action,
+            Event event,
+            long sequenceNumber,
+            ExecutionTraceContext sourceTraceContext) {
         ExecutionTraceContext actionTraceContext =
                 ExecutionTraceContext.forAction(sourceTraceContext, action.getName());
         if (action.getExec() instanceof JavaFunction) {
-            return new JavaActionTask(key, event, action, actionTraceContext);
+            return new JavaActionTask(key, event, action, sequenceNumber, actionTraceContext);
         } else if (action.getExec() instanceof PythonFunction) {
-            return new PythonActionTask(key, event, action, actionTraceContext);
+            return new PythonActionTask(key, event, action, sequenceNumber, actionTraceContext);
         } else {
             throw new IllegalStateException(
                     "Unsupported action type: " + action.getExec().getClass());
@@ -756,6 +867,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 }
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
                 String contextKey = resolveContextKey(key);
+                // Align with the task-level replay: re-emit the record start for the resumed
+                // round so listeners observe a paired start/finished bracket as well.
+                notifyRecordStart(key);
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key, contextKey), "process action task");
             }

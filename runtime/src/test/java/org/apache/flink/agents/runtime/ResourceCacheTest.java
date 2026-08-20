@@ -34,18 +34,27 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
+import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
 import org.junit.jupiter.api.Test;
 import pemja.core.object.PyObject;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /** Tests for {@link ResourceCache}. */
 public class ResourceCacheTest {
@@ -207,6 +216,57 @@ public class ResourceCacheTest {
         }
     }
 
+    /** Stands in for a handle to a resource that the Python runtime owns. */
+    public static class TestPythonHandle extends Resource {
+        @Override
+        public ResourceType getResourceType() {
+            return ResourceType.CHAT_MODEL;
+        }
+    }
+
+    @Test
+    public void testEagerMaterializeResolvesEveryJavaOwnedResourceOfTheType() throws Exception {
+        TestAgentWithResources agent = new TestAgentWithResources();
+        AgentPlan agentPlan = new AgentPlan(agent);
+        ResourceCache cache = new ResourceCache(agentPlan.getResourceProviders());
+
+        List<Resource> materialized = cache.eagerMaterialize(ResourceType.TOOL);
+
+        assertThat(materialized).hasSize(2).allMatch(resource -> resource instanceof TestTool);
+        assertThat(materialized).contains(cache.getResource("myTool", ResourceType.TOOL));
+        assertThat(materialized).contains(cache.getResource("anotherTool", ResourceType.TOOL));
+    }
+
+    @Test
+    public void testEagerMaterializeAsksThePythonRuntimeForTheResourcesItOwns() throws Exception {
+        TestAgentWithResources agent = new TestAgentWithResources();
+        AgentPlan agentPlan = new AgentPlan(agent);
+        ResourceCache cache = new ResourceCache(agentPlan.getResourceProviders());
+        TestPythonHandle handle = new TestPythonHandle();
+        // No Python resource adapter is wired, so resolving the Python provider here would fail:
+        // the type materializes only because the Python runtime is asked for its own resources.
+        PythonActionExecutor pythonActionExecutor = mock(PythonActionExecutor.class);
+        when(pythonActionExecutor.eagerMaterialize(ResourceType.CHAT_MODEL))
+                .thenReturn(Collections.singletonMap("pythonChatModel", handle));
+        cache.setPythonActionExecutor(pythonActionExecutor);
+
+        List<Resource> materialized = cache.eagerMaterialize(ResourceType.CHAT_MODEL);
+
+        assertThat(materialized).hasSize(2).contains(handle);
+        assertThat(cache.getResource("pythonChatModel", ResourceType.CHAT_MODEL)).isSameAs(handle);
+    }
+
+    @Test
+    public void testEagerMaterializeFailsWhenThePythonRuntimeIsNotRunning() throws Exception {
+        TestAgentWithResources agent = new TestAgentWithResources();
+        AgentPlan agentPlan = new AgentPlan(agent);
+        ResourceCache cache = new ResourceCache(agentPlan.getResourceProviders());
+
+        assertThatThrownBy(() -> cache.eagerMaterialize(ResourceType.CHAT_MODEL))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("declared in Python but the Python runtime is not running");
+    }
+
     @Test
     public void testGetResourceNotFound() throws Exception {
         Agent agent = new Agent();
@@ -250,5 +310,33 @@ public class ResourceCacheTest {
         // Test that resources are cached (should be the same instance)
         Resource myToolAgain = cache.getResource("myTool", ResourceType.TOOL);
         assertThat(myTool).isSameAs(myToolAgain);
+    }
+
+    /** Test Java sub-agent setup, registered as an AGENT resource. */
+    public static class TestAgentSetup extends BaseSubagentSetup {
+        @Override
+        public SubagentFuture submit(
+                RunnerContext ctx, Object prompt, String sessionId, String callId) {
+            return null;
+        }
+    }
+
+    @Test
+    public void testMaterializingAnAgentInjectsTheResourceNameAsSubagentName() throws Exception {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = new HashMap<>();
+        Map<String, ResourceProvider> agentProviders = new HashMap<>();
+        agentProviders.put(
+                "reviewer",
+                JavaSerializableResourceProvider.createResourceProvider(
+                        "reviewer", ResourceType.AGENT, new TestAgentSetup()));
+        providers.put(ResourceType.AGENT, agentProviders);
+
+        ResourceCache cache = new ResourceCache(providers);
+        List<Resource> materialized = cache.eagerMaterialize(ResourceType.AGENT);
+
+        assertThat(materialized).hasSize(1);
+        assertThat(materialized.get(0)).isInstanceOf(TestAgentSetup.class);
+        // The framework owns the identity: the resource name becomes the sub-agent name.
+        assertThat(((TestAgentSetup) materialized.get(0)).getSubagentName()).isEqualTo("reviewer");
     }
 }

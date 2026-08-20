@@ -121,7 +121,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     private static final Logger LOG = LoggerFactory.getLogger(RunnerContextImpl.class);
 
-    protected final List<Event> pendingEvents = new ArrayList<>();
+    protected List<Event> pendingEvents = new ArrayList<>();
+
     protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
     protected final Runnable mailboxThreadChecker;
     protected final AgentPlan agentPlan;
@@ -181,12 +182,14 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     public void switchActionContext(
             String actionName,
             MemoryContext memoryContext,
+            List<Event> pendingEvents,
             String contextKey,
             String observationId,
             boolean observationSuppressed) {
         switchActionContext(
                 actionName,
                 memoryContext,
+                pendingEvents,
                 contextKey,
                 observationId,
                 observationSuppressed,
@@ -197,12 +200,14 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     public void switchActionContext(
             String actionName,
             MemoryContext memoryContext,
+            List<Event> pendingEvents,
             String contextKey,
             @Nullable ExecutionTraceContext actionTraceContext,
             @Nullable Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions) {
         switchActionContext(
                 actionName,
                 memoryContext,
+                pendingEvents,
                 contextKey,
                 null,
                 false,
@@ -213,6 +218,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     public void switchActionContext(
             String actionName,
             MemoryContext memoryContext,
+            List<Event> pendingEvents,
             String contextKey,
             @Nullable String observationId,
             boolean observationSuppressed,
@@ -220,6 +226,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             @Nullable Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions) {
         this.actionName = actionName;
         this.memoryContext = memoryContext;
+        this.pendingEvents = pendingEvents;
         this.contextKey = contextKey;
         this.observationId = observationId;
         this.observationSuppressed = observationSuppressed;
@@ -347,6 +354,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     public void checkNoPendingEvents() {
         Preconditions.checkState(
                 this.pendingEvents.isEmpty(), "There are pending events remaining in the context.");
+    }
+
+    public List<Event> getPendingEvents() {
+        return this.pendingEvents;
     }
 
     public List<MemoryUpdate> getSensoryMemoryUpdates() {
