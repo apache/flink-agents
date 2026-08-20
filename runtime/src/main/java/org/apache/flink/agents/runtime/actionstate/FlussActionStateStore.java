@@ -51,8 +51,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntPredicate;
 import java.util.function.LongPredicate;
-import java.util.function.Predicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_ACTION_STATE_DATABASE;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_ACTION_STATE_TABLE;
@@ -106,16 +106,20 @@ public class FlussActionStateStore implements ActionStateStore {
     /** In-memory cache for O(1) state lookups; rebuilt from Fluss log on recovery. */
     private final Map<String, ActionState> actionStates;
 
-    // When set, only business keys accepted by this predicate are kept in the in-memory cache
-    // during rebuildState; null means retain all keys (default).
-    private Predicate<String> ownershipFilter;
+    // When set, only records whose key-group is accepted by this predicate are kept in the
+    // in-memory cache during rebuildState; null means retain all keys (default).
+    private IntPredicate ownershipFilter;
+
+    // The operator's maximum parallelism, used to compute key-groups consistently with Flink.
+    private int maxParallelism;
 
     @VisibleForTesting
     FlussActionStateStore(
             Map<String, ActionState> actionStates,
             Connection connection,
             Table table,
-            AppendWriter writer) {
+            AppendWriter writer,
+            int maxParallelism) {
         this.agentConfiguration = null;
         this.databaseName = null;
         this.tableName = null;
@@ -124,6 +128,7 @@ public class FlussActionStateStore implements ActionStateStore {
         this.connection = connection;
         this.table = table;
         this.writer = writer;
+        this.maxParallelism = maxParallelism;
     }
 
     public FlussActionStateStore(AgentConfiguration agentConfiguration) {
@@ -198,7 +203,7 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
             throws Exception {
-        String stateKey = generateKey(key, seqNum, action, event);
+        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
         byte[] payload = ActionStateSerde.serialize(state);
 
         GenericRow row =
@@ -220,13 +225,12 @@ public class FlussActionStateStore implements ActionStateStore {
 
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
-        String stateKey = generateKey(key, seqNum, action, event);
-        String keyPrefix = key.toString() + "_";
+        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
 
-        boolean hasDivergence = checkDivergence(key.toString(), seqNum);
+        boolean hasDivergence = checkDivergence(key, seqNum);
 
         if (!actionStates.containsKey(stateKey) || hasDivergence) {
-            removeStateEntries(keyPrefix, stateSeqNum -> stateSeqNum > seqNum);
+            removeStateEntries(key, stateSeqNum -> stateSeqNum > seqNum);
         }
 
         ActionState state = actionStates.get(stateKey);
@@ -234,36 +238,24 @@ public class FlussActionStateStore implements ActionStateStore {
         return state;
     }
 
-    private boolean checkDivergence(String key, long seqNum) {
+    private boolean checkDivergence(Object key, long seqNum) {
         return actionStates.keySet().stream()
-                        .filter(k -> k.startsWith(key + "_" + seqNum + "_"))
+                        .filter(k -> ActionStateUtil.matchesBusinessKeyAndSeqNum(k, key, seqNum))
                         .count()
                 > 1;
     }
 
     /**
-     * Removes cached state entries whose key starts with {@code keyPrefix} and whose parsed
+     * Removes cached state entries whose business-key segment equals {@code key} and whose parsed
      * sequence number satisfies {@code seqNumFilter}.
      */
-    private void removeStateEntries(String keyPrefix, LongPredicate seqNumFilter) {
+    private void removeStateEntries(Object key, LongPredicate seqNumFilter) {
         actionStates
-                .entrySet()
+                .keySet()
                 .removeIf(
-                        entry -> {
-                            if (!entry.getKey().startsWith(keyPrefix)) {
-                                return false;
-                            }
-                            try {
-                                List<String> parts = ActionStateUtil.parseKey(entry.getKey());
-                                if (parts.size() >= 2) {
-                                    long stateSeqNum = Long.parseLong(parts.get(1));
-                                    return seqNumFilter.test(stateSeqNum);
-                                }
-                            } catch (Exception e) {
-                                LOG.warn("Failed to parse state key: {}", entry.getKey(), e);
-                            }
-                            return false;
-                        });
+                        cachedKey ->
+                                ActionStateUtil.matchesBusinessKeyWithSeqNum(
+                                        cachedKey, key, seqNumFilter));
     }
 
     /**
@@ -457,8 +449,13 @@ public class FlussActionStateStore implements ActionStateStore {
     }
 
     @Override
-    public void setOwnershipFilter(Predicate<String> ownershipFilter) {
+    public void setOwnershipFilter(IntPredicate ownershipFilter) {
         this.ownershipFilter = ownershipFilter;
+    }
+
+    @Override
+    public void setMaxParallelism(int maxParallelism) {
+        this.maxParallelism = maxParallelism;
     }
 
     private Map<Integer, Long> getBucketEndOffsets() {
@@ -499,7 +496,7 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning in-memory state for key: {} up to seqNum: {}", key, seqNum);
-        removeStateEntries(key.toString() + "_", stateSeqNum -> stateSeqNum <= seqNum);
+        removeStateEntries(key, stateSeqNum -> stateSeqNum <= seqNum);
     }
 
     @Override

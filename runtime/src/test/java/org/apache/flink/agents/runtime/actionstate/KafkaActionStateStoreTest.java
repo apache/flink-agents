@@ -50,6 +50,7 @@ public class KafkaActionStateStoreTest {
 
     private static final String TEST_TOPIC = "test-action-state";
     private static final String TEST_KEY = "test-key";
+    private static final int MAX_PARALLELISM = 128;
 
     private MockProducer<String, ActionState> mockProducer;
     private MockConsumer<String, ActionState> mockConsumer;
@@ -77,7 +78,8 @@ public class KafkaActionStateStoreTest {
                         new AgentConfiguration(),
                         mockProducer,
                         mockConsumer,
-                        TEST_TOPIC);
+                        TEST_TOPIC,
+                        MAX_PARALLELISM);
 
         // Create test objects
         testAction = new NoOpAction("test-action");
@@ -95,7 +97,7 @@ public class KafkaActionStateStoreTest {
         assertEquals(1, history.size());
         var record = history.get(0);
         assertEquals(TEST_TOPIC, record.topic());
-        assertThat(record.key()).startsWith(TEST_KEY + "_1");
+        assertThat(record.key()).contains("_" + TEST_KEY + "_1");
         assertNotNull(record.value());
         assertThat(record.value()).isEqualTo(testActionState);
     }
@@ -103,13 +105,13 @@ public class KafkaActionStateStoreTest {
     @Test
     void testGetNonExistentActionState() throws Exception {
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM), testActionState);
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent, MAX_PARALLELISM), testActionState);
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent, MAX_PARALLELISM), testActionState);
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 4L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 4L, testAction, testEvent, MAX_PARALLELISM), testActionState);
 
         actionStateStore.get(TEST_KEY, 2L, new NoOpAction("test-1"), testEvent);
 
@@ -122,17 +124,17 @@ public class KafkaActionStateStoreTest {
     @Test
     void testGetActionStateWithDiverge() throws Exception {
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM), testActionState);
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent, MAX_PARALLELISM), testActionState);
         // diverge here
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 2L, new NoOpAction("test-2"), testEvent),
+                ActionStateUtil.generateKey(TEST_KEY, 2L, new NoOpAction("test-2"), testEvent, MAX_PARALLELISM),
                 testActionState);
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent, MAX_PARALLELISM), testActionState);
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 4L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 4L, testAction, testEvent, MAX_PARALLELISM), testActionState);
 
         actionStateStore.get(TEST_KEY, 2L, testAction, testEvent);
 
@@ -182,11 +184,11 @@ public class KafkaActionStateStoreTest {
     void testPruneState() throws Exception {
         // Arrange
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM), testActionState);
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent, MAX_PARALLELISM), testActionState);
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent), testActionState);
+                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent, MAX_PARALLELISM), testActionState);
 
         // Verify all states exist
         assertNotNull(actionStateStore.get(TEST_KEY, 1L, testAction, testEvent));
@@ -198,9 +200,9 @@ public class KafkaActionStateStoreTest {
 
         // Assert - states 1 and 2 should be pruned, state 3 should remain
         assertNull(
-                actionStates.get(ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent)));
+                actionStates.get(ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM)));
         assertNull(
-                actionStates.get(ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent)));
+                actionStates.get(ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent, MAX_PARALLELISM)));
         assertNotNull(actionStateStore.get(TEST_KEY, 3L, testAction, testEvent));
     }
 
@@ -220,7 +222,7 @@ public class KafkaActionStateStoreTest {
         assertEquals(2, history.size());
         var record = history.get(0);
         assertEquals(TEST_TOPIC, record.topic());
-        assertThat(record.key()).startsWith(TEST_KEY + "_1");
+        assertThat(record.key()).contains("_" + TEST_KEY + "_1");
         assertNotNull(record.value());
         assertThat(record.value()).isEqualTo(testActionState);
     }
@@ -249,15 +251,15 @@ public class KafkaActionStateStoreTest {
         // Assert - only the state up to the recovery marker should be restored
         assertThat(
                         actionStates.get(
-                                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent)))
+                                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM)))
                 .isEqualTo(testActionState);
         assertThat(
                         actionStates.get(
-                                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent)))
+                                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent, MAX_PARALLELISM)))
                 .isEqualTo(secondState);
         assertThat(
                         actionStates.get(
-                                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent)))
+                                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent, MAX_PARALLELISM)))
                 .isEqualTo(thirdState);
     }
 
@@ -269,8 +271,8 @@ public class KafkaActionStateStoreTest {
     void testRebuildStateFiltersForeignKeys() throws Exception {
         String keyA = "A";
         String keyB = "B";
-        String stateKeyA = ActionStateUtil.generateKey(keyA, 1L, testAction, testEvent);
-        String stateKeyB = ActionStateUtil.generateKey(keyB, 1L, testAction, testEvent);
+        String stateKeyA = ActionStateUtil.generateKey(keyA, 1L, testAction, testEvent, MAX_PARALLELISM);
+        String stateKeyB = ActionStateUtil.generateKey(keyB, 1L, testAction, testEvent, MAX_PARALLELISM);
 
         long offset = 0L;
         mockConsumer.addRecord(
@@ -280,7 +282,8 @@ public class KafkaActionStateStoreTest {
 
         List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
 
-        actionStateStore.setOwnershipFilter(k -> k.equals(keyA));
+        int ownedKeyGroup = ActionStateUtil.parseKeyGroup(stateKeyA);
+        actionStateStore.setOwnershipFilter(kg -> kg == ownedKeyGroup);
         actionStateStore.rebuildState(recoveryMarkers);
 
         assertThat(actionStates).containsKey(stateKeyA);
@@ -296,8 +299,8 @@ public class KafkaActionStateStoreTest {
      */
     @Test
     void testRebuildStateKeepsAllKeysWhenNoFilter() throws Exception {
-        String stateKeyA = ActionStateUtil.generateKey("A", 1L, testAction, testEvent);
-        String stateKeyB = ActionStateUtil.generateKey("B", 1L, testAction, testEvent);
+        String stateKeyA = ActionStateUtil.generateKey("A", 1L, testAction, testEvent, MAX_PARALLELISM);
+        String stateKeyB = ActionStateUtil.generateKey("B", 1L, testAction, testEvent, MAX_PARALLELISM);
 
         long offset = 0L;
         mockConsumer.addRecord(
@@ -314,15 +317,57 @@ public class KafkaActionStateStoreTest {
     }
 
     /**
-     * A record whose composite state key cannot be parsed must still be retained (fail-safe: prefer
-     * keeping a valid key over dropping it on a parse error).
+     * Regression test for cross-key pruning: a numeric business key must not match another
+     * record's sequence-number segment. Here business key 1 at seqNum 5 collides, on substring
+     * matching, with pruning business key 5 — segment-exact matching must keep it.
      */
     @Test
-    void testRebuildStateKeepsUnparseableKey() throws Exception {
+    void testPruneStateDoesNotCrossNumericKeyAndSeqNum() throws Exception {
+        String keyOneAtSeqFive =
+                ActionStateUtil.generateKey(1L, 5L, testAction, testEvent, MAX_PARALLELISM);
+        String keyFiveAtSeqThree =
+                ActionStateUtil.generateKey(5L, 3L, testAction, testEvent, MAX_PARALLELISM);
+        actionStates.put(keyOneAtSeqFive, testActionState);
+        actionStates.put(keyFiveAtSeqThree, testActionState);
+
+        actionStateStore.pruneState(5L, 10L);
+
+        // Key 5's record (seqNum 3 <= 10) is pruned; key 1's record must survive even though its
+        // seqNum segment ("_5_") textually contains the pruned business key.
+        assertThat(actionStates).containsKey(keyOneAtSeqFive);
+        assertThat(actionStates).doesNotContainKey(keyFiveAtSeqThree);
+    }
+
+    /**
+     * The divergence cleanup inside {@code get()} must also be scoped to the requested business
+     * key: a cache miss for one key must not evict another key's newer states.
+     */
+    @Test
+    void testGetCleanupIsScopedToRequestedKey() throws Exception {
+        String otherKeyNewerState =
+                ActionStateUtil.generateKey("other-key", 9L, testAction, testEvent, MAX_PARALLELISM);
+        actionStates.put(otherKeyNewerState, testActionState);
+
+        // Cache miss for TEST_KEY at seqNum 1 triggers cleanup of states with seqNum > 1.
+        assertNull(actionStateStore.get(TEST_KEY, 1L, testAction, testEvent));
+
+        assertThat(actionStates).containsKey(otherKeyNewerState);
+    }
+
+    /**
+     * Records whose composite state key does not have the current 5-segment layout — including
+     * records written in the pre-key-group 4-segment format — are dropped deterministically during
+     * rebuild: they cannot be attributed to a key-group and are unreachable for lookups anyway.
+     */
+    @Test
+    void testRebuildStateDropsLegacyFormatKeys() throws Exception {
+        String legacyKey = TEST_KEY + "_1_event-uuid_action-uuid";
         String malformedKey = "malformed-key";
-        String stateKeyA = ActionStateUtil.generateKey("A", 1L, testAction, testEvent);
+        String stateKeyA = ActionStateUtil.generateKey("A", 1L, testAction, testEvent, MAX_PARALLELISM);
 
         long offset = 0L;
+        mockConsumer.addRecord(
+                new ConsumerRecord<>(TEST_TOPIC, 0, offset++, legacyKey, testActionState));
         mockConsumer.addRecord(
                 new ConsumerRecord<>(TEST_TOPIC, 0, offset++, malformedKey, testActionState));
         mockConsumer.addRecord(
@@ -330,12 +375,38 @@ public class KafkaActionStateStoreTest {
 
         List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
 
-        actionStateStore.setOwnershipFilter(k -> k.equals("A"));
+        int ownedKeyGroup = ActionStateUtil.parseKeyGroup(stateKeyA);
+        actionStateStore.setOwnershipFilter(kg -> kg == ownedKeyGroup);
         actionStateStore.rebuildState(recoveryMarkers);
 
-        // "A" is accepted, and the unparseable key is retained as a fail-safe.
         assertThat(actionStates).containsKey(stateKeyA);
-        assertThat(actionStates).containsKey(malformedKey);
+        assertThat(actionStates).doesNotContainKey(legacyKey);
+        assertThat(actionStates).doesNotContainKey(malformedKey);
+    }
+
+    /**
+     * A 5-segment key whose key-group segment fails to parse is retained as a fail-safe (prefer
+     * keeping a possibly-valid current-format key over dropping it on a parse error).
+     */
+    @Test
+    void testRebuildStateKeepsCurrentFormatKeyWithUnparseableKeyGroup() throws Exception {
+        String unparseableGroupKey = "not-a-number_key_1_event-uuid_action-uuid";
+        String stateKeyA = ActionStateUtil.generateKey("A", 1L, testAction, testEvent, MAX_PARALLELISM);
+
+        long offset = 0L;
+        mockConsumer.addRecord(
+                new ConsumerRecord<>(TEST_TOPIC, 0, offset++, unparseableGroupKey, testActionState));
+        mockConsumer.addRecord(
+                new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyA, testActionState));
+
+        List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
+
+        int ownedKeyGroup = ActionStateUtil.parseKeyGroup(stateKeyA);
+        actionStateStore.setOwnershipFilter(kg -> kg == ownedKeyGroup);
+        actionStateStore.rebuildState(recoveryMarkers);
+
+        assertThat(actionStates).containsKey(stateKeyA);
+        assertThat(actionStates).containsKey(unparseableGroupKey);
     }
 
     /** Contract: the consumer is closed even when closing the producer throws. */
@@ -352,7 +423,8 @@ public class KafkaActionStateStoreTest {
                         new AgentConfiguration(),
                         failingProducer,
                         consumer,
-                        TEST_TOPIC);
+                        TEST_TOPIC,
+                        MAX_PARALLELISM);
 
         assertThrows(RuntimeException.class, store::close);
 
@@ -379,7 +451,8 @@ public class KafkaActionStateStoreTest {
                         new AgentConfiguration(),
                         failingProducer,
                         failingConsumer,
-                        TEST_TOPIC);
+                        TEST_TOPIC,
+                        MAX_PARALLELISM);
 
         RuntimeException thrown = assertThrows(RuntimeException.class, store::close);
 
@@ -405,7 +478,8 @@ public class KafkaActionStateStoreTest {
                         new AgentConfiguration(),
                         producer,
                         failingConsumer,
-                        TEST_TOPIC);
+                        TEST_TOPIC,
+                        MAX_PARALLELISM);
 
         RuntimeException thrown = assertThrows(RuntimeException.class, store::close);
 
@@ -432,7 +506,8 @@ public class KafkaActionStateStoreTest {
                         new AgentConfiguration(),
                         failingProducer,
                         consumer,
-                        TEST_TOPIC);
+                        TEST_TOPIC,
+                        MAX_PARALLELISM);
 
         assertThat(catchThrowable(store::close)).isSameAs(producerFailure);
 
@@ -461,7 +536,8 @@ public class KafkaActionStateStoreTest {
                         new AgentConfiguration(),
                         failingProducer,
                         failingConsumer,
-                        TEST_TOPIC);
+                        TEST_TOPIC,
+                        MAX_PARALLELISM);
 
         Throwable thrown = catchThrowable(store::close);
 

@@ -226,7 +226,10 @@ public class FlussActionStateStoreIT {
         FlussActionStateStore recoveredStore =
                 new FlussActionStateStore(createAgentConfiguration());
         try {
-            recoveredStore.setOwnershipFilter(k -> k.equals("A"));
+            // Own key's key-group computed from the WAL key; the filter accepts only this key-group.
+            int ownedKeyGroup = ActionStateUtil.parseKeyGroup(
+                    ActionStateUtil.generateKey("A", 1L, testAction, testEvent, 128));
+            recoveredStore.setOwnershipFilter(kg -> kg == ownedKeyGroup);
             recoveredStore.rebuildState(List.of(marker));
 
             // Owned key is recovered; foreign key is filtered out and never enters the cache.
